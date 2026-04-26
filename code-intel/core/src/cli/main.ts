@@ -72,6 +72,48 @@ program
   │                                                                          │
   └──────────────────────────────────────────────────────────────────────────┘
 
+  ┌─ All Commands ─────────────────────────────────────────────────────────────────────────────────────────────────────┐
+  │                                                                                                                    │
+  │  setup                                                                                                             │
+  │    code-intel setup                         Register the MCP server in your editor config (one-time)              │
+  │                                                                                                                    │
+  │  analyze                                                                                                           │
+  │    code-intel analyze [path]                Parse source code and build the knowledge graph                        │
+  │    code-intel analyze --force               Discard the existing index and perform a full re-analysis             │
+  │    code-intel analyze --skills              Emit per-cluster SKILL.md files under .claude/skills/code-intel/      │
+  │    code-intel analyze --embeddings          Build a vector index for semantic (natural-language) search           │
+  │    code-intel analyze --skip-embeddings     Omit embedding generation for a significantly faster run             │
+  │    code-intel analyze --skip-agents-md      Preserve any hand-edited content in AGENTS.md / CLAUDE.md            │
+  │    code-intel analyze --skip-git            Allow analysis of directories that are not Git repositories           │
+  │    code-intel analyze --verbose             Print every file skipped due to an unsupported parser                 │
+  │                                                                                                                    │
+  │  server                                                                                                            │
+  │    code-intel mcp [path]                    Launch the MCP stdio server consumed by AI-enabled editors            │
+  │    code-intel serve [path] --port <n>       Start the HTTP API and serve the interactive web UI (default :4747)   │
+  │                                                                                                                    │
+  │  registry                                                                                                          │
+  │    code-intel list                          Display all repositories that have been indexed                       │
+  │    code-intel status [path]                 Report index freshness, symbol counts, and last-run duration          │
+  │    code-intel clean [path]                  Remove the .code-intel/ index for the specified repository            │
+  │    code-intel clean --all --force           Permanently remove all indexed repositories (requires --force)        │
+  │                                                                                                                    │
+  │  exploration                                                                                                       │
+  │    code-intel search <query>                Execute a BM25 keyword search across all indexed symbols              │
+  │    code-intel inspect <symbol>              Show callers, callees, import edges, and source location              │
+  │    code-intel impact <symbol>               Compute the transitive blast radius of a change to a symbol           │
+  │                                                                                                                    │
+  │  groups  (multi-repo / monorepo service tracking)                                                                  │
+  │    code-intel group create <name>           Create a named group to track multiple repositories together          │
+  │    code-intel group add <g> <path> <repo>   Enroll an indexed repo in a group under the given hierarchy path     │
+  │    code-intel group remove <g> <path>       Remove a repository from a group by its hierarchy path               │
+  │    code-intel group list [name]             List all groups, or print the full membership of one group            │
+  │    code-intel group sync <name>             Extract cross-repo contracts and resolve provider/consumer links      │
+  │    code-intel group contracts <name>        Inspect extracted contracts and confidence-ranked cross-links         │
+  │    code-intel group query <name> <q>        Run a merged RRF search across every repository in a group           │
+  │    code-intel group status <name>           Audit index freshness and sync staleness for all group members        │
+  │                                                                                                                    │
+  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
   Multi-language: TypeScript · JavaScript · Python · Java · Go · Rust · C/C++
                   C# · PHP · Kotlin · Ruby · Swift · Dart
 
