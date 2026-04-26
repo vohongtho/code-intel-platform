@@ -1,0 +1,47 @@
+name: Build & Publish
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # needed for provenance attestation
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Typecheck (shared + core)
+        run: npx tsc -b code-intel/shared code-intel/core
+
+      - name: Typecheck (web)
+        run: npx tsc -b code-intel/web
+
+      - name: Run tests
+        run: npm test --workspace=code-intel/core
+
+      - name: Build core
+        run: npm run build --workspace=code-intel/core
+
+      - name: Build web
+        run: npm run build --workspace=code-intel/web
+
+      - name: Publish to npm
+        run: npm publish --workspace=code-intel/core --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
