@@ -45,3 +45,37 @@ jobs:
         run: npm publish --workspace=code-intel/core --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  notify:
+    name: Discord Notification
+    needs: build-and-publish
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Discord notification (success)
+        if: ${{ needs.build-and-publish.result == 'success' }}
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          curl -H "Content-Type: application/json" \
+            -d "{\"embeds\": [{
+              \"title\": \"📦 code-intel ${{ github.ref_name }} published to npm!\",
+              \"description\": \"**Package:** \`@vohongtho.infotech/code-intel\`\n**Version:** \`${{ github.ref_name }}\`\n\n[View on npm](https://www.npmjs.com/package/@vohongtho.infotech/code-intel)\n[View Release](${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ github.ref_name }})\",
+              \"color\": 5763719,
+              \"footer\": {\"text\": \"Triggered by ${{ github.actor }}\"}
+            }]}" \
+            $DISCORD_WEBHOOK
+
+      - name: Discord notification (failure)
+        if: ${{ needs.build-and-publish.result == 'failure' }}
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          curl -H "Content-Type: application/json" \
+            -d "{\"embeds\": [{
+              \"title\": \"❌ code-intel ${{ github.ref_name }} publish failed\",
+              \"description\": \"**Package:** \`@vohongtho.infotech/code-intel\`\n**Tag:** \`${{ github.ref_name }}\`\n\n[View Logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})\",
+              \"color\": 15158332,
+              \"footer\": {\"text\": \"Triggered by ${{ github.actor }}\"}
+            }]}" \
+            $DISCORD_WEBHOOK
