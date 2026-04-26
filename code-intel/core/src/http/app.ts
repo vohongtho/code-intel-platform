@@ -103,8 +103,8 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     }
 
     try {
-      // Embed the query using the same model
-      const { pipeline } = await import('@xenova/transformers');
+      // Embed the query using @huggingface/transformers
+      const { pipeline } = await import('@huggingface/transformers');
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const embedder = (await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2')) as unknown as (text: string, opts: Record<string, unknown>) => Promise<{ data: Float32Array }>;
       const out = await embedder(query, { pooling: 'mean', normalize: true });

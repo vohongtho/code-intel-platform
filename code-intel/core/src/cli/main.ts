@@ -1,5 +1,14 @@
 #!/usr/bin/env node
 
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { join, dirname } from 'node:path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+// Resolve package.json relative to the built CLI file (dist/cli/main.js → ../../package.json)
+const _pkg = JSON.parse(readFileSync(join(__dirname, '../../package.json'), 'utf-8')) as { version: string };
+
 import { Command } from 'commander';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -28,7 +37,7 @@ const program = new Command();
 program
   .name('code-intel')
   .description('Code Intelligence Platform — Static Analysis + Knowledge Graph')
-  .version('0.1.0');
+  .version(_pkg.version);
 
 async function analyzeWorkspace(targetPath: string, options?: {
   silent?: boolean;

@@ -14,8 +14,7 @@ let pipelineInstance: ((text: string, opts: Record<string, unknown>) => Promise<
 
 async function getEmbedder() {
   if (!pipelineInstance) {
-    // Dynamic import to keep startup fast
-    const { pipeline } = await import('@xenova/transformers');
+    const { pipeline } = await import('@huggingface/transformers');
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     pipelineInstance = (await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2')) as unknown as typeof pipelineInstance;
   }

@@ -19,7 +19,7 @@ export default defineConfig([
     clean: true,
     external: [
       /^node:/,
-      '@xenova/transformers',
+      '@huggingface/transformers',
       'web-tree-sitter',
       '@ladybugdb/core',
       'express',
@@ -43,7 +43,7 @@ export default defineConfig([
     clean: false,
     external: [
       /^node:/,
-      '@xenova/transformers',
+      '@huggingface/transformers',
       'web-tree-sitter',
       '@ladybugdb/core',
       'express',
