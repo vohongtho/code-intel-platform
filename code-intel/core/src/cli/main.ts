@@ -179,6 +179,11 @@ async function analyzeWorkspace(targetPath: string, options?: {
   // Persist graph to LadybugDB
   try {
     const dbPath = getDbPath(workspaceRoot);
+    // Remove stale / incompatible DB files before writing
+    const staleFiles = [dbPath, `${dbPath}-shm`, `${dbPath}-wal`];
+    for (const f of staleFiles) {
+      try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* ignore */ }
+    }
     const db = new DbManager(dbPath);
     await db.init();
     const { nodeCount, edgeCount } = await loadGraphToDB(graph, db);
