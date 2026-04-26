@@ -1,0 +1,6 @@
+services:
+  build:
+    build:
+      context: .
+      dockerfile: Dockerfile.build
+    image: code-intel-build-test
