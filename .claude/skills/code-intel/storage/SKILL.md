@@ -39,7 +39,7 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `loadRegistry` | function | 7 | 0 | `storage/repo-registry.ts` |
+| `loadRegistry` | function | 9 | 0 | `storage/repo-registry.ts` |
 | `DbManager` | class | 5 | 0 | `storage/db-manager.ts` |
 | `loadGraphToDB` | function | 1 | 4 | `storage/graph-loader.ts` |
 | `upsertRepo` | function | 1 | 2 | `storage/repo-registry.ts` |
@@ -47,10 +47,10 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | `csvRow` | function | 2 | 0 | `storage/csv-writer.ts` |
 | `buildNodeProps` | function | 1 | 1 | `storage/graph-loader.ts` |
 | `escCypher` | function | 2 | 0 | `storage/graph-loader.ts` |
+| `loadMetadata` | function | 2 | 0 | `storage/metadata.ts` |
 | `getDbPath` | function | 2 | 0 | `storage/metadata.ts` |
 | `getVectorDbPath` | function | 2 | 0 | `storage/metadata.ts` |
 | `saveRegistry` | function | 2 | 0 | `storage/repo-registry.ts` |
-| `writeNodeCSVs` | function | 0 | 1 | `storage/csv-writer.ts` |
 
 ## Impact Guidance
 

@@ -1,11 +1,11 @@
 ---
 name: cli
-description: "Covers the **cli** subsystem of code-intel-platform. 15 symbols across 3 files. Key symbols: `analyzeWorkspace`, `writeSkillFiles`, `conf`. Internal call density: 0.7 calls/symbol."
+description: "Covers the **cli** subsystem of code-intel-platform. 16 symbols across 3 files. Key symbols: `analyzeWorkspace`, `writeSkillFiles`, `conf`. Internal call density: 0.6 calls/symbol."
 ---
 
 # cli
 
-> **15 symbols** | **3 files** | path: `code-intel/core/src/cli/` | call density: 0.7/sym
+> **16 symbols** | **3 files** | path: `code-intel/core/src/cli/` | call density: 0.6/sym
 
 ## When to Use
 
@@ -20,7 +20,7 @@ Load this skill when:
 | File | Symbols | Notes |
 |------|---------|-------|
 | `code-intel/core/src/cli/skill-writer.ts` | `SkillSummary`, `AreaInfo`, `writeSkillFiles`, `buildAreaMap` +(4) | 2 exported |
-| `code-intel/core/src/cli/context-writer.ts` | `ContextStats`, `writeContextFiles`, `buildBlock`, `upsertFile` +(1) | 2 exported |
+| `code-intel/core/src/cli/context-writer.ts` | `ContextStats`, `writeContextFiles`, `buildBlock`, `upsertFile` +(2) | 2 exported |
 | `code-intel/core/src/cli/main.ts` | `analyzeWorkspace`, `conf` | internal |
 
 ## Hot Symbols
@@ -29,7 +29,7 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `analyzeWorkspace` | function | 0 | 27 | `cli/main.ts` |
+| `analyzeWorkspace` | function | 0 | 28 | `cli/main.ts` |
 | `writeSkillFiles` | function | 1 | 4 | `cli/skill-writer.ts` |
 | `conf` | function | 0 | 4 | `cli/main.ts` |
 | `writeContextFiles` | function | 1 | 2 | `cli/context-writer.ts` |

@@ -12,3 +12,4 @@ dist/
 screenshots/
 .playwright-mcp/
 ref-use/
+.env

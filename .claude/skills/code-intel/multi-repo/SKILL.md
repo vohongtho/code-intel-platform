@@ -44,18 +44,18 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `syncGroup` | function | 4 | 6 | `multi-repo/group-sync.ts` |
-| `queryGroup` | function | 2 | 6 | `multi-repo/group-query.ts` |
-| `loadGroup` | function | 5 | 1 | `multi-repo/group-registry.ts` |
-| `saveGroup` | function | 4 | 1 | `multi-repo/group-registry.ts` |
+| `syncGroup` | function | 5 | 6 | `multi-repo/group-sync.ts` |
+| `queryGroup` | function | 3 | 6 | `multi-repo/group-query.ts` |
+| `loadGroup` | function | 7 | 1 | `multi-repo/group-registry.ts` |
+| `saveGroup` | function | 5 | 1 | `multi-repo/group-registry.ts` |
+| `listGroups` | function | 5 | 0 | `multi-repo/group-registry.ts` |
 | `loadGraphFromDB` | function | 3 | 1 | `multi-repo/graph-from-db.ts` |
 | `groupFile` | function | 4 | 0 | `multi-repo/group-registry.ts` |
-| `listGroups` | function | 4 | 0 | `multi-repo/group-registry.ts` |
 | `getGroup` | function | 2 | 1 | `multi-repo/group-manager.ts` |
 | `addMember` | function | 1 | 2 | `multi-repo/group-registry.ts` |
 | `removeMember` | function | 1 | 2 | `multi-repo/group-registry.ts` |
-| `loadGroupConfig` | function | 2 | 0 | `multi-repo/group-config.ts` |
-| `groupExists` | function | 1 | 1 | `multi-repo/group-registry.ts` |
+| `saveSyncResult` | function | 3 | 0 | `multi-repo/group-registry.ts` |
+| `loadSyncResult` | function | 3 | 0 | `multi-repo/group-registry.ts` |
 
 ## Impact Guidance
 

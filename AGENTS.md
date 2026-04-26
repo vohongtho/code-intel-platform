@@ -1,17 +1,27 @@
 
+
+# RULE
+1. Before run git add and git commit should get confirm from me
+2. The message generate for git commit DO NOT CONTENT: 
+    "Amp-Thread-ID:"
+    "Co-authored-by: Amp amp@ampcode.com"
+
 <!-- code-intel:start -->
 # Code Intelligence — code-intel-platform
 
-Indexed: **669 nodes** | **1,274 edges** | **151 files** | analyzed in 0.2s
+> ⚠ This section is auto-managed by `code-intel analyze`. Do **not** edit between the markers — your changes will be overwritten.
+> Add your own notes below the `<!-- code-intel:end -->` marker.
 
-> If the index is stale, re-run: `code-intel analyze`
+Indexed: **678 nodes** | **1,309 edges** | **151 files** | analyzed in 0.2s
+
+> Index stale? Re-run: `code-intel analyze`
 
 ## Always Do
 
-- **Before editing any symbol**, run `code-intel impact <symbol>` and review blast radius.
+- **Before editing any symbol**, run `code-intel impact <symbol>` to review its blast radius.
 - **Before committing**, verify scope with `code-intel inspect <symbol>`.
 - Use `code-intel search "<concept>"` to find related symbols instead of grepping.
-- Warn the user if impact shows ≥ 5 direct callers (HIGH risk).
+- Warn the user if impact shows ≥ 5 direct callers (**HIGH risk**).
 
 ## Never Do
 
@@ -41,20 +51,20 @@ code-intel clean [path]            # Remove index data
 | Work in `panels` (30 symbols) | `.claude/skills/code-intel/panels/SKILL.md` |
 | Work in `eval` (25 symbols) | `.claude/skills/code-intel/eval/SKILL.md` |
 | Work in `storage` (20 symbols) | `.claude/skills/code-intel/storage/SKILL.md` |
-| Work in `cli` (15 symbols) | `.claude/skills/code-intel/cli/SKILL.md` |
+| Work in `cli` (16 symbols) | `.claude/skills/code-intel/cli/SKILL.md` |
 | Work in `pages` (13 symbols) | `.claude/skills/code-intel/pages/SKILL.md` |
 | Work in `java-repo` (13 symbols) | `.claude/skills/code-intel/java-repo/SKILL.md` |
 | Work in `multi-lang` (13 symbols) | `.claude/skills/code-intel/multi-lang/SKILL.md` |
 | Work in `phases` (12 symbols) | `.claude/skills/code-intel/phases/SKILL.md` |
 | Work in `search` (12 symbols) | `.claude/skills/code-intel/search/SKILL.md` |
+| Work in `graph` (12 symbols) | `.claude/skills/code-intel/graph/SKILL.md` |
 | Work in `shared` (12 symbols) | `.claude/skills/code-intel/shared/SKILL.md` |
 | Work in `src` (12 symbols) | `.claude/skills/code-intel/src/SKILL.md` |
+| Work in `mcp-server` (10 symbols) | `.claude/skills/code-intel/mcp-server/SKILL.md` |
 | Work in `pipeline` (10 symbols) | `.claude/skills/code-intel/pipeline/SKILL.md` |
 | Work in `go-repo` (10 symbols) | `.claude/skills/code-intel/go-repo/SKILL.md` |
-| Work in `graph` (9 symbols) | `.claude/skills/code-intel/graph/SKILL.md` |
 | Work in `state` (9 symbols) | `.claude/skills/code-intel/state/SKILL.md` |
 | Work in `inheritance` (8 symbols) | `.claude/skills/code-intel/inheritance/SKILL.md` |
-| Work in `mcp-server` (7 symbols) | `.claude/skills/code-intel/mcp-server/SKILL.md` |
 | Work in `parsing` (7 symbols) | `.claude/skills/code-intel/parsing/SKILL.md` |
 | Work in `shared` (7 symbols) | `.claude/skills/code-intel/shared-2/SKILL.md` |
 

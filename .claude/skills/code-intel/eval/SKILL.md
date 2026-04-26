@@ -32,7 +32,7 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `check` | function | 1 | 4 | `eval/run-eval.mjs` |
+| `check` | function | 2 | 4 | `eval/run-eval.mjs` |
 | `blockCount` | function | 0 | 4 | `eval/run-eval.mjs` |
 | `baselineAnswer` | function | 1 | 2 | `eval/run-agent-bench.mjs` |
 | `col` | function | 0 | 3 | `eval/run-agent-bench.mjs` |

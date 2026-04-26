@@ -393,8 +393,8 @@ program
     $ code-intel mcp ./my-project
 `)
   .action(async (targetPath: string) => {
-    const { graph, repoName } = await analyzeWorkspace(targetPath, { silent: true });
-    await startMcpStdio(graph, repoName);
+    const { graph, repoName, workspaceRoot } = await analyzeWorkspace(targetPath, { silent: true });
+    await startMcpStdio(graph, repoName, workspaceRoot);
   });
 
 // ─── 4. serve ────────────────────────────────────────────────────────────────

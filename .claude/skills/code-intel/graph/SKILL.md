@@ -1,11 +1,11 @@
 ---
 name: graph
-description: "Covers the **graph** subsystem of code-intel-platform. 9 symbols across 1 files. Key symbols: `GraphView`. Internal call density: 0.1 calls/symbol."
+description: "Covers the **graph** subsystem of code-intel-platform. 12 symbols across 1 files. Key symbols: `GraphView`. Internal call density: 0.3 calls/symbol."
 ---
 
 # graph
 
-> **9 symbols** | **1 files** | path: `code-intel/web/src/components/graph/` | call density: 0.1/sym
+> **12 symbols** | **1 files** | path: `code-intel/web/src/components/graph/` | call density: 0.3/sym
 
 ## When to Use
 
@@ -19,13 +19,13 @@ Load this skill when:
 
 | File | Symbols | Notes |
 |------|---------|-------|
-| `code-intel/web/src/components/graph/GraphView.tsx` | `drawDarkNodeHover`, `GraphView`, `angle`, `onZoom` +(5) | 1 exported |
+| `code-intel/web/src/components/graph/GraphView.tsx` | `drawDarkNodeHover`, `GraphMeta`, `GraphView`, `angle` +(8) | 1 exported |
 
 ## Entry Points
 
 Start exploration here — exported symbols with no external callers:
 
-- **`GraphView`** `(function)` → `code-intel/web/src/components/graph/GraphView.tsx:76`
+- **`GraphView`** `(function)` → `code-intel/web/src/components/graph/GraphView.tsx:54`
 
 ## Hot Symbols
 
@@ -33,11 +33,14 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `GraphView` | function | 0 | 4 | `graph/GraphView.tsx` |
-| `angle` | function | 0 | 2 | `graph/GraphView.tsx` |
-| `factor` | function | 0 | 2 | `graph/GraphView.tsx` |
+| `applyNodeEdgeReducers` | function | 2 | 3 | `graph/GraphView.tsx` |
+| `angle` | function | 0 | 3 | `graph/GraphView.tsx` |
+| `bfsNeighborhood` | function | 1 | 1 | `graph/GraphView.tsx` |
+| `GraphView` | function | 0 | 1 | `graph/GraphView.tsx` |
+| `factor` | function | 0 | 1 | `graph/GraphView.tsx` |
 | `sizeForKind` | function | 1 | 0 | `graph/GraphView.tsx` |
 | `drawDarkNodeHover` | function | 0 | 0 | `graph/GraphView.tsx` |
+| `GraphMeta` | interface | 0 | 0 | `graph/GraphView.tsx` |
 | `onZoom` | function | 0 | 0 | `graph/GraphView.tsx` |
 | `GraphLegend` | function | 0 | 0 | `graph/GraphView.tsx` |
 | `GraphControls` | function | 0 | 0 | `graph/GraphView.tsx` |
@@ -54,7 +57,7 @@ Before modifying any symbol in this area:
 
 ```bash
 # Inspect most-connected symbol
-code-intel inspect GraphView
+code-intel inspect applyNodeEdgeReducers
 # Blast radius for entry point
 code-intel impact GraphView
 # Search this area

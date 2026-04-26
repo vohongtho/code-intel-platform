@@ -38,7 +38,7 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `delete` | function | 7 | 0 | `src/lib.rs` |
+| `delete` | function | 6 | 0 | `src/lib.rs` |
 | `count` | function | 1 | 0 | `src/lib.rs` |
 | `internal_hash` | function | 1 | 0 | `src/lib.rs` |
 | `generate_token` | function | 0 | 1 | `src/lib.rs` |
