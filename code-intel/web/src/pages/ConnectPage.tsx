@@ -17,7 +17,7 @@ export function ConnectPage() {
   const [error, setError] = useState('');
   const [connecting, setConnecting] = useState(false);
   const [tab, setTab] = useState<ConnectTab>('repo');
-  const [repos, setRepos] = useState<{ name: string; nodes: number; edges: number }[]>([]);
+  const [repos, setRepos] = useState<{ name: string; path: string; nodes: number; edges: number; indexedAt: string | null; active?: boolean }[]>([]);
   const [groups, setGroups] = useState<{ name: string; memberCount: number; lastSync: string | null; createdAt: string }[]>([]);
   const [loadingGroups, setLoadingGroups] = useState(false);
   const [connectingGroup, setConnectingGroup] = useState<string | null>(null);
@@ -185,16 +185,28 @@ export function ConnectPage() {
                       key={r.name}
                       onClick={() => handleConnectRepo(r.name)}
                       disabled={connecting}
-                      className="w-full flex items-center justify-between bg-gray-900/60 hover:bg-gray-800/60 border border-gray-700/60 hover:border-cyan-700/50 rounded-lg px-4 py-3 transition group disabled:opacity-50 disabled:cursor-not-allowed text-left"
+                      className={`w-full flex items-center justify-between bg-gray-900/60 hover:bg-gray-800/60 border rounded-lg px-4 py-3 transition group disabled:opacity-50 disabled:cursor-not-allowed text-left ${
+                        r.active
+                          ? 'border-cyan-700/60 hover:border-cyan-600'
+                          : 'border-gray-700/60 hover:border-cyan-700/50'
+                      }`}
                     >
-                      <div>
-                        <div className="text-sm font-semibold text-cyan-400">{r.name}</div>
-                        <div className="text-xs text-gray-500">{r.nodes.toLocaleString()} nodes · {r.edges.toLocaleString()} edges</div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <div className="text-sm font-semibold text-cyan-400 truncate">{r.name}</div>
+                          {r.active && (
+                            <span className="text-[9px] bg-cyan-900/50 text-cyan-400 border border-cyan-700/50 px-1.5 py-0.5 rounded-full font-medium shrink-0">active</span>
+                          )}
+                        </div>
+                        <div className="text-xs text-gray-500 truncate">{r.nodes.toLocaleString()} nodes · {r.edges.toLocaleString()} edges</div>
+                        {r.path && (
+                          <div className="text-[10px] text-gray-600 font-mono truncate mt-0.5">{r.path}</div>
+                        )}
                       </div>
                       {connecting ? (
-                        <Spinner className="w-4 h-4 text-cyan-400" />
+                        <Spinner className="w-4 h-4 text-cyan-400 ml-2 shrink-0" />
                       ) : (
-                        <span className="text-gray-600 group-hover:text-cyan-500 transition text-lg">→</span>
+                        <span className="text-gray-600 group-hover:text-cyan-500 transition text-lg ml-2 shrink-0">→</span>
                       )}
                     </button>
                   ))}

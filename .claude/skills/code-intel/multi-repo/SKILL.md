@@ -48,8 +48,8 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | `queryGroup` | function | 3 | 6 | `multi-repo/group-query.ts` |
 | `loadGroup` | function | 7 | 1 | `multi-repo/group-registry.ts` |
 | `saveGroup` | function | 5 | 1 | `multi-repo/group-registry.ts` |
+| `loadGraphFromDB` | function | 4 | 1 | `multi-repo/graph-from-db.ts` |
 | `listGroups` | function | 5 | 0 | `multi-repo/group-registry.ts` |
-| `loadGraphFromDB` | function | 3 | 1 | `multi-repo/graph-from-db.ts` |
 | `groupFile` | function | 4 | 0 | `multi-repo/group-registry.ts` |
 | `getGroup` | function | 2 | 1 | `multi-repo/group-manager.ts` |
 | `addMember` | function | 1 | 2 | `multi-repo/group-registry.ts` |

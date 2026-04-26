@@ -77,22 +77,75 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     res.json({ status: 'ok', nodes: graph.size.nodes, edges: graph.size.edges });
   });
 
-  // List repos
+  // List ALL indexed repos from the global registry (not just the current one)
   app.get('/api/repos', (_req, res) => {
-    res.json([{ name: repoName, nodes: graph.size.nodes, edges: graph.size.edges }]);
+    const registry = loadRegistry();
+    if (registry.length === 0) {
+      // Fallback: return only the in-memory repo
+      res.json([{ name: repoName, path: workspaceRoot ?? '', nodes: graph.size.nodes, edges: graph.size.edges, indexedAt: null }]);
+      return;
+    }
+    res.json(registry.map((r) => ({
+      name: r.name,
+      path: r.path,
+      nodes: r.stats.nodes,
+      edges: r.stats.edges,
+      indexedAt: r.indexedAt,
+      active: r.path === workspaceRoot,
+    })));
   });
 
-  // Download full graph
-  app.get('/api/graph/:repo', (_req, res) => {
-    const nodes = [...graph.allNodes()];
-    const edges = [...graph.allEdges()];
+  // Helper: load graph for a repo by name from its DB (returns in-memory graph if it matches)
+  async function loadRepoGraph(requestedRepo: string): Promise<KnowledgeGraph | null> {
+    // If the requested repo is the currently loaded in-memory graph, return it directly
+    if (requestedRepo === repoName) return graph;
+
+    // Otherwise look up in the global registry and load from DB
+    const registry = loadRegistry();
+    const entry = registry.find((r) => r.name === requestedRepo || r.path === requestedRepo);
+    if (!entry) return null;
+
+    const dbPath = path.join(entry.path, '.code-intel', 'graph.db');
+    if (!fs.existsSync(dbPath)) return null;
+
+    const repoGraph = createKnowledgeGraph();
+    const db = new DbManager(dbPath);
+    try {
+      await db.init();
+      await loadGraphFromDB(repoGraph, db);
+      db.close();
+      return repoGraph;
+    } catch {
+      db.close();
+      return null;
+    }
+  }
+
+  // Download full graph — supports any registered repo by name
+  app.get('/api/graph/:repo', async (req, res) => {
+    const requestedRepo = decodeURIComponent(req.params.repo);
+    const g = await loadRepoGraph(requestedRepo);
+    if (!g) {
+      res.status(404).json({ error: `Repo "${requestedRepo}" not found or not indexed. Run: code-intel analyze <path>` });
+      return;
+    }
+    const nodes = [...g.allNodes()];
+    const edges = [...g.allEdges()];
     res.json({ nodes, edges });
   });
 
-  // Hybrid search (BM25-like text)
-  app.post('/api/search', (req, res) => {
-    const { query, limit } = req.body;
-    const results = textSearch(graph, query, limit ?? 20);
+  // Helper: resolve graph for a repo (in-memory if matches, else load from DB)
+  async function getGraphForRepo(requestedRepo: string | undefined): Promise<KnowledgeGraph> {
+    if (!requestedRepo || requestedRepo === repoName) return graph;
+    const g = await loadRepoGraph(requestedRepo);
+    return g ?? graph; // fallback to in-memory
+  }
+
+  // Hybrid search (BM25-like text) — repo-aware
+  app.post('/api/search', async (req, res) => {
+    const { query, limit, repo } = req.body;
+    const g = await getGraphForRepo(repo as string | undefined);
+    const results = textSearch(g, query, limit ?? 20);
     res.json({ results });
   });
 
@@ -231,66 +284,64 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     }
   });
 
-  // Get node detail (inspect)
-  app.get('/api/nodes/:id', (req, res) => {
+  // Get node detail (inspect) — repo-aware via ?repo= query param
+  app.get('/api/nodes/:id', async (req, res) => {
     const nodeId = decodeURIComponent(req.params.id);
-    const node = graph.getNode(nodeId);
+    const g = await getGraphForRepo(req.query.repo as string | undefined);
+    const node = g.getNode(nodeId);
     if (!node) {
       res.status(404).json({ error: 'Node not found' });
       return;
     }
 
-    const incoming = [...graph.findEdgesTo(nodeId)];
-    const outgoing = [...graph.findEdgesFrom(nodeId)];
+    const incoming = [...g.findEdgesTo(nodeId)];
+    const outgoing = [...g.findEdgesFrom(nodeId)];
 
     res.json({
       node,
       callers: incoming.filter((e) => e.kind === 'calls').map((e) => ({
         id: e.source,
-        name: graph.getNode(e.source)?.name,
+        name: g.getNode(e.source)?.name,
         weight: e.weight,
       })),
       callees: outgoing.filter((e) => e.kind === 'calls').map((e) => ({
         id: e.target,
-        name: graph.getNode(e.target)?.name,
+        name: g.getNode(e.target)?.name,
         weight: e.weight,
       })),
       imports: outgoing.filter((e) => e.kind === 'imports').map((e) => ({
         id: e.target,
-        name: graph.getNode(e.target)?.name,
+        name: g.getNode(e.target)?.name,
       })),
       importedBy: incoming.filter((e) => e.kind === 'imports').map((e) => ({
         id: e.source,
-        name: graph.getNode(e.source)?.name,
+        name: g.getNode(e.source)?.name,
       })),
       extends: outgoing.filter((e) => e.kind === 'extends').map((e) => ({
         id: e.target,
-        name: graph.getNode(e.target)?.name,
+        name: g.getNode(e.target)?.name,
       })),
       implementsEdges: outgoing.filter((e) => e.kind === 'implements').map((e) => ({
         id: e.target,
-        name: graph.getNode(e.target)?.name,
+        name: g.getNode(e.target)?.name,
       })),
       members: outgoing.filter((e) => e.kind === 'has_member').map((e) => ({
         id: e.target,
-        name: graph.getNode(e.target)?.name,
-        kind: graph.getNode(e.target)?.kind,
+        name: g.getNode(e.target)?.name,
+        kind: g.getNode(e.target)?.kind,
       })),
-      cluster: incoming.filter((e) => e.kind === 'belongs_to').map((e) => graph.getNode(e.target)?.name)[0],
+      cluster: incoming.filter((e) => e.kind === 'belongs_to').map((e) => g.getNode(e.target)?.name)[0],
     });
   });
 
-  // Blast radius
-  app.post('/api/blast-radius', (req, res) => {
-    const { target, direction = 'both', max_hops = 5 } = req.body;
+  // Blast radius — repo-aware
+  app.post('/api/blast-radius', async (req, res) => {
+    const { target, direction = 'both', max_hops = 5, repo } = req.body;
+    const g = await getGraphForRepo(repo as string | undefined);
 
-    // Find the node
     let targetNode = null;
-    for (const node of graph.allNodes()) {
-      if (node.name === target || node.id === target) {
-        targetNode = node;
-        break;
-      }
+    for (const node of g.allNodes()) {
+      if (node.name === target || node.id === target) { targetNode = node; break; }
     }
 
     if (!targetNode) {
@@ -306,25 +357,17 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
       const { id, depth } = queue.shift()!;
       if (visited.has(id) || depth > max_hops) continue;
       visited.add(id);
-
-      const node = graph.getNode(id);
-      if (node) {
-        affected.set(id, { name: node.name, kind: node.kind, depth });
-      }
+      const node = g.getNode(id);
+      if (node) affected.set(id, { name: node.name, kind: node.kind, depth });
 
       if (direction === 'callers' || direction === 'both') {
-        for (const edge of graph.findEdgesTo(id)) {
-          if (edge.kind === 'calls' || edge.kind === 'imports') {
-            queue.push({ id: edge.source, depth: depth + 1 });
-          }
+        for (const edge of g.findEdgesTo(id)) {
+          if (edge.kind === 'calls' || edge.kind === 'imports') queue.push({ id: edge.source, depth: depth + 1 });
         }
       }
-
       if (direction === 'callees' || direction === 'both') {
-        for (const edge of graph.findEdgesFrom(id)) {
-          if (edge.kind === 'calls' || edge.kind === 'imports') {
-            queue.push({ id: edge.target, depth: depth + 1 });
-          }
+        for (const edge of g.findEdgesFrom(id)) {
+          if (edge.kind === 'calls' || edge.kind === 'imports') queue.push({ id: edge.target, depth: depth + 1 });
         }
       }
     }
@@ -332,37 +375,27 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     res.json({
       target: targetNode.name,
       affectedCount: [...affected.values()].filter((a) => a.depth > 0).length,
-      affected: [...affected.entries()]
-        .map(([id, info]) => ({ id, ...info }))
-        .filter((a) => a.depth > 0),
+      affected: [...affected.entries()].map(([id, info]) => ({ id, ...info })).filter((a) => a.depth > 0),
     });
   });
 
-  // Flows
-  app.get('/api/flows', (_req, res) => {
+  // Flows — repo-aware via ?repo=
+  app.get('/api/flows', async (req, res) => {
+    const g = await getGraphForRepo(req.query.repo as string | undefined);
     const flows: { id: string; name: string; steps: unknown }[] = [];
-    for (const node of graph.allNodes()) {
-      if (node.kind === 'flow') {
-        flows.push({
-          id: node.id,
-          name: node.name,
-          steps: node.metadata?.steps,
-        });
-      }
+    for (const node of g.allNodes()) {
+      if (node.kind === 'flow') flows.push({ id: node.id, name: node.name, steps: node.metadata?.steps });
     }
     res.json({ flows });
   });
 
-  // Clusters
-  app.get('/api/clusters', (_req, res) => {
+  // Clusters — repo-aware via ?repo=
+  app.get('/api/clusters', async (req, res) => {
+    const g = await getGraphForRepo(req.query.repo as string | undefined);
     const clusters: { id: string; name: string; memberCount: number }[] = [];
-    for (const node of graph.allNodes()) {
+    for (const node of g.allNodes()) {
       if (node.kind === 'cluster') {
-        clusters.push({
-          id: node.id,
-          name: node.name,
-          memberCount: (node.metadata?.memberCount as number) ?? 0,
-        });
+        clusters.push({ id: node.id, name: node.name, memberCount: (node.metadata?.memberCount as number) ?? 0 });
       }
     }
     res.json({ clusters });

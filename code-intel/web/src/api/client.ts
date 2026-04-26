@@ -60,10 +60,10 @@ export class ApiClient {
     return res.json() as Promise<{ ready: boolean; building: boolean }>;
   }
 
-  async listRepos(): Promise<{ name: string; nodes: number; edges: number }[]> {
+  async listRepos(): Promise<{ name: string; path: string; nodes: number; edges: number; indexedAt: string | null; active?: boolean }[]> {
     const res = await fetch(`${this.baseUrl}/api/repos`);
     if (!res.ok) throw new Error(`Failed to list repos: ${res.statusText}`);
-    return res.json() as Promise<{ name: string; nodes: number; edges: number }[]>;
+    return res.json() as Promise<{ name: string; path: string; nodes: number; edges: number; indexedAt: string | null; active?: boolean }[]>;
   }
 
   async readFile(filePath: string): Promise<{ content: string }> {

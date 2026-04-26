@@ -39,8 +39,8 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `loadRegistry` | function | 9 | 0 | `storage/repo-registry.ts` |
-| `DbManager` | class | 5 | 0 | `storage/db-manager.ts` |
+| `loadRegistry` | function | 11 | 0 | `storage/repo-registry.ts` |
+| `DbManager` | class | 6 | 0 | `storage/db-manager.ts` |
 | `loadGraphToDB` | function | 1 | 4 | `storage/graph-loader.ts` |
 | `upsertRepo` | function | 1 | 2 | `storage/repo-registry.ts` |
 | `removeRepo` | function | 1 | 2 | `storage/repo-registry.ts` |
