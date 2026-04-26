@@ -7,7 +7,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "code-intel": "./dist/cli/main.js"
+    "code-intel": "dist/cli/main.js"
   },
   "exports": {
     ".": "./dist/index.js"
@@ -31,7 +31,7 @@
   "homepage": "https://github.com/vohongtho/code-intel-platform",
   "repository": {
     "type": "git",
-    "url": "https://github.com/vohongtho/code-intel-platform"
+    "url": "git+https://github.com/vohongtho/code-intel-platform.git"
   },
   "engines": {
     "node": ">=22.0.0"
