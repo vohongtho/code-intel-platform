@@ -30,15 +30,33 @@ program
   .description('Code Intelligence Platform — Static Analysis + Knowledge Graph')
   .version('0.1.0');
 
-async function analyzeWorkspace(targetPath: string, options?: { silent?: boolean }) {
+async function analyzeWorkspace(targetPath: string, options?: {
+  silent?: boolean;
+  force?: boolean;
+  skills?: boolean;
+  skipEmbeddings?: boolean;
+  skipAgentsMd?: boolean;
+  skipGit?: boolean;
+  embeddings?: boolean;
+  verbose?: boolean;
+}) {
   const workspaceRoot = path.resolve(targetPath);
   if (!options?.silent) console.log(`Analyzing: ${workspaceRoot}`);
+
+  // --skip-git: skip the .git check (allow non-git folders)
+  if (!options?.skipGit) {
+    const gitDir = path.join(workspaceRoot, '.git');
+    if (!fs.existsSync(gitDir)) {
+      console.warn(`  Warning: ${workspaceRoot} is not a Git repository. Use --skip-git to suppress this warning.`);
+    }
+  }
 
   const graph = createKnowledgeGraph();
   const context: PipelineContext = {
     workspaceRoot,
     graph,
     filePaths: [],
+    verbose: options?.verbose,
     onProgress: options?.silent ? undefined : (phase, msg) => console.log(`  [${phase}] ${msg}`),
   };
 
@@ -84,34 +102,70 @@ async function analyzeWorkspace(targetPath: string, options?: { silent?: boolean
     }
   }
 
-  // Generate .claude/skills/code-intel/ skill files
-  let skillSummaries: { name: string; label: string; symbolCount: number; fileCount: number }[] = [];
-  try {
-    const { skills } = await writeSkillFiles(graph, workspaceRoot, repoName);
-    skillSummaries = skills;
-    if (!options?.silent && skills.length > 0) {
-      console.log(`  Skills: ${skills.length} generated → .claude/skills/code-intel/`);
+  // Vector embeddings (opt-in or --embeddings, skip if --skip-embeddings)
+  const doEmbeddings = options?.embeddings && !options?.skipEmbeddings;
+  if (doEmbeddings) {
+    if (!options?.silent) console.log('  Embeddings: building vector index…');
+    try {
+      const { embedNodes } = await import('../search/embedder.js');
+      const { getVectorDbPath } = await import('../storage/index.js');
+      const { VectorIndex } = await import('../search/vector-index.js');
+      const vdbPath = getVectorDbPath(workspaceRoot);
+      const vdb = new DbManager(vdbPath);
+      await vdb.init();
+      const idx = new VectorIndex(vdb);
+      await idx.init();
+      const nodes = await embedNodes(graph, {
+        onProgress: (done, total) => {
+          if (!options?.silent) process.stdout.write(`\r  [vector] ${done}/${total}`);
+        },
+      });
+      if (!options?.silent) console.log('');
+      await idx.buildIndex(nodes);
+      if (!options?.silent) console.log(`  Embeddings: ${nodes.length} vectors built`);
+      vdb.close();
+    } catch (err) {
+      if (!options?.silent) {
+        console.warn(`  Embeddings warning: ${err instanceof Error ? err.message : err}`);
+      }
     }
-  } catch (err) {
-    if (!options?.silent) {
-      console.warn(`  Skills warning: ${err instanceof Error ? err.message : err}`);
+  } else if (!options?.skipEmbeddings && !options?.silent) {
+    console.log('  Embeddings: skipped (use --embeddings to enable)');
+  }
+
+  // Generate .claude/skills/code-intel/ skill files (always, unless --skills was set to false)
+  const doSkills = options?.skills !== false;
+  let skillSummaries: { name: string; label: string; symbolCount: number; fileCount: number }[] = [];
+  if (doSkills) {
+    try {
+      const { skills } = await writeSkillFiles(graph, workspaceRoot, repoName);
+      skillSummaries = skills;
+      if (!options?.silent && skills.length > 0) {
+        console.log(`  Skills: ${skills.length} generated → .claude/skills/code-intel/`);
+      }
+    } catch (err) {
+      if (!options?.silent) {
+        console.warn(`  Skills warning: ${err instanceof Error ? err.message : err}`);
+      }
     }
   }
 
   // Write AGENTS.md + CLAUDE.md context blocks
-  try {
-    writeContextFiles(workspaceRoot, repoName, {
-      nodes: graph.size.nodes,
-      edges: graph.size.edges,
-      files: context.filePaths.length,
-      duration: result.totalDuration,
-    }, skillSummaries);
-    if (!options?.silent) {
-      console.log(`  Context: AGENTS.md + CLAUDE.md updated`);
-    }
-  } catch (err) {
-    if (!options?.silent) {
-      console.warn(`  Context warning: ${err instanceof Error ? err.message : err}`);
+  if (!options?.skipAgentsMd) {
+    try {
+      writeContextFiles(workspaceRoot, repoName, {
+        nodes: graph.size.nodes,
+        edges: graph.size.edges,
+        files: context.filePaths.length,
+        duration: result.totalDuration,
+      }, skillSummaries);
+      if (!options?.silent) {
+        console.log(`  Context: AGENTS.md + CLAUDE.md updated`);
+      }
+    } catch (err) {
+      if (!options?.silent) {
+        console.warn(`  Context warning: ${err instanceof Error ? err.message : err}`);
+      }
     }
   }
 
@@ -130,8 +184,31 @@ program
   .command('analyze')
   .description('Analyze a codebase and build the knowledge graph')
   .argument('[path]', 'Path to analyze', '.')
-  .action(async (targetPath: string) => {
-    await analyzeWorkspace(targetPath);
+  .option('--force', 'Force full re-index even if already indexed')
+  .option('--skills', 'Generate repo-specific skill files from detected communities')
+  .option('--skip-embeddings', 'Skip embedding generation (faster)')
+  .option('--skip-agents-md', 'Preserve custom AGENTS.md/CLAUDE.md code-intel section edits')
+  .option('--skip-git', 'Index folders that are not Git repositories')
+  .option('--embeddings', 'Enable embedding generation (slower, better semantic search)')
+  .option('--verbose', 'Log skipped files when parsers are unavailable')
+  .action(async (targetPath: string, opts: {
+    force?: boolean;
+    skills?: boolean;
+    skipEmbeddings?: boolean;
+    skipAgentsMd?: boolean;
+    skipGit?: boolean;
+    embeddings?: boolean;
+    verbose?: boolean;
+  }) => {
+    await analyzeWorkspace(targetPath, {
+      force: opts.force,
+      skills: opts.skills,
+      skipEmbeddings: opts.skipEmbeddings,
+      skipAgentsMd: opts.skipAgentsMd,
+      skipGit: opts.skipGit,
+      embeddings: opts.embeddings,
+      verbose: opts.verbose,
+    });
   });
 
 program
@@ -303,6 +380,54 @@ program
     }
     removeRepo(workspaceRoot);
     console.log('Index cleaned.');
+  });
+
+program
+  .command('setup')
+  .description('Configure MCP server for your editors (one-time setup)')
+  .action(() => {
+    const configDir = process.env.HOME ? `${process.env.HOME}/.config/claude` : null;
+
+    console.log('\n📡 Code Intelligence MCP Setup\n');
+    console.log('Add the following to your editor MCP configuration:\n');
+
+    const mcpConfig = {
+      mcpServers: {
+        'code-intel': {
+          command: 'npx',
+          args: ['@vohongtho.infotech/code-intel', 'mcp', '.'],
+        },
+      },
+    };
+
+    console.log('For Claude Desktop / Claude Code (~/.config/claude/claude_desktop_config.json):');
+    console.log(JSON.stringify(mcpConfig, null, 2));
+
+    if (configDir) {
+      const configFile = `${configDir}/claude_desktop_config.json`;
+      try {
+        let existing: Record<string, unknown> = {};
+        if (fs.existsSync(configFile)) {
+          existing = JSON.parse(fs.readFileSync(configFile, 'utf-8')) as Record<string, unknown>;
+        }
+        const merged = {
+          ...existing,
+          mcpServers: {
+            ...(existing.mcpServers as Record<string, unknown> ?? {}),
+            ...mcpConfig.mcpServers,
+          },
+        };
+        fs.mkdirSync(configDir, { recursive: true });
+        fs.writeFileSync(configFile, JSON.stringify(merged, null, 2) + '\n', 'utf-8');
+        console.log(`\n✅ Written to ${configFile}`);
+      } catch (err) {
+        console.warn(`\n⚠ Could not auto-write config: ${err instanceof Error ? err.message : err}`);
+        console.log('Please add the config above manually.');
+      }
+    }
+
+    console.log('\nFor VS Code (settings.json or .vscode/mcp.json), use the same mcpServers block.');
+    console.log('\nThen run `code-intel analyze` in your project to index it.\n');
   });
 
 program.parse();

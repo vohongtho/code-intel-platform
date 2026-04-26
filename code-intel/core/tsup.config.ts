@@ -1,0 +1,60 @@
+import { defineConfig } from 'tsup';
+
+export default defineConfig([
+  // Library entry — dist/index.js (bundled single file + types)
+  {
+    entry: { index: 'src/index.ts' },
+    format: ['esm'],
+    outDir: 'dist',
+    dts: {
+      resolve: true,
+      compilerOptions: {
+        composite: false,
+        declaration: true,
+        declarationMap: true,
+        incremental: false,
+      },
+    },
+    sourcemap: true,
+    clean: true,
+    external: [
+      /^node:/,
+      '@xenova/transformers',
+      'web-tree-sitter',
+      '@ladybugdb/core',
+      'express',
+      'cors',
+      'commander',
+      '@modelcontextprotocol/sdk',
+      'graphology',
+      'graphology-communities-louvain',
+      'code-intel-shared',
+    ],
+    treeshake: true,
+    splitting: false,
+  },
+  // CLI entry — dist/cli/main.js (bundled single file, no types needed)
+  {
+    entry: { 'cli/main': 'src/cli/main.ts' },
+    format: ['esm'],
+    outDir: 'dist',
+    dts: false,
+    sourcemap: true,
+    clean: false,
+    external: [
+      /^node:/,
+      '@xenova/transformers',
+      'web-tree-sitter',
+      '@ladybugdb/core',
+      'express',
+      'cors',
+      'commander',
+      '@modelcontextprotocol/sdk',
+      'graphology',
+      'graphology-communities-louvain',
+      'code-intel-shared',
+    ],
+    treeshake: true,
+    splitting: false,
+  },
+]);

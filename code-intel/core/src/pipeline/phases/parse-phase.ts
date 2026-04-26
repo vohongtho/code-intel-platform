@@ -14,7 +14,13 @@ export const parsePhase: Phase = {
 
     for (const filePath of context.filePaths) {
       const lang = detectLanguage(filePath);
-      if (!lang) continue;
+      if (!lang) {
+        if (context.verbose) {
+          const relativePath = path.relative(context.workspaceRoot, filePath);
+          console.log(`  [parse] skipped (no parser): ${relativePath}`);
+        }
+        continue;
+      }
 
       const relativePath = path.relative(context.workspaceRoot, filePath);
       const fileNodeId = generateNodeId('file', relativePath, relativePath);

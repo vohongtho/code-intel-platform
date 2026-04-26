@@ -13,6 +13,7 @@ export interface PipelineContext {
   graph: KnowledgeGraph;
   filePaths: string[];
   onProgress?: (phase: string, message: string) => void;
+  verbose?: boolean;
 }
 
 export interface Phase {
