@@ -47,10 +47,36 @@ import { queryGroup } from '../multi-repo/group-query.js';
 
 const program = new Command();
 
+const BANNER = `
+  ◈  Code Intelligence Platform  v${_pkg.version}
+  ──────────────────────────────────────────────────────────────────────────────
+  Build a Knowledge Graph from source code and explore it via Web UI, HTTP API,
+  CLI, and MCP server. Supports 14+ languages. Zero config.
+  ──────────────────────────────────────────────────────────────────────────────
+`;
+
 program
   .name('code-intel')
   .description('Code Intelligence Platform — Static Analysis + Knowledge Graph')
-  .version(_pkg.version);
+  .version(_pkg.version)
+  .addHelpText('beforeAll', BANNER)
+  .addHelpText('after', `
+  ┌─ Quick Start ────────────────────────────────────────────────────────────┐
+  │                                                                          │
+  │  code-intel setup                  Configure MCP for your editors        │
+  │  code-intel analyze                Index current directory               │
+  │  code-intel serve                  Start web UI at http://localhost:4747  │
+  │  code-intel search "query"         Search the knowledge graph            │
+  │  code-intel inspect <symbol>       Inspect a symbol's connections        │
+  │  code-intel impact <symbol>        Show blast radius for a symbol        │
+  │                                                                          │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+  Multi-language: TypeScript · JavaScript · Python · Java · Go · Rust · C/C++
+                  C# · PHP · Kotlin · Ruby · Swift · Dart
+
+  Docs: https://github.com/vohongtho/code-intel-platform
+`);
 
 async function analyzeWorkspace(targetPath: string, options?: {
   silent?: boolean;
@@ -206,11 +232,20 @@ async function analyzeWorkspace(targetPath: string, options?: {
 program
   .command('setup')
   .description('Configure MCP server for your editors (one-time setup)')
+  .addHelpText('after', `
+  Configure the code-intel MCP server for Claude Desktop, VS Code, or any
+  editor that supports the Model Context Protocol.
+
+  Auto-writes to ~/.config/claude/claude_desktop_config.json when available.
+
+  Examples:
+    $ code-intel setup
+`)
   .action(() => {
     const configDir = process.env.HOME ? `${process.env.HOME}/.config/claude` : null;
 
-    console.log('\n📡 Code Intelligence MCP Setup\n');
-    console.log('Add the following to your editor MCP configuration:\n');
+    console.log('\n  ◈  Code Intelligence — MCP Setup\n');
+    console.log('  Add the following to your editor MCP configuration:\n');
 
     const mcpConfig = {
       mcpServers: {
@@ -221,8 +256,8 @@ program
       },
     };
 
-    console.log('For Claude Desktop / Claude Code (~/.config/claude/claude_desktop_config.json):');
-    console.log(JSON.stringify(mcpConfig, null, 2));
+    console.log('  Claude Desktop / Claude Code  (~/.config/claude/claude_desktop_config.json)');
+    console.log('  ' + JSON.stringify(mcpConfig, null, 2).split('\n').join('\n  '));
 
     if (configDir) {
       const configFile = `${configDir}/claude_desktop_config.json`;
@@ -240,40 +275,45 @@ program
         };
         fs.mkdirSync(configDir, { recursive: true });
         fs.writeFileSync(configFile, JSON.stringify(merged, null, 2) + '\n', 'utf-8');
-        console.log(`\n✅ Written to ${configFile}`);
+        console.log(`\n  ✅  Written to ${configFile}`);
       } catch (err) {
-        console.warn(`\n⚠ Could not auto-write config: ${err instanceof Error ? err.message : err}`);
-        console.log('Please add the config above manually.');
+        console.warn(`\n  ⚠   Could not auto-write config: ${err instanceof Error ? err.message : err}`);
+        console.log('  Please add the config above manually.');
       }
     }
 
-    console.log('\nFor VS Code (settings.json or .vscode/mcp.json), use the same mcpServers block.');
-    console.log('\nThen run `code-intel analyze` in your project to index it.\n');
+    console.log('\n  VS Code / Cursor — add the same mcpServers block to settings.json or .vscode/mcp.json');
+    console.log('\n  Next: run `code-intel analyze` inside your project to build the knowledge graph.\n');
   });
 
 // ─── 2. analyze ──────────────────────────────────────────────────────────────
 program
   .command('analyze')
-  .description('Index a repository (or update stale index)')
-  .argument('[path]', 'Path to analyze', '.')
-  .option('--force',              'Force full re-index even if already indexed')
-  .option('--skills',             'Generate repo-specific skill files from detected communities')
-  .option('--skip-embeddings',    'Skip embedding generation (faster)')
-  .option('--skip-agents-md',     'Preserve custom AGENTS.md/CLAUDE.md code-intel section edits')
-  .option('--skip-git',           'Index folders that are not Git repositories')
-  .option('--embeddings',         'Enable embedding generation (slower, better search)')
-  .option('--verbose',            'Log skipped files when parsers are unavailable')
+  .description('Index a repository and build the knowledge graph')
+  .argument('[path]', 'Path to the repository (default: current directory)', '.')
+  .option('--force',             'Force full re-index, ignoring cached data')
+  .option('--skills',            'Generate .claude/skills/ SKILL.md files from detected clusters')
+  .option('--embeddings',        'Build vector embeddings for semantic search (slower, recommended)')
+  .option('--skip-embeddings',   'Skip embedding generation (faster, text-search only)')
+  .option('--skip-agents-md',    'Preserve any custom edits inside AGENTS.md / CLAUDE.md')
+  .option('--skip-git',          'Allow indexing directories that are not Git repositories')
+  .option('--verbose',           'Log every file skipped due to missing parser support')
   .addHelpText('after', `
-Examples:
-  code-intel analyze                       Index current directory
-  code-intel analyze ./my-project          Index a specific path
-  code-intel analyze --force               Force full re-index
-  code-intel analyze --skills              Also generate .claude/skills/ files
-  code-intel analyze --skip-embeddings     Skip vector embeddings (faster)
-  code-intel analyze --skip-agents-md      Preserve custom AGENTS.md edits
-  code-intel analyze --skip-git            Allow non-Git folders
-  code-intel analyze --embeddings          Enable vector embeddings
-  code-intel analyze --verbose             Show skipped files`)
+  Parses your source code with tree-sitter, builds a Knowledge Graph of
+  symbols and their relationships, persists it to .code-intel/graph.db,
+  and auto-generates AGENTS.md + CLAUDE.md context blocks.
+
+  Examples:
+    $ code-intel analyze                        Index current directory
+    $ code-intel analyze ./my-project           Index a specific path
+    $ code-intel analyze --force                Force full re-index
+    $ code-intel analyze --embeddings           Enable semantic (vector) search
+    $ code-intel analyze --skills               Generate .claude/skills/ files
+    $ code-intel analyze --skip-embeddings      Skip vectors for a faster run
+    $ code-intel analyze --skip-agents-md       Preserve your custom AGENTS.md edits
+    $ code-intel analyze --skip-git             Index a non-Git folder
+    $ code-intel analyze --verbose              Show files skipped by the parser
+`)
   .action(async (targetPath: string, opts: {
     force?: boolean;
     skills?: boolean;
@@ -297,8 +337,19 @@ Examples:
 // ─── 3. mcp ──────────────────────────────────────────────────────────────────
 program
   .command('mcp')
-  .description('Start MCP server (stdio) — serves all indexed repos')
-  .argument('[path]', 'Path to analyze', '.')
+  .description('Start MCP server over stdio — exposes all tools to your AI editor')
+  .argument('[path]', 'Path to analyze (default: current directory)', '.')
+  .addHelpText('after', `
+  Starts the Model Context Protocol server over stdio transport.
+  Your editor (Claude Desktop, VS Code, Cursor, etc.) connects to it
+  and gains access to search, inspect, blast-radius, and flow tools.
+
+  Typically invoked automatically by your editor via the config from \`code-intel setup\`.
+
+  Examples:
+    $ code-intel mcp
+    $ code-intel mcp ./my-project
+`)
   .action(async (targetPath: string) => {
     const { graph, repoName } = await analyzeWorkspace(targetPath, { silent: true });
     await startMcpStdio(graph, repoName);
@@ -307,9 +358,25 @@ program
 // ─── 4. serve ────────────────────────────────────────────────────────────────
 program
   .command('serve')
-  .description('Start local HTTP server + web UI (http://localhost:4747)')
-  .argument('[path]', 'Path to analyze', '.')
-  .option('-p, --port <port>', 'Port number', '4747')
+  .description('Start the local HTTP server + web UI for graph exploration')
+  .argument('[path]', 'Path to analyze (default: current directory)', '.')
+  .option('-p, --port <port>', 'Port to listen on', '4747')
+  .addHelpText('after', `
+  Analyzes the repository, starts an HTTP server, and serves the interactive
+  Web UI at http://localhost:<port>.
+
+  The web UI offers:
+    · Force-directed Knowledge Graph with color-coded node types
+    · BM25 text search + optional semantic (vector) search
+    · Node detail panel: callers, callees, blast radius, source preview
+    · AI Code Chat grounded on your codebase
+    · Multi-repo group view (if groups are configured)
+
+  Examples:
+    $ code-intel serve
+    $ code-intel serve ./my-project
+    $ code-intel serve --port 8080
+`)
   .action(async (targetPath: string, options: { port: string }) => {
     const { graph, repoName, workspaceRoot } = await analyzeWorkspace(targetPath);
     startHttpServer(graph, repoName, parseInt(options.port, 10), workspaceRoot);
@@ -318,68 +385,97 @@ program
 // ─── 5. list ─────────────────────────────────────────────────────────────────
 program
   .command('list')
-  .description('List all indexed repositories')
+  .description('List all indexed repositories in the registry')
+  .addHelpText('after', `
+  Shows every repository that has been indexed with \`code-intel analyze\`.
+  Useful for checking what is available before using \`code-intel group add\`.
+
+  Examples:
+    $ code-intel list
+`)
   .action(() => {
     const repos = loadRegistry();
     if (repos.length === 0) {
-      console.log('No indexed repositories. Run `code-intel analyze <path>` first.');
+      console.log('\n  No indexed repositories found.');
+      console.log('  Run `code-intel analyze <path>` to index a project.\n');
       return;
     }
-    console.log(`\nIndexed repositories (${repos.length}):\n`);
+    console.log(`\n  Indexed repositories (${repos.length}):\n`);
     for (const r of repos) {
-      console.log(`  ${r.name.padEnd(25)} ${r.stats.nodes} nodes, ${r.stats.edges} edges, ${r.stats.files} files`);
-      console.log(`    Path:    ${r.path}`);
-      console.log(`    Indexed: ${r.indexedAt}`);
+      console.log(`  ◆  ${r.name}`);
+      console.log(`     Nodes:   ${r.stats.nodes}  ·  Edges: ${r.stats.edges}  ·  Files: ${r.stats.files}`);
+      console.log(`     Path:    ${r.path}`);
+      console.log(`     Indexed: ${r.indexedAt}\n`);
     }
   });
 
 // ─── 6. status ───────────────────────────────────────────────────────────────
 program
   .command('status')
-  .description('Show index status for current repo')
-  .argument('[path]', 'Path to check', '.')
+  .description('Show index freshness and statistics for a repository')
+  .argument('[path]', 'Path to check (default: current directory)', '.')
+  .addHelpText('after', `
+  Reads the metadata from .code-intel/meta.json and reports when the index
+  was last built and how many symbols were found.
+
+  Examples:
+    $ code-intel status
+    $ code-intel status ./my-project
+`)
   .action((targetPath: string) => {
     const workspaceRoot = path.resolve(targetPath);
     const meta = loadMetadata(workspaceRoot);
     if (!meta) {
-      console.log('Not indexed. Run `code-intel analyze` first.');
+      console.log(`\n  ✗  ${workspaceRoot} is not indexed.`);
+      console.log('     Run `code-intel analyze` to build the index.\n');
       return;
     }
-    console.log(`\nIndex status for ${workspaceRoot}:`);
-    console.log(`  Indexed at: ${meta.indexedAt}`);
-    console.log(`  Nodes:      ${meta.stats.nodes}`);
-    console.log(`  Edges:      ${meta.stats.edges}`);
-    console.log(`  Files:      ${meta.stats.files}`);
-    console.log(`  Duration:   ${meta.stats.duration}ms`);
+    console.log(`\n  ◈  Index status — ${workspaceRoot}\n`);
+    console.log(`     Indexed at : ${meta.indexedAt}`);
+    console.log(`     Nodes      : ${meta.stats.nodes}`);
+    console.log(`     Edges      : ${meta.stats.edges}`);
+    console.log(`     Files      : ${meta.stats.files}`);
+    console.log(`     Duration   : ${meta.stats.duration}ms\n`);
   });
 
 // ─── 7. clean ────────────────────────────────────────────────────────────────
 program
   .command('clean')
-  .description('Delete index for current repo (or all repos with --all --force)')
-  .argument('[path]', 'Path to clean', '.')
-  .option('--all',   'Clean all indexed repositories')
-  .option('--force', 'Required with --all to confirm destructive operation')
+  .description('Remove the knowledge graph index for a repository')
+  .argument('[path]', 'Path to clean (default: current directory)', '.')
+  .option('--all',   'Remove indexes for ALL indexed repositories')
+  .option('--force', 'Required with --all to confirm the destructive operation')
+  .addHelpText('after', `
+  Deletes the .code-intel/ directory and removes the entry from the registry.
+
+  ⚠  --all --force is irreversible — it deletes every indexed repo's data.
+
+  Examples:
+    $ code-intel clean                   Remove index for current directory
+    $ code-intel clean ./my-project      Remove index for a specific path
+    $ code-intel clean --all --force     Remove ALL indexes (requires --force)
+`)
   .action((targetPath: string, opts: { all?: boolean; force?: boolean }) => {
     if (opts.all) {
       if (!opts.force) {
-        console.error('Error: --all requires --force to confirm. Run: code-intel clean --all --force');
+        console.error('\n  ✗  --all requires --force to confirm the destructive operation.');
+        console.error('     Run: code-intel clean --all --force\n');
         process.exit(1);
       }
       const repos = loadRegistry();
       if (repos.length === 0) {
-        console.log('No indexed repositories to clean.');
+        console.log('\n  No indexed repositories to clean.\n');
         return;
       }
       for (const r of repos) {
         const codeIntelDir = path.join(r.path, '.code-intel');
         if (fs.existsSync(codeIntelDir)) {
           fs.rmSync(codeIntelDir, { recursive: true, force: true });
-          console.log(`  Removed ${codeIntelDir}`);
+          console.log(`  ✓  Removed ${codeIntelDir}`);
         }
         removeRepo(r.path);
       }
-      console.log(`\nCleaned ${repos.length} repositor${repos.length === 1 ? 'y' : 'ies'}.`);
+      console.log(`\n  Cleaned ${repos.length} repositor${repos.length === 1 ? 'y' : 'ies'}.\n`);
       return;
     }
 
@@ -387,38 +483,58 @@ program
     const codeIntelDir = path.join(workspaceRoot, '.code-intel');
     if (fs.existsSync(codeIntelDir)) {
       fs.rmSync(codeIntelDir, { recursive: true, force: true });
-      console.log(`Removed ${codeIntelDir}`);
+      console.log(`\n  ✓  Removed ${codeIntelDir}`);
     }
     removeRepo(workspaceRoot);
-    console.log('Index cleaned.');
+    console.log('  Index cleaned.\n');
   });
 
 // ─── 8. search ───────────────────────────────────────────────────────────────
 program
   .command('search')
-  .description('Search the knowledge graph')
-  .argument('<query>', 'Search query')
-  .option('-l, --limit <limit>', 'Max results', '20')
-  .option('-p, --path <path>', 'Path to analyze', '.')
+  .description('Search the knowledge graph for symbols matching a query')
+  .argument('<query>', 'Search query (name, kind, or partial match)')
+  .option('-l, --limit <n>', 'Maximum number of results', '20')
+  .option('-p, --path <path>', 'Path to the repository (default: current directory)', '.')
+  .addHelpText('after', `
+  Runs BM25 text search across all indexed symbols — functions, classes,
+  files, routes, interfaces, and more.
+
+  Examples:
+    $ code-intel search "handleRequest"
+    $ code-intel search "auth" --limit 10
+    $ code-intel search "UserService" --path ./backend
+`)
   .action(async (query: string, options: { limit: string; path: string }) => {
     const { graph } = await analyzeWorkspace(options.path, { silent: true });
     const results = textSearch(graph, query, parseInt(options.limit, 10));
     if (results.length === 0) {
-      console.log('No results found.');
+      console.log(`\n  No results found for "${query}".\n`);
       return;
     }
-    console.log(`Found ${results.length} results for "${query}":\n`);
+    console.log(`\n  ${results.length} result(s) for "${query}":\n`);
     for (const r of results) {
-      console.log(`  ${r.kind.padEnd(12)} ${r.name.padEnd(30)} ${r.filePath}`);
+      console.log(`  ${r.kind.padEnd(14)} ${r.name.padEnd(32)} ${r.filePath}`);
     }
+    console.log('');
   });
 
 // ─── 9. inspect ──────────────────────────────────────────────────────────────
 program
   .command('inspect')
-  .description('Inspect a symbol: callers, callees, location')
-  .argument('<symbol>', 'Symbol name')
-  .option('-p, --path <path>', 'Path to analyze', '.')
+  .description('Inspect a symbol — show callers, callees, file location, and export status')
+  .argument('<symbol>', 'Exact symbol name to inspect')
+  .option('-p, --path <path>', 'Path to the repository (default: current directory)', '.')
+  .addHelpText('after', `
+  Finds the symbol in the knowledge graph and prints its full connection
+  profile: where it lives, who calls it, and what it calls.
+
+  Use this before renaming a symbol to understand its blast radius.
+
+  Examples:
+    $ code-intel inspect runPipeline
+    $ code-intel inspect ApiClient --path ./frontend
+`)
   .action(async (symbol: string, options: { path: string }) => {
     const { graph } = await analyzeWorkspace(options.path, { silent: true });
 
@@ -426,9 +542,9 @@ program
     for (const node of graph.allNodes()) {
       if (node.name === symbol) {
         found = true;
-        console.log(`\n${node.kind}: ${node.name}`);
-        console.log(`  File:     ${node.filePath}:${node.startLine ?? '?'}`);
-        console.log(`  Exported: ${node.exported ?? 'unknown'}`);
+        console.log(`\n  ◆  ${node.kind}: ${node.name}`);
+        console.log(`     File     : ${node.filePath}:${node.startLine ?? '?'}`);
+        console.log(`     Exported : ${node.exported ?? 'unknown'}`);
 
         const incoming = [...graph.findEdgesTo(node.id)];
         const outgoing = [...graph.findEdgesFrom(node.id)];
@@ -436,33 +552,50 @@ program
         const callees = outgoing.filter((e) => e.kind === 'calls');
 
         if (callers.length > 0) {
-          console.log(`  Callers (${callers.length}):`);
+          console.log(`\n     Callers (${callers.length}):`);
           for (const c of callers.slice(0, 10)) {
             const n = graph.getNode(c.source);
-            console.log(`    ← ${n?.name ?? c.source} (${n?.filePath})`);
+            console.log(`       ←  ${n?.name ?? c.source}  (${n?.filePath})`);
           }
+          if (callers.length > 10) console.log(`       … and ${callers.length - 10} more`);
         }
         if (callees.length > 0) {
-          console.log(`  Callees (${callees.length}):`);
+          console.log(`\n     Callees (${callees.length}):`);
           for (const c of callees.slice(0, 10)) {
             const n = graph.getNode(c.target);
-            console.log(`    → ${n?.name ?? c.target} (${n?.filePath})`);
+            console.log(`       →  ${n?.name ?? c.target}  (${n?.filePath})`);
           }
+          if (callees.length > 10) console.log(`       … and ${callees.length - 10} more`);
         }
+        console.log('');
         break;
       }
     }
 
-    if (!found) console.log(`Symbol "${symbol}" not found.`);
+    if (!found) {
+      console.log(`\n  Symbol "${symbol}" not found.`);
+      console.log(`  Try: code-intel search "${symbol}"\n`);
+    }
   });
 
 // ─── 10. impact ──────────────────────────────────────────────────────────────
 program
   .command('impact')
-  .description('Show blast radius for a symbol')
-  .argument('<symbol>', 'Symbol name')
-  .option('-p, --path <path>', 'Path to analyze', '.')
-  .option('-d, --depth <depth>', 'Max hops', '5')
+  .description('Show the blast radius — all symbols that break if this one changes')
+  .argument('<symbol>', 'Symbol name to analyse')
+  .option('-p, --path <path>', 'Path to the repository (default: current directory)', '.')
+  .option('-d, --depth <n>', 'Maximum traversal depth (hops)', '5')
+  .addHelpText('after', `
+  Traverses the call graph upward from the target symbol, collecting every
+  symbol that transitively depends on it via calls or imports.
+
+  ⚠  If impact shows ≥ 5 direct callers, treat the change as HIGH risk.
+
+  Examples:
+    $ code-intel impact runPipeline
+    $ code-intel impact ApiClient --depth 3
+    $ code-intel impact UserService --path ./backend
+`)
   .action(async (symbol: string, options: { path: string; depth: string }) => {
     const { graph } = await analyzeWorkspace(options.path, { silent: true });
     const maxHops = parseInt(options.depth, 10);
@@ -471,7 +604,11 @@ program
     for (const node of graph.allNodes()) {
       if (node.name === symbol) { targetNode = node; break; }
     }
-    if (!targetNode) { console.log(`Symbol "${symbol}" not found.`); return; }
+    if (!targetNode) {
+      console.log(`\n  Symbol "${symbol}" not found.`);
+      console.log(`  Try: code-intel search "${symbol}"\n`);
+      return;
+    }
 
     const affected = new Set<string>();
     const queue: { id: string; depth: number }[] = [{ id: targetNode.id, depth: 0 }];
@@ -489,65 +626,109 @@ program
       }
     }
 
-    console.log(`\nBlast radius for "${symbol}": ${affected.size} affected symbols\n`);
+    const risk = affected.size > 10 ? '⚠  HIGH' : affected.size > 5 ? '⚡ MEDIUM' : '✓  LOW';
+    console.log(`\n  ◈  Blast radius for "${symbol}"\n`);
+    console.log(`     Affected symbols : ${affected.size}`);
+    console.log(`     Risk level       : ${risk}\n`);
     for (const id of affected) {
       const n = graph.getNode(id);
-      if (n) console.log(`  ${n.kind.padEnd(12)} ${n.name.padEnd(30)} ${n.filePath}`);
+      if (n) console.log(`  ${n.kind.padEnd(14)} ${n.name.padEnd(32)} ${n.filePath}`);
     }
+    console.log('');
   });
 
 // ─── 11. group ───────────────────────────────────────────────────────────────
 const groupCmd = program
   .command('group')
-  .description('Manage repository groups (multi-repo / monorepo service tracking)');
+  .description('Manage repository groups for multi-repo / monorepo service tracking')
+  .addHelpText('after', `
+  Repository groups let you track contracts (exports, routes, schemas, events)
+  across multiple indexed repos and detect cross-repo dependencies automatically.
+
+  Subcommands:
+    create <name>                        Create a new group
+    add <group> <groupPath> <registry>   Add a repo to the group
+    remove <group> <groupPath>           Remove a repo from the group
+    list [name]                          List all groups or inspect one
+    sync <name>                          Extract contracts + detect cross-links
+    contracts <name>                     View extracted contracts and links
+    query <name> <q>                     Search across all repos in the group
+    status <name>                        Check index freshness of group members
+
+  Examples:
+    $ code-intel group create my-platform
+    $ code-intel group add my-platform services/auth auth-service
+    $ code-intel group sync my-platform
+    $ code-intel group contracts my-platform --kind route
+`);
 
 // group create <name>
 groupCmd
   .command('create <name>')
-  .description('Create a repository group')
+  .description('Create a new repository group')
+  .addHelpText('after', `
+  Examples:
+    $ code-intel group create my-platform
+    $ code-intel group create hr-services
+`)
   .action((name: string) => {
     if (groupExists(name)) {
-      console.error(`Error: Group "${name}" already exists.`);
+      console.error(`\n  ✗  Group "${name}" already exists.\n`);
       process.exit(1);
     }
     saveGroup({ name, createdAt: new Date().toISOString(), members: [] });
-    console.log(`✅ Group "${name}" created.`);
+    console.log(`\n  ✅  Group "${name}" created.`);
+    console.log(`      Add repos with: code-intel group add ${name} <groupPath> <registryName>\n`);
   });
 
 // group add <group> <groupPath> <registryName>
 groupCmd
   .command('add <group> <groupPath> <registryName>')
-  .description('Add a repo to a group. <groupPath> is a hierarchy path (e.g. hr/hiring/backend); <registryName> is from `code-intel list`')
+  .description('Add an indexed repository to a group at the given hierarchy path')
+  .addHelpText('after', `
+  <groupPath>     Dot-separated or slash-separated hierarchy path, e.g. hr/hiring/backend
+  <registryName>  The repo's name as shown by \`code-intel list\`
+
+  Examples:
+    $ code-intel group add my-platform services/auth      auth-service
+    $ code-intel group add my-platform services/payments  payments-api
+    $ code-intel group add my-platform frontend           web-app
+`)
   .action((group: string, groupPath: string, registryName: string) => {
-    // Validate the registry entry exists
     const registry = loadRegistry();
     const regEntry = registry.find((r) => r.name === registryName);
     if (!regEntry) {
-      console.error(`Error: Registry entry "${registryName}" not found. Run \`code-intel list\` to see available repos.`);
+      console.error(`\n  ✗  Registry entry "${registryName}" not found.`);
+      console.error(`     Run \`code-intel list\` to see available repos.\n`);
       process.exit(1);
     }
     if (!groupExists(group)) {
-      console.error(`Error: Group "${group}" does not exist. Create it first with \`code-intel group create ${group}\`.`);
+      console.error(`\n  ✗  Group "${group}" does not exist.`);
+      console.error(`     Create it first: code-intel group create ${group}\n`);
       process.exit(1);
     }
     addMember(group, { groupPath, registryName });
-    console.log(`✅ Added "${registryName}" to group "${group}" at path "${groupPath}".`);
+    console.log(`\n  ✅  Added "${registryName}" → group "${group}" at path "${groupPath}"\n`);
   });
 
 // group remove <group> <groupPath>
 groupCmd
   .command('remove <group> <groupPath>')
-  .description('Remove a repo from a group by its hierarchy path')
+  .description('Remove a repository from a group by its hierarchy path')
+  .addHelpText('after', `
+  Examples:
+    $ code-intel group remove my-platform services/auth
+`)
   .action((group: string, groupPath: string) => {
     if (!groupExists(group)) {
-      console.error(`Error: Group "${group}" does not exist.`);
+      console.error(`\n  ✗  Group "${group}" does not exist.\n`);
       process.exit(1);
     }
     try {
       removeMember(group, groupPath);
-      console.log(`✅ Removed member at path "${groupPath}" from group "${group}".`);
+      console.log(`\n  ✅  Removed "${groupPath}" from group "${group}"\n`);
     } catch (err) {
-      console.error(`Error: ${err instanceof Error ? err.message : err}`);
+      console.error(`\n  ✗  ${err instanceof Error ? err.message : err}\n`);
       process.exit(1);
     }
   });
@@ -555,90 +736,114 @@ groupCmd
 // group list [name]
 groupCmd
   .command('list [name]')
-  .description('List all groups, or show one group\'s config')
+  .description('List all groups, or show the full config of one group')
+  .addHelpText('after', `
+  Examples:
+    $ code-intel group list
+    $ code-intel group list my-platform
+`)
   .action((name?: string) => {
     if (name) {
       const group = loadGroup(name);
       if (!group) {
-        console.error(`Error: Group "${name}" not found.`);
+        console.error(`\n  ✗  Group "${name}" not found.\n`);
         process.exit(1);
       }
-      console.log(`\nGroup: ${group.name}`);
-      console.log(`Created: ${group.createdAt}`);
-      if (group.lastSync) console.log(`Last sync: ${group.lastSync}`);
-      console.log(`\nMembers (${group.members.length}):`);
+      console.log(`\n  ◈  Group: ${group.name}`);
+      console.log(`     Created  : ${group.createdAt}`);
+      if (group.lastSync) console.log(`     Last sync: ${group.lastSync}`);
+      console.log(`\n     Members (${group.members.length}):`);
       if (group.members.length === 0) {
-        console.log('  (none — use `code-intel group add` to add repos)');
+        console.log('       (none — use `code-intel group add` to add repos)');
       } else {
         for (const m of group.members) {
-          console.log(`  ${m.groupPath.padEnd(35)} → ${m.registryName}`);
+          console.log(`       ${m.groupPath.padEnd(35)} →  ${m.registryName}`);
         }
       }
+      console.log('');
     } else {
       const groups = listGroups();
       if (groups.length === 0) {
-        console.log('No groups found. Create one with `code-intel group create <name>`.');
+        console.log('\n  No groups found.');
+        console.log('  Create one with: code-intel group create <name>\n');
         return;
       }
-      console.log(`\nRepository groups (${groups.length}):\n`);
+      console.log(`\n  Repository groups (${groups.length}):\n`);
       for (const g of groups) {
-        const sync = g.lastSync ? `synced ${g.lastSync}` : 'not synced';
-        console.log(`  ${g.name.padEnd(25)} ${g.members.length} member(s)  [${sync}]`);
+        const sync = g.lastSync ? `synced ${g.lastSync}` : 'never synced';
+        console.log(`  ◆  ${g.name.padEnd(25)} ${g.members.length} member(s)  [${sync}]`);
       }
+      console.log('');
     }
   });
 
 // group sync <name>
 groupCmd
   .command('sync <name>')
-  .description('Extract contracts and match across repos/services in a group')
+  .description('Extract contracts and detect cross-repo dependencies in a group')
+  .addHelpText('after', `
+  Scans every member repo's knowledge graph for exported symbols, routes,
+  schemas, and events, then cross-matches names across repos to find
+  likely provider → consumer relationships.
+
+  Examples:
+    $ code-intel group sync my-platform
+`)
   .action(async (name: string) => {
     const group = loadGroup(name);
     if (!group) {
-      console.error(`Error: Group "${name}" not found.`);
+      console.error(`\n  ✗  Group "${name}" not found.\n`);
       process.exit(1);
     }
     if (group.members.length === 0) {
-      console.error(`Error: Group "${name}" has no members. Add repos with \`code-intel group add\`.`);
+      console.error(`\n  ✗  Group "${name}" has no members.`);
+      console.error(`     Add repos with \`code-intel group add\`.\n`);
       process.exit(1);
     }
 
-    console.log(`\n🔄 Syncing group "${name}" (${group.members.length} member(s))…\n`);
+    console.log(`\n  ⟳  Syncing group "${name}" (${group.members.length} member(s))…\n`);
     const result = await syncGroup(group);
 
-    // Persist sync result and update lastSync timestamp
     saveSyncResult(result);
     group.lastSync = result.syncedAt;
     saveGroup(group);
 
-    console.log(`\n✅ Sync complete:`);
-    console.log(`   Repos synced:  ${result.memberCount}`);
-    console.log(`   Contracts:     ${result.contracts.length}`);
-    console.log(`   Cross-links:   ${result.links.length}`);
+    console.log(`  ✅  Sync complete\n`);
+    console.log(`     Repos synced  : ${result.memberCount}`);
+    console.log(`     Contracts     : ${result.contracts.length}`);
+    console.log(`     Cross-links   : ${result.links.length}`);
 
     if (result.links.length > 0) {
-      console.log(`\nTop cross-repo links:`);
+      console.log(`\n  Top cross-repo links:\n`);
       for (const link of result.links.slice(0, 10)) {
         const conf = (link.confidence * 100).toFixed(0).padStart(3);
         console.log(`  ${conf}%  ${link.providerRepo} ∷ ${link.providerContract.padEnd(30)} ↔  ${link.consumerRepo} ∷ ${link.consumerContract}`);
       }
       if (result.links.length > 10) {
-        console.log(`  … and ${result.links.length - 10} more. Run \`code-intel group contracts ${name}\` for full details.`);
+        console.log(`\n  … and ${result.links.length - 10} more. Run \`code-intel group contracts ${name}\` for full details.`);
       }
     }
+    console.log('');
   });
 
 // group contracts <name>
 groupCmd
   .command('contracts <name>')
   .description('Inspect extracted contracts and cross-links from the last sync')
-  .option('--kind <kind>', 'Filter by contract kind: export | route | schema | event')
-  .option('--repo <repo>', 'Filter by registry name')
-  .option('--min-confidence <pct>', 'Minimum link confidence 0-100 (default: 0)', '0')
+  .option('--kind <kind>',           'Filter by contract kind: export | route | schema | event')
+  .option('--repo <repo>',           'Filter by registry name')
+  .option('--min-confidence <pct>',  'Minimum link confidence 0–100 (default: 0)', '0')
+  .addHelpText('after', `
+  Examples:
+    $ code-intel group contracts my-platform
+    $ code-intel group contracts my-platform --kind route
+    $ code-intel group contracts my-platform --repo auth-service --min-confidence 70
+`)
   .action((name: string, opts: { kind?: string; repo?: string; minConfidence: string }) => {
     const result = loadSyncResult(name);
     if (!result) {
-      console.error(`No sync data for group "${name}". Run \`code-intel group sync ${name}\` first.`);
+      console.error(`\n  ✗  No sync data for group "${name}".`);
+      console.error(`     Run: code-intel group sync ${name}\n`);
       process.exit(1);
     }
 
@@ -651,15 +856,15 @@ groupCmd
     let links = result.links.filter((l) => l.confidence >= minConf);
     if (opts.repo) links = links.filter((l) => l.providerRepo === opts.repo || l.consumerRepo === opts.repo);
 
-    console.log(`\n📦 Group "${name}" — synced ${result.syncedAt}\n`);
+    console.log(`\n  ◈  Group "${name}"  —  synced ${result.syncedAt}\n`);
 
-    console.log(`Contracts (${contracts.length}):`);
+    console.log(`  Contracts (${contracts.length}):\n`);
     for (const c of contracts) {
-      const sig = c.signature ? `  ${c.signature.slice(0, 60)}` : '';
-      console.log(`  [${c.kind.padEnd(6)}] ${c.repoName.padEnd(20)} ${c.name.padEnd(35)}${sig}`);
+      const sig = c.signature ? `  ${c.signature.slice(0, 55)}` : '';
+      console.log(`  [${c.kind.padEnd(6)}]  ${c.repoName.padEnd(22)} ${c.name.padEnd(35)}${sig}`);
     }
 
-    console.log(`\nCross-repo links (${links.length}):`);
+    console.log(`\n  Cross-repo links (${links.length}):\n`);
     if (links.length === 0) {
       console.log('  (none)');
     } else {
@@ -668,83 +873,98 @@ groupCmd
         console.log(`  ${conf}%  [${link.matchKind}]  ${link.providerRepo} ∷ ${link.providerContract.padEnd(30)} ↔  ${link.consumerRepo} ∷ ${link.consumerContract}`);
       }
     }
+    console.log('');
   });
 
 // group query <name> <q>
 groupCmd
   .command('query <name> <q>')
   .description('Search execution flows across all repos in a group')
-  .option('-l, --limit <limit>', 'Max results per repo', '10')
+  .option('-l, --limit <n>', 'Max results per repo', '10')
+  .addHelpText('after', `
+  Uses BM25 search within each member repo's graph, then merges the results
+  using Reciprocal Rank Fusion (RRF) for a unified ranked list.
+
+  Examples:
+    $ code-intel group query my-platform "handlePayment"
+    $ code-intel group query my-platform "UserAuth" --limit 5
+`)
   .action(async (name: string, q: string, opts: { limit: string }) => {
     const group = loadGroup(name);
     if (!group) {
-      console.error(`Error: Group "${name}" not found.`);
+      console.error(`\n  ✗  Group "${name}" not found.\n`);
       process.exit(1);
     }
 
-    console.log(`\n🔍 Querying group "${name}" for: "${q}"\n`);
+    console.log(`\n  ◈  Querying group "${name}" for: "${q}"\n`);
     const limit = parseInt(opts.limit, 10);
     const { perRepo, merged } = await queryGroup(group, q, limit);
 
     if (merged.length === 0) {
-      console.log('No results found across any repo in this group.');
+      console.log('  No results found across any repo in this group.\n');
       return;
     }
 
-    console.log(`Merged results (${merged.length} total, ranked by Reciprocal Rank Fusion):\n`);
+    console.log(`  Merged results (${merged.length}, ranked by RRF):\n`);
     for (const r of merged) {
-      console.log(`  ${r.kind.padEnd(12)} ${r.name.padEnd(30)} ${r.filePath}`);
-      if (r.snippet) console.log(`             ${r.snippet.slice(0, 100)}`);
+      console.log(`  ${r.kind.padEnd(14)} ${r.name.padEnd(32)} ${r.filePath}`);
+      if (r.snippet) console.log(`                 ${r.snippet.slice(0, 95)}`);
     }
 
-    console.log(`\nPer-repo breakdown:`);
+    console.log(`\n  Per-repo breakdown:\n`);
     for (const rr of perRepo) {
-      console.log(`  ${rr.repoName} (${rr.groupPath}): ${rr.results.length} result(s)`);
+      console.log(`    ${rr.repoName.padEnd(25)} (${rr.groupPath})  →  ${rr.results.length} result(s)`);
     }
+    console.log('');
   });
 
 // group status <name>
 groupCmd
   .command('status <name>')
-  .description('Check staleness of repos in a group')
+  .description('Check index freshness and sync status of all repos in a group')
+  .addHelpText('after', `
+  Examples:
+    $ code-intel group status my-platform
+`)
   .action((name: string) => {
     const group = loadGroup(name);
     if (!group) {
-      console.error(`Error: Group "${name}" not found.`);
+      console.error(`\n  ✗  Group "${name}" not found.\n`);
       process.exit(1);
     }
 
     const registry = loadRegistry();
     const now = Date.now();
 
-    console.log(`\n📊 Group "${name}" status\n`);
+    console.log(`\n  ◈  Group "${name}" — status\n`);
     if (group.lastSync) {
       const age = Math.round((now - new Date(group.lastSync).getTime()) / 60000);
-      console.log(`Last sync: ${group.lastSync} (${age} min ago)`);
+      console.log(`     Last sync : ${group.lastSync} (${age} min ago)`);
     } else {
-      console.log('Last sync: never  (run `code-intel group sync ' + name + '`)');
+      console.log(`     Last sync : never  →  run \`code-intel group sync ${name}\``);
     }
-    console.log(`\nMembers (${group.members.length}):\n`);
+    console.log(`\n     Members (${group.members.length}):\n`);
 
     for (const m of group.members) {
       const regEntry = registry.find((r) => r.name === m.registryName);
       if (!regEntry) {
-        console.log(`  ✗ ${m.groupPath.padEnd(35)} [${m.registryName}]  — NOT IN REGISTRY`);
+        console.log(`  ✗  ${m.groupPath.padEnd(35)} [${m.registryName}]  — NOT IN REGISTRY`);
         continue;
       }
 
       const metaPath = path.join(regEntry.path, '.code-intel', 'meta.json');
-      let indexedAt = regEntry.indexedAt;
       try {
         const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as { indexedAt: string; stats: { nodes: number; edges: number; files: number } };
-        indexedAt = meta.indexedAt;
+        const indexedAt = meta.indexedAt;
         const ageMin = Math.round((now - new Date(indexedAt).getTime()) / 60000);
-        const stale = ageMin > 1440 ? ' ⚠ STALE (>24h)' : '';
-        console.log(`  ✓ ${m.groupPath.padEnd(35)} [${m.registryName}]  indexed ${indexedAt} (${ageMin} min ago)${stale}`);
-        console.log(`    ${regEntry.path}`);
-        console.log(`    ${meta.stats.nodes} nodes, ${meta.stats.edges} edges, ${meta.stats.files} files`);
+        const stale = ageMin > 1440 ? '  ⚠  STALE (>24h)' : '';
+        console.log(`  ✓  ${m.groupPath.padEnd(35)} [${m.registryName}]${stale}`);
+        console.log(`       indexed ${indexedAt} (${ageMin} min ago)`);
+        console.log(`       ${meta.stats.nodes} nodes · ${meta.stats.edges} edges · ${meta.stats.files} files`);
+        console.log(`       ${regEntry.path}\n`);
       } catch {
-        console.log(`  ✗ ${m.groupPath.padEnd(35)} [${m.registryName}]  — NOT INDEXED  (run: code-intel analyze ${regEntry.path})`);
+        console.log(`  ✗  ${m.groupPath.padEnd(35)} [${m.registryName}]  — NOT INDEXED`);
+        console.log(`       run: code-intel analyze ${regEntry.path}\n`);
       }
     }
   });
