@@ -77,7 +77,14 @@ export function Header({ onToggleAI, aiOpen }: Props) {
         {state.repoName && (
           <>
             <span className="text-gray-600">·</span>
-            <span className="text-cyan-400 text-sm font-mono">{state.repoName}</span>
+            {state.mode === 'group' ? (
+              <span className="flex items-center gap-1">
+                <span className="text-xs bg-indigo-900/50 text-indigo-300 border border-indigo-700/50 rounded px-1.5 py-0.5 font-mono">group</span>
+                <span className="text-cyan-400 text-sm font-mono">{state.repoName}</span>
+              </span>
+            ) : (
+              <span className="text-cyan-400 text-sm font-mono">{state.repoName}</span>
+            )}
           </>
         )}
       </div>

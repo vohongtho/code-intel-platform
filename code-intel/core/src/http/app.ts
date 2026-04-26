@@ -8,6 +8,13 @@ import { findEntryPoints, traceFlow } from '../flow-detection/entry-point-finder
 import { DbManager, getDbPath, getVectorDbPath } from '../storage/index.js';
 import { VectorIndex } from '../search/vector-index.js';
 import fs from 'node:fs';
+import os from 'node:os';
+import { listGroups, loadGroup, loadSyncResult, saveSyncResult } from '../multi-repo/group-registry.js';
+import { syncGroup } from '../multi-repo/group-sync.js';
+import { queryGroup } from '../multi-repo/group-query.js';
+import { createKnowledgeGraph } from '../graph/knowledge-graph.js';
+import { loadGraphFromDB } from '../multi-repo/graph-from-db.js';
+import { loadRegistry } from '../storage/repo-registry.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Resolve web dist: <core>/dist/http -> ../../web/dist
@@ -361,10 +368,82 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     res.json({ clusters });
   });
 
+  // ── Group routes ──────────────────────────────────────────────────────────────
+  app.get('/api/groups', (_req, res) => {
+    const groups = listGroups();
+    res.json(groups.map((g) => ({
+      name: g.name,
+      memberCount: g.members.length,
+      lastSync: g.lastSync ?? null,
+      createdAt: g.createdAt,
+    })));
+  });
+
+  app.get('/api/groups/:name', (req, res) => {
+    const group = loadGroup(req.params.name);
+    if (!group) { res.status(404).json({ error: 'Group not found' }); return; }
+    res.json(group);
+  });
+
+  app.get('/api/groups/:name/contracts', (req, res) => {
+    const result = loadSyncResult(req.params.name);
+    if (!result) { res.status(404).json({ error: 'No sync result. Run sync first.' }); return; }
+    res.json(result);
+  });
+
+  app.post('/api/groups/:name/sync', async (req, res) => {
+    const group = loadGroup(req.params.name);
+    if (!group) { res.status(404).json({ error: 'Group not found' }); return; }
+    try {
+      const result = await syncGroup(group);
+      saveSyncResult(result);
+      // Update lastSync on group
+      group.lastSync = result.syncedAt;
+      const { saveGroup } = await import('../multi-repo/group-registry.js');
+      saveGroup(group);
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  app.post('/api/groups/:name/search', async (req, res) => {
+    const group = loadGroup(req.params.name);
+    if (!group) { res.status(404).json({ error: 'Group not found' }); return; }
+    const { q, limit = 20 } = req.body;
+    if (!q) { res.status(400).json({ error: 'Missing query q' }); return; }
+    try {
+      const { perRepo, merged } = await queryGroup(group, q, limit);
+      res.json({ perRepo, merged });
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  app.get('/api/groups/:name/graph', async (req, res) => {
+    const group = loadGroup(req.params.name);
+    if (!group) { res.status(404).json({ error: 'Group not found' }); return; }
+    const registry = loadRegistry();
+    const mergedGraph = createKnowledgeGraph();
+    for (const member of group.members) {
+      const regEntry = registry.find((r) => r.name === member.registryName);
+      if (!regEntry) continue;
+      const dbPath = path.join(regEntry.path, '.code-intel', 'graph.db');
+      if (!fs.existsSync(dbPath)) continue;
+      const db = new DbManager(dbPath);
+      try {
+        await db.init();
+        await loadGraphFromDB(mergedGraph, db);
+        db.close();
+      } catch { db.close(); }
+    }
+    res.json({ nodes: [...mergedGraph.allNodes()], edges: [...mergedGraph.allEdges()] });
+  });
+
   // Serve web UI static files
   if (fs.existsSync(WEB_DIST)) {
     app.use(express.static(WEB_DIST));
-    app.get('*', (_req, res) => {
+    app.get('/{*path}', (_req, res) => {
       res.sendFile(path.join(WEB_DIST, 'index.html'));
     });
   }

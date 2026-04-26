@@ -1,5 +1,5 @@
 import { Language } from '../../shared/index.js';
-import type Parser from 'web-tree-sitter';
+import type { Node } from 'web-tree-sitter';
 import type { LanguageModule, FileSet } from '../types.js';
 import { goQueries } from '../../parsing/queries/go.js';
 
@@ -15,14 +15,14 @@ export const goModule: LanguageModule = {
     return workspace.findByPackage(cleaned);
   },
 
-  isExported(node: Parser.SyntaxNode): boolean {
+  isExported(node: Node): boolean {
     const name = node.childForFieldName('name');
     if (!name) return false;
     const first = name.text[0];
     return first === first.toUpperCase() && first !== first.toLowerCase();
   },
 
-  extractType(node: Parser.SyntaxNode): string | null {
+  extractType(node: Node): string | null {
     const typeNode = node.childForFieldName('type');
     return typeNode?.text ?? null;
   },

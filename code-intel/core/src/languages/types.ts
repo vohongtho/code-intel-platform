@@ -1,5 +1,5 @@
 import { Language } from '../shared/index.js';
-import type Parser from 'web-tree-sitter';
+import type { Node } from 'web-tree-sitter';
 
 export interface FileSet {
   has(filePath: string): boolean;
@@ -14,6 +14,6 @@ export interface LanguageModule {
   readonly importStyle: 'explicit' | 'wildcard' | 'namespace' | 'include';
   readonly inheritanceStrategy: 'depth-first' | 'c3' | 'mixin-aware' | 'none';
   resolveImport(rawPath: string, fromFile: string, workspace: FileSet): string | null;
-  isExported(node: Parser.SyntaxNode): boolean;
-  extractType(node: Parser.SyntaxNode): string | null;
+  isExported(node: Node): boolean;
+  extractType(node: Node): string | null;
 }

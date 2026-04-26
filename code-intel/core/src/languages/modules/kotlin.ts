@@ -1,5 +1,5 @@
 import { Language } from '../../shared/index.js';
-import type Parser from 'web-tree-sitter';
+import type { Node } from 'web-tree-sitter';
 import type { LanguageModule, FileSet } from '../types.js';
 import { kotlinQueries } from '../../parsing/queries/kotlin.js';
 
@@ -16,11 +16,11 @@ export const kotlinModule: LanguageModule = {
     return workspace.findByPackage(filePath);
   },
 
-  isExported(node: Parser.SyntaxNode): boolean {
+  isExported(node: Node): boolean {
     return !node.text.includes('private') && !node.text.includes('internal');
   },
 
-  extractType(node: Parser.SyntaxNode): string | null {
+  extractType(node: Node): string | null {
     const typeNode = node.childForFieldName('type');
     return typeNode?.text ?? null;
   },

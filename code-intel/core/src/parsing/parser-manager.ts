@@ -1,9 +1,9 @@
 import { Language } from '../shared/index.js';
-import Parser from 'web-tree-sitter';
+import { Parser, Language as TSLanguage, Tree } from 'web-tree-sitter';
 
 let initialized = false;
 const parserCache = new Map<Language, Parser>();
-const languageCache = new Map<Language, Parser.Language>();
+const languageCache = new Map<Language, TSLanguage>();
 
 const GRAMMAR_WASM_MAP: Partial<Record<Language, string>> = {
   // WASM grammar files to be downloaded/provided per language
@@ -26,7 +26,7 @@ export async function getParser(lang: Language): Promise<Parser> {
   return parser;
 }
 
-export async function getLanguage(lang: Language): Promise<Parser.Language | null> {
+export async function getLanguage(lang: Language): Promise<TSLanguage | null> {
   const cached = languageCache.get(lang);
   if (cached) return cached;
 
@@ -34,7 +34,7 @@ export async function getLanguage(lang: Language): Promise<Parser.Language | nul
   if (!wasmPath) return null;
 
   try {
-    const language = await Parser.Language.load(wasmPath);
+    const language = await TSLanguage.load(wasmPath);
     languageCache.set(lang, language);
     return language;
   } catch {
@@ -45,7 +45,7 @@ export async function getLanguage(lang: Language): Promise<Parser.Language | nul
 export async function parseSource(
   lang: Language,
   source: string,
-): Promise<Parser.Tree | null> {
+): Promise<Tree | null> {
   const parser = await getParser(lang);
   const language = await getLanguage(lang);
   if (!language) return null;

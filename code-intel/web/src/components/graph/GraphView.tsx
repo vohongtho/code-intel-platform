@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import Graph from 'graphology';
 import Sigma from 'sigma';
 import type { NodeDisplayData, PartialButFor } from 'sigma/types';
@@ -6,23 +6,18 @@ import type { Settings } from 'sigma/settings';
 import forceAtlas2 from 'graphology-layout-forceatlas2';
 import { useAppState } from '../../state/app-context';
 import { NODE_COLORS, EDGE_COLORS, EDGE_ALPHA, withAlpha } from '../../graph/colors';
-import { neighborhood, directNeighbors } from '../../graph/layout';
+import { directNeighbors } from '../../graph/layout';
 import type { NodeKind, EdgeKind } from '@code-intel/shared';
 
-// Custom dark-themed node hover — overrides Sigma's default white fill
+// ─── Dark node hover ──────────────────────────────────────────────────────────
 function drawDarkNodeHover(
   context: CanvasRenderingContext2D,
   data: PartialButFor<NodeDisplayData, 'x' | 'y' | 'size' | 'label' | 'color'>,
   settings: Settings,
 ): void {
   const size = settings.labelSize;
-  const font = settings.labelFont;
-  const weight = settings.labelWeight;
-  context.font = `${weight} ${size}px ${font}`;
-
-  const PADDING = 3;
-  const RADIUS = 4;
-
+  context.font = `${settings.labelWeight} ${size}px ${settings.labelFont}`;
+  const PADDING = 3, RADIUS = 4;
   if (typeof data.label === 'string' && data.label.length > 0) {
     const textWidth = context.measureText(data.label).width;
     const boxWidth = Math.round(textWidth + PADDING * 2 + 6);
@@ -30,18 +25,9 @@ function drawDarkNodeHover(
     const nodeRadius = Math.max(data.size, size / 2) + PADDING;
     const angleRadian = Math.asin(boxHeight / 2 / nodeRadius);
     const xDelta = Math.sqrt(Math.abs(nodeRadius ** 2 - (boxHeight / 2) ** 2));
-
-    // Shadow
-    context.shadowOffsetX = 0;
-    context.shadowOffsetY = 2;
-    context.shadowBlur = 12;
+    context.shadowOffsetX = 0; context.shadowOffsetY = 2; context.shadowBlur = 12;
     context.shadowColor = 'rgba(0,0,0,0.8)';
-
-    // Dark background pill
-    context.fillStyle = '#0c101f';
-    context.strokeStyle = 'rgba(255,255,255,0.08)';
-    context.lineWidth = 0.8;
-
+    context.fillStyle = '#0c101f'; context.strokeStyle = 'rgba(255,255,255,0.08)'; context.lineWidth = 0.8;
     context.beginPath();
     context.moveTo(data.x + xDelta, data.y + boxHeight / 2);
     context.lineTo(data.x + nodeRadius + boxWidth - RADIUS, data.y + boxHeight / 2);
@@ -50,131 +36,111 @@ function drawDarkNodeHover(
     context.quadraticCurveTo(data.x + nodeRadius + boxWidth, data.y - boxHeight / 2, data.x + nodeRadius + boxWidth - RADIUS, data.y - boxHeight / 2);
     context.lineTo(data.x + xDelta, data.y - boxHeight / 2);
     context.arc(data.x, data.y, nodeRadius, angleRadian, -angleRadian);
-    context.closePath();
-    context.fill();
-    context.stroke();
-
-    context.shadowOffsetX = 0;
-    context.shadowOffsetY = 0;
-    context.shadowBlur = 0;
+    context.closePath(); context.fill(); context.stroke();
+    context.shadowOffsetX = 0; context.shadowOffsetY = 0; context.shadowBlur = 0;
+    const nr = Math.max(data.size, size / 2) + PADDING;
+    context.fillStyle = '#e2e8f0';
+    context.fillText(data.label, data.x + nr + PADDING + 2, data.y + size / 2 - 1);
   } else {
     context.fillStyle = '#0c101f';
-    context.beginPath();
-    context.arc(data.x, data.y, data.size + PADDING, 0, Math.PI * 2);
-    context.closePath();
-    context.fill();
-  }
-
-  // Label text
-  if (typeof data.label === 'string' && data.label.length > 0) {
-    const nodeRadius = Math.max(data.size, size / 2) + PADDING;
-    context.fillStyle = '#e2e8f0';
-    context.fillText(data.label, data.x + nodeRadius + PADDING + 2, data.y + size / 2 - 1);
+    context.beginPath(); context.arc(data.x, data.y, data.size + PADDING, 0, Math.PI * 2); context.closePath(); context.fill();
   }
 }
 
+// ─── Metadata stored on the graphology graph ──────────────────────────────────
+interface GraphMeta { _degreeMap?: Map<string, number>; _topNThreshold?: number }
+
+// ─── GraphView ────────────────────────────────────────────────────────────────
 export function GraphView() {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const sigmaRef = useRef<Sigma | null>(null);
-  const layoutRunningRef = useRef(false);
   const { state, dispatch } = useAppState();
 
-  // Compute visible node set from filters + focus depth
-  const visibleIds = useMemo(() => {
-    const allowed = new Set<string>();
-    for (const node of state.nodes) {
-      if (state.filters.hiddenNodeKinds.has(node.kind)) continue;
-      allowed.add(node.id);
-    }
-    if (
-      state.selectedNode &&
-      state.filters.focusDepth !== 'all' &&
-      typeof state.filters.focusDepth === 'number'
-    ) {
-      const focus = neighborhood(state.selectedNode.id, state.edges, state.filters.focusDepth);
-      for (const id of [...allowed]) if (!focus.has(id)) allowed.delete(id);
-    }
-    return allowed;
-  }, [state.nodes, state.edges, state.filters, state.selectedNode]);
+  // Always-fresh refs — avoids stale closures without recreating Sigma
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const dispatchRef = useRef(dispatch);
+  dispatchRef.current = dispatch;
 
-  // Build graphology graph
-  const graph = useMemo(() => {
-    const g = new Graph({ multi: false, type: 'directed' });
+  // The graphology graph lives for the component lifetime — rebuilt when data changes
+  const graphRef = useRef<Graph & GraphMeta>(new Graph({ multi: false, type: 'directed' }) as Graph & GraphMeta);
+  const sigmaRef = useRef<Sigma | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [visibleCount, setVisibleCount] = useState({ nodes: 0, edges: 0 });
+
+  // Track which data we've built the graph for
+  const builtRef = useRef({ nodeCount: -1, edgeCount: -1 });
+
+  // ── Step 1: Build graphology graph whenever node/edge data changes ──────────
+  useEffect(() => {
+    if (state.nodes.length === 0) return;
+    if (
+      builtRef.current.nodeCount === state.nodes.length &&
+      builtRef.current.edgeCount === state.edges.length
+    ) return;
+
+    builtRef.current = { nodeCount: state.nodes.length, edgeCount: state.edges.length };
+    const g = graphRef.current;
+    g.clear();
+
     let i = 0;
     for (const node of state.nodes) {
-      if (!visibleIds.has(node.id)) continue;
       const angle = (i++ / Math.max(1, state.nodes.length)) * Math.PI * 2;
       const r = 200 + Math.random() * 300;
       try {
         g.addNode(node.id, {
           label: node.name,
+          baseLabel: node.name,
           x: Math.cos(angle) * r + (Math.random() - 0.5) * 50,
           y: Math.sin(angle) * r + (Math.random() - 0.5) * 50,
-          size: sizeForKind(node.kind),
-          color: NODE_COLORS[node.kind] ?? '#6b7280',
+          size: sizeForKind(node.kind as NodeKind),
+          color: NODE_COLORS[node.kind as NodeKind] ?? '#6b7280',
           nodeKind: node.kind,
-          filePath: node.filePath,
         });
-      } catch {
-        /* duplicate */
-      }
+      } catch { /* skip duplicate */ }
     }
     for (const edge of state.edges) {
-      if (state.filters.hiddenEdgeKinds.has(edge.kind)) continue;
-      if (!g.hasNode(edge.source) || !g.hasNode(edge.target)) continue;
-      if (edge.source === edge.target) continue;
+      if (!g.hasNode(edge.source) || !g.hasNode(edge.target) || edge.source === edge.target) continue;
       try {
-        const alpha = EDGE_ALPHA[edge.kind] ?? 0.25;
+        const col = withAlpha(EDGE_COLORS[edge.kind] ?? '#4b5563', EDGE_ALPHA[edge.kind] ?? 0.25);
         g.addEdge(edge.source, edge.target, {
-          color: withAlpha(EDGE_COLORS[edge.kind] ?? '#4b5563', alpha),
+          color: col, baseColor: col,
           size: edge.kind === 'calls' ? 0.8 : edge.kind === 'imports' ? 0.5 : 0.4,
-          type: 'arrow',
-          edgeKind: edge.kind,
+          type: 'arrow', edgeKind: edge.kind,
         });
-      } catch {
-        /* duplicate */
-      }
+      } catch { /* skip duplicate */ }
     }
-    return g;
-  }, [state.nodes, state.edges, state.filters.hiddenEdgeKinds, visibleIds]);
 
-  // Run ForceAtlas2 layout
-  useEffect(() => {
-    if (graph.order === 0 || layoutRunningRef.current) return;
-    layoutRunningRef.current = true;
-    try {
-      const settings = forceAtlas2.inferSettings(graph);
-      forceAtlas2.assign(graph, {
-        iterations: graph.order > 500 ? 80 : 150,
-        settings: {
-          ...settings,
-          gravity: 1,
-          scalingRatio: 8,
-          slowDown: 5,
-          barnesHutOptimize: graph.order > 200,
-          adjustSizes: true,
-        },
-      });
-    } finally {
-      layoutRunningRef.current = false;
+    // ForceAtlas2 layout (synchronous)
+    if (g.order > 0) {
+      const s = forceAtlas2.inferSettings(g);
+      forceAtlas2.assign(g, { iterations: g.order > 500 ? 80 : 150, settings: { ...s, gravity: 1, scalingRatio: 8, slowDown: 5, barnesHutOptimize: g.order > 200, adjustSizes: true } });
     }
-  }, [graph]);
 
-  // Build Sigma renderer
+    // Degree map for label threshold
+    const degreeMap = new Map<string, number>();
+    g.forEachNode((n) => degreeMap.set(n, g.degree(n)));
+    const sortedDeg = [...degreeMap.values()].sort((a, b) => b - a);
+    g._degreeMap = degreeMap;
+    g._topNThreshold = sortedDeg[Math.min(30, sortedDeg.length - 1)] ?? 0;
+
+    // If Sigma already exists, tell it to refresh with the new graph data
+    if (sigmaRef.current) {
+      applyNodeEdgeReducers(sigmaRef.current, g, stateRef.current, null, null);
+      sigmaRef.current.refresh();
+      let nc = 0, ec = 0;
+      g.forEachNode((_n, a) => { if (!a.hidden) nc++; });
+      g.forEachEdge((_e, a) => { if (!a.hidden) ec++; });
+      setVisibleCount({ nodes: nc, edges: ec });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.nodes, state.edges]);
+
+  // ── Step 2: Mount Sigma exactly once (when container is ready) ──────────────
   useEffect(() => {
     if (!containerRef.current) return;
-    if (sigmaRef.current) {
-      sigmaRef.current.kill();
-      sigmaRef.current = null;
-    }
+    if (sigmaRef.current) return; // already mounted
 
-    // Compute degree map for label threshold
-    const degreeMap = new Map<string, number>();
-    graph.forEachNode((n) => degreeMap.set(n, graph.degree(n)));
-    const degrees = [...degreeMap.values()].sort((a, b) => b - a);
-    const topNThreshold = degrees[Math.min(30, degrees.length - 1)] ?? 0;
-
-    const renderer = new Sigma(graph, containerRef.current, {
+    const g = graphRef.current;
+    const renderer = new Sigma(g, containerRef.current, {
       allowInvalidContainer: true,
       renderEdgeLabels: false,
       defaultEdgeType: 'arrow',
@@ -184,34 +150,37 @@ export function GraphView() {
       labelSize: 11,
       labelWeight: '600',
       defaultDrawNodeHover: drawDarkNodeHover,
-      // Only render labels for top-degree nodes initially
-      nodeReducer: (nodeId, attrs) => {
-        const deg = degreeMap.get(nodeId) ?? 0;
-        return {
-          ...attrs,
-          label: deg >= topNThreshold ? attrs.label : '',
-        };
-      },
     });
-
-    renderer.on('clickNode', ({ node }) => {
-      const n = state.nodes.find((nd) => nd.id === node);
-      if (n) dispatch({ type: 'SELECT_NODE', node: n });
-    });
-    renderer.on('enterNode', ({ node }) => dispatch({ type: 'HOVER_NODE', nodeId: node }));
-    renderer.on('leaveNode', () => dispatch({ type: 'HOVER_NODE', nodeId: null }));
-    renderer.on('clickStage', () => dispatch({ type: 'SELECT_NODE', node: null }));
 
     sigmaRef.current = renderer;
+
+    // Apply initial reducers
+    applyNodeEdgeReducers(renderer, g, stateRef.current, null, null);
+    renderer.refresh();
+
+    // Guard: clickNode and clickStage both fire; clickNode must win
+    let suppressNextStage = false;
+
+    renderer.on('clickNode', ({ node }) => {
+      suppressNextStage = true;
+      const n = stateRef.current.nodes.find((nd) => nd.id === node);
+      if (n) dispatchRef.current({ type: 'SELECT_NODE', node: n });
+      setTimeout(() => { suppressNextStage = false; }, 50);
+    });
+
+    renderer.on('clickStage', () => {
+      if (suppressNextStage) return;
+      dispatchRef.current({ type: 'SELECT_NODE', node: null });
+    });
+
+    renderer.on('enterNode', ({ node }) => dispatchRef.current({ type: 'HOVER_NODE', nodeId: node }));
+    renderer.on('leaveNode', () => dispatchRef.current({ type: 'HOVER_NODE', nodeId: null }));
 
     const onZoom = (e: Event) => {
       const factor = (e as CustomEvent<number>).detail;
       const cam = renderer.getCamera();
-      if (factor === 0) {
-        cam.animatedReset();
-      } else {
-        cam.animate({ ratio: cam.getState().ratio * factor }, { duration: 200 });
-      }
+      if (factor === 0) cam.animatedReset();
+      else cam.animate({ ratio: cam.getState().ratio * factor }, { duration: 200 });
     };
     window.addEventListener('graph-zoom', onZoom);
 
@@ -220,119 +189,168 @@ export function GraphView() {
       renderer.kill();
       sigmaRef.current = null;
     };
-  }, [graph]);
+  // Mount once — no dependencies that could cause remount
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Fly camera to selected node
+  // ── Step 3: Apply filter/selection/hover reducers (no rebuild) ──────────────
+  useEffect(() => {
+    const renderer = sigmaRef.current;
+    if (!renderer) return;
+    applyNodeEdgeReducers(renderer, graphRef.current, state, state.hoveredNodeId, state.selectedNode?.id ?? null);
+    renderer.refresh();
+
+    let nc = 0, ec = 0;
+    graphRef.current.forEachNode((_n, a) => { if (!a.hidden) nc++; });
+    graphRef.current.forEachEdge((_e, a) => { if (!a.hidden) ec++; });
+    setVisibleCount({ nodes: nc, edges: ec });
+  }, [state.filters, state.hoveredNodeId, state.selectedNode]);
+
+  // ── Step 4: Fly camera to selected node ─────────────────────────────────────
   useEffect(() => {
     const renderer = sigmaRef.current;
     if (!renderer || !state.selectedNode) return;
-    const nodeId = state.selectedNode.id;
-    if (!graph.hasNode(nodeId)) return;
-    const { x, y } = graph.getNodeAttributes(nodeId) as { x: number; y: number };
-    const cam = renderer.getCamera();
-    cam.animate(
-      { x, y, ratio: Math.min(cam.getState().ratio, 0.5) },
+    // Use getNodeDisplayData — it returns already-normalized (framed-graph) coordinates
+    // that match the camera's coordinate space. Raw graphology attributes are NOT normalized.
+    const displayData = renderer.getNodeDisplayData(state.selectedNode.id);
+    if (!displayData) return;
+    renderer.getCamera().animate(
+      { x: displayData.x, y: displayData.y, ratio: Math.min(renderer.getCamera().getState().ratio, 0.5) },
       { duration: 400, easing: 'quadraticInOut' },
     );
   }, [state.selectedNode?.id]);
 
-  // Apply highlight reducers when selection/hover changes
-  useEffect(() => {
-    const renderer = sigmaRef.current;
-    if (!renderer) return;
-    const hoverId = state.hoveredNodeId;
-    const selectedId = state.selectedNode?.id ?? null;
-    const focusId = hoverId ?? selectedId;
-    const highlightSet = focusId ? directNeighbors(focusId, state.edges) : null;
-
-    renderer.setSetting('nodeReducer', (nodeId, attrs) => {
-      const data = { ...attrs };
-      if (highlightSet) {
-        if (highlightSet.has(nodeId)) {
-          data.zIndex = 2;
-          data.label = graph.getNodeAttribute(nodeId, 'label') || attrs.label;
-          if (nodeId === focusId) {
-            data.size = (attrs.size ?? 5) * 1.8;
-            data.highlighted = true;
-            data.color = attrs.color;
-          } else {
-            data.size = (attrs.size ?? 5) * 1.1;
-          }
-        } else {
-          data.color = '#0f172a';
-          data.label = '';
-          data.zIndex = 0;
-        }
-      }
-      return data;
-    });
-    renderer.setSetting('edgeReducer', (edgeId, attrs) => {
-      const data = { ...attrs };
-      if (highlightSet) {
-        const ext = renderer.getGraph().extremities(edgeId);
-        if (highlightSet.has(ext[0]) && highlightSet.has(ext[1])) {
-          data.color = withAlpha(
-            EDGE_COLORS[(attrs.edgeKind as EdgeKind) ?? 'calls'] ?? '#9ca3af',
-            0.95,
-          );
-          data.size = 1.5;
-          data.zIndex = 1;
-        } else {
-          data.color = '#0f172a40';
-          data.size = 0.3;
-          data.zIndex = 0;
-        }
-      }
-      return data;
-    });
-    renderer.refresh();
-  }, [state.hoveredNodeId, state.selectedNode, state.edges]);
-
   return (
     <div className="relative w-full h-full bg-[#040812]">
       <div ref={containerRef} className="absolute inset-0" />
-      {/* Overlay info bar */}
       <div className="absolute top-3 left-3 flex items-center gap-2 bg-gray-950/90 backdrop-blur border border-gray-800/60 rounded-lg px-3 py-1.5 text-[10px] text-gray-400 font-mono pointer-events-none shadow-lg">
         <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-        <span className="text-gray-200">{graph.order}</span>
+        <span className="text-gray-200">{visibleCount.nodes}</span>
         <span className="text-gray-600">nodes</span>
         <span className="text-gray-700">·</span>
-        <span className="text-gray-200">{graph.size}</span>
+        <span className="text-gray-200">{visibleCount.edges}</span>
         <span className="text-gray-600">edges</span>
       </div>
-      {/* Legend */}
       <GraphLegend />
       <GraphControls />
     </div>
   );
 }
 
+// ─── Reducer logic (pure — no graph rebuild) ──────────────────────────────────
+function applyNodeEdgeReducers(
+  renderer: Sigma,
+  g: Graph & GraphMeta,
+  state: ReturnType<typeof useAppState>['state'],
+  hoveredNodeId: string | null,
+  selectedNodeId: string | null,
+) {
+  const topNThreshold = g._topNThreshold ?? 0;
+  const degreeMap = g._degreeMap ?? new Map<string, number>();
+  const focusId = hoveredNodeId ?? selectedNodeId;
+  const highlightSet = focusId ? directNeighbors(focusId, state.edges) : null;
+  const hiddenKinds = state.filters.hiddenNodeKinds;
+  const hiddenEdgeKinds = state.filters.hiddenEdgeKinds;
+
+  let focusDepthSet: Set<string> | null = null;
+  if (selectedNodeId && state.filters.focusDepth !== 'all' && typeof state.filters.focusDepth === 'number') {
+    focusDepthSet = bfsNeighborhood(selectedNodeId, state.edges, state.filters.focusDepth);
+  }
+
+  renderer.setSetting('nodeReducer', (nodeId, attrs) => {
+    const kind = attrs.nodeKind as NodeKind;
+    if (hiddenKinds.has(kind)) return { ...attrs, hidden: true };
+    if (focusDepthSet && !focusDepthSet.has(nodeId)) return { ...attrs, hidden: true };
+
+    const baseColor = NODE_COLORS[kind] ?? attrs.color;
+    const deg = degreeMap.get(nodeId) ?? 0;
+    const baseLabel = deg >= topNThreshold ? (attrs.baseLabel ?? attrs.label) : '';
+
+    if (!highlightSet) {
+      return { ...attrs, hidden: false, color: baseColor, label: baseLabel };
+    }
+
+    if (highlightSet.has(nodeId)) {
+      return {
+        ...attrs, hidden: false, color: baseColor,
+        label: attrs.baseLabel ?? attrs.label,
+        zIndex: 2,
+        size: nodeId === focusId ? (attrs.size ?? 5) * 1.8 : (attrs.size ?? 5) * 1.1,
+        highlighted: nodeId === focusId,
+      };
+    }
+
+    return {
+      ...attrs, hidden: false,
+      color: withAlpha(baseColor, 0.08),
+      label: '',
+      zIndex: 0,
+      size: (attrs.size ?? 3) * 0.7,
+    };
+  });
+
+  renderer.setSetting('edgeReducer', (edgeId, attrs) => {
+    const edgeKind = attrs.edgeKind as EdgeKind;
+    const ext = renderer.getGraph().extremities(edgeId);
+    const srcKind = g.getNodeAttribute(ext[0], 'nodeKind') as NodeKind;
+    const tgtKind = g.getNodeAttribute(ext[1], 'nodeKind') as NodeKind;
+
+    if (hiddenEdgeKinds.has(edgeKind) || hiddenKinds.has(srcKind) || hiddenKinds.has(tgtKind)) {
+      return { ...attrs, hidden: true };
+    }
+    if (focusDepthSet && (!focusDepthSet.has(ext[0]) || !focusDepthSet.has(ext[1]))) {
+      return { ...attrs, hidden: true };
+    }
+
+    if (!highlightSet) {
+      return { ...attrs, hidden: false, color: attrs.baseColor ?? attrs.color };
+    }
+
+    if (highlightSet.has(ext[0]) && highlightSet.has(ext[1])) {
+      return { ...attrs, hidden: false, color: withAlpha(EDGE_COLORS[edgeKind] ?? '#9ca3af', 0.95), size: 1.5, zIndex: 1 };
+    }
+    return { ...attrs, hidden: false, color: '#0f172a30', size: 0.3, zIndex: 0 };
+  });
+}
+
+// ─── BFS neighborhood ─────────────────────────────────────────────────────────
+function bfsNeighborhood(startId: string, edges: { source: string; target: string }[], maxDepth: number): Set<string> {
+  const result = new Set<string>([startId]);
+  const adj = new Map<string, string[]>();
+  for (const e of edges) {
+    (adj.get(e.source) ?? (adj.set(e.source, []), adj.get(e.source)!)).push(e.target);
+    (adj.get(e.target) ?? (adj.set(e.target, []), adj.get(e.target)!)).push(e.source);
+  }
+  const queue: { id: string; depth: number }[] = [{ id: startId, depth: 0 }];
+  while (queue.length > 0) {
+    const { id, depth } = queue.shift()!;
+    if (depth >= maxDepth) continue;
+    for (const n of adj.get(id) ?? []) {
+      if (!result.has(n)) { result.add(n); queue.push({ id: n, depth: depth + 1 }); }
+    }
+  }
+  return result;
+}
+
+// ─── Legend ───────────────────────────────────────────────────────────────────
 function GraphLegend() {
   const [collapsed, setCollapsed] = React.useState(true);
   const topKinds: NodeKind[] = ['function', 'class', 'interface', 'file', 'method', 'enum'];
   return (
     <div className="absolute bottom-14 right-3 bg-gray-950/90 backdrop-blur border border-gray-800/60 rounded-lg shadow-xl overflow-hidden">
-      <button
-        onClick={() => setCollapsed((v) => !v)}
-        className="flex items-center gap-2 px-3 py-1.5 text-[10px] text-gray-400 hover:text-gray-200 w-full"
-      >
-        <span>◉</span>
-        <span className="font-medium">Legend</span>
-        <span className="ml-auto">{collapsed ? '▸' : '▾'}</span>
+      <button onClick={() => setCollapsed(v => !v)} className="flex items-center gap-2 px-3 py-1.5 text-[10px] text-gray-400 hover:text-gray-200 w-full">
+        <span>◉</span><span className="font-medium">Legend</span><span className="ml-auto">{collapsed ? '▸' : '▾'}</span>
       </button>
       {!collapsed && (
         <div className="px-3 pb-2.5 space-y-1">
-          {topKinds.map((k) => (
+          {topKinds.map(k => (
             <div key={k} className="flex items-center gap-2 text-[10px] text-gray-400">
-              <span
-                className="w-2 h-2 rounded-full flex-shrink-0"
-                style={{ backgroundColor: NODE_COLORS[k] }}
-              />
+              <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: NODE_COLORS[k] }} />
               <span className="capitalize">{k}</span>
             </div>
           ))}
           <div className="border-t border-gray-800 mt-1 pt-1 space-y-1">
-            {(['calls', 'imports', 'extends'] as EdgeKind[]).map((k) => (
+            {(['calls', 'imports', 'extends'] as EdgeKind[]).map(k => (
               <div key={k} className="flex items-center gap-2 text-[10px] text-gray-400">
                 <span className="w-4 h-px flex-shrink-0" style={{ backgroundColor: EDGE_COLORS[k] }} />
                 <span>{k}</span>
@@ -345,59 +363,27 @@ function GraphLegend() {
   );
 }
 
+// ─── Controls ─────────────────────────────────────────────────────────────────
 function GraphControls() {
-  const zoom = (factor: number) => {
-    window.dispatchEvent(new CustomEvent('graph-zoom', { detail: factor }));
-  };
+  const zoom = (f: number) => window.dispatchEvent(new CustomEvent('graph-zoom', { detail: f }));
   return (
     <div className="absolute bottom-3 right-3 flex flex-col gap-1 bg-gray-950/90 backdrop-blur border border-gray-800/60 rounded-lg p-1 shadow-lg">
-      <button
-        className="w-7 h-7 text-gray-300 hover:bg-gray-800 hover:text-white rounded text-sm font-bold transition"
-        onClick={() => zoom(0.7)}
-        title="Zoom in"
-      >
-        +
-      </button>
-      <button
-        className="w-7 h-7 text-gray-300 hover:bg-gray-800 hover:text-white rounded text-sm font-bold transition"
-        onClick={() => zoom(1.4)}
-        title="Zoom out"
-      >
-        −
-      </button>
+      <button className="w-7 h-7 text-gray-300 hover:bg-gray-800 hover:text-white rounded text-sm font-bold transition" onClick={() => zoom(0.7)} title="Zoom in">+</button>
+      <button className="w-7 h-7 text-gray-300 hover:bg-gray-800 hover:text-white rounded text-sm font-bold transition" onClick={() => zoom(1.4)} title="Zoom out">−</button>
       <div className="h-px bg-gray-800 mx-1" />
-      <button
-        className="w-7 h-7 text-gray-400 hover:bg-gray-800 hover:text-white rounded text-xs transition"
-        onClick={() => zoom(0)}
-        title="Fit to view"
-      >
-        ⌖
-      </button>
+      <button className="w-7 h-7 text-gray-400 hover:bg-gray-800 hover:text-white rounded text-xs transition" onClick={() => zoom(0)} title="Fit to view">⌖</button>
     </div>
   );
 }
 
+// ─── Node size by kind ────────────────────────────────────────────────────────
 function sizeForKind(kind: NodeKind): number {
-  switch (kind) {
-    case 'function':    return 5;   // primary logic
-    case 'file':        return 7;   // container
-    case 'class':       return 8;   // structural
-    case 'interface':   return 6;   // abstract
-    case 'enum':        return 5;   // structured constants
-    case 'constant':    return 3;   // small/subtle
-    case 'type_alias':  return 4;   // rare highlight
-    case 'flow':        return 4;   // execution path
-    case 'method':      return 4;
-    case 'constructor': return 4;
-    case 'struct':      return 7;
-    case 'trait':       return 6;
-    case 'variable':    return 3;
-    case 'property':    return 3;
-    case 'namespace':   return 6;
-    case 'module':      return 7;
-    case 'route':       return 5;
-    case 'cluster':     return 9;
-    case 'directory':   return 3;
-    default:            return 3;
-  }
+  const MAP: Partial<Record<NodeKind, number>> = {
+    cluster: 9, class: 8, file: 7, module: 7, struct: 7,
+    interface: 6, trait: 6, namespace: 6,
+    function: 5, enum: 5, route: 5,
+    method: 4, constructor: 4, type_alias: 4, flow: 4,
+    constant: 3, variable: 3, property: 3, directory: 3,
+  };
+  return MAP[kind] ?? 3;
 }

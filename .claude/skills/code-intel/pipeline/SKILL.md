@@ -1,6 +1,6 @@
 ---
 name: pipeline
-description: "Covers the **pipeline** subsystem of code-intel-platform. 10 symbols across 3 files. Key symbols: `runPipeline`, `validateDAG`, `topologicalSort`. Internal call density: 0.2 calls/symbol."
+description: "Covers the **pipeline** subsystem of code-intel-platform. 10 symbols across 3 files. Key symbols: `runPipeline`, `validateDAG`, `dfs`. Internal call density: 0.2 calls/symbol."
 ---
 
 # pipeline
@@ -11,7 +11,7 @@ description: "Covers the **pipeline** subsystem of code-intel-platform. 10 symbo
 
 Load this skill when:
 - The task involves code in `code-intel/core/src/pipeline/`
-- The user mentions `runPipeline`, `validateDAG`, `topologicalSort` or asks how they work
+- The user mentions `runPipeline`, `validateDAG`, `dfs` or asks how they work
 - Adding, modifying, or debugging pipeline-related functionality
 - Tracing call chains that pass through the pipeline layer
 
@@ -31,8 +31,8 @@ Sorted by call graph degree (changing these has the highest blast radius):
 |--------|------|-----:|------:|------|
 | `runPipeline` | function | 2 | 2 | `pipeline/orchestrator.ts` |
 | `validateDAG` | function | 2 | 1 | `pipeline/dag-validator.ts` |
+| `dfs` | function | 0 | 2 | `pipeline/dag-validator.ts` |
 | `topologicalSort` | function | 2 | 0 | `pipeline/dag-validator.ts` |
-| `dfs` | function | 0 | 1 | `pipeline/dag-validator.ts` |
 | `ValidationError` | interface | 0 | 0 | `pipeline/dag-validator.ts` |
 | `newDegree` | function | 0 | 0 | `pipeline/dag-validator.ts` |
 | `PipelineRunResult` | interface | 0 | 0 | `pipeline/orchestrator.ts` |

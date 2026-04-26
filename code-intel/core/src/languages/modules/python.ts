@@ -1,5 +1,5 @@
 import { Language } from '../../shared/index.js';
-import type Parser from 'web-tree-sitter';
+import type { Node } from 'web-tree-sitter';
 import type { LanguageModule, FileSet } from '../types.js';
 import { pythonQueries } from '../../parsing/queries/python.js';
 import path from 'node:path';
@@ -27,14 +27,14 @@ export const pythonModule: LanguageModule = {
     return workspace.findByPackage(cleaned);
   },
 
-  isExported(node: Parser.SyntaxNode): boolean {
+  isExported(node: Node): boolean {
     // Python: names starting with _ are private by convention
     const name = node.childForFieldName('name');
     if (!name) return true;
     return !name.text.startsWith('_');
   },
 
-  extractType(node: Parser.SyntaxNode): string | null {
+  extractType(node: Node): string | null {
     const returnType = node.childForFieldName('return_type');
     return returnType?.text ?? null;
   },

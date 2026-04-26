@@ -1,5 +1,5 @@
 import { Language } from '../../shared/index.js';
-import type Parser from 'web-tree-sitter';
+import type { Node } from 'web-tree-sitter';
 import type { LanguageModule, FileSet } from '../types.js';
 import { rubyQueries } from '../../parsing/queries/ruby.js';
 
@@ -15,11 +15,11 @@ export const rubyModule: LanguageModule = {
     return workspace.findByPackage(cleaned + '.rb') ?? workspace.findByPackage(cleaned);
   },
 
-  isExported(_node: Parser.SyntaxNode): boolean {
+  isExported(_node: Node): boolean {
     return true; // Ruby: methods are public by default
   },
 
-  extractType(_node: Parser.SyntaxNode): string | null {
+  extractType(_node: Node): string | null {
     return null; // Ruby: dynamic typing
   },
 };

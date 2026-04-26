@@ -18,7 +18,11 @@ type Action =
   | { type: 'TOGGLE_NODE_KIND'; kind: NodeKind }
   | { type: 'TOGGLE_EDGE_KIND'; kind: EdgeKind }
   | { type: 'SET_FOCUS_DEPTH'; depth: FocusDepth }
-  | { type: 'RESET_FILTERS' };
+  | { type: 'RESET_FILTERS' }
+  | { type: 'SET_MODE'; mode: 'repo' | 'group' }
+  | { type: 'SET_GROUP_NAME'; name: string }
+  | { type: 'SET_GROUP_MEMBERS'; members: { groupPath: string; registryName: string }[] }
+  | { type: 'SET_GROUP_CONTRACTS'; contracts: AppState['groupContracts']; links: AppState['groupLinks']; syncedAt: string };
 
 const initialState: AppState = {
   view: 'connect',
@@ -36,6 +40,12 @@ const initialState: AppState = {
   },
   search: { query: '', results: [] },
   chat: { messages: [], loading: false },
+  mode: 'repo',
+  groupName: '',
+  groupMembers: [],
+  groupContracts: [],
+  groupLinks: [],
+  groupSyncedAt: null,
 };
 
 function reducer(state: AppState, action: Action): AppState {
@@ -87,6 +97,10 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, filters: { ...state.filters, focusDepth: action.depth } };
     case 'RESET_FILTERS':
       return { ...state, filters: initialState.filters };
+    case 'SET_MODE': return { ...state, mode: action.mode };
+    case 'SET_GROUP_NAME': return { ...state, groupName: action.name };
+    case 'SET_GROUP_MEMBERS': return { ...state, groupMembers: action.members };
+    case 'SET_GROUP_CONTRACTS': return { ...state, groupContracts: action.contracts, groupLinks: action.links, groupSyncedAt: action.syncedAt };
     default:
       return state;
   }

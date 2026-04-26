@@ -29,14 +29,14 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `textSearch` | function | 5 | 0 | `search/text-search.ts` |
-| `embedNodes` | function | 1 | 3 | `search/embedder.ts` |
-| `reciprocalRankFusion` | function | 2 | 0 | `search/text-search.ts` |
+| `textSearch` | function | 6 | 0 | `search/text-search.ts` |
+| `embedNodes` | function | 2 | 3 | `search/embedder.ts` |
+| `reciprocalRankFusion` | function | 3 | 0 | `search/text-search.ts` |
+| `VectorIndex` | class | 2 | 0 | `search/vector-index.ts` |
 | `getEmbedder` | function | 1 | 0 | `search/embedder.ts` |
 | `buildText` | function | 1 | 0 | `search/embedder.ts` |
 | `isTestPath` | function | 1 | 0 | `search/text-search.ts` |
 | `isDistPath` | function | 0 | 1 | `search/text-search.ts` |
-| `VectorIndex` | class | 1 | 0 | `search/vector-index.ts` |
 | `esc` | function | 1 | 0 | `search/vector-index.ts` |
 | `EmbeddedNode` | interface | 0 | 0 | `search/embedder.ts` |
 | `SearchResult` | interface | 0 | 0 | `search/text-search.ts` |

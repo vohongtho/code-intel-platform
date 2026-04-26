@@ -1,17 +1,17 @@
 ---
 name: cli
-description: "Covers the **cli** subsystem of code-intel-platform. 14 symbols across 3 files. Key symbols: `analyzeWorkspace`, `writeSkillFiles`, `writeContextFiles`. Internal call density: 0.7 calls/symbol."
+description: "Covers the **cli** subsystem of code-intel-platform. 15 symbols across 3 files. Key symbols: `analyzeWorkspace`, `writeSkillFiles`, `conf`. Internal call density: 0.7 calls/symbol."
 ---
 
 # cli
 
-> **14 symbols** | **3 files** | path: `code-intel/core/src/cli/` | call density: 0.7/sym
+> **15 symbols** | **3 files** | path: `code-intel/core/src/cli/` | call density: 0.7/sym
 
 ## When to Use
 
 Load this skill when:
 - The task involves code in `code-intel/core/src/cli/`
-- The user mentions `analyzeWorkspace`, `writeSkillFiles`, `writeContextFiles` or asks how they work
+- The user mentions `analyzeWorkspace`, `writeSkillFiles`, `conf` or asks how they work
 - Adding, modifying, or debugging cli-related functionality
 - Tracing call chains that pass through the cli layer
 
@@ -21,7 +21,7 @@ Load this skill when:
 |------|---------|-------|
 | `code-intel/core/src/cli/skill-writer.ts` | `SkillSummary`, `AreaInfo`, `writeSkillFiles`, `buildAreaMap` +(4) | 2 exported |
 | `code-intel/core/src/cli/context-writer.ts` | `ContextStats`, `writeContextFiles`, `buildBlock`, `upsertFile` +(1) | 2 exported |
-| `code-intel/core/src/cli/main.ts` | `analyzeWorkspace` | internal |
+| `code-intel/core/src/cli/main.ts` | `analyzeWorkspace`, `conf` | internal |
 
 ## Hot Symbols
 
@@ -29,8 +29,9 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `analyzeWorkspace` | function | 0 | 16 | `cli/main.ts` |
+| `analyzeWorkspace` | function | 0 | 27 | `cli/main.ts` |
 | `writeSkillFiles` | function | 1 | 4 | `cli/skill-writer.ts` |
+| `conf` | function | 0 | 4 | `cli/main.ts` |
 | `writeContextFiles` | function | 1 | 2 | `cli/context-writer.ts` |
 | `buildAreaMap` | function | 1 | 2 | `cli/skill-writer.ts` |
 | `upsertFile` | function | 1 | 1 | `cli/context-writer.ts` |
@@ -40,7 +41,6 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | `uniqueKebab` | function | 1 | 0 | `cli/skill-writer.ts` |
 | `relPath` | function | 1 | 0 | `cli/skill-writer.ts` |
 | `relFile` | function | 1 | 0 | `cli/skill-writer.ts` |
-| `ContextStats` | interface | 0 | 0 | `cli/context-writer.ts` |
 
 ## Impact Guidance
 

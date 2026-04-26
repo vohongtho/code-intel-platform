@@ -1,17 +1,17 @@
 ---
 name: shared-2
-description: "Covers the **shared** subsystem of code-intel-platform. 6 symbols across 2 files. Key symbols: `Header`, `StatusFooter`. Internal call density: 0 calls/symbol."
+description: "Covers the **shared** subsystem of code-intel-platform. 7 symbols across 4 files. Key symbols: `detectLanguage`, `getSupportedExtensions`. Internal call density: 0 calls/symbol."
 ---
 
 # shared
 
-> **6 symbols** | **2 files** | path: `code-intel/web/src/components/shared/` | call density: 0/sym
+> **7 symbols** | **4 files** | path: `code-intel/core/src/shared/` | call density: 0/sym
 
 ## When to Use
 
 Load this skill when:
-- The task involves code in `code-intel/web/src/components/shared/`
-- The user mentions `Header`, `StatusFooter` or asks how they work
+- The task involves code in `code-intel/core/src/shared/`
+- The user mentions `detectLanguage`, `getSupportedExtensions` or asks how they work
 - Adding, modifying, or debugging shared-related functionality
 - Tracing call chains that pass through the shared layer
 
@@ -19,15 +19,17 @@ Load this skill when:
 
 | File | Symbols | Notes |
 |------|---------|-------|
-| `code-intel/web/src/components/shared/Header.tsx` | `Props`, `Header`, `check`, `onKey` +(1) | 1 exported |
-| `code-intel/web/src/components/shared/StatusFooter.tsx` | `StatusFooter` | 1 exported |
+| `code-intel/core/src/shared/detection.ts` | `detectLanguage`, `getSupportedExtensions` | 2 exported |
+| `code-intel/core/src/shared/graph-types.ts` | `CodeNode`, `CodeEdge` | 2 exported |
+| `code-intel/core/src/shared/pipeline-types.ts` | `PipelineProgress`, `PipelineResult` | 2 exported |
+| `code-intel/core/src/shared/languages.ts` | `Language` | 1 exported |
 
 ## Entry Points
 
 Start exploration here — exported symbols with no external callers:
 
-- **`Header`** `(function)` → `code-intel/web/src/components/shared/Header.tsx:12`
-- **`StatusFooter`** `(function)` → `code-intel/web/src/components/shared/StatusFooter.tsx:4`
+- **`detectLanguage`** `(function)` → `code-intel/core/src/shared/detection.ts:33`
+- **`getSupportedExtensions`** `(function)` → `code-intel/core/src/shared/detection.ts:38`
 
 ## Hot Symbols
 
@@ -35,12 +37,13 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `Header` | function | 0 | 1 | `shared/Header.tsx` |
-| `check` | function | 0 | 1 | `shared/Header.tsx` |
-| `handleSearch` | function | 0 | 1 | `shared/Header.tsx` |
-| `StatusFooter` | function | 0 | 1 | `shared/StatusFooter.tsx` |
-| `Props` | interface | 0 | 0 | `shared/Header.tsx` |
-| `onKey` | function | 0 | 0 | `shared/Header.tsx` |
+| `detectLanguage` | function | 0 | 0 | `shared/detection.ts` |
+| `getSupportedExtensions` | function | 0 | 0 | `shared/detection.ts` |
+| `CodeNode` | interface | 0 | 0 | `shared/graph-types.ts` |
+| `CodeEdge` | interface | 0 | 0 | `shared/graph-types.ts` |
+| `Language` | enum | 0 | 0 | `shared/languages.ts` |
+| `PipelineProgress` | interface | 0 | 0 | `shared/pipeline-types.ts` |
+| `PipelineResult` | interface | 0 | 0 | `shared/pipeline-types.ts` |
 
 ## Impact Guidance
 
@@ -53,9 +56,9 @@ Before modifying any symbol in this area:
 
 ```bash
 # Inspect most-connected symbol
-code-intel inspect Header
+code-intel inspect detectLanguage
 # Blast radius for entry point
-code-intel impact Header
+code-intel impact detectLanguage
 # Search this area
 code-intel search "shared"
 ```

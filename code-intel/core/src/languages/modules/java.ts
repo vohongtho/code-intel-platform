@@ -1,5 +1,5 @@
 import { Language } from '../../shared/index.js';
-import type Parser from 'web-tree-sitter';
+import type { Node } from 'web-tree-sitter';
 import type { LanguageModule, FileSet } from '../types.js';
 import { javaQueries } from '../../parsing/queries/java.js';
 
@@ -16,12 +16,12 @@ export const javaModule: LanguageModule = {
     return workspace.findByPackage(filePath);
   },
 
-  isExported(node: Parser.SyntaxNode): boolean {
+  isExported(node: Node): boolean {
     const text = node.text;
     return text.includes('public');
   },
 
-  extractType(node: Parser.SyntaxNode): string | null {
+  extractType(node: Node): string | null {
     const typeNode = node.childForFieldName('type');
     return typeNode?.text ?? null;
   },

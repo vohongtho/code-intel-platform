@@ -1,5 +1,5 @@
 import { Language } from '../../shared/index.js';
-import type Parser from 'web-tree-sitter';
+import type { Node } from 'web-tree-sitter';
 import type { LanguageModule, FileSet } from '../types.js';
 import { typescriptQueries } from '../../parsing/queries/typescript.js';
 import path from 'node:path';
@@ -32,13 +32,13 @@ export const typescriptModule: LanguageModule = {
     return workspace.findByPackage(cleaned);
   },
 
-  isExported(node: Parser.SyntaxNode): boolean {
+  isExported(node: Node): boolean {
     const parent = node.parent;
     if (!parent) return false;
     return parent.type === 'export_statement' || node.type === 'export_statement';
   },
 
-  extractType(node: Parser.SyntaxNode): string | null {
+  extractType(node: Node): string | null {
     const typeAnnotation = node.childForFieldName('type');
     return typeAnnotation?.text ?? null;
   },

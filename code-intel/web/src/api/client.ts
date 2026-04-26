@@ -111,4 +111,48 @@ export class ApiClient {
     if (!res.ok) throw new Error(`List flows failed: ${res.statusText}`);
     return res.json() as Promise<{ flows: { id: string; name: string; steps: unknown }[] }>;
   }
+
+  async listGroups(): Promise<{ name: string; memberCount: number; lastSync: string | null; createdAt: string }[]> {
+    const res = await fetch(`${this.baseUrl}/api/groups`);
+    if (!res.ok) throw new Error(`Failed to list groups: ${res.statusText}`);
+    return res.json() as Promise<{ name: string; memberCount: number; lastSync: string | null; createdAt: string }[]>;
+  }
+
+  async getGroup(name: string): Promise<{ name: string; members: { groupPath: string; registryName: string }[]; lastSync?: string; createdAt: string }> {
+    const res = await fetch(`${this.baseUrl}/api/groups/${encodeURIComponent(name)}`);
+    if (!res.ok) throw new Error(`Group not found: ${res.statusText}`);
+    return res.json() as Promise<{ name: string; members: { groupPath: string; registryName: string }[]; lastSync?: string; createdAt: string }>;
+  }
+
+  async getGroupContracts(name: string): Promise<{ contracts: unknown[]; links: unknown[]; syncedAt: string } | null> {
+    const res = await fetch(`${this.baseUrl}/api/groups/${encodeURIComponent(name)}/contracts`);
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`Failed to get contracts: ${res.statusText}`);
+    return res.json() as Promise<{ contracts: unknown[]; links: unknown[]; syncedAt: string }>;
+  }
+
+  async syncGroup(name: string): Promise<{ contracts: unknown[]; links: unknown[]; syncedAt: string; memberCount: number }> {
+    const res = await fetch(`${this.baseUrl}/api/groups/${encodeURIComponent(name)}/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    if (!res.ok) throw new Error(`Sync failed: ${res.statusText}`);
+    return res.json() as Promise<{ contracts: unknown[]; links: unknown[]; syncedAt: string; memberCount: number }>;
+  }
+
+  async searchGroup(name: string, q: string, limit = 20): Promise<{ perRepo: { repoName: string; groupPath: string; results: SearchResult[] }[]; merged: SearchResult[] }> {
+    const res = await fetch(`${this.baseUrl}/api/groups/${encodeURIComponent(name)}/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ q, limit }),
+    });
+    if (!res.ok) throw new Error(`Group search failed: ${res.statusText}`);
+    return res.json() as Promise<{ perRepo: { repoName: string; groupPath: string; results: SearchResult[] }[]; merged: SearchResult[] }>;
+  }
+
+  async fetchGroupGraph(name: string): Promise<{ nodes: import('@code-intel/shared').CodeNode[]; edges: import('@code-intel/shared').CodeEdge[] }> {
+    const res = await fetch(`${this.baseUrl}/api/groups/${encodeURIComponent(name)}/graph`);
+    if (!res.ok) throw new Error(`Failed to fetch group graph: ${res.statusText}`);
+    return res.json() as Promise<{ nodes: import('@code-intel/shared').CodeNode[]; edges: import('@code-intel/shared').CodeEdge[] }>;
+  }
 }

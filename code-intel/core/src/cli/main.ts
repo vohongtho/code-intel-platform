@@ -31,6 +31,19 @@ import { writeSkillFiles } from './skill-writer.js';
 import { writeContextFiles } from './context-writer.js';
 import { upsertRepo, loadRegistry, removeRepo } from '../storage/repo-registry.js';
 import { DbManager, loadGraphToDB } from '../storage/index.js';
+import {
+  loadGroup,
+  saveGroup,
+  listGroups,
+  deleteGroup,
+  groupExists,
+  addMember,
+  removeMember,
+  saveSyncResult,
+  loadSyncResult,
+} from '../multi-repo/group-registry.js';
+import { syncGroup } from '../multi-repo/group-sync.js';
+import { queryGroup } from '../multi-repo/group-query.js';
 
 const program = new Command();
 
@@ -480,6 +493,259 @@ program
     for (const id of affected) {
       const n = graph.getNode(id);
       if (n) console.log(`  ${n.kind.padEnd(12)} ${n.name.padEnd(30)} ${n.filePath}`);
+    }
+  });
+
+// ─── 11. group ───────────────────────────────────────────────────────────────
+const groupCmd = program
+  .command('group')
+  .description('Manage repository groups (multi-repo / monorepo service tracking)');
+
+// group create <name>
+groupCmd
+  .command('create <name>')
+  .description('Create a repository group')
+  .action((name: string) => {
+    if (groupExists(name)) {
+      console.error(`Error: Group "${name}" already exists.`);
+      process.exit(1);
+    }
+    saveGroup({ name, createdAt: new Date().toISOString(), members: [] });
+    console.log(`✅ Group "${name}" created.`);
+  });
+
+// group add <group> <groupPath> <registryName>
+groupCmd
+  .command('add <group> <groupPath> <registryName>')
+  .description('Add a repo to a group. <groupPath> is a hierarchy path (e.g. hr/hiring/backend); <registryName> is from `code-intel list`')
+  .action((group: string, groupPath: string, registryName: string) => {
+    // Validate the registry entry exists
+    const registry = loadRegistry();
+    const regEntry = registry.find((r) => r.name === registryName);
+    if (!regEntry) {
+      console.error(`Error: Registry entry "${registryName}" not found. Run \`code-intel list\` to see available repos.`);
+      process.exit(1);
+    }
+    if (!groupExists(group)) {
+      console.error(`Error: Group "${group}" does not exist. Create it first with \`code-intel group create ${group}\`.`);
+      process.exit(1);
+    }
+    addMember(group, { groupPath, registryName });
+    console.log(`✅ Added "${registryName}" to group "${group}" at path "${groupPath}".`);
+  });
+
+// group remove <group> <groupPath>
+groupCmd
+  .command('remove <group> <groupPath>')
+  .description('Remove a repo from a group by its hierarchy path')
+  .action((group: string, groupPath: string) => {
+    if (!groupExists(group)) {
+      console.error(`Error: Group "${group}" does not exist.`);
+      process.exit(1);
+    }
+    try {
+      removeMember(group, groupPath);
+      console.log(`✅ Removed member at path "${groupPath}" from group "${group}".`);
+    } catch (err) {
+      console.error(`Error: ${err instanceof Error ? err.message : err}`);
+      process.exit(1);
+    }
+  });
+
+// group list [name]
+groupCmd
+  .command('list [name]')
+  .description('List all groups, or show one group\'s config')
+  .action((name?: string) => {
+    if (name) {
+      const group = loadGroup(name);
+      if (!group) {
+        console.error(`Error: Group "${name}" not found.`);
+        process.exit(1);
+      }
+      console.log(`\nGroup: ${group.name}`);
+      console.log(`Created: ${group.createdAt}`);
+      if (group.lastSync) console.log(`Last sync: ${group.lastSync}`);
+      console.log(`\nMembers (${group.members.length}):`);
+      if (group.members.length === 0) {
+        console.log('  (none — use `code-intel group add` to add repos)');
+      } else {
+        for (const m of group.members) {
+          console.log(`  ${m.groupPath.padEnd(35)} → ${m.registryName}`);
+        }
+      }
+    } else {
+      const groups = listGroups();
+      if (groups.length === 0) {
+        console.log('No groups found. Create one with `code-intel group create <name>`.');
+        return;
+      }
+      console.log(`\nRepository groups (${groups.length}):\n`);
+      for (const g of groups) {
+        const sync = g.lastSync ? `synced ${g.lastSync}` : 'not synced';
+        console.log(`  ${g.name.padEnd(25)} ${g.members.length} member(s)  [${sync}]`);
+      }
+    }
+  });
+
+// group sync <name>
+groupCmd
+  .command('sync <name>')
+  .description('Extract contracts and match across repos/services in a group')
+  .action(async (name: string) => {
+    const group = loadGroup(name);
+    if (!group) {
+      console.error(`Error: Group "${name}" not found.`);
+      process.exit(1);
+    }
+    if (group.members.length === 0) {
+      console.error(`Error: Group "${name}" has no members. Add repos with \`code-intel group add\`.`);
+      process.exit(1);
+    }
+
+    console.log(`\n🔄 Syncing group "${name}" (${group.members.length} member(s))…\n`);
+    const result = await syncGroup(group);
+
+    // Persist sync result and update lastSync timestamp
+    saveSyncResult(result);
+    group.lastSync = result.syncedAt;
+    saveGroup(group);
+
+    console.log(`\n✅ Sync complete:`);
+    console.log(`   Repos synced:  ${result.memberCount}`);
+    console.log(`   Contracts:     ${result.contracts.length}`);
+    console.log(`   Cross-links:   ${result.links.length}`);
+
+    if (result.links.length > 0) {
+      console.log(`\nTop cross-repo links:`);
+      for (const link of result.links.slice(0, 10)) {
+        const conf = (link.confidence * 100).toFixed(0).padStart(3);
+        console.log(`  ${conf}%  ${link.providerRepo} ∷ ${link.providerContract.padEnd(30)} ↔  ${link.consumerRepo} ∷ ${link.consumerContract}`);
+      }
+      if (result.links.length > 10) {
+        console.log(`  … and ${result.links.length - 10} more. Run \`code-intel group contracts ${name}\` for full details.`);
+      }
+    }
+  });
+
+// group contracts <name>
+groupCmd
+  .command('contracts <name>')
+  .description('Inspect extracted contracts and cross-links from the last sync')
+  .option('--kind <kind>', 'Filter by contract kind: export | route | schema | event')
+  .option('--repo <repo>', 'Filter by registry name')
+  .option('--min-confidence <pct>', 'Minimum link confidence 0-100 (default: 0)', '0')
+  .action((name: string, opts: { kind?: string; repo?: string; minConfidence: string }) => {
+    const result = loadSyncResult(name);
+    if (!result) {
+      console.error(`No sync data for group "${name}". Run \`code-intel group sync ${name}\` first.`);
+      process.exit(1);
+    }
+
+    const minConf = parseInt(opts.minConfidence, 10) / 100;
+
+    let contracts = result.contracts;
+    if (opts.kind) contracts = contracts.filter((c) => c.kind === opts.kind);
+    if (opts.repo) contracts = contracts.filter((c) => c.repoName === opts.repo);
+
+    let links = result.links.filter((l) => l.confidence >= minConf);
+    if (opts.repo) links = links.filter((l) => l.providerRepo === opts.repo || l.consumerRepo === opts.repo);
+
+    console.log(`\n📦 Group "${name}" — synced ${result.syncedAt}\n`);
+
+    console.log(`Contracts (${contracts.length}):`);
+    for (const c of contracts) {
+      const sig = c.signature ? `  ${c.signature.slice(0, 60)}` : '';
+      console.log(`  [${c.kind.padEnd(6)}] ${c.repoName.padEnd(20)} ${c.name.padEnd(35)}${sig}`);
+    }
+
+    console.log(`\nCross-repo links (${links.length}):`);
+    if (links.length === 0) {
+      console.log('  (none)');
+    } else {
+      for (const link of links) {
+        const conf = (link.confidence * 100).toFixed(0).padStart(3);
+        console.log(`  ${conf}%  [${link.matchKind}]  ${link.providerRepo} ∷ ${link.providerContract.padEnd(30)} ↔  ${link.consumerRepo} ∷ ${link.consumerContract}`);
+      }
+    }
+  });
+
+// group query <name> <q>
+groupCmd
+  .command('query <name> <q>')
+  .description('Search execution flows across all repos in a group')
+  .option('-l, --limit <limit>', 'Max results per repo', '10')
+  .action(async (name: string, q: string, opts: { limit: string }) => {
+    const group = loadGroup(name);
+    if (!group) {
+      console.error(`Error: Group "${name}" not found.`);
+      process.exit(1);
+    }
+
+    console.log(`\n🔍 Querying group "${name}" for: "${q}"\n`);
+    const limit = parseInt(opts.limit, 10);
+    const { perRepo, merged } = await queryGroup(group, q, limit);
+
+    if (merged.length === 0) {
+      console.log('No results found across any repo in this group.');
+      return;
+    }
+
+    console.log(`Merged results (${merged.length} total, ranked by Reciprocal Rank Fusion):\n`);
+    for (const r of merged) {
+      console.log(`  ${r.kind.padEnd(12)} ${r.name.padEnd(30)} ${r.filePath}`);
+      if (r.snippet) console.log(`             ${r.snippet.slice(0, 100)}`);
+    }
+
+    console.log(`\nPer-repo breakdown:`);
+    for (const rr of perRepo) {
+      console.log(`  ${rr.repoName} (${rr.groupPath}): ${rr.results.length} result(s)`);
+    }
+  });
+
+// group status <name>
+groupCmd
+  .command('status <name>')
+  .description('Check staleness of repos in a group')
+  .action((name: string) => {
+    const group = loadGroup(name);
+    if (!group) {
+      console.error(`Error: Group "${name}" not found.`);
+      process.exit(1);
+    }
+
+    const registry = loadRegistry();
+    const now = Date.now();
+
+    console.log(`\n📊 Group "${name}" status\n`);
+    if (group.lastSync) {
+      const age = Math.round((now - new Date(group.lastSync).getTime()) / 60000);
+      console.log(`Last sync: ${group.lastSync} (${age} min ago)`);
+    } else {
+      console.log('Last sync: never  (run `code-intel group sync ' + name + '`)');
+    }
+    console.log(`\nMembers (${group.members.length}):\n`);
+
+    for (const m of group.members) {
+      const regEntry = registry.find((r) => r.name === m.registryName);
+      if (!regEntry) {
+        console.log(`  ✗ ${m.groupPath.padEnd(35)} [${m.registryName}]  — NOT IN REGISTRY`);
+        continue;
+      }
+
+      const metaPath = path.join(regEntry.path, '.code-intel', 'meta.json');
+      let indexedAt = regEntry.indexedAt;
+      try {
+        const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as { indexedAt: string; stats: { nodes: number; edges: number; files: number } };
+        indexedAt = meta.indexedAt;
+        const ageMin = Math.round((now - new Date(indexedAt).getTime()) / 60000);
+        const stale = ageMin > 1440 ? ' ⚠ STALE (>24h)' : '';
+        console.log(`  ✓ ${m.groupPath.padEnd(35)} [${m.registryName}]  indexed ${indexedAt} (${ageMin} min ago)${stale}`);
+        console.log(`    ${regEntry.path}`);
+        console.log(`    ${meta.stats.nodes} nodes, ${meta.stats.edges} edges, ${meta.stats.files} files`);
+      } catch {
+        console.log(`  ✗ ${m.groupPath.padEnd(35)} [${m.registryName}]  — NOT INDEXED  (run: code-intel analyze ${regEntry.path})`);
+      }
     }
   });
 

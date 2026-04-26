@@ -1,5 +1,5 @@
 import { Language } from '../../shared/index.js';
-import type Parser from 'web-tree-sitter';
+import type { Node } from 'web-tree-sitter';
 import type { LanguageModule, FileSet } from '../types.js';
 import { cQueries } from '../../parsing/queries/c.js';
 import path from 'node:path';
@@ -17,11 +17,11 @@ export const cModule: LanguageModule = {
     return workspace.resolve(fromDir, cleaned);
   },
 
-  isExported(_node: Parser.SyntaxNode): boolean {
+  isExported(_node: Node): boolean {
     return true; // C: all non-static symbols are visible
   },
 
-  extractType(node: Parser.SyntaxNode): string | null {
+  extractType(node: Node): string | null {
     const typeNode = node.childForFieldName('type');
     return typeNode?.text ?? null;
   },

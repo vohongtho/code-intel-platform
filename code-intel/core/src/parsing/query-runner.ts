@@ -1,17 +1,17 @@
-import Parser from 'web-tree-sitter';
+import { Node, Tree, Language, Query } from 'web-tree-sitter';
 
 export interface QueryCapture {
   name: string;
-  node: Parser.SyntaxNode;
+  node: Node;
   text: string;
 }
 
 export function runQuery(
-  tree: Parser.Tree,
-  language: Parser.Language,
+  tree: Tree,
+  language: Language,
   querySource: string,
 ): QueryCapture[] {
-  const query = language.query(querySource);
+  const query = new Query(language, querySource);
   const matches = query.matches(tree.rootNode);
   const captures: QueryCapture[] = [];
 

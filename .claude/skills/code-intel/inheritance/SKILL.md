@@ -38,10 +38,10 @@ Sorted by call graph degree (changing these has the highest blast radius):
 |--------|------|-----:|------:|------|
 | `computeMRO` | function | 1 | 3 | `inheritance/mro-walker.ts` |
 | `depthFirstMRO` | function | 2 | 1 | `inheritance/mro-walker.ts` |
+| `linearize` | function | 0 | 2 | `inheritance/mro-walker.ts` |
 | `mixinAwareMRO` | function | 1 | 1 | `inheritance/mro-walker.ts` |
 | `buildHeritageEdges` | function | 0 | 1 | `inheritance/heritage-builder.ts` |
 | `c3Linearize` | function | 1 | 0 | `inheritance/mro-walker.ts` |
-| `linearize` | function | 0 | 1 | `inheritance/mro-walker.ts` |
 | `detectOverrides` | function | 0 | 1 | `inheritance/override-detector.ts` |
 | `HeritageInfo` | interface | 0 | 0 | `inheritance/heritage-builder.ts` |
 

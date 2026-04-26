@@ -46,5 +46,9 @@ export { createApp, startHttpServer } from './http/index.js';
 export { DbManager, loadGraphToDB, upsertRepo, loadRegistry, removeRepo, saveMetadata, loadMetadata, getDbPath } from './storage/index.js';
 export type { RepoEntry, IndexMetadata } from './storage/index.js';
 
-export { listGroups, getGroup, createGroup, deleteGroup, mergeSearchResults } from './multi-repo/index.js';
-export type { RepoGroup } from './multi-repo/index.js';
+export { listGroups, loadGroup, saveGroup, deleteGroup, groupExists, addMember, removeMember, saveSyncResult, loadSyncResult } from './multi-repo/index.js';
+export { syncGroup } from './multi-repo/index.js';
+export { queryGroup } from './multi-repo/index.js';
+export { mergeSearchResults } from './multi-repo/index.js';
+export type { RepoGroup, GroupMember, Contract, ContractLink, GroupSyncResult } from './multi-repo/index.js';
+export type { GroupQueryResult } from './multi-repo/index.js';

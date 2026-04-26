@@ -26,7 +26,7 @@ Load this skill when:
 
 Start exploration here — exported symbols with no external callers:
 
-- **`AppProvider`** `(function)` → `code-intel/web/src/state/app-context.tsx:100`
+- **`AppProvider`** `(function)` → `code-intel/web/src/state/app-context.tsx:114`
 
 ## Hot Symbols
 
@@ -34,8 +34,8 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `useAppState` | function | 12 | 0 | `state/app-context.tsx` |
-| `reducer` | function | 0 | 1 | `state/app-context.tsx` |
+| `useAppState` | function | 13 | 0 | `state/app-context.tsx` |
+| `reducer` | function | 0 | 2 | `state/app-context.tsx` |
 | `AppProvider` | function | 0 | 0 | `state/app-context.tsx` |
 | `SearchResult` | interface | 0 | 0 | `state/types.ts` |
 | `ChatCitation` | interface | 0 | 0 | `state/types.ts` |

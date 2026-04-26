@@ -1,11 +1,11 @@
 ---
 name: eval
-description: "Covers the **eval** subsystem of code-intel-platform. 16 symbols across 4 files. Key symbols: `check`, `blockCount`, `baselineAnswer`. Internal call density: 1 calls/symbol."
+description: "Covers the **eval** subsystem of code-intel-platform. 25 symbols across 6 files. Key symbols: `check`, `blockCount`, `baselineAnswer`. Internal call density: 0.9 calls/symbol."
 ---
 
 # eval
 
-> **16 symbols** | **4 files** | path: `eval/` | call density: 1/sym
+> **25 symbols** | **6 files** | path: `eval/` | call density: 0.9/sym
 
 ## When to Use
 
@@ -21,8 +21,10 @@ Load this skill when:
 |------|---------|-------|
 | `eval/run-agent-bench.mjs` | `runCLI`, `grepFile`, `readFile`, `score` +(3) | internal |
 | `eval/run-eval.mjs` | `pass`, `fail`, `run`, `check` +(1) | internal |
+| `eval/run-eval-langs.mjs` | `runCLI`, `pass`, `fail`, `check` | internal |
+| `eval/run-mcp-bench.mjs` | `McpClient`, `pass`, `fail`, `bench` | internal |
 | `eval/run-eval-multi.mjs` | `pass`, `fail`, `run` | internal |
-| `eval/summarize.mjs` | `col` | internal |
+| `eval/summarize.mjs` | `col`, `col2` | internal |
 
 ## Hot Symbols
 
@@ -34,14 +36,14 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | `blockCount` | function | 0 | 4 | `eval/run-eval.mjs` |
 | `baselineAnswer` | function | 1 | 2 | `eval/run-agent-bench.mjs` |
 | `col` | function | 0 | 3 | `eval/run-agent-bench.mjs` |
+| `check` | function | 0 | 3 | `eval/run-eval-langs.mjs` |
+| `bench` | function | 0 | 3 | `eval/run-mcp-bench.mjs` |
 | `runCLI` | function | 2 | 0 | `eval/run-agent-bench.mjs` |
 | `readFile` | function | 2 | 0 | `eval/run-agent-bench.mjs` |
 | `score` | function | 1 | 1 | `eval/run-agent-bench.mjs` |
 | `enhancedAnswer` | function | 1 | 1 | `eval/run-agent-bench.mjs` |
 | `run` | function | 0 | 2 | `eval/run-eval-multi.mjs` |
 | `pass` | function | 2 | 0 | `eval/run-eval.mjs` |
-| `fail` | function | 2 | 0 | `eval/run-eval.mjs` |
-| `run` | function | 2 | 0 | `eval/run-eval.mjs` |
 
 ## Impact Guidance
 

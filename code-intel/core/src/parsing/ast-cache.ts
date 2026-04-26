@@ -1,16 +1,16 @@
-import Parser from 'web-tree-sitter';
+import { Tree } from 'web-tree-sitter';
 
 const DEFAULT_MAX = 500;
 
 export class AstCache {
-  private cache = new Map<string, { tree: Parser.Tree; accessedAt: number }>();
+  private cache = new Map<string, { tree: Tree; accessedAt: number }>();
   private maxEntries: number;
 
   constructor(maxEntries = DEFAULT_MAX) {
     this.maxEntries = maxEntries;
   }
 
-  get(filePath: string): Parser.Tree | undefined {
+  get(filePath: string): Tree | undefined {
     const entry = this.cache.get(filePath);
     if (entry) {
       entry.accessedAt = Date.now();
@@ -19,7 +19,7 @@ export class AstCache {
     return undefined;
   }
 
-  set(filePath: string, tree: Parser.Tree): void {
+  set(filePath: string, tree: Tree): void {
     if (this.cache.size >= this.maxEntries) {
       this.evictLRU();
     }

@@ -1,11 +1,11 @@
 ---
 name: panels
-description: "Covers the **panels** subsystem of code-intel-platform. 29 symbols across 5 files. Key symbols: `NodeDetail`, `SearchBar`, `SidebarChat`. Internal call density: 0.3 calls/symbol."
+description: "Covers the **panels** subsystem of code-intel-platform. 30 symbols across 5 files. Key symbols: `NodeDetail`, `SearchBar`, `SidebarChat`. Internal call density: 0.3 calls/symbol."
 ---
 
 # panels
 
-> **29 symbols** | **5 files** | path: `code-intel/web/src/components/panels/` | call density: 0.3/sym
+> **30 symbols** | **5 files** | path: `code-intel/web/src/components/panels/` | call density: 0.3/sym
 
 ## When to Use
 
@@ -21,7 +21,7 @@ Load this skill when:
 |------|---------|-------|
 | `code-intel/web/src/components/panels/SidebarChat.tsx` | `SidebarChat`, `send`, `onCitationClick`, `MessageBubble` +(8) | 1 exported |
 | `code-intel/web/src/components/panels/SidebarFiles.tsx` | `TreeNode`, `buildTree`, `countLeaves`, `TreeNodeViewProps` +(4) | 1 exported |
-| `code-intel/web/src/components/panels/NodeDetail.tsx` | `Props`, `NodeDetail`, `jumpTo`, `Field` +(1) | 1 exported |
+| `code-intel/web/src/components/panels/NodeDetail.tsx` | `Props`, `NodeDetail`, `loadImpact`, `jumpTo` +(2) | 1 exported |
 | `code-intel/web/src/components/panels/SearchBar.tsx` | `SearchBar`, `handleSearch` | 1 exported |
 | `code-intel/web/src/components/panels/SidebarFilters.tsx` | `SidebarFilters`, `Section` | 1 exported |
 
@@ -29,7 +29,7 @@ Load this skill when:
 
 Start exploration here — exported symbols with no external callers:
 
-- **`NodeDetail`** `(function)` → `code-intel/web/src/components/panels/NodeDetail.tsx:15`
+- **`NodeDetail`** `(function)` → `code-intel/web/src/components/panels/NodeDetail.tsx:14`
 - **`SearchBar`** `(function)` → `code-intel/web/src/components/panels/SearchBar.tsx:5`
 - **`SidebarChat`** `(function)` → `code-intel/web/src/components/panels/SidebarChat.tsx:13`
 - **`SidebarFiles`** `(function)` → `code-intel/web/src/components/panels/SidebarFiles.tsx:182`
@@ -47,12 +47,12 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | `onCitationClick` | function | 1 | 1 | `panels/SidebarChat.tsx` |
 | `TreeNodeView` | function | 0 | 2 | `panels/SidebarFiles.tsx` |
 | `SidebarFiles` | function | 0 | 2 | `panels/SidebarFiles.tsx` |
+| `loadImpact` | function | 0 | 1 | `panels/NodeDetail.tsx` |
 | `SearchBar` | function | 0 | 1 | `panels/SearchBar.tsx` |
 | `handleSearch` | function | 0 | 1 | `panels/SearchBar.tsx` |
 | `SidebarChat` | function | 0 | 1 | `panels/SidebarChat.tsx` |
 | `RichText` | function | 0 | 1 | `panels/SidebarChat.tsx` |
 | `renderLine` | function | 1 | 0 | `panels/SidebarChat.tsx` |
-| `Tag` | function | 0 | 1 | `panels/SidebarChat.tsx` |
 
 ## Impact Guidance
 

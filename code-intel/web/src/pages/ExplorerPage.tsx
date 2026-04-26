@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAppState } from '../state/app-context';
+import { ApiClient } from '../api/client';
 import { GraphView } from '../components/graph/GraphView';
 import { NodeDetail } from '../components/panels/NodeDetail';
 import { SidebarChat } from '../components/panels/SidebarChat';
@@ -10,7 +11,7 @@ import { Header } from '../components/shared/Header';
 import { KeyboardShortcutsModal } from '../components/shared/KeyboardShortcutsModal';
 import { NODE_COLORS } from '../graph/colors';
 
-type SidebarTab = 'explorer' | 'filters' | 'files';
+type SidebarTab = 'explorer' | 'filters' | 'files' | 'group';
 
 export function ExplorerPage() {
   const { state, dispatch } = useAppState();
@@ -42,24 +43,27 @@ export function ExplorerPage() {
         {/* Left Sidebar */}
         <div className="w-72 bg-[#080b14] border-r border-gray-800/50 flex flex-col">
           <div className="flex border-b border-gray-800/50">
-            {(['explorer', 'filters', 'files'] as SidebarTab[]).map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`flex-1 px-3 py-2.5 text-xs font-semibold capitalize tracking-wide transition ${
-                  activeTab === tab
-                    ? 'text-cyan-400 border-b-2 border-cyan-500 bg-cyan-500/5'
-                    : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800/30'
-                }`}
-              >
-                {tab}
-              </button>
-            ))}
+            {(['explorer', 'filters', 'files'] as SidebarTab[])
+              .concat(state.mode === 'group' ? ['group' as SidebarTab] : [])
+              .map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`flex-1 px-3 py-2.5 text-xs font-semibold capitalize tracking-wide transition ${
+                    activeTab === tab
+                      ? 'text-cyan-400 border-b-2 border-cyan-500 bg-cyan-500/5'
+                      : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800/30'
+                  }`}
+                >
+                  {tab === 'group' ? '⬢ group' : tab}
+                </button>
+              ))}
           </div>
           <div className="flex-1 overflow-hidden">
             {activeTab === 'explorer' && <ExplorerTab />}
             {activeTab === 'filters' && <SidebarFilters />}
             {activeTab === 'files' && <SidebarFiles />}
+            {activeTab === 'group' && state.mode === 'group' && <GroupTab />}
           </div>
         </div>
 
@@ -192,6 +196,132 @@ function ExplorerTab() {
           Use <span className="text-gray-400">Filters</span> to show/hide node types.
         </p>
       </div>
+    </div>
+  );
+}
+
+function GroupTab() {
+  const { state, dispatch } = useAppState();
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState('');
+
+  const handleSyncFull = async () => {
+    setSyncing(true);
+    setSyncError('');
+    try {
+      const client = new ApiClient(state.serverUrl);
+      const result = await client.syncGroup(state.groupName);
+      dispatch({
+        type: 'SET_GROUP_CONTRACTS',
+        contracts: result.contracts as never,
+        links: result.links as never,
+        syncedAt: result.syncedAt,
+      });
+    } catch (err) {
+      setSyncError(err instanceof Error ? err.message : 'Sync failed');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  return (
+    <div className="overflow-y-auto h-full text-sm">
+      {/* Group header */}
+      <div className="p-3 border-b border-gray-800/50">
+        <div className="flex items-center justify-between mb-1">
+          <h3 className="text-[10px] font-bold tracking-wider text-indigo-400/80 uppercase">
+            ⬢ {state.groupName}
+          </h3>
+          <button
+            onClick={handleSyncFull}
+            disabled={syncing}
+            className="text-[10px] text-indigo-400 hover:text-indigo-300 border border-indigo-800/50 hover:border-indigo-600 rounded px-1.5 py-0.5 transition disabled:opacity-50"
+          >
+            {syncing ? '⟳ syncing…' : '↻ sync'}
+          </button>
+        </div>
+        {syncError && <p className="text-red-400 text-[10px] mt-1">{syncError}</p>}
+        {state.groupSyncedAt && (
+          <p className="text-[10px] text-gray-600">
+            Last sync: {new Date(state.groupSyncedAt).toLocaleString()}
+          </p>
+        )}
+      </div>
+
+      {/* Members */}
+      <div className="p-3 border-b border-gray-800/50">
+        <h3 className="text-[10px] font-bold tracking-wider text-gray-500 uppercase mb-2">
+          Members ({state.groupMembers.length})
+        </h3>
+        <div className="space-y-1">
+          {state.groupMembers.map((m) => (
+            <div key={m.groupPath} className="bg-gray-900/40 rounded-md px-2 py-1.5 border border-gray-800/30">
+              <div className="text-[10px] text-gray-500 font-mono truncate">{m.groupPath}</div>
+              <div className="text-xs text-cyan-400 font-medium truncate">{m.registryName}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Contracts summary */}
+      {state.groupContracts.length > 0 && (
+        <div className="p-3 border-b border-gray-800/50">
+          <h3 className="text-[10px] font-bold tracking-wider text-gray-500 uppercase mb-2">
+            Contracts ({state.groupContracts.length})
+          </h3>
+          <div className="space-y-0.5 max-h-40 overflow-y-auto">
+            {state.groupContracts.slice(0, 30).map((c, i) => (
+              <div key={i} className="flex items-center gap-1.5 py-0.5">
+                <span className={`text-[9px] px-1 rounded font-mono ${
+                  c.kind === 'export' ? 'bg-cyan-900/40 text-cyan-400' :
+                  c.kind === 'route' ? 'bg-green-900/40 text-green-400' :
+                  c.kind === 'event' ? 'bg-purple-900/40 text-purple-400' :
+                  'bg-yellow-900/40 text-yellow-400'
+                }`}>{c.kind}</span>
+                <span className="text-[10px] text-gray-300 truncate">{c.name}</span>
+                <span className="text-[10px] text-gray-600 ml-auto shrink-0">{c.repoName}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Cross-links */}
+      {state.groupLinks.length > 0 && (
+        <div className="p-3">
+          <h3 className="text-[10px] font-bold tracking-wider text-gray-500 uppercase mb-2">
+            Cross-repo Links ({state.groupLinks.length})
+          </h3>
+          <div className="space-y-1 max-h-48 overflow-y-auto">
+            {state.groupLinks
+              .filter((l) => l.confidence >= 0.7)
+              .slice(0, 20)
+              .map((l, i) => (
+                <div key={i} className="bg-gray-900/40 rounded-md px-2 py-1.5 border border-gray-800/30 text-[10px]">
+                  <div className="flex items-center gap-1 mb-0.5">
+                    <span className="text-green-400 font-mono">{l.providerRepo}</span>
+                    <span className="text-gray-600">∷</span>
+                    <span className="text-white truncate">{l.providerContract}</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-gray-600 pl-3">↔</span>
+                    <span className="text-indigo-400 font-mono">{l.consumerRepo}</span>
+                    <span className="text-gray-600">∷</span>
+                    <span className="text-white truncate">{l.consumerContract}</span>
+                    <span className="ml-auto text-gray-600">{(l.confidence * 100).toFixed(0)}%</span>
+                  </div>
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
+
+      {state.groupContracts.length === 0 && state.groupMembers.length > 0 && (
+        <div className="p-3 text-center">
+          <p className="text-[10px] text-gray-600">No contract data yet.</p>
+          <p className="text-[10px] text-gray-600 mt-1">Click ↻ sync to extract contracts.</p>
+        </div>
+      )}
     </div>
   );
 }

@@ -39,18 +39,18 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
+| `loadRegistry` | function | 7 | 0 | `storage/repo-registry.ts` |
+| `DbManager` | class | 5 | 0 | `storage/db-manager.ts` |
 | `loadGraphToDB` | function | 1 | 4 | `storage/graph-loader.ts` |
-| `DbManager` | class | 3 | 0 | `storage/db-manager.ts` |
-| `loadRegistry` | function | 3 | 0 | `storage/repo-registry.ts` |
 | `upsertRepo` | function | 1 | 2 | `storage/repo-registry.ts` |
 | `removeRepo` | function | 1 | 2 | `storage/repo-registry.ts` |
 | `csvRow` | function | 2 | 0 | `storage/csv-writer.ts` |
 | `buildNodeProps` | function | 1 | 1 | `storage/graph-loader.ts` |
 | `escCypher` | function | 2 | 0 | `storage/graph-loader.ts` |
 | `getDbPath` | function | 2 | 0 | `storage/metadata.ts` |
+| `getVectorDbPath` | function | 2 | 0 | `storage/metadata.ts` |
 | `saveRegistry` | function | 2 | 0 | `storage/repo-registry.ts` |
 | `writeNodeCSVs` | function | 0 | 1 | `storage/csv-writer.ts` |
-| `writeEdgeCSV` | function | 0 | 1 | `storage/csv-writer.ts` |
 
 ## Impact Guidance
 
@@ -63,7 +63,7 @@ Before modifying any symbol in this area:
 
 ```bash
 # Inspect most-connected symbol
-code-intel inspect loadGraphToDB
+code-intel inspect loadRegistry
 # Blast radius for entry point
 code-intel impact writeNodeCSVs
 # Search this area

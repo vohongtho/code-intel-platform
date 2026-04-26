@@ -1,5 +1,5 @@
 import { Language } from '../../shared/index.js';
-import type Parser from 'web-tree-sitter';
+import type { Node } from 'web-tree-sitter';
 import type { LanguageModule, FileSet } from '../types.js';
 import { typescriptQueries } from '../../parsing/queries/typescript.js';
 import path from 'node:path';
@@ -21,13 +21,13 @@ export const dartModule: LanguageModule = {
     return workspace.resolve(fromDir, cleaned);
   },
 
-  isExported(node: Parser.SyntaxNode): boolean {
+  isExported(node: Node): boolean {
     const name = node.childForFieldName('name');
     if (!name) return true;
     return !name.text.startsWith('_');
   },
 
-  extractType(node: Parser.SyntaxNode): string | null {
+  extractType(node: Node): string | null {
     const typeNode = node.childForFieldName('type');
     return typeNode?.text ?? null;
   },

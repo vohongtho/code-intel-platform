@@ -1,5 +1,5 @@
 import { Language } from '../../shared/index.js';
-import type Parser from 'web-tree-sitter';
+import type { Node } from 'web-tree-sitter';
 import type { LanguageModule, FileSet } from '../types.js';
 import { rustQueries } from '../../parsing/queries/rust.js';
 
@@ -17,11 +17,11 @@ export const rustModule: LanguageModule = {
     return workspace.findByPackage(filePath);
   },
 
-  isExported(node: Parser.SyntaxNode): boolean {
+  isExported(node: Node): boolean {
     return node.text.startsWith('pub ') || node.text.startsWith('pub(');
   },
 
-  extractType(node: Parser.SyntaxNode): string | null {
+  extractType(node: Node): string | null {
     const returnType = node.childForFieldName('return_type');
     return returnType?.text ?? null;
   },
