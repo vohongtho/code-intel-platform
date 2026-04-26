@@ -1,0 +1,143 @@
+{
+  "fixture": "simple-ts",
+  "tasks": 6,
+  "baseline": {
+    "avgAccuracy": 92,
+    "totalSteps": 12,
+    "totalMs": 39,
+    "avgChars": 1620
+  },
+  "enhanced": {
+    "avgAccuracy": 100,
+    "totalSteps": 6,
+    "totalMs": 7161,
+    "avgChars": 189
+  },
+  "delta": {
+    "accuracyPp": 8,
+    "stepsReductionPct": 50,
+    "charsReductionPct": 88
+  },
+  "rows": [
+    {
+      "task": "find-callers",
+      "category": "callers",
+      "base": {
+        "hits": 1,
+        "total": 1,
+        "pct": 100,
+        "steps": 2,
+        "ms": 6,
+        "chars": 1577
+      },
+      "enhanced": {
+        "hits": 1,
+        "total": 1,
+        "pct": 100,
+        "steps": 1,
+        "ms": 1265,
+        "chars": 167
+      }
+    },
+    {
+      "task": "blast-radius",
+      "category": "impact",
+      "base": {
+        "hits": 1,
+        "total": 1,
+        "pct": 100,
+        "steps": 2,
+        "ms": 9,
+        "chars": 1418
+      },
+      "enhanced": {
+        "hits": 1,
+        "total": 1,
+        "pct": 100,
+        "steps": 1,
+        "ms": 1129,
+        "chars": 207
+      }
+    },
+    {
+      "task": "find-class",
+      "category": "search",
+      "base": {
+        "hits": 1,
+        "total": 1,
+        "pct": 100,
+        "steps": 2,
+        "ms": 9,
+        "chars": 2079
+      },
+      "enhanced": {
+        "hits": 1,
+        "total": 1,
+        "pct": 100,
+        "steps": 1,
+        "ms": 1354,
+        "chars": 305
+      }
+    },
+    {
+      "task": "inspect-add",
+      "category": "inspect",
+      "base": {
+        "hits": 1,
+        "total": 2,
+        "pct": 50,
+        "steps": 2,
+        "ms": 5,
+        "chars": 1418
+      },
+      "enhanced": {
+        "hits": 2,
+        "total": 2,
+        "pct": 100,
+        "steps": 1,
+        "ms": 1201,
+        "chars": 96
+      }
+    },
+    {
+      "task": "impact-chain",
+      "category": "impact",
+      "base": {
+        "hits": 1,
+        "total": 1,
+        "pct": 100,
+        "steps": 2,
+        "ms": 4,
+        "chars": 1438
+      },
+      "enhanced": {
+        "hits": 1,
+        "total": 1,
+        "pct": 100,
+        "steps": 1,
+        "ms": 1059,
+        "chars": 212
+      }
+    },
+    {
+      "task": "search-function",
+      "category": "search",
+      "base": {
+        "hits": 2,
+        "total": 2,
+        "pct": 100,
+        "steps": 2,
+        "ms": 6,
+        "chars": 1789
+      },
+      "enhanced": {
+        "hits": 2,
+        "total": 2,
+        "pct": 100,
+        "steps": 1,
+        "ms": 1153,
+        "chars": 145
+      }
+    }
+  ]
+}

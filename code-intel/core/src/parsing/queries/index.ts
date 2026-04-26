@@ -1,0 +1,12 @@
+export { typescriptQueries } from './typescript.js';
+export { pythonQueries } from './python.js';
+export { javaQueries } from './java.js';
+export { goQueries } from './go.js';
+export { cQueries } from './c.js';
+export { cppQueries } from './cpp.js';
+export { csharpQueries } from './csharp.js';
+export { rustQueries } from './rust.js';
+export { phpQueries } from './php.js';
+export { kotlinQueries } from './kotlin.js';
+export { rubyQueries } from './ruby.js';
+export { swiftQueries } from './swift.js';

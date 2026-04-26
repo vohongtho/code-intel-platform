@@ -1,0 +1,242 @@
+{
+  "fixture": "go+rust+java",
+  "score": 100,
+  "passed": 39,
+  "total": 39,
+  "results": [
+    {
+      "lang": "Go",
+      "label": "analyze exits 0",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "lang": "Go",
+      "label": "nodes ≥ 6",
+      "pass": true,
+      "note": "12"
+    },
+    {
+      "lang": "Go",
+      "label": "edges ≥ 2",
+      "pass": true,
+      "note": "23"
+    },
+    {
+      "lang": "Go",
+      "label": "search: UserRepository",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "lang": "Go",
+      "label": "search: ValidateEmail",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "lang": "Go",
+      "label": "search: FormatUser",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "lang": "Go",
+      "label": "impact: NewUserRepository ≥ 1",
+      "pass": true,
+      "note": "2"
+    },
+    {
+      "lang": "Go",
+      "label": "skills dir created",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "lang": "Go",
+      "label": "AGENTS.md created",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "lang": "Go",
+      "label": "AGENTS.md has code-intel block",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "lang": "Go",
+      "label": "CLAUDE.md created",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "lang": "Go",
+      "label": "CLAUDE.md has code-intel block",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "lang": "Go",
+      "label": "clean removes .code-intel/",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "lang": "Rust",
+      "label": "analyze exits 0",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "lang": "Rust",
+      "label": "nodes ≥ 5",
+      "pass": true,
+      "note": "15"
+    },
+    {
+      "lang": "Rust",
+      "label": "edges ≥ 1",
+      "pass": true,
+      "note": "25"
+    },
+    {
+      "lang": "Rust",
+      "label": "search: UserRepository",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "lang": "Rust",
+      "label": "search: validate_email",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "lang": "Rust",
+      "label": "search: generate_token",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "lang": "Rust",
+      "label": "impact: internal_hash ≥ 1",
+      "pass": true,
+      "note": "2"
+    },
+    {
+      "lang": "Rust",
+      "label": "skills dir created",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "lang": "Rust",
+      "label": "AGENTS.md created",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "lang": "Rust",
+      "label": "AGENTS.md has code-intel block",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "lang": "Rust",
+      "label": "CLAUDE.md created",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "lang": "Rust",
+      "label": "CLAUDE.md has code-intel block",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "lang": "Rust",
+      "label": "clean removes .code-intel/",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "lang": "Java",
+      "label": "analyze exits 0",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "lang": "Java",
+      "label": "nodes ≥ 5",
+      "pass": true,
+      "note": "15"
+    },
+    {
+      "lang": "Java",
+      "label": "edges ≥ 1",
+      "pass": true,
+      "note": "30"
+    },
+    {
+      "lang": "Java",
+      "label": "search: UserRepository",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "lang": "Java",
+      "label": "search: User",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "lang": "Java",
+      "label": "search: EmailValidator",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "lang": "Java",
+      "label": "impact: User ≥ 1",
+      "pass": true,
+      "note": "3"
+    },
+    {
+      "lang": "Java",
+      "label": "skills dir created",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "lang": "Java",
+      "label": "AGENTS.md created",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "lang": "Java",
+      "label": "AGENTS.md has code-intel block",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "lang": "Java",
+      "label": "CLAUDE.md created",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "lang": "Java",
+      "label": "CLAUDE.md has code-intel block",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "lang": "Java",
+      "label": "clean removes .code-intel/",
+      "pass": true,
+      "note": ""
+    }
+  ]
+}

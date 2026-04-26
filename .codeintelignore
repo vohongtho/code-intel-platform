@@ -1,0 +1,9 @@
+# .codeintelignore — directories to exclude from code-intel analysis
+# One directory name per line. These are matched against directory names (not full paths).
+# Use this to exclude large reference codebases, vendored code, or generated directories.
+
+# Reference code (not part of this project)
+ref-use
+
+# Screenshots and assets
+screenshots

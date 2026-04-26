@@ -1,0 +1,40 @@
+{
+  "name": "code-intel-shared",
+  "version": "0.1.0",
+  "description": "Shared types for the Code Intelligence Platform (NodeKind, EdgeKind, CodeNode, CodeEdge, Language)",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "code-intelligence",
+    "knowledge-graph",
+    "static-analysis",
+    "types",
+    "ast"
+  ],
+  "homepage": "https://github.com/vohongtho/code-intel-platform",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vohongtho/code-intel-platform"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "prepublishOnly": "npm run build",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  }
+}

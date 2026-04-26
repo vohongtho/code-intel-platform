@@ -1,0 +1,143 @@
+{
+  "fixture": "simple-ts",
+  "tasks": 6,
+  "baseline": {
+    "avgAccuracy": 100,
+    "totalSteps": 12,
+    "totalMs": 492,
+    "avgChars": 1115
+  },
+  "enhanced": {
+    "avgAccuracy": 17,
+    "totalSteps": 6,
+    "totalMs": 10104,
+    "avgChars": 95
+  },
+  "delta": {
+    "accuracyPp": -83,
+    "stepsReductionPct": 50,
+    "charsReductionPct": 91
+  },
+  "rows": [
+    {
+      "task": "find-callers",
+      "category": "callers",
+      "base": {
+        "hits": 1,
+        "total": 1,
+        "pct": 100,
+        "steps": 2,
+        "ms": 7,
+        "chars": 1418
+      },
+      "enhanced": {
+        "hits": 0,
+        "total": 1,
+        "pct": 0,
+        "steps": 1,
+        "ms": 2317,
+        "chars": 96
+      }
+    },
+    {
+      "task": "blast-radius",
+      "category": "impact",
+      "base": {
+        "hits": 1,
+        "total": 1,
+        "pct": 100,
+        "steps": 2,
+        "ms": 8,
+        "chars": 1418
+      },
+      "enhanced": {
+        "hits": 1,
+        "total": 1,
+        "pct": 100,
+        "steps": 1,
+        "ms": 1727,
+        "chars": 207
+      }
+    },
+    {
+      "task": "exported-symbols",
+      "category": "search",
+      "base": {
+        "hits": 4,
+        "total": 4,
+        "pct": 100,
+        "steps": 2,
+        "ms": 206,
+        "chars": 806
+      },
+      "enhanced": {
+        "hits": 0,
+        "total": 4,
+        "pct": 0,
+        "steps": 1,
+        "ms": 1783,
+        "chars": 18
+      }
+    },
+    {
+      "task": "class-methods",
+      "category": "inspect",
+      "base": {
+        "hits": 3,
+        "total": 3,
+        "pct": 100,
+        "steps": 2,
+        "ms": 141,
+        "chars": 806
+      },
+      "enhanced": {
+        "hits": 0,
+        "total": 3,
+        "pct": 0,
+        "steps": 1,
+        "ms": 1298,
+        "chars": 21
+      }
+    },
+    {
+      "task": "find-entry-point",
+      "category": "entry-points",
+      "base": {
+        "hits": 3,
+        "total": 3,
+        "pct": 100,
+        "steps": 2,
+        "ms": 123,
+        "chars": 806
+      },
+      "enhanced": {
+        "hits": 0,
+        "total": 3,
+        "pct": 0,
+        "steps": 1,
+        "ms": 1735,
+        "chars": 18
+      }
+    },
+    {
+      "task": "impact-chain",
+      "category": "impact",
+      "base": {
+        "hits": 2,
+        "total": 2,
+        "pct": 100,
+        "steps": 2,
+        "ms": 7,
+        "chars": 1438
+      },
+      "enhanced": {
+        "hits": 0,
+        "total": 2,
+        "pct": 0,
+        "steps": 1,
+        "ms": 1244,
+        "chars": 212
+      }
+    }
+  ]
+}

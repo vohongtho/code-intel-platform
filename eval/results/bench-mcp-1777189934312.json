@@ -1,0 +1,106 @@
+{
+  "fixture": "simple-ts",
+  "type": "mcp",
+  "score": 100,
+  "passed": 16,
+  "total": 16,
+  "avgLatencyMs": 39,
+  "results": [
+    {
+      "label": "ListTools returns tool list",
+      "pass": true,
+      "note": "6 tools",
+      "ms": 592
+    },
+    {
+      "label": "ListResources returns resource list",
+      "pass": true,
+      "note": "3 resources",
+      "ms": 4
+    },
+    {
+      "label": "repos: returns indexed repo",
+      "pass": true,
+      "note": "simple-ts",
+      "ms": 5
+    },
+    {
+      "label": "repos: has node+edge counts",
+      "pass": true,
+      "note": "9n 19e",
+      "ms": 3
+    },
+    {
+      "label": "search: finds Calculator",
+      "pass": true,
+      "note": "",
+      "ms": 2
+    },
+    {
+      "label": "search: finds add function",
+      "pass": true,
+      "note": "",
+      "ms": 2
+    },
+    {
+      "label": "search: respects limit",
+      "pass": true,
+      "note": "2 results",
+      "ms": 2
+    },
+    {
+      "label": "inspect: finds Calculator node",
+      "pass": true,
+      "note": "",
+      "ms": 2
+    },
+    {
+      "label": "inspect: returns file path + exported flag",
+      "pass": true,
+      "note": "math.ts exported=true",
+      "ms": 3
+    },
+    {
+      "label": "inspect: not-found returns message",
+      "pass": true,
+      "note": "",
+      "ms": 2
+    },
+    {
+      "label": "blast_radius: add affects ≥ 1 symbol",
+      "pass": true,
+      "note": "4 affected",
+      "ms": 2
+    },
+    {
+      "label": "blast_radius: returns affected array with names",
+      "pass": true,
+      "note": "add, internalHelper, formatResult",
+      "ms": 1
+    },
+    {
+      "label": "blast_radius: unknown symbol returns not found",
+      "pass": true,
+      "note": "",
+      "ms": 2
+    },
+    {
+      "label": "raw_query: name='Calculator' returns node",
+      "pass": true,
+      "note": "",
+      "ms": 1
+    },
+    {
+      "label": "raw_query: :function returns functions",
+      "pass": true,
+      "note": "4 functions",
+      "ms": 1
+    },
+    {
+      "label": "ReadResource: /overview returns stats",
+      "pass": true,
+      "note": "{\"repo\":\"simple-ts\",\"stats\":{\"nodes\":9,\"edges\":19},\"nodeCoun",
+      "ms": 4
+    }
+  ]
+}

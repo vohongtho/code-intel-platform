@@ -1,0 +1,36 @@
+{
+  "name": "code-intel-platform",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "workspaces": [
+    "code-intel/shared",
+    "code-intel/core",
+    "code-intel/web"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "clean": "npm run clean --workspaces --if-present",
+    "lint": "eslint code-intel/*/src/**/*.ts",
+    "format": "prettier --write \"code-intel/*/src/**/*.ts\"",
+    "test": "npm run test --workspaces --if-present",
+    "eval": "node eval/run-eval.mjs",
+    "eval:json": "node eval/run-eval.mjs --json",
+    "eval:multi": "node eval/run-eval-multi.mjs",
+    "eval:all": "node eval/run-eval.mjs --json && node eval/run-eval-multi.mjs --json && node eval/run-eval-langs.mjs --json",
+    "eval:langs": "node eval/run-eval-langs.mjs --json",
+    "eval:summary": "node eval/summarize.mjs",
+    "bench": "node eval/run-agent-bench.mjs --json",
+    "bench:mcp": "node eval/run-mcp-bench.mjs --json"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "eslint": "^9.0.0",
+    "prettier": "^3.3.0",
+    "typescript": "^5.5.0"
+  },
+  "dependencies": {
+    "@vohongtho.infotech/code-intel": "^0.1.0"
+  }
+}

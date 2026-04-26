@@ -1,0 +1,83 @@
+{
+  "fixture": "multi-lang",
+  "score": 100,
+  "passed": 15,
+  "total": 15,
+  "results": [
+    {
+      "label": "analyze exits 0",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "label": "multi-lang nodes",
+      "pass": true,
+      "note": "16"
+    },
+    {
+      "label": "multi-lang edges",
+      "pass": true,
+      "note": "32"
+    },
+    {
+      "label": "Python: User class found",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "label": "Python: AuthService found",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "label": "Python: validate_email found",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "label": "TS: Router class found",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "label": "TS: handle method found",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "label": "AuthService blast radius ≥ 1",
+      "pass": true,
+      "note": "1 affected"
+    },
+    {
+      "label": "AGENTS.md created",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "label": "AGENTS.md has code-intel block",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "label": "CLAUDE.md created",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "label": "CLAUDE.md has code-intel block",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "label": "skills dir created",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "label": "clean removes .code-intel/",
+      "pass": true,
+      "note": ""
+    }
+  ]
+}

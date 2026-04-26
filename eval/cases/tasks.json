@@ -1,0 +1,50 @@
+[
+  {
+    "id": "find-callers",
+    "question": "What calls internalHelper()?",
+    "symbol": "internalHelper",
+    "cliCmd": "inspect",
+    "groundTruth": ["formatResult"],
+    "category": "callers"
+  },
+  {
+    "id": "blast-radius",
+    "question": "How many symbols affected if add() changes?",
+    "symbol": "add",
+    "cliCmd": "impact",
+    "groundTruth": ["3"],
+    "category": "impact"
+  },
+  {
+    "id": "find-class",
+    "question": "Find the Calculator class",
+    "symbol": "Calculator",
+    "cliCmd": "search",
+    "groundTruth": ["Calculator"],
+    "category": "search"
+  },
+  {
+    "id": "inspect-add",
+    "question": "What file is add() defined in and is it exported?",
+    "symbol": "add",
+    "cliCmd": "inspect",
+    "groundTruth": ["math.ts", "true"],
+    "category": "inspect"
+  },
+  {
+    "id": "impact-chain",
+    "question": "What is the blast radius if multiply() changes?",
+    "symbol": "multiply",
+    "cliCmd": "impact",
+    "groundTruth": ["3"],
+    "category": "impact"
+  },
+  {
+    "id": "search-function",
+    "question": "Search for formatResult",
+    "symbol": "formatResult",
+    "cliCmd": "search",
+    "groundTruth": ["formatResult", "function"],
+    "category": "search"
+  }
+]

@@ -1,0 +1,132 @@
+{
+  "score": 100,
+  "passed": 25,
+  "total": 25,
+  "results": [
+    {
+      "label": "analyze exits 0",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "label": "nodes detected",
+      "pass": true,
+      "note": "9 nodes"
+    },
+    {
+      "label": "edges detected",
+      "pass": true,
+      "note": "19 edges"
+    },
+    {
+      "label": "search finds Calculator",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "label": "search finds add()",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "label": "inspect returns Calculator",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "label": "inspect callees: add() is called by Calculator area (≥2 affected)",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "label": "impact finds add in blast radius",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "label": "impact blast radius ≥ 1",
+      "pass": true,
+      "note": "3 affected"
+    },
+    {
+      "label": ".claude/skills/code-intel/ created",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "label": "SKILL.md files generated",
+      "pass": true,
+      "note": "1 files"
+    },
+    {
+      "label": "skill has Hot Symbols section",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "label": "skill has Quick Commands section",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "label": "skill has Impact Guidance section",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "label": "skill has frontmatter description",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "label": "AGENTS.md created",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "label": "AGENTS.md has code-intel block",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "label": "AGENTS.md has CLI reference",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "label": "AGENTS.md block idempotent (no duplicates)",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "label": "CLAUDE.md created",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "label": "CLAUDE.md has code-intel block",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "label": "CLAUDE.md has CLI reference",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "label": "CLAUDE.md block idempotent (no duplicates)",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "label": "status shows indexed state",
+      "pass": true,
+      "note": ""
+    },
+    {
+      "label": "clean removes .code-intel/",
+      "pass": true,
+      "note": ""
+    }
+  ]
+}
