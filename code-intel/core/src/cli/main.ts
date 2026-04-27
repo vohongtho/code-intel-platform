@@ -32,6 +32,7 @@ import { writeSkillFiles } from './skill-writer.js';
 import { writeContextFiles } from './context-writer.js';
 import { upsertRepo, loadRegistry, removeRepo } from '../storage/repo-registry.js';
 import { DbManager, loadGraphToDB } from '../storage/index.js';
+import { loadGraphFromDB } from '../multi-repo/graph-from-db.js';
 import {
   loadGroup,
   saveGroup,
@@ -454,8 +455,22 @@ program
     $ code-intel mcp ./my-project
 `)
   .action(async (targetPath: string) => {
-    const { graph, repoName, workspaceRoot } = await analyzeWorkspace(targetPath, { silent: true });
-    await startMcpStdio(graph, repoName, workspaceRoot);
+    const workspaceRoot = path.resolve(targetPath);
+    const repoName = path.basename(workspaceRoot);
+    const dbPath = getDbPath(workspaceRoot);
+    const existingIndex = fs.existsSync(dbPath) && loadMetadata(workspaceRoot) !== null;
+
+    if (existingIndex) {
+      const graph = createKnowledgeGraph();
+      const db = new DbManager(dbPath);
+      await db.init();
+      await loadGraphFromDB(graph, db);
+      db.close();
+      await startMcpStdio(graph, repoName, workspaceRoot);
+    } else {
+      const { graph, repoName: name, workspaceRoot: root } = await analyzeWorkspace(targetPath, { silent: true });
+      await startMcpStdio(graph, name, root);
+    }
   });
 
 // ─── 4. serve ────────────────────────────────────────────────────────────────
@@ -464,9 +479,11 @@ program
   .description('Start the local HTTP server + web UI for graph exploration')
   .argument('[path]', 'Path to analyze (default: current directory)', '.')
   .option('-p, --port <port>', 'Port to listen on', '4747')
+  .option('--force', 'Force re-analysis even if an index already exists')
   .addHelpText('after', `
-  Analyzes the repository, starts an HTTP server, and serves the interactive
-  Web UI at http://localhost:<port>.
+  If a .code-intel/graph.db index already exists for the path, the server
+  loads the persisted graph directly and starts immediately — no re-analysis.
+  Use --force to discard the existing index and re-analyze from scratch.
 
   The web UI offers:
     · Force-directed Knowledge Graph with color-coded node types
@@ -479,10 +496,30 @@ program
     $ code-intel serve
     $ code-intel serve ./my-project
     $ code-intel serve --port 8080
+    $ code-intel serve --force
 `)
-  .action(async (targetPath: string, options: { port: string }) => {
-    const { graph, repoName, workspaceRoot } = await analyzeWorkspace(targetPath);
-    startHttpServer(graph, repoName, parseInt(options.port, 10), workspaceRoot);
+  .action(async (targetPath: string, options: { port: string; force?: boolean }) => {
+    const workspaceRoot = path.resolve(targetPath);
+    const repoName = path.basename(workspaceRoot);
+    const dbPath = getDbPath(workspaceRoot);
+    const existingIndex = !options.force && fs.existsSync(dbPath) && loadMetadata(workspaceRoot) !== null;
+
+    if (existingIndex) {
+      // Load graph from persisted DB — no re-analysis needed
+      console.log(`Loading index: ${workspaceRoot}`);
+      const meta = loadMetadata(workspaceRoot)!;
+      console.log(`  ◈  ${meta.stats.nodes} nodes · ${meta.stats.edges} edges · ${meta.stats.files} files  (indexed ${meta.indexedAt})`);
+      const graph = createKnowledgeGraph();
+      const db = new DbManager(dbPath);
+      await db.init();
+      await loadGraphFromDB(graph, db);
+      db.close();
+      startHttpServer(graph, repoName, parseInt(options.port, 10), workspaceRoot);
+    } else {
+      // No index or --force: run full analysis then serve
+      const { graph, workspaceRoot: root, repoName: name } = await analyzeWorkspace(targetPath, { force: options.force });
+      startHttpServer(graph, name, parseInt(options.port, 10), root);
+    }
   });
 
 // ─── 5. list ─────────────────────────────────────────────────────────────────

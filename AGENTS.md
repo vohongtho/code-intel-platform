@@ -5,14 +5,14 @@
 2. The message generate for git commit DO NOT CONTENT: 
     "Amp-Thread-ID:"
     "Co-authored-by: Amp amp@ampcode.com"
-
+3. Before run git add, if change need to update into readme.md, Should update
 <!-- code-intel:start -->
 # Code Intelligence — code-intel-platform
 
 > ⚠ This section is auto-managed by `code-intel analyze`. Do **not** edit between the markers — your changes will be overwritten.
 > Add your own notes below the `<!-- code-intel:end -->` marker.
 
-Indexed: **705 nodes** | **1,393 edges** | **152 files** | analyzed in 0.4s
+Indexed: **705 nodes** | **1,395 edges** | **152 files** | analyzed in 0.5s
 
 > Index stale? Re-run: `code-intel analyze`
 

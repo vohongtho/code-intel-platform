@@ -45,9 +45,9 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
 | `syncGroup` | function | 5 | 6 | `multi-repo/group-sync.ts` |
+| `loadGraphFromDB` | function | 5 | 1 | `multi-repo/graph-from-db.ts` |
 | `loadGroup` | function | 5 | 1 | `multi-repo/group-registry.ts` |
 | `saveGroup` | function | 5 | 1 | `multi-repo/group-registry.ts` |
-| `loadGraphFromDB` | function | 4 | 1 | `multi-repo/graph-from-db.ts` |
 | `listGroups` | function | 5 | 0 | `multi-repo/group-registry.ts` |
 | `groupFile` | function | 4 | 0 | `multi-repo/group-registry.ts` |
 | `getGroup` | function | 2 | 1 | `multi-repo/group-manager.ts` |
