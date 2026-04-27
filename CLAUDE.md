@@ -4,7 +4,7 @@
 > ⚠ This section is auto-managed by `code-intel analyze`. Do **not** edit between the markers — your changes will be overwritten.
 > Add your own notes below the `<!-- code-intel:end -->` marker.
 
-Indexed: **697 nodes** | **1,375 edges** | **151 files** | analyzed in 0.4s
+Indexed: **708 nodes** | **1,398 edges** | **152 files** | analyzed in 0.3s
 
 > Index stale? Re-run: `code-intel analyze`
 
@@ -49,8 +49,9 @@ code-intel clean [path]            # Remove index data
 | Work in `java-repo` (13 symbols) | `.claude/skills/code-intel/java-repo/SKILL.md` |
 | Work in `multi-lang` (13 symbols) | `.claude/skills/code-intel/multi-lang/SKILL.md` |
 | Work in `search` (12 symbols) | `.claude/skills/code-intel/search/SKILL.md` |
-| Work in `graph` (12 symbols) | `.claude/skills/code-intel/graph/SKILL.md` |
 | Work in `shared` (12 symbols) | `.claude/skills/code-intel/shared/SKILL.md` |
+| Work in `graph` (12 symbols) | `.claude/skills/code-intel/graph/SKILL.md` |
+| Work in `shared` (12 symbols) | `.claude/skills/code-intel/shared-2/SKILL.md` |
 | Work in `src` (12 symbols) | `.claude/skills/code-intel/src/SKILL.md` |
 | Work in `mcp-server` (10 symbols) | `.claude/skills/code-intel/mcp-server/SKILL.md` |
 | Work in `pipeline` (10 symbols) | `.claude/skills/code-intel/pipeline/SKILL.md` |
@@ -58,6 +59,5 @@ code-intel clean [path]            # Remove index data
 | Work in `state` (9 symbols) | `.claude/skills/code-intel/state/SKILL.md` |
 | Work in `inheritance` (8 symbols) | `.claude/skills/code-intel/inheritance/SKILL.md` |
 | Work in `parsing` (7 symbols) | `.claude/skills/code-intel/parsing/SKILL.md` |
-| Work in `shared` (7 symbols) | `.claude/skills/code-intel/shared-2/SKILL.md` |
 
 <!-- code-intel:end -->

@@ -1,13 +1,18 @@
 /**
- * Lightweight singleton logger with sensitive-data masking.
- * Drop-in replacement for console.* — no external dependencies.
+ * Logger with sensitive data masking.
+ * Uses winston + winston-daily-rotate-file.
  *
- * Log level is controlled by the LOG_LEVEL env var (default: "info").
- * Valid values: "debug" | "info" | "warn" | "error" | "silent"
+ * - In production / CI (NODE_ENV=production): Console only (stdout, structured).
+ * - Otherwise: Daily-rotating file logs under ./logs/ + Console.
+ * - Log level controlled by LOG_LEVEL env var (default: "info").
+ * - Sensitive keys and patterns are masked before output.
+ *
+ * @module shared/Logger
  */
-
-const LEVELS = { debug: 0, info: 1, warn: 2, error: 3, silent: 4 } as const;
-type Level = keyof typeof LEVELS;
+import winston from 'winston';
+import DailyRotateFile from 'winston-daily-rotate-file';
+import fs from 'node:fs';
+import path from 'node:path';
 
 // ─── Sensitive-data masking ───────────────────────────────────────────────────
 
@@ -37,8 +42,6 @@ const SENSITIVE_KEYS: string[] = [
   'license_key', 'product_key', 'serial_number', 'activation_code',
 ];
 
-const SENSITIVE_KEYS_REGEX = new RegExp(`^(${SENSITIVE_KEYS.join('|')})$`, 'i');
-
 const SENSITIVE_PATTERNS: RegExp[] = [
   /(?:password|passwd|secret|api_key|access_token|auth_token|token)\s*[:=]\s*([^\s,]+)/gi,
   /\b\d{16}\b/gi,
@@ -52,85 +55,115 @@ const SENSITIVE_PATTERNS: RegExp[] = [
   /(?:bearer\s+)[a-zA-Z0-9\-_]+\.[a-zA-Z0-9\-_]+\.[a-zA-Z0-9\-_]+/gi,
 ];
 
-function maskValue(value: string): string {
-  if (typeof value === 'string' && value.length > 5) {
-    return value[0] + '*'.repeat(value.length - 2) + value[value.length - 1];
-  }
-  return value;
-}
-
-function maskString(input: string): string {
-  if (typeof input !== 'string') return input;
-  return SENSITIVE_PATTERNS.reduce((str, pattern) => {
-    return str.replace(pattern, (match: string, value: string) =>
-      value ? match.replace(value, maskValue(value)) : match,
-    );
-  }, input);
-}
-
-function deepMask(obj: unknown): unknown {
-  if (typeof obj === 'string') return maskString(obj);
-  if (Array.isArray(obj)) return obj.map(deepMask);
-  if (typeof obj === 'object' && obj !== null) {
-    return Object.entries(obj as Record<string, unknown>).reduce(
-      (acc: Record<string, unknown>, [key, value]) => {
-        if (value === undefined) return acc;
-        const isSensitive = SENSITIVE_KEYS_REGEX.test(key);
-        acc[key] = isSensitive && typeof value === 'string'
-          ? maskValue(value)
-          : deepMask(value);
-        return acc;
-      },
-      {},
-    );
-  }
-  return obj;
-}
-
-// ─── Logger class ─────────────────────────────────────────────────────────────
+const SENSITIVE_KEYS_REGEX = new RegExp(`^(${SENSITIVE_KEYS.join('|')})$`, 'i');
 
 class Logger {
-  private static _level: Level = (() => {
-    const env = (process.env.LOG_LEVEL ?? 'info').toLowerCase() as Level;
-    return env in LEVELS ? env : 'info';
-  })();
+  private static instance: winston.Logger | null = null;
 
-  static setLevel(level: Level): void {
-    Logger._level = level;
+  static maskSensitiveData(value: string): string {
+    if (typeof value === 'string' && value.length > 5) {
+      const firstChar = value.at(0)!;
+      const lastChar = value.at(-1)!;
+      return firstChar + '*'.repeat(value.length - 2) + lastChar;
+    }
+    return value;
   }
 
-  private static _shouldLog(level: Level): boolean {
-    return LEVELS[level] >= LEVELS[Logger._level];
+  static maskSensitive(message: string, args: unknown[] = []): { maskedMessage: string; maskedArgs: unknown[] } {
+    const maskString = (input: string): string => {
+      if (typeof input !== 'string') return input;
+      return SENSITIVE_PATTERNS.reduce((str, pattern) => {
+        return str.replace(pattern, (match: string, value: string) =>
+          value ? match.replace(value, Logger.maskSensitiveData(value)) : match,
+        );
+      }, input);
+    };
+
+    const deepMask = (obj: unknown): unknown => {
+      if (typeof obj === 'string') return maskString(obj);
+      if (Array.isArray(obj)) return obj.map((item: unknown) => deepMask(item));
+      if (typeof obj === 'object' && obj !== null) {
+        return Object.entries(obj as Record<string, unknown>).reduce(
+          (acc: Record<string, unknown>, [key, value]) => {
+            if (value === undefined) return acc;
+            const isSensitiveKey = SENSITIVE_KEYS_REGEX.test(key);
+            acc[key] = isSensitiveKey && typeof value === 'string'
+              ? Logger.maskSensitiveData(value)
+              : deepMask(value);
+            return acc;
+          },
+          {},
+        );
+      }
+      return obj;
+    };
+
+    return {
+      maskedMessage: maskString(message),
+      maskedArgs: args.map((arg: unknown) => deepMask(arg)),
+    };
   }
 
-  private static _format(level: Level, message: string, args: unknown[]): string {
-    const ts = new Date().toISOString().replace('T', ' ').slice(0, 23);
-    const maskedMsg = maskString(message);
-    const maskedArgs = args.map(deepMask).map((a) =>
-      typeof a === 'object' ? JSON.stringify(a) : String(a),
-    );
-    const suffix = maskedArgs.length ? ' ' + maskedArgs.join(' ') : '';
-    return `${ts} [${level.toUpperCase()}]: ${maskedMsg}${suffix}`;
-  }
+  static getLogger(): winston.Logger {
+    if (!Logger.instance) {
+      const isProduction = process.env.NODE_ENV === 'production';
+      const logLevel = process.env.LOG_LEVEL ?? 'info';
+      const transports: winston.transport[] = [];
 
-  static debug(message: string, ...args: unknown[]): void {
-    if (!Logger._shouldLog('debug')) return;
-    console.debug(Logger._format('debug', message, args));
+      if (isProduction) {
+        // Production / Lambda-like: console only
+        transports.push(new winston.transports.Console());
+      } else {
+        // Development: daily-rotating file + console
+        const logDir = 'logs';
+        if (!fs.existsSync(logDir)) {
+          fs.mkdirSync(logDir, { recursive: true });
+        }
+        transports.push(
+          new DailyRotateFile({
+            filename: path.join(logDir, '%DATE%-code-intel.log'),
+            datePattern: 'YYYY-MM-DD',
+            maxSize: '20m',
+            maxFiles: '14d',
+          }),
+          new winston.transports.Console(),
+        );
+      }
+
+      Logger.instance = winston.createLogger({
+        level: logLevel,
+        format: winston.format.combine(
+          winston.format.timestamp(),
+          winston.format.printf(({ timestamp, level, message, ...meta }) => {
+            const args = (meta[Symbol.for('splat') as unknown as string] as unknown[]) || [];
+            const { maskedMessage, maskedArgs } = Logger.maskSensitive(message as string, args);
+            const formattedArgs = maskedArgs.map((arg: unknown) =>
+              typeof arg === 'object' ? JSON.stringify(arg) : String(arg),
+            );
+            const suffix = formattedArgs.length ? ' ' + formattedArgs.join(' ') : '';
+            return `${timestamp} [${level.toUpperCase()}]: ${maskedMessage}${suffix}`;
+          }),
+        ),
+        transports,
+      });
+    }
+    return Logger.instance;
   }
 
   static info(message: string, ...args: unknown[]): void {
-    if (!Logger._shouldLog('info')) return;
-    console.log(Logger._format('info', message, args));
+    Logger.getLogger().info(message, ...args);
   }
 
   static warn(message: string, ...args: unknown[]): void {
-    if (!Logger._shouldLog('warn')) return;
-    console.warn(Logger._format('warn', message, args));
+    Logger.getLogger().warn(message, ...args);
   }
 
   static error(message: string, ...args: unknown[]): void {
-    if (!Logger._shouldLog('error')) return;
-    console.error(Logger._format('error', message, args));
+    Logger.getLogger().error(message, ...args);
+  }
+
+  static debug(message: string, ...args: unknown[]): void {
+    Logger.getLogger().debug(message, ...args);
   }
 }
 
