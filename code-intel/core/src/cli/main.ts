@@ -136,6 +136,20 @@ async function analyzeWorkspace(targetPath: string, options?: {
   if (!options?.silent) console.log(`Analyzing: ${workspaceRoot}`);
   Logger.info(`analyze started: ${workspaceRoot}`);
 
+  // --force: wipe all existing DB files upfront so there's no stale state
+  if (options?.force) {
+    const dbPath = getDbPath(workspaceRoot);
+    const { getVectorDbPath } = await import('../storage/index.js');
+    const vdbPath = getVectorDbPath(workspaceRoot);
+    const wipeFiles = [
+      dbPath, `${dbPath}-shm`, `${dbPath}-wal`, `${dbPath}.shm`, `${dbPath}.wal`,
+      vdbPath, `${vdbPath}-shm`, `${vdbPath}-wal`, `${vdbPath}.shm`, `${vdbPath}.wal`,
+    ];
+    for (const f of wipeFiles) {
+      try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* ignore */ }
+    }
+  }
+
   // --skip-git: skip the .git check (allow non-git folders)
   if (!options?.skipGit) {
     const gitDir = path.join(workspaceRoot, '.git');
@@ -228,8 +242,12 @@ async function analyzeWorkspace(targetPath: string, options?: {
   startSpinner('Persisting graph to DB');
   try {
     const dbPath = getDbPath(workspaceRoot);
-    // Remove stale / incompatible DB files before writing
-    const staleFiles = [dbPath, `${dbPath}-shm`, `${dbPath}-wal`];
+    // Remove stale / incompatible DB files before writing (handles both -wal and .wal suffixes)
+    const staleFiles = [
+      dbPath,
+      `${dbPath}-shm`, `${dbPath}-wal`,
+      `${dbPath}.shm`, `${dbPath}.wal`,
+    ];
     for (const f of staleFiles) {
       try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* ignore */ }
     }
@@ -256,6 +274,11 @@ async function analyzeWorkspace(targetPath: string, options?: {
       const { getVectorDbPath } = await import('../storage/index.js');
       const { VectorIndex } = await import('../search/vector-index.js');
       const vdbPath = getVectorDbPath(workspaceRoot);
+      // Remove stale vector DB files before writing
+      const staleVdb = [vdbPath, `${vdbPath}-shm`, `${vdbPath}-wal`, `${vdbPath}.shm`, `${vdbPath}.wal`];
+      for (const f of staleVdb) {
+        try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* ignore */ }
+      }
       const vdb = new DbManager(vdbPath);
       await vdb.init();
       const idx = new VectorIndex(vdb);
