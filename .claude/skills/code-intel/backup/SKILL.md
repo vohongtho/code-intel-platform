@@ -1,17 +1,17 @@
 ---
 name: backup
-description: "Covers the **backup** subsystem of code-intel-platform. 8 symbols across 1 files. Key symbols: `BackupService`, `getBackupDir`, `getBackupKey`. Internal call density: 0 calls/symbol."
+description: "Covers the **backup** subsystem of code-intel-platform. 17 symbols across 2 files. Key symbols: `BackupService`, `createBackupScheduler`, `hmac`. Internal call density: 0.1 calls/symbol."
 ---
 
 # backup
 
-> **8 symbols** | **1 files** | path: `code-intel/core/src/backup/` | call density: 0/sym
+> **17 symbols** | **2 files** | path: `code-intel/core/src/backup/` | call density: 0.1/sym
 
 ## When to Use
 
 Load this skill when:
 - The task involves code in `code-intel/core/src/backup/`
-- The user mentions `BackupService`, `getBackupDir`, `getBackupKey` or asks how they work
+- The user mentions `BackupService`, `createBackupScheduler`, `hmac` or asks how they work
 - Adding, modifying, or debugging backup-related functionality
 - Tracing call chains that pass through the backup layer
 
@@ -19,7 +19,8 @@ Load this skill when:
 
 | File | Symbols | Notes |
 |------|---------|-------|
-| `code-intel/core/src/backup/backup-service.ts` | `BackupManifest`, `BackupEntry`, `getBackupDir`, `getBackupKey` +(4) | 5 exported |
+| `code-intel/core/src/backup/backup-service.ts` | `S3Config`, `getS3Config`, `hmac`, `sha256hex` +(11) | 7 exported |
+| `code-intel/core/src/backup/backup-scheduler.ts` | `BackupScheduler`, `createBackupScheduler` | 2 exported |
 
 ## Hot Symbols
 
@@ -27,14 +28,18 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `BackupService` | class | 2 | 0 | `backup/backup-service.ts` |
+| `BackupService` | class | 3 | 0 | `backup/backup-service.ts` |
+| `createBackupScheduler` | function | 1 | 1 | `backup/backup-scheduler.ts` |
+| `hmac` | function | 2 | 0 | `backup/backup-service.ts` |
+| `sigV4SigningKey` | function | 1 | 1 | `backup/backup-service.ts` |
+| `BackupScheduler` | class | 1 | 0 | `backup/backup-scheduler.ts` |
+| `getS3Config` | function | 1 | 0 | `backup/backup-service.ts` |
+| `sha256hex` | function | 1 | 0 | `backup/backup-service.ts` |
+| `s3Request` | function | 1 | 0 | `backup/backup-service.ts` |
 | `getBackupDir` | function | 1 | 0 | `backup/backup-service.ts` |
 | `getBackupKey` | function | 1 | 0 | `backup/backup-service.ts` |
 | `encryptBuffer` | function | 1 | 0 | `backup/backup-service.ts` |
 | `decryptBuffer` | function | 1 | 0 | `backup/backup-service.ts` |
-| `BackupManifest` | interface | 0 | 0 | `backup/backup-service.ts` |
-| `BackupEntry` | interface | 0 | 0 | `backup/backup-service.ts` |
-| `sha256File` | function | 0 | 0 | `backup/backup-service.ts` |
 
 ## Impact Guidance
 

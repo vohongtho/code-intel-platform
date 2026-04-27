@@ -1,11 +1,11 @@
 ---
 name: cli
-description: "Covers the **cli** subsystem of code-intel-platform. 21 symbols across 3 files. Key symbols: `writeContextFiles`, `buildAreaMap`, `upsertFile`. Internal call density: 0.2 calls/symbol."
+description: "Covers the **cli** subsystem of code-intel-platform. 25 symbols across 3 files. Key symbols: `writeContextFiles`, `buildAreaMap`, `upsertFile`. Internal call density: 0.2 calls/symbol."
 ---
 
 # cli
 
-> **21 symbols** | **3 files** | path: `code-intel/core/src/cli/` | call density: 0.2/sym
+> **25 symbols** | **3 files** | path: `code-intel/core/src/cli/` | call density: 0.2/sym
 
 ## When to Use
 
@@ -19,8 +19,8 @@ Load this skill when:
 
 | File | Symbols | Notes |
 |------|---------|-------|
+| `code-intel/core/src/cli/main.ts` | `analyzeWorkspace`, `renderBar`, `pctStr`, `clearBar` +(7) | internal |
 | `code-intel/core/src/cli/skill-writer.ts` | `SkillSummary`, `AreaInfo`, `writeSkillFiles`, `buildAreaMap` +(4) | 2 exported |
-| `code-intel/core/src/cli/main.ts` | `analyzeWorkspace`, `renderBar`, `pctStr`, `clearBar` +(3) | internal |
 | `code-intel/core/src/cli/context-writer.ts` | `ContextStats`, `writeContextFiles`, `buildBlock`, `upsertFile` +(2) | 2 exported |
 
 ## Hot Symbols
@@ -32,6 +32,7 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | `writeContextFiles` | function | 2 | 2 | `cli/context-writer.ts` |
 | `buildAreaMap` | function | 1 | 2 | `cli/skill-writer.ts` |
 | `upsertFile` | function | 1 | 1 | `cli/context-writer.ts` |
+| `softDeleteCodeIntel` | function | 1 | 1 | `cli/main.ts` |
 | `renderSkill` | function | 1 | 1 | `cli/skill-writer.ts` |
 | `buildBlock` | function | 1 | 0 | `cli/context-writer.ts` |
 | `findLineMarker` | function | 1 | 0 | `cli/context-writer.ts` |
@@ -40,7 +41,6 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | `clearBar` | function | 1 | 0 | `cli/main.ts` |
 | `startSpinner` | function | 1 | 0 | `cli/main.ts` |
 | `stopSpinner` | function | 1 | 0 | `cli/main.ts` |
-| `writeSkillFiles` | function | 1 | 0 | `cli/skill-writer.ts` |
 
 ## Impact Guidance
 

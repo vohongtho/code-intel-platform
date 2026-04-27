@@ -1,6 +1,6 @@
 ---
 name: pages
-description: "Covers the **pages** subsystem of code-intel-platform. 17 symbols across 4 files. Key symbols: `ConnectPage`, `ExplorerPage`, `LoadingPage`. Internal call density: 0.1 calls/symbol. Participates in 2 execution flow(s)."
+description: "Covers the **pages** subsystem of code-intel-platform. 17 symbols across 4 files. Key symbols: `ConnectPage`, `ExplorerPage`, `LoadingPage`. Internal call density: 0.1 calls/symbol. Participates in 8 execution flow(s)."
 ---
 
 # pages
@@ -39,22 +39,22 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
+| `handleConnectGroup` | function | 1 | 3 | `pages/ConnectPage.tsx` |
+| `handleLogin` | function | 1 | 3 | `pages/LoginPage.tsx` |
 | `ConnectPage` | function | 0 | 3 | `pages/ConnectPage.tsx` |
 | `probeServer` | function | 2 | 1 | `pages/ConnectPage.tsx` |
 | `loadGroups` | function | 1 | 2 | `pages/ConnectPage.tsx` |
-| `handleConnectGroup` | function | 1 | 2 | `pages/ConnectPage.tsx` |
-| `handleLogin` | function | 1 | 2 | `pages/LoginPage.tsx` |
-| `handleConnectRepo` | function | 1 | 1 | `pages/ConnectPage.tsx` |
-| `handleSyncFull` | function | 0 | 2 | `pages/ExplorerPage.tsx` |
-| `LoginPage` | function | 0 | 2 | `pages/LoginPage.tsx` |
-| `ExplorerPage` | function | 0 | 1 | `pages/ExplorerPage.tsx` |
-| `ExplorerTab` | function | 0 | 1 | `pages/ExplorerPage.tsx` |
+| `handleConnectRepo` | function | 1 | 2 | `pages/ConnectPage.tsx` |
+| `handleSyncFull` | function | 0 | 3 | `pages/ExplorerPage.tsx` |
+| `LoginPage` | function | 0 | 3 | `pages/LoginPage.tsx` |
+| `ExplorerPage` | function | 0 | 2 | `pages/ExplorerPage.tsx` |
+| `ExplorerTab` | function | 0 | 2 | `pages/ExplorerPage.tsx` |
+| `handleBootstrap` | function | 0 | 2 | `pages/LoginPage.tsx` |
 | `GroupTab` | function | 0 | 1 | `pages/ExplorerPage.tsx` |
-| `handleBootstrap` | function | 0 | 1 | `pages/LoginPage.tsx` |
 
 ## Execution Flows
 
-**2** execution path(s) pass through this area.
+**8** execution path(s) pass through this area.
 Run `code-intel inspect <symbol>` on a hot symbol to trace the full call chain.
 
 ## Impact Guidance
@@ -68,7 +68,7 @@ Before modifying any symbol in this area:
 
 ```bash
 # Inspect most-connected symbol
-code-intel inspect ConnectPage
+code-intel inspect handleConnectGroup
 # Blast radius for entry point
 code-intel impact ConnectPage
 # Search this area

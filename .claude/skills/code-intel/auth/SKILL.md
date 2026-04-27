@@ -1,17 +1,17 @@
 ---
 name: auth
-description: "Covers the **auth** subsystem of code-intel-platform. 22 symbols across 2 files. Key symbols: `requestIdMiddleware`, `authMiddleware`. Internal call density: 0.4 calls/symbol. Participates in 4 execution flow(s)."
+description: "Covers the **auth** subsystem of code-intel-platform. 63 symbols across 5 files. Key symbols: `setKeychainSecret`, `getKeychainSecret`, `deleteKeychainSecret`. Internal call density: 0.6 calls/symbol. Participates in 4 execution flow(s)."
 ---
 
 # auth
 
-> **22 symbols** | **2 files** | path: `code-intel/core/src/auth/` | call density: 0.4/sym
+> **63 symbols** | **5 files** | path: `code-intel/core/src/auth/` | call density: 0.6/sym
 
 ## When to Use
 
 Load this skill when:
 - The task involves code in `code-intel/core/src/auth/`
-- The user mentions `requestIdMiddleware`, `authMiddleware` or asks how they work
+- The user mentions `setKeychainSecret`, `getKeychainSecret`, `deleteKeychainSecret` or asks how they work
 - Adding, modifying, or debugging auth-related functionality
 - Tracing call chains that pass through the auth layer
 
@@ -19,15 +19,22 @@ Load this skill when:
 
 | File | Symbols | Notes |
 |------|---------|-------|
-| `code-intel/core/src/auth/middleware.ts` | `Request`, `SessionEntry`, `getSessionTtlMs`, `createSession` +(13) | 13 exported |
-| `code-intel/core/src/auth/users-db.ts` | `User`, `Token`, `UsersDB`, `getUsersDBPath` +(1) | 5 exported |
+| `code-intel/core/src/auth/oidc.ts` | `OIDCPendingFlow`, `cleanExpiredFlows`, `OIDCConfig`, `getOIDCConfig` +(14) | 16 exported |
+| `code-intel/core/src/auth/middleware.ts` | `Request`, `SessionEntry`, `getSessionTtlMs`, `createSession` +(13) | 14 exported |
+| `code-intel/core/src/auth/secret-store.ts` | `getScryptN`, `SecretsBlob`, `getSecretsPath`, `getMasterPassword` +(9) | 10 exported |
+| `code-intel/core/src/auth/keychain.ts` | `getKeytar`, `k`, `KeychainBackendInfo`, `keychainBackend` +(4) | 6 exported |
+| `code-intel/core/src/auth/users-db.ts` | `User`, `Token`, `OIDCIdentity`, `UsersDB` +(3) | 7 exported |
 
 ## Entry Points
 
 Start exploration here — exported symbols with no external callers:
 
-- **`requestIdMiddleware`** `(function)` → `code-intel/core/src/auth/middleware.ts:68`
-- **`authMiddleware`** `(function)` → `code-intel/core/src/auth/middleware.ts:83`
+- **`setKeychainSecret`** `(function)` → `code-intel/core/src/auth/keychain.ts:61`
+- **`getKeychainSecret`** `(function)` → `code-intel/core/src/auth/keychain.ts:71`
+- **`deleteKeychainSecret`** `(function)` → `code-intel/core/src/auth/keychain.ts:80`
+- **`_resetKeychainCacheForTests`** `(function)` → `code-intel/core/src/auth/keychain.ts:95`
+- **`requestIdMiddleware`** `(function)` → `code-intel/core/src/auth/middleware.ts:69`
+- **`authMiddleware`** `(function)` → `code-intel/core/src/auth/middleware.ts:84`
 
 ## Hot Symbols
 
@@ -35,18 +42,18 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `getOrCreateUsersDB` | function | 4 | 2 | `auth/users-db.ts` |
-| `authMiddleware` | function | 0 | 5 | `auth/middleware.ts` |
-| `getSession` | function | 2 | 2 | `auth/middleware.ts` |
-| `buildSessionCookie` | function | 3 | 1 | `auth/middleware.ts` |
-| `getSessionTtlMs` | function | 3 | 0 | `auth/middleware.ts` |
-| `UsersDB` | class | 3 | 0 | `auth/users-db.ts` |
-| `createSession` | function | 2 | 0 | `auth/middleware.ts` |
-| `deleteSession` | function | 1 | 1 | `auth/middleware.ts` |
-| `requireRole` | function | 2 | 0 | `auth/middleware.ts` |
-| `clearSessionCookie` | function | 2 | 0 | `auth/middleware.ts` |
-| `isLocalhost` | function | 1 | 0 | `auth/middleware.ts` |
-| `requireAuth` | function | 1 | 0 | `auth/middleware.ts` |
+| `saveSecrets` | function | 3 | 5 | `auth/secret-store.ts` |
+| `getOrCreateUsersDB` | function | 6 | 2 | `auth/users-db.ts` |
+| `getOIDCConfig` | function | 7 | 0 | `auth/oidc.ts` |
+| `UsersDB` | class | 7 | 0 | `auth/users-db.ts` |
+| `authMiddleware` | function | 0 | 6 | `auth/middleware.ts` |
+| `loadSecrets` | function | 5 | 1 | `auth/secret-store.ts` |
+| `getSession` | function | 3 | 2 | `auth/middleware.ts` |
+| `getDiscoveredConfig` | function | 4 | 1 | `auth/oidc.ts` |
+| `handleOIDCCallback` | function | 2 | 3 | `auth/oidc.ts` |
+| `setSecret` | function | 2 | 3 | `auth/secret-store.ts` |
+| `getSecret` | function | 3 | 2 | `auth/secret-store.ts` |
+| `deleteSecret` | function | 2 | 3 | `auth/secret-store.ts` |
 
 ## Execution Flows
 
@@ -64,9 +71,9 @@ Before modifying any symbol in this area:
 
 ```bash
 # Inspect most-connected symbol
-code-intel inspect getOrCreateUsersDB
+code-intel inspect saveSecrets
 # Blast radius for entry point
-code-intel impact requestIdMiddleware
+code-intel impact setKeychainSecret
 # Search this area
 code-intel search "auth"
 ```

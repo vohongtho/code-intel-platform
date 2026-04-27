@@ -793,6 +793,28 @@ program
     console.log('  Index cleaned.\n');
   });
 
+// ─── loadOrAnalyzeWorkspace ───────────────────────────────────────────────────
+// Shared helper for read-only commands (search, inspect, impact).
+// If an existing .code-intel/graph.db index is found it loads directly from DB —
+// no re-analysis needed. Falls back to a full analysis only when no index exists.
+async function loadOrAnalyzeWorkspace(targetPath: string) {
+  const workspaceRoot = path.resolve(targetPath);
+  const dbPath = getDbPath(workspaceRoot);
+  const existingIndex = fs.existsSync(dbPath) && loadMetadata(workspaceRoot) !== null;
+
+  if (existingIndex) {
+    const graph = createKnowledgeGraph();
+    const db = new DbManager(dbPath);
+    await db.init();
+    await loadGraphFromDB(graph, db);
+    db.close();
+    return { graph, workspaceRoot, repoName: path.basename(workspaceRoot) };
+  }
+
+  // No index yet — run full analysis and persist for next time
+  return analyzeWorkspace(targetPath, { silent: true });
+}
+
 // ─── 8. search ───────────────────────────────────────────────────────────────
 program
   .command('search')
@@ -810,7 +832,7 @@ program
     $ code-intel search "UserService" --path ./backend
 `)
   .action(async (query: string, options: { limit: string; path: string }) => {
-    const { graph } = await analyzeWorkspace(options.path, { silent: true });
+    const { graph } = await loadOrAnalyzeWorkspace(options.path);
     const results = textSearch(graph, query, parseInt(options.limit, 10));
     if (results.length === 0) {
       console.log(`\n  No results found for "${query}".\n`);
@@ -840,7 +862,7 @@ program
     $ code-intel inspect ApiClient --path ./frontend
 `)
   .action(async (symbol: string, options: { path: string }) => {
-    const { graph } = await analyzeWorkspace(options.path, { silent: true });
+    const { graph } = await loadOrAnalyzeWorkspace(options.path);
 
     let found = false;
     for (const node of graph.allNodes()) {
@@ -901,7 +923,7 @@ program
     $ code-intel impact UserService --path ./backend
 `)
   .action(async (symbol: string, options: { path: string; depth: string }) => {
-    const { graph } = await analyzeWorkspace(options.path, { silent: true });
+    const { graph } = await loadOrAnalyzeWorkspace(options.path);
     const maxHops = parseInt(options.depth, 10);
 
     let targetNode = null;

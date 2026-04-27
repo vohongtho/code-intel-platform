@@ -1,6 +1,6 @@
 ---
 name: storage
-description: "Covers the **storage** subsystem of code-intel-platform. 20 symbols across 6 files. Key symbols: `loadRegistry`, `DbManager`, `upsertRepo`. Internal call density: 0.4 calls/symbol."
+description: "Covers the **storage** subsystem of code-intel-platform. 20 symbols across 6 files. Key symbols: `loadRegistry`, `DbManager`, `loadMetadata`. Internal call density: 0.4 calls/symbol. Participates in 4 execution flow(s)."
 ---
 
 # storage
@@ -11,7 +11,7 @@ description: "Covers the **storage** subsystem of code-intel-platform. 20 symbol
 
 Load this skill when:
 - The task involves code in `code-intel/core/src/storage/`
-- The user mentions `loadRegistry`, `DbManager`, `upsertRepo` or asks how they work
+- The user mentions `loadRegistry`, `DbManager`, `loadMetadata` or asks how they work
 - Adding, modifying, or debugging storage-related functionality
 - Tracing call chains that pass through the storage layer
 
@@ -32,11 +32,11 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `loadRegistry` | function | 9 | 0 | `storage/repo-registry.ts` |
+| `loadRegistry` | function | 10 | 0 | `storage/repo-registry.ts` |
 | `DbManager` | class | 6 | 0 | `storage/db-manager.ts` |
+| `loadMetadata` | function | 4 | 0 | `storage/metadata.ts` |
 | `upsertRepo` | function | 2 | 2 | `storage/repo-registry.ts` |
 | `removeRepo` | function | 2 | 2 | `storage/repo-registry.ts` |
-| `loadMetadata` | function | 3 | 0 | `storage/metadata.ts` |
 | `getDbPath` | function | 3 | 0 | `storage/metadata.ts` |
 | `getVectorDbPath` | function | 3 | 0 | `storage/metadata.ts` |
 | `saveRegistry` | function | 3 | 0 | `storage/repo-registry.ts` |
@@ -44,6 +44,11 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | `writeEdgeCSV` | function | 1 | 1 | `storage/csv-writer.ts` |
 | `csvRow` | function | 2 | 0 | `storage/csv-writer.ts` |
 | `buildNodeProps` | function | 1 | 1 | `storage/graph-loader.ts` |
+
+## Execution Flows
+
+**4** execution path(s) pass through this area.
+Run `code-intel inspect <symbol>` on a hot symbol to trace the full call chain.
 
 ## Impact Guidance
 
