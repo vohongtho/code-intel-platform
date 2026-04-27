@@ -37,11 +37,11 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
+| `check` | function | 1 | 1 | `shared/Header.tsx` |
+| `handleSearch` | function | 1 | 1 | `shared/Header.tsx` |
 | `StatusFooter` | function | 0 | 2 | `shared/StatusFooter.tsx` |
-| `Header` | function | 0 | 1 | `shared/Header.tsx` |
-| `check` | function | 0 | 1 | `shared/Header.tsx` |
-| `handleSearch` | function | 0 | 1 | `shared/Header.tsx` |
 | `Props` | interface | 0 | 0 | `shared/Header.tsx` |
+| `Header` | function | 0 | 0 | `shared/Header.tsx` |
 | `onKey` | function | 0 | 0 | `shared/Header.tsx` |
 | `KeyboardShortcutsModalProps` | interface | 0 | 0 | `shared/KeyboardShortcutsModal.tsx` |
 | `ShortcutEntry` | interface | 0 | 0 | `shared/KeyboardShortcutsModal.tsx` |
@@ -61,7 +61,7 @@ Before modifying any symbol in this area:
 
 ```bash
 # Inspect most-connected symbol
-code-intel inspect StatusFooter
+code-intel inspect check
 # Blast radius for entry point
 code-intel impact Header
 # Search this area

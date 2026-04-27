@@ -1,11 +1,11 @@
 ---
 name: panels
-description: "Covers the **panels** subsystem of code-intel-platform. 30 symbols across 5 files. Key symbols: `NodeDetail`, `SearchBar`, `SidebarChat`. Internal call density: 0.3 calls/symbol."
+description: "Covers the **panels** subsystem of code-intel-platform. 30 symbols across 5 files. Key symbols: `NodeDetail`, `SearchBar`, `SidebarChat`. Internal call density: 0.2 calls/symbol. Participates in 1 execution flow(s)."
 ---
 
 # panels
 
-> **30 symbols** | **5 files** | path: `code-intel/web/src/components/panels/` | call density: 0.3/sym
+> **30 symbols** | **5 files** | path: `code-intel/web/src/components/panels/` | call density: 0.2/sym
 
 ## When to Use
 
@@ -43,16 +43,21 @@ Sorted by call graph degree (changing these has the highest blast radius):
 |--------|------|-----:|------:|------|
 | `renderInline` | function | 1 | 4 | `panels/SidebarChat.tsx` |
 | `send` | function | 1 | 2 | `panels/SidebarChat.tsx` |
-| `NodeDetail` | function | 0 | 2 | `panels/NodeDetail.tsx` |
-| `onCitationClick` | function | 1 | 1 | `panels/SidebarChat.tsx` |
-| `TreeNodeView` | function | 0 | 2 | `panels/SidebarFiles.tsx` |
+| `loadImpact` | function | 1 | 1 | `panels/NodeDetail.tsx` |
+| `SearchBar` | function | 0 | 2 | `panels/SearchBar.tsx` |
+| `handleSearch` | function | 1 | 1 | `panels/SearchBar.tsx` |
+| `renderLine` | function | 1 | 1 | `panels/SidebarChat.tsx` |
 | `SidebarFiles` | function | 0 | 2 | `panels/SidebarFiles.tsx` |
-| `loadImpact` | function | 0 | 1 | `panels/NodeDetail.tsx` |
-| `SearchBar` | function | 0 | 1 | `panels/SearchBar.tsx` |
-| `handleSearch` | function | 0 | 1 | `panels/SearchBar.tsx` |
+| `jumpTo` | function | 1 | 0 | `panels/NodeDetail.tsx` |
 | `SidebarChat` | function | 0 | 1 | `panels/SidebarChat.tsx` |
-| `RichText` | function | 0 | 1 | `panels/SidebarChat.tsx` |
-| `renderLine` | function | 1 | 0 | `panels/SidebarChat.tsx` |
+| `onCitationClick` | function | 1 | 0 | `panels/SidebarChat.tsx` |
+| `parseCitation` | function | 1 | 0 | `panels/SidebarChat.tsx` |
+| `shortPath` | function | 1 | 0 | `panels/SidebarChat.tsx` |
+
+## Execution Flows
+
+**1** execution path(s) pass through this area.
+Run `code-intel inspect <symbol>` on a hot symbol to trace the full call chain.
 
 ## Impact Guidance
 

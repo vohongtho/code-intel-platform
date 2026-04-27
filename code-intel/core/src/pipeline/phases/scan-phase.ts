@@ -8,7 +8,8 @@ const IGNORED_DIRS = new Set([
   'node_modules', '.git', '.svn', '.hg', 'dist', 'dist-tests', 'build', 'out',
   '__pycache__', '.tox', '.pytest_cache', '.mypy_cache',
   'vendor', 'target', '.code-intel', 'coverage', '.next',
-  '.turbo', '.cache', 'tmp', 'temp', '.parcel-cache',
+  '.turbo', '.cache', 'tmp', 'temp', '.parcel-cache', '.venv', 'venv',
+  '.env', 'env', '__snapshots__', '.nyc_output', 'storybook-static',
 ]);
 
 /**
@@ -29,7 +30,8 @@ function loadIgnorePatterns(workspaceRoot: string): Set<string> {
   }
 }
 
-const IGNORED_EXTENSIONS = new Set(['.d.ts', '.js.map', '.d.ts.map']);
+const IGNORED_FILE_SUFFIXES = ['.d.ts', '.js.map', '.d.ts.map', '.min.js', '.min.css'];
+const MAX_FILE_SIZE_BYTES = 512 * 1024; // skip files > 512 KB
 
 export const scanPhase: Phase = {
   name: 'scan',
@@ -49,27 +51,34 @@ export const scanPhase: Phase = {
       }
 
       for (const entry of entries) {
-        if (entry.name.startsWith('.') && entry.isDirectory()) continue;
-        if (IGNORED_DIRS.has(entry.name) && entry.isDirectory()) continue;
-        if (extraIgnore.has(entry.name) && entry.isDirectory()) continue;
-
-        const fullPath = path.join(dir, entry.name);
+        // Skip hidden directories and ignored directories
         if (entry.isDirectory()) {
-          walk(fullPath);
+          if (entry.name.startsWith('.')) continue;
+          if (IGNORED_DIRS.has(entry.name)) continue;
+          if (extraIgnore.has(entry.name)) continue;
+          walk(path.join(dir, entry.name));
         } else if (entry.isFile()) {
-          const ext = path.extname(entry.name);
-          const fullName = entry.name;
-          // Skip declaration files and maps
-          if (fullName.endsWith('.d.ts') || fullName.endsWith('.js.map') || fullName.endsWith('.d.ts.map')) continue;
-          if (extensions.has(ext)) {
-            filePaths.push(fullPath);
+          const name = entry.name;
+          // Skip known non-source suffixes
+          if (IGNORED_FILE_SUFFIXES.some((s) => name.endsWith(s))) continue;
+          const ext = path.extname(name);
+          if (!extensions.has(ext)) continue;
+          const fullPath = path.join(dir, name);
+          // Skip very large files (generated code, minified assets)
+          try {
+            const stat = fs.statSync(fullPath);
+            if (stat.size > MAX_FILE_SIZE_BYTES) continue;
+          } catch {
+            continue;
           }
+          filePaths.push(fullPath);
         }
       }
     }
 
     walk(context.workspaceRoot);
     context.filePaths.push(...filePaths);
+    context.onPhaseProgress?.('scan', filePaths.length, filePaths.length);
 
     return {
       status: 'completed',
@@ -86,6 +95,7 @@ export const structurePhase: Phase = {
     const start = Date.now();
     const dirs = new Set<string>();
 
+    let structDone = 0;
     for (const filePath of context.filePaths) {
       const relativePath = path.relative(context.workspaceRoot, filePath);
       const lang = detectLanguage(filePath);
@@ -105,6 +115,8 @@ export const structurePhase: Phase = {
         dirs.add(dir);
         dir = path.dirname(dir);
       }
+      structDone++;
+      context.onPhaseProgress?.('structure', structDone, context.filePaths.length);
     }
 
     for (const dir of dirs) {

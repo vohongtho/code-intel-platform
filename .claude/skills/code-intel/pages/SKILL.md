@@ -1,11 +1,11 @@
 ---
 name: pages
-description: "Covers the **pages** subsystem of code-intel-platform. 13 symbols across 3 files. Key symbols: `ConnectPage`, `ExplorerPage`, `LoadingPage`. Internal call density: 0.3 calls/symbol."
+description: "Covers the **pages** subsystem of code-intel-platform. 13 symbols across 3 files. Key symbols: `ConnectPage`, `ExplorerPage`, `LoadingPage`. Internal call density: 0.2 calls/symbol."
 ---
 
 # pages
 
-> **13 symbols** | **3 files** | path: `code-intel/web/src/pages/` | call density: 0.3/sym
+> **13 symbols** | **3 files** | path: `code-intel/web/src/pages/` | call density: 0.2/sym
 
 ## When to Use
 
@@ -37,10 +37,10 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `probeServer` | function | 2 | 2 | `pages/ConnectPage.tsx` |
-| `handleConnectGroup` | function | 0 | 4 | `pages/ConnectPage.tsx` |
+| `ConnectPage` | function | 0 | 3 | `pages/ConnectPage.tsx` |
+| `probeServer` | function | 2 | 1 | `pages/ConnectPage.tsx` |
 | `loadGroups` | function | 1 | 2 | `pages/ConnectPage.tsx` |
-| `ConnectPage` | function | 0 | 2 | `pages/ConnectPage.tsx` |
+| `handleConnectGroup` | function | 1 | 2 | `pages/ConnectPage.tsx` |
 | `handleConnectRepo` | function | 1 | 1 | `pages/ConnectPage.tsx` |
 | `handleSyncFull` | function | 0 | 2 | `pages/ExplorerPage.tsx` |
 | `ExplorerPage` | function | 0 | 1 | `pages/ExplorerPage.tsx` |
@@ -61,7 +61,7 @@ Before modifying any symbol in this area:
 
 ```bash
 # Inspect most-connected symbol
-code-intel inspect probeServer
+code-intel inspect ConnectPage
 # Blast radius for entry point
 code-intel impact ConnectPage
 # Search this area

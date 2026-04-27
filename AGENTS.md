@@ -12,7 +12,7 @@
 > ⚠ This section is auto-managed by `code-intel analyze`. Do **not** edit between the markers — your changes will be overwritten.
 > Add your own notes below the `<!-- code-intel:end -->` marker.
 
-Indexed: **680 nodes** | **1,321 edges** | **151 files** | analyzed in 0.4s
+Indexed: **697 nodes** | **1,375 edges** | **151 files** | analyzed in 0.4s
 
 > Index stale? Re-run: `code-intel analyze`
 
@@ -50,12 +50,12 @@ code-intel clean [path]            # Remove index data
 | Work in `multi-repo` (30 symbols) | `.claude/skills/code-intel/multi-repo/SKILL.md` |
 | Work in `panels` (30 symbols) | `.claude/skills/code-intel/panels/SKILL.md` |
 | Work in `eval` (25 symbols) | `.claude/skills/code-intel/eval/SKILL.md` |
+| Work in `cli` (21 symbols) | `.claude/skills/code-intel/cli/SKILL.md` |
 | Work in `storage` (20 symbols) | `.claude/skills/code-intel/storage/SKILL.md` |
-| Work in `cli` (16 symbols) | `.claude/skills/code-intel/cli/SKILL.md` |
+| Work in `phases` (16 symbols) | `.claude/skills/code-intel/phases/SKILL.md` |
 | Work in `pages` (13 symbols) | `.claude/skills/code-intel/pages/SKILL.md` |
 | Work in `java-repo` (13 symbols) | `.claude/skills/code-intel/java-repo/SKILL.md` |
 | Work in `multi-lang` (13 symbols) | `.claude/skills/code-intel/multi-lang/SKILL.md` |
-| Work in `phases` (12 symbols) | `.claude/skills/code-intel/phases/SKILL.md` |
 | Work in `search` (12 symbols) | `.claude/skills/code-intel/search/SKILL.md` |
 | Work in `graph` (12 symbols) | `.claude/skills/code-intel/graph/SKILL.md` |
 | Work in `shared` (12 symbols) | `.claude/skills/code-intel/shared/SKILL.md` |

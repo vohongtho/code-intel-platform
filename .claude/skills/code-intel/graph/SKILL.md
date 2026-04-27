@@ -33,18 +33,18 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `applyNodeEdgeReducers` | function | 2 | 3 | `graph/GraphView.tsx` |
-| `angle` | function | 0 | 3 | `graph/GraphView.tsx` |
-| `bfsNeighborhood` | function | 1 | 1 | `graph/GraphView.tsx` |
+| `applyNodeEdgeReducers` | function | 1 | 3 | `graph/GraphView.tsx` |
 | `GraphView` | function | 0 | 1 | `graph/GraphView.tsx` |
-| `factor` | function | 0 | 1 | `graph/GraphView.tsx` |
+| `angle` | function | 0 | 1 | `graph/GraphView.tsx` |
+| `bfsNeighborhood` | function | 1 | 0 | `graph/GraphView.tsx` |
+| `GraphControls` | function | 0 | 1 | `graph/GraphView.tsx` |
+| `zoom` | function | 1 | 0 | `graph/GraphView.tsx` |
 | `sizeForKind` | function | 1 | 0 | `graph/GraphView.tsx` |
 | `drawDarkNodeHover` | function | 0 | 0 | `graph/GraphView.tsx` |
 | `GraphMeta` | interface | 0 | 0 | `graph/GraphView.tsx` |
 | `onZoom` | function | 0 | 0 | `graph/GraphView.tsx` |
+| `factor` | function | 0 | 0 | `graph/GraphView.tsx` |
 | `GraphLegend` | function | 0 | 0 | `graph/GraphView.tsx` |
-| `GraphControls` | function | 0 | 0 | `graph/GraphView.tsx` |
-| `zoom` | function | 0 | 0 | `graph/GraphView.tsx` |
 
 ## Impact Guidance
 

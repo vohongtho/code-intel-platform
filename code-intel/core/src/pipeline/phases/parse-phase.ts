@@ -12,7 +12,33 @@ export const parsePhase: Phase = {
     const start = Date.now();
     let symbolCount = 0;
 
-    for (const filePath of context.filePaths) {
+    // Initialise shared caches that resolve phase will reuse
+    if (!context.fileCache) context.fileCache = new Map();
+    if (!context.fileFunctionIndex) context.fileFunctionIndex = new Map();
+
+    // Batch-read all files in parallel (Node.js async I/O pool)
+    const CONCURRENCY = 64;
+    const filePaths = context.filePaths;
+
+    // Read files in parallel batches
+    let readDone = 0;
+    for (let i = 0; i < filePaths.length; i += CONCURRENCY) {
+      const batch = filePaths.slice(i, i + CONCURRENCY);
+      await Promise.all(batch.map(async (filePath) => {
+        try {
+          const source = await fs.promises.readFile(filePath, 'utf-8');
+          context.fileCache!.set(filePath, source);
+        } catch {
+          // Unreadable file — skip silently
+        }
+      }));
+      readDone += batch.length;
+      context.onPhaseProgress?.('parse:read', readDone, filePaths.length);
+    }
+
+    // Parse symbols from cached content
+    let parseDone = 0;
+    for (const filePath of filePaths) {
       const lang = detectLanguage(filePath);
       if (!lang) {
         if (context.verbose) {
@@ -22,17 +48,13 @@ export const parsePhase: Phase = {
         continue;
       }
 
+      const source = context.fileCache.get(filePath);
+      if (!source) continue;
+
       const relativePath = path.relative(context.workspaceRoot, filePath);
       const fileNodeId = generateNodeId('file', relativePath, relativePath);
 
-      let source: string;
-      try {
-        source = fs.readFileSync(filePath, 'utf-8');
-      } catch {
-        continue;
-      }
-
-      // Store content on file node for search
+      // Store a snippet on the file node for full-text search
       const fileNode = context.graph.getNode(fileNodeId);
       if (fileNode) {
         fileNode.content = source.slice(0, 2000);
@@ -48,20 +70,32 @@ export const parsePhase: Phase = {
         const trimmed = line.trim();
 
         // Skip comments
-        if (trimmed.startsWith('//') || trimmed.startsWith('#') || trimmed.startsWith('*') || trimmed.startsWith('/*')) continue;
+        if (
+          trimmed.startsWith('//') ||
+          trimmed.startsWith('#') ||
+          trimmed.startsWith('*') ||
+          trimmed.startsWith('/*')
+        ) continue;
 
         const extracted = extractSymbol(trimmed, lang, i + 1, relativePath);
         if (!extracted) continue;
-        if (seen.has(extracted.name + ':' + extracted.kind)) continue;
-        seen.add(extracted.name + ':' + extracted.kind);
+
+        const dedupeKey = extracted.name + ':' + extracted.kind;
+        if (seen.has(dedupeKey)) continue;
+        seen.add(dedupeKey);
 
         const nodeId = generateNodeId(extracted.kind, relativePath, extracted.name);
+
+        // Estimate endLine by scanning forward for the closing brace / dedent (max 200 lines)
+        const endLine = estimateEndLine(lines, i, lang);
+
         nodes.push({
           id: nodeId,
           kind: extracted.kind,
           name: extracted.name,
           filePath: relativePath,
           startLine: i + 1,
+          endLine,
           exported: extracted.exported,
           content: extractBlock(lines, i, 20),
         });
@@ -92,15 +126,28 @@ export const parsePhase: Phase = {
 
       for (const n of nodes) context.graph.addNode(n);
       for (const e of edges) context.graph.addEdge(e);
+
+      // Build per-file sorted function/method index for fast enclosing-function lookup in resolve phase
+      const funcs = nodes
+        .filter((n) => n.kind === 'function' || n.kind === 'method')
+        .map((n) => ({ id: n.id, startLine: n.startLine ?? 0, endLine: n.endLine }))
+        .sort((a, b) => a.startLine - b.startLine);
+      if (funcs.length > 0) {
+        context.fileFunctionIndex!.set(relativePath, funcs);
+      }
+      parseDone++;
+      context.onPhaseProgress?.('parse', parseDone, filePaths.length);
     }
 
     return {
       status: 'completed',
       duration: Date.now() - start,
-      message: `Extracted ${symbolCount} symbols`,
+      message: `Extracted ${symbolCount} symbols from ${filePaths.length} files`,
     };
   },
 };
+
+// ─── Symbol extraction ────────────────────────────────────────────────────────
 
 interface ExtractedSymbol {
   kind: CodeNode['kind'];
@@ -141,13 +188,6 @@ function extractSymbol(
     const constVar = line.match(/^(?:export\s+)?const\s+(\w+)\s*(?::\s*\w[^=]*)?\s*=/);
     if (constVar && /^[A-Z_]+$/.test(constVar[1])) {
       return { kind: 'constant', name: constVar[1], exported: line.includes('export') };
-    }
-
-    const method = line.match(/^(?:(?:public|private|protected|static|async|readonly)\s+)*(\w+)\s*\(/);
-    if (method && !['if', 'for', 'while', 'switch', 'catch', 'return', 'constructor'].includes(method[1])) {
-      if (method[1] === 'constructor') {
-        return { kind: 'constructor', name: 'constructor', exported: false };
-      }
     }
   }
 
@@ -312,6 +352,46 @@ function extractSymbol(
   }
 
   return null;
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Estimate the end line of a block by counting braces/indents (max 200-line scan).
+ * Returns undefined when a reliable estimate is not possible.
+ */
+function estimateEndLine(lines: string[], startIdx: number, lang: Language): number | undefined {
+  const MAX_SCAN = 200;
+  const end = Math.min(startIdx + MAX_SCAN, lines.length);
+
+  // Brace-delimited languages
+  if (
+    lang !== Language.Python &&
+    lang !== Language.Ruby
+  ) {
+    let depth = 0;
+    let foundOpen = false;
+    for (let i = startIdx; i < end; i++) {
+      for (const ch of lines[i]) {
+        if (ch === '{') { depth++; foundOpen = true; }
+        else if (ch === '}') {
+          depth--;
+          if (foundOpen && depth === 0) return i + 1;
+        }
+      }
+    }
+    return undefined;
+  }
+
+  // Indent-based (Python, Ruby) — look for next same-level line
+  const startIndent = (lines[startIdx].match(/^(\s*)/) ?? ['', ''])[1].length;
+  for (let i = startIdx + 1; i < end; i++) {
+    const l = lines[i];
+    if (l.trim() === '') continue;
+    const indent = (l.match(/^(\s*)/) ?? ['', ''])[1].length;
+    if (indent <= startIndent && l.trim() !== '') return i;
+  }
+  return undefined;
 }
 
 function extractBlock(lines: string[], startIdx: number, maxLines: number): string {

@@ -1,17 +1,17 @@
 ---
 name: eval
-description: "Covers the **eval** subsystem of code-intel-platform. 25 symbols across 6 files. Key symbols: `check`, `blockCount`, `baselineAnswer`. Internal call density: 0.9 calls/symbol."
+description: "Covers the **eval** subsystem of code-intel-platform. 25 symbols across 6 files. Key symbols: `col`, `readFile`, `baselineAnswer`. Internal call density: 0.4 calls/symbol."
 ---
 
 # eval
 
-> **25 symbols** | **6 files** | path: `eval/` | call density: 0.9/sym
+> **25 symbols** | **6 files** | path: `eval/` | call density: 0.4/sym
 
 ## When to Use
 
 Load this skill when:
 - The task involves code in `eval/`
-- The user mentions `check`, `blockCount`, `baselineAnswer` or asks how they work
+- The user mentions `col`, `readFile`, `baselineAnswer` or asks how they work
 - Adding, modifying, or debugging eval-related functionality
 - Tracing call chains that pass through the eval layer
 
@@ -32,18 +32,18 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `check` | function | 2 | 4 | `eval/run-eval.mjs` |
-| `blockCount` | function | 0 | 4 | `eval/run-eval.mjs` |
+| `col` | function | 1 | 3 | `eval/run-agent-bench.mjs` |
+| `readFile` | function | 3 | 0 | `eval/run-agent-bench.mjs` |
 | `baselineAnswer` | function | 1 | 2 | `eval/run-agent-bench.mjs` |
-| `col` | function | 0 | 3 | `eval/run-agent-bench.mjs` |
-| `check` | function | 0 | 3 | `eval/run-eval-langs.mjs` |
-| `bench` | function | 0 | 3 | `eval/run-mcp-bench.mjs` |
+| `check` | function | 3 | 0 | `eval/run-eval.mjs` |
+| `bench` | function | 1 | 2 | `eval/run-mcp-bench.mjs` |
 | `runCLI` | function | 2 | 0 | `eval/run-agent-bench.mjs` |
-| `readFile` | function | 2 | 0 | `eval/run-agent-bench.mjs` |
-| `score` | function | 1 | 1 | `eval/run-agent-bench.mjs` |
 | `enhancedAnswer` | function | 1 | 1 | `eval/run-agent-bench.mjs` |
-| `run` | function | 0 | 2 | `eval/run-eval-multi.mjs` |
 | `pass` | function | 2 | 0 | `eval/run-eval.mjs` |
+| `blockCount` | function | 0 | 2 | `eval/run-eval.mjs` |
+| `grepFile` | function | 1 | 0 | `eval/run-agent-bench.mjs` |
+| `score` | function | 1 | 0 | `eval/run-agent-bench.mjs` |
+| `runCLI` | function | 1 | 0 | `eval/run-eval-langs.mjs` |
 
 ## Impact Guidance
 
@@ -56,9 +56,9 @@ Before modifying any symbol in this area:
 
 ```bash
 # Inspect most-connected symbol
-code-intel inspect check
+code-intel inspect col
 # Blast radius for entry point
-code-intel impact check
+code-intel impact col
 # Search this area
 code-intel search "eval"
 ```

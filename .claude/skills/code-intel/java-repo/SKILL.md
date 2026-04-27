@@ -1,11 +1,11 @@
 ---
 name: java-repo
-description: "Covers the **java-repo** subsystem of code-intel-platform. 13 symbols across 1 files. Key symbols: `UserRepository`, `create`, `findById`. Internal call density: 0.3 calls/symbol."
+description: "Covers the **java-repo** subsystem of code-intel-platform. 13 symbols across 1 files. Key symbols: `UserRepository`, `create`, `findById`. Internal call density: 0.2 calls/symbol."
 ---
 
 # java-repo
 
-> **13 symbols** | **1 files** | path: `eval/fixtures/java-repo/` | call density: 0.3/sym
+> **13 symbols** | **1 files** | path: `eval/fixtures/java-repo/` | call density: 0.2/sym
 
 ## When to Use
 
@@ -41,12 +41,12 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | `User` | class | 2 | 0 | `java-repo/UserRepository.java` |
 | `format` | method | 0 | 2 | `java-repo/UserRepository.java` |
 | `create` | method | 0 | 1 | `java-repo/UserRepository.java` |
-| `count` | method | 0 | 1 | `java-repo/UserRepository.java` |
 | `getName` | method | 1 | 0 | `java-repo/UserRepository.java` |
 | `getEmail` | method | 1 | 0 | `java-repo/UserRepository.java` |
 | `UserRepository` | class | 0 | 0 | `java-repo/UserRepository.java` |
 | `findById` | method | 0 | 0 | `java-repo/UserRepository.java` |
 | `delete` | method | 0 | 0 | `java-repo/UserRepository.java` |
+| `count` | method | 0 | 0 | `java-repo/UserRepository.java` |
 | `getId` | method | 0 | 0 | `java-repo/UserRepository.java` |
 | `setName` | method | 0 | 0 | `java-repo/UserRepository.java` |
 | `EmailValidator` | class | 0 | 0 | `java-repo/UserRepository.java` |

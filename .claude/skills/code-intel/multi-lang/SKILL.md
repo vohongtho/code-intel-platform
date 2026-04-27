@@ -40,11 +40,11 @@ Sorted by call graph degree (changing these has the highest blast radius):
 |--------|------|-----:|------:|------|
 | `login` | function | 1 | 2 | `multi-lang/auth.py` |
 | `User` | class | 1 | 0 | `multi-lang/auth.py` |
+| `__init__` | method | 1 | 0 | `multi-lang/auth.py` |
 | `register` | function | 0 | 1 | `multi-lang/auth.py` |
 | `logout` | function | 1 | 0 | `multi-lang/auth.py` |
 | `_find_user` | function | 1 | 0 | `multi-lang/auth.py` |
 | `_generate_token` | function | 1 | 0 | `multi-lang/auth.py` |
-| `__init__` | method | 0 | 0 | `multi-lang/auth.py` |
 | `AuthService` | class | 0 | 0 | `multi-lang/auth.py` |
 | `validate_email` | function | 0 | 0 | `multi-lang/auth.py` |
 | `Request` | interface | 0 | 0 | `multi-lang/router.ts` |

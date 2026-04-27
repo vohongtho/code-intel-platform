@@ -1,11 +1,11 @@
 ---
 name: storage
-description: "Covers the **storage** subsystem of code-intel-platform. 20 symbols across 6 files. Key symbols: `writeNodeCSVs`, `writeEdgeCSV`. Internal call density: 0.6 calls/symbol."
+description: "Covers the **storage** subsystem of code-intel-platform. 20 symbols across 6 files. Key symbols: `writeNodeCSVs`, `writeEdgeCSV`. Internal call density: 0.4 calls/symbol."
 ---
 
 # storage
 
-> **20 symbols** | **6 files** | path: `code-intel/core/src/storage/` | call density: 0.6/sym
+> **20 symbols** | **6 files** | path: `code-intel/core/src/storage/` | call density: 0.4/sym
 
 ## When to Use
 
@@ -39,9 +39,8 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `loadRegistry` | function | 11 | 0 | `storage/repo-registry.ts` |
+| `loadRegistry` | function | 9 | 0 | `storage/repo-registry.ts` |
 | `DbManager` | class | 6 | 0 | `storage/db-manager.ts` |
-| `loadGraphToDB` | function | 1 | 4 | `storage/graph-loader.ts` |
 | `upsertRepo` | function | 1 | 2 | `storage/repo-registry.ts` |
 | `removeRepo` | function | 1 | 2 | `storage/repo-registry.ts` |
 | `csvRow` | function | 2 | 0 | `storage/csv-writer.ts` |
@@ -51,6 +50,7 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | `getDbPath` | function | 2 | 0 | `storage/metadata.ts` |
 | `getVectorDbPath` | function | 2 | 0 | `storage/metadata.ts` |
 | `saveRegistry` | function | 2 | 0 | `storage/repo-registry.ts` |
+| `writeNodeCSVs` | function | 0 | 1 | `storage/csv-writer.ts` |
 
 ## Impact Guidance
 

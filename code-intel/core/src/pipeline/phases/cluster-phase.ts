@@ -23,7 +23,11 @@ export const clusterPhase: Phase = {
     }
 
     let clusterCount = 0;
-    for (const [dir, members] of nodesByDir) {
+    const dirEntries = [...nodesByDir.entries()];
+    let clusterDone = 0;
+    for (const [dir, members] of dirEntries) {
+      clusterDone++;
+      context.onPhaseProgress?.('cluster', clusterDone, dirEntries.length);
       if (members.length < 2) continue;
 
       const clusterId = generateNodeId('cluster', dir, `cluster-${clusterCount}`);

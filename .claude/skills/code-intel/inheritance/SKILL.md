@@ -1,11 +1,11 @@
 ---
 name: inheritance
-description: "Covers the **inheritance** subsystem of code-intel-platform. 8 symbols across 3 files. Key symbols: `buildHeritageEdges`, `detectOverrides`. Internal call density: 0.5 calls/symbol."
+description: "Covers the **inheritance** subsystem of code-intel-platform. 8 symbols across 3 files. Key symbols: `buildHeritageEdges`, `detectOverrides`. Internal call density: 0.6 calls/symbol."
 ---
 
 # inheritance
 
-> **8 symbols** | **3 files** | path: `code-intel/core/src/inheritance/` | call density: 0.5/sym
+> **8 symbols** | **3 files** | path: `code-intel/core/src/inheritance/` | call density: 0.6/sym
 
 ## When to Use
 
@@ -38,10 +38,10 @@ Sorted by call graph degree (changing these has the highest blast radius):
 |--------|------|-----:|------:|------|
 | `computeMRO` | function | 1 | 3 | `inheritance/mro-walker.ts` |
 | `depthFirstMRO` | function | 2 | 1 | `inheritance/mro-walker.ts` |
-| `linearize` | function | 0 | 2 | `inheritance/mro-walker.ts` |
+| `linearize` | function | 1 | 2 | `inheritance/mro-walker.ts` |
+| `c3Linearize` | function | 1 | 1 | `inheritance/mro-walker.ts` |
 | `mixinAwareMRO` | function | 1 | 1 | `inheritance/mro-walker.ts` |
 | `buildHeritageEdges` | function | 0 | 1 | `inheritance/heritage-builder.ts` |
-| `c3Linearize` | function | 1 | 0 | `inheritance/mro-walker.ts` |
 | `detectOverrides` | function | 0 | 1 | `inheritance/override-detector.ts` |
 | `HeritageInfo` | interface | 0 | 0 | `inheritance/heritage-builder.ts` |
 

@@ -41,8 +41,11 @@ export const flowPhase: Phase = {
     const maxDepth = 10;
     const maxBranching = 4;
     let flowCount = 0;
+    const epSlice = entryPoints.slice(0, 20);
 
-    for (const ep of entryPoints.slice(0, 20)) {
+    for (let epIdx = 0; epIdx < epSlice.length; epIdx++) {
+      const ep = epSlice[epIdx];
+      context.onPhaseProgress?.('flow', epIdx + 1, epSlice.length);
       if (flowCount >= maxFlows) break;
 
       // BFS trace

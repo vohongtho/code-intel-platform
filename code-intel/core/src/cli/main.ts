@@ -142,12 +142,57 @@ async function analyzeWorkspace(targetPath: string, options?: {
   }
 
   const graph = createKnowledgeGraph();
+
+  // ── Progress bar + spinner helpers ───────────────────────────────────────
+  const BAR_WIDTH = 30;
+  let currentPhase = '';
+  function renderBar(phase: string, done: number, total: number): void {
+    const pct = total > 0 ? done / total : 1;
+    const filled = Math.round(pct * BAR_WIDTH);
+    const bar = '█'.repeat(filled) + '░'.repeat(BAR_WIDTH - filled);
+    const pctStr = (pct * 100).toFixed(0).padStart(3);
+    process.stdout.write(`\r  [${phase.padEnd(9)}] ${bar} ${pctStr}% (${done}/${total})`);
+  }
+  function clearBar(): void {
+    process.stdout.write('\r' + ' '.repeat(70) + '\r');
+  }
+
+  const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+  let spinnerIdx = 0;
+  let spinnerTimer: ReturnType<typeof setInterval> | null = null;
+  function startSpinner(label: string): void {
+    if (options?.silent) return;
+    spinnerIdx = 0;
+    spinnerTimer = setInterval(() => {
+      process.stdout.write(`\r  ${SPINNER_FRAMES[spinnerIdx % SPINNER_FRAMES.length]} ${label}…`);
+      spinnerIdx++;
+    }, 80);
+  }
+  function stopSpinner(): void {
+    if (spinnerTimer) { clearInterval(spinnerTimer); spinnerTimer = null; }
+    process.stdout.write('\r' + ' '.repeat(60) + '\r');
+  }
+
   const context: PipelineContext = {
     workspaceRoot,
     graph,
     filePaths: [],
     verbose: options?.verbose,
-    onProgress: options?.silent ? undefined : (phase, msg) => console.log(`  [${phase}] ${msg}`),
+    onProgress: options?.silent ? undefined : (phase, msg) => {
+      if (!options?.silent) {
+        if (currentPhase) clearBar();
+        console.log(`  [${phase}] ${msg}`);
+        currentPhase = '';
+      }
+    },
+    onPhaseProgress: options?.silent ? undefined : (phase, done, total) => {
+      currentPhase = phase;
+      renderBar(phase, done, total);
+      if (done >= total) {
+        clearBar();
+        currentPhase = '';
+      }
+    },
   };
 
   const phases = [scanPhase, structurePhase, parsePhase, resolvePhase, clusterPhase, flowPhase];
@@ -177,6 +222,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
   });
 
   // Persist graph to LadybugDB
+  startSpinner('Persisting graph to DB');
   try {
     const dbPath = getDbPath(workspaceRoot);
     // Remove stale / incompatible DB files before writing
@@ -188,10 +234,12 @@ async function analyzeWorkspace(targetPath: string, options?: {
     await db.init();
     const { nodeCount, edgeCount } = await loadGraphToDB(graph, db);
     db.close();
+    stopSpinner();
     if (!options?.silent) {
-      console.log(`  DB: ${nodeCount} nodes, ${edgeCount} edges persisted`);
+      console.log(`  ✓ DB: ${nodeCount} nodes, ${edgeCount} edges persisted`);
     }
   } catch (err) {
+    stopSpinner();
     if (!options?.silent) {
       console.warn(`  DB persist warning: ${err instanceof Error ? err.message : err}`);
     }
@@ -200,7 +248,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
   // Vector embeddings (opt-in or --embeddings, skip if --skip-embeddings)
   const doEmbeddings = options?.embeddings && !options?.skipEmbeddings;
   if (doEmbeddings) {
-    if (!options?.silent) console.log('  Embeddings: building vector index…');
+    startSpinner('Building vector embeddings');
     try {
       const { embedNodes } = await import('../search/embedder.js');
       const { getVectorDbPath } = await import('../storage/index.js');
@@ -212,14 +260,19 @@ async function analyzeWorkspace(targetPath: string, options?: {
       await idx.init();
       const nodes = await embedNodes(graph, {
         onProgress: (done, total) => {
-          if (!options?.silent) process.stdout.write(`\r  [vector] ${done}/${total}`);
+          if (!options?.silent) {
+            stopSpinner();
+            renderBar('vector', done, total);
+            if (done >= total) clearBar();
+          }
         },
       });
-      if (!options?.silent) console.log('');
+      stopSpinner();
       await idx.buildIndex(nodes);
-      if (!options?.silent) console.log(`  Embeddings: ${nodes.length} vectors built`);
+      if (!options?.silent) console.log(`  ✓ Embeddings: ${nodes.length} vectors built`);
       vdb.close();
     } catch (err) {
+      stopSpinner();
       if (!options?.silent) {
         console.warn(`  Embeddings warning: ${err instanceof Error ? err.message : err}`);
       }
@@ -232,13 +285,16 @@ async function analyzeWorkspace(targetPath: string, options?: {
   const doSkills = options?.skills !== false;
   let skillSummaries: { name: string; label: string; symbolCount: number; fileCount: number }[] = [];
   if (doSkills) {
+    startSpinner('Generating skill files');
     try {
       const { skills } = await writeSkillFiles(graph, workspaceRoot, repoName);
       skillSummaries = skills;
+      stopSpinner();
       if (!options?.silent && skills.length > 0) {
-        console.log(`  Skills: ${skills.length} generated → .claude/skills/code-intel/`);
+        console.log(`  ✓ Skills: ${skills.length} generated → .claude/skills/code-intel/`);
       }
     } catch (err) {
+      stopSpinner();
       if (!options?.silent) {
         console.warn(`  Skills warning: ${err instanceof Error ? err.message : err}`);
       }
@@ -247,6 +303,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
 
   // Write AGENTS.md + CLAUDE.md context blocks
   if (!options?.skipAgentsMd) {
+    startSpinner('Writing context files');
     try {
       writeContextFiles(workspaceRoot, repoName, {
         nodes: graph.size.nodes,
@@ -254,10 +311,12 @@ async function analyzeWorkspace(targetPath: string, options?: {
         files: context.filePaths.length,
         duration: result.totalDuration,
       }, skillSummaries);
+      stopSpinner();
       if (!options?.silent) {
-        console.log(`  Context: AGENTS.md + CLAUDE.md updated`);
+        console.log(`  ✓ Context: AGENTS.md + CLAUDE.md updated`);
       }
     } catch (err) {
+      stopSpinner();
       if (!options?.silent) {
         console.warn(`  Context warning: ${err instanceof Error ? err.message : err}`);
       }
@@ -265,11 +324,9 @@ async function analyzeWorkspace(targetPath: string, options?: {
   }
 
   if (!options?.silent) {
-    console.log(`\nDone in ${result.totalDuration}ms`);
-    console.log(`  Nodes: ${graph.size.nodes}`);
-    console.log(`  Edges: ${graph.size.edges}`);
-    console.log(`  Files: ${context.filePaths.length}`);
-    console.log(`  Success: ${result.success}`);
+    const dur = result.totalDuration;
+    const durStr = dur >= 1000 ? `${(dur / 1000).toFixed(1)}s` : `${dur}ms`;
+    console.log(`\n  ✅  Done in ${durStr}  —  ${graph.size.nodes} nodes · ${graph.size.edges} edges · ${context.filePaths.length} files`);
   }
 
   return { graph, result, repoName, workspaceRoot };
