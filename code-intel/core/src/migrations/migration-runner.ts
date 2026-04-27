@@ -9,6 +9,8 @@
 import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import crypto from 'node:crypto';
 
 export interface Migration {
   version: number;
@@ -131,6 +133,30 @@ export class MigrationRunner {
   }
 
   /**
+   * Create a pre-migration backup of the DB file.
+   * Stored in ~/.code-intel/backups/pre-migration/ as a timestamped copy.
+   * Non-fatal: if backup fails, migration still proceeds.
+   */
+  private autoBackupBeforeMigration(): void {
+    try {
+      // Get the DB file path from the Database object
+      const dbFile = (this.db as unknown as { name?: string }).name;
+      if (!dbFile || !fs.existsSync(dbFile)) return;
+
+      const backupDir = path.join(os.homedir(), '.code-intel', 'backups', 'pre-migration');
+      fs.mkdirSync(backupDir, { recursive: true });
+
+      const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const baseName = path.basename(dbFile, '.db');
+      const backupPath = path.join(backupDir, `${baseName}-pre-migration-${ts}.db`);
+
+      // SQLite backup via file copy (WAL checkpoint first)
+      try { this.db.pragma('wal_checkpoint(TRUNCATE)'); } catch { /* ignore */ }
+      fs.copyFileSync(dbFile, backupPath);
+    } catch { /* auto-backup is non-fatal */ }
+  }
+
+  /**
    * Run all pending migrations (up).
    * Returns number of migrations applied.
    */
@@ -140,6 +166,11 @@ export class MigrationRunner {
 
     if (dryRun) {
       return pending.length;
+    }
+
+    if (pending.length > 0) {
+      // Auto-backup before applying any migrations
+      this.autoBackupBeforeMigration();
     }
 
     for (const migration of pending) {

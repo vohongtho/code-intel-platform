@@ -22,6 +22,8 @@ import { queryGroup } from '../multi-repo/group-query.js';
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { withSpan, isTracingEnabled, sanitizeAttrs } from '../observability/tracing.js';
+import { mcpToolCallsTotal, mcpToolDurationSeconds } from '../observability/metrics.js';
 
 export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspaceRoot?: string): Server {
   const server = new Server(
@@ -289,7 +291,51 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
       }
     }
 
-    switch (name) {
+    // ── OTel span + Prometheus metrics wrapper ─────────────────────────────
+    const startMs = Date.now();
+    const dispatch = () => dispatchTool(name, a, graph, repoName, workspaceRoot);
+
+    let result: Awaited<ReturnType<typeof dispatchTool>>;
+    let status = 'success';
+    try {
+      if (isTracingEnabled()) {
+        result = await withSpan(
+          `mcp.tool.${name}`,
+          sanitizeAttrs({ 'mcp.tool': name, 'mcp.repo': repoName }),
+          dispatch,
+        );
+      } else {
+        result = await dispatch();
+      }
+      if (result.isError) status = 'error';
+    } catch (err) {
+      status = 'error';
+      mcpToolCallsTotal.inc({ tool: name, status });
+      mcpToolDurationSeconds.observe({ tool: name }, (Date.now() - startMs) / 1000);
+      throw err;
+    }
+    mcpToolCallsTotal.inc({ tool: name, status });
+    mcpToolDurationSeconds.observe({ tool: name }, (Date.now() - startMs) / 1000);
+    return result;
+  });
+
+  // ─── Resources ───────────────────────────────────────────────────────────────
+  registerResources(server, graph, repoName);
+
+  return server;
+}
+// ─── Tool dispatch (extracted for testability + OTel wrapping) ───────────────
+
+type ToolResult = { content: { type: string; text: string }[]; isError?: boolean };
+
+async function dispatchTool(
+  name: string,
+  a: Record<string, unknown>,
+  graph: KnowledgeGraph,
+  repoName: string,
+  workspaceRoot: string | undefined,
+): Promise<ToolResult> {
+  switch (name) {
 
       // ── repos ──────────────────────────────────────────────────────────────
       case 'repos': {
@@ -837,10 +883,13 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
       default:
         return { content: [{ type: 'text', text: `Unknown tool: ${name}` }] };
     }
-  });
+}
 
-  // ─── Resources ─────────────────────────────────────────────────────────────
+// ─── Resources section returns to createMcpServer via separate call ──────────
+// The Resources handlers need to be registered inside createMcpServer.
+// (See below where we call registerResources(server, graph, repoName).)
 
+function registerResources(server: Server, graph: KnowledgeGraph, repoName: string): void {
   server.setRequestHandler(ListResourcesRequestSchema, async () => ({
     resources: [
       { uri: `codeintel://repo/${repoName}/overview`, name: `${repoName} Overview`, mimeType: 'application/json' },
@@ -878,8 +927,6 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
 
     throw new Error(`Unknown resource: ${uri}`);
   });
-
-  return server;
 }
 
 export async function startMcpStdio(graph: KnowledgeGraph, repoName: string, workspaceRoot?: string): Promise<void> {

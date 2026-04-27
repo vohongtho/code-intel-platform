@@ -133,4 +133,36 @@ describe('JobsDB — durable job model', () => {
     const stuck = db.detectStuckJobs();
     assert.ok(Array.isArray(stuck));
   });
+
+  it('job survives process kill + restart — running job is recovered on new DB instantiation', async () => {
+    // Simulate: a job is running when the process dies
+    const job = db.submit('analyze', '/repo/restart-test');
+    db.markRunning(job.id);
+
+    // Verify it's running
+    const running = db.getJob(job.id);
+    assert.equal(running!.status, 'running');
+
+    // Simulate process kill + restart: create a new JobsDB on the same file.
+    // The constructor calls recoverStuckJobs() which re-queues running jobs.
+    // We need to move startedAt into the past so it looks "stuck":
+    // directly update the DB to set startedAt to 31 minutes ago
+    const pastTime = new Date(Date.now() - 31 * 60 * 1000).toISOString();
+    // Access the internal SQLite DB through a fresh connection
+    const Database2 = (await import('better-sqlite3')).default;
+    const raw = new Database2(dbPath);
+    raw.prepare(`UPDATE jobs SET startedAt = ? WHERE id = ?`).run(pastTime, job.id);
+    raw.close();
+
+    // Now simulate restart by opening a new JobsDB instance
+    const db2 = new JobsDB(dbPath);
+    const recovered = db2.getJob(job.id);
+
+    // The job should have been moved to 'failed' (eligible for retry) by recovery
+    assert.ok(
+      recovered!.status === 'failed' || recovered!.status === 'pending',
+      `Expected recovered job to be failed/pending, got: ${recovered!.status}`,
+    );
+    db2.close();
+  });
 });

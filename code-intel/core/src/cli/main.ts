@@ -50,8 +50,24 @@ import { queryGroup } from '../multi-repo/group-query.js';
 import { getOrCreateUsersDB } from '../auth/users-db.js';
 import type { Role } from '../auth/users-db.js';
 import { BackupService } from '../backup/backup-service.js';
+import { v4 as uuidv4 } from 'uuid';
 import { MigrationRunner, CURRENT_SCHEMA_VERSION } from '../migrations/migration-runner.js';
 import Database from 'better-sqlite3';
+import {
+  loadSecrets,
+  saveSecrets,
+  setSecret,
+  getSecret,
+  deleteSecret,
+  listSecretKeys,
+} from '../auth/secret-store.js';
+import { keychainBackend } from '../auth/keychain.js';
+import { assertNoPlaintextSecrets } from '../shared/config-validator.js';
+import { secureMkdir, tightenDbFiles } from '../shared/fs-secure.js';
+import { initTracing } from '../observability/tracing.js';
+
+// Bootstrap OTel tracing if enabled (must be called before any auto-instrumented code).
+initTracing();
 
 const program = new Command();
 
@@ -221,10 +237,12 @@ async function analyzeWorkspace(targetPath: string, options?: {
   const phases = [scanPhase, structurePhase, parsePhase, resolvePhase, clusterPhase, flowPhase];
   const result = await runPipeline(phases, context);
 
-  // Save metadata
+  // Save metadata (bump indexVersion on every successful analysis)
   const repoName = path.basename(workspaceRoot);
+  const indexVersion = uuidv4();
   saveMetadata(workspaceRoot, {
     indexedAt: new Date().toISOString(),
+    indexVersion,
     stats: {
       nodes: graph.size.nodes,
       edges: graph.size.edges,
@@ -244,11 +262,26 @@ async function analyzeWorkspace(targetPath: string, options?: {
     },
   });
 
-  // Persist graph to LadybugDB
+  // Persist graph to LadybugDB — atomic swap: write to graph.db.new then rename
   startSpinner('Persisting graph to DB');
   try {
     const dbPath = getDbPath(workspaceRoot);
-    // Remove stale / incompatible DB files before writing (handles both -wal and .wal suffixes)
+    const dbPathNew = `${dbPath}.new`;
+    // Clean up any previous failed .new file
+    const newStaleFiles = [
+      dbPathNew,
+      `${dbPathNew}-shm`, `${dbPathNew}-wal`,
+      `${dbPathNew}.shm`, `${dbPathNew}.wal`,
+    ];
+    for (const f of newStaleFiles) {
+      try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* ignore */ }
+    }
+    // Write to the .new file
+    const db = new DbManager(dbPathNew);
+    await db.init();
+    const { nodeCount, edgeCount } = await loadGraphToDB(graph, db);
+    db.close();
+    // Atomic swap: remove old DB files, rename .new → live
     const staleFiles = [
       dbPath,
       `${dbPath}-shm`, `${dbPath}-wal`,
@@ -257,10 +290,14 @@ async function analyzeWorkspace(targetPath: string, options?: {
     for (const f of staleFiles) {
       try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* ignore */ }
     }
-    const db = new DbManager(dbPath);
-    await db.init();
-    const { nodeCount, edgeCount } = await loadGraphToDB(graph, db);
-    db.close();
+    // Rename .new and its WAL/SHM companions atomically
+    for (const f of newStaleFiles) {
+      if (fs.existsSync(f)) {
+        const dest = f.replace(dbPathNew, dbPath);
+        try { fs.renameSync(f, dest); } catch { /* ignore */ }
+      }
+    }
+    fs.renameSync(dbPathNew, dbPath);
     stopSpinner();
     Logger.info(`DB persisted: ${nodeCount} nodes, ${edgeCount} edges`);
     if (!options?.silent) {
@@ -608,23 +645,110 @@ program
   });
 
 // ─── 7. clean ────────────────────────────────────────────────────────────────
+
+// Soft-delete helpers ──────────────────────────────────────────────────────────
+
+const TRASH_TTL_DAYS = 30;
+
+function trashDirName(repoPath: string): string {
+  const date = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  return `.code-intel-trash-${date}`;
+}
+
+function softDeleteCodeIntel(repoPath: string): void {
+  const codeIntelDir = path.join(repoPath, '.code-intel');
+  if (!fs.existsSync(codeIntelDir)) return;
+
+  const trashName = trashDirName(repoPath);
+  const trashDir = path.join(repoPath, trashName);
+
+  // If a trash dir already exists for today, append a counter
+  let dest = trashDir;
+  let counter = 1;
+  while (fs.existsSync(dest)) {
+    dest = `${trashDir}-${counter++}`;
+  }
+
+  fs.renameSync(codeIntelDir, dest);
+  fs.writeFileSync(
+    path.join(dest, 'TRASH_META.json'),
+    JSON.stringify({ deletedAt: new Date().toISOString(), repoPath, permanent: false }, null, 2),
+  );
+  console.log(`  ✓  Moved to trash: ${dest}`);
+  console.log(`     (auto-purge in ${TRASH_TTL_DAYS} days, or run --purge to delete immediately)`);
+}
+
+function purgeStaleTrashes(repoPath: string): void {
+  const cutoff = Date.now() - TRASH_TTL_DAYS * 24 * 60 * 60 * 1000;
+  try {
+    for (const entry of fs.readdirSync(repoPath)) {
+      if (!entry.startsWith('.code-intel-trash-')) continue;
+      const fullPath = path.join(repoPath, entry);
+      const metaPath = path.join(fullPath, 'TRASH_META.json');
+      if (fs.existsSync(metaPath)) {
+        try {
+          const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as { deletedAt: string };
+          if (new Date(meta.deletedAt).getTime() < cutoff) {
+            fs.rmSync(fullPath, { recursive: true, force: true });
+            console.log(`  ✓  Auto-purged stale trash: ${fullPath}`);
+          }
+        } catch { /* skip corrupt meta */ }
+      }
+    }
+  } catch { /* ignore if dir not readable */ }
+}
+
 program
   .command('clean')
-  .description('Remove the knowledge graph index for a repository')
+  .description('Soft-delete the knowledge graph index for a repository (30-day trash)')
   .argument('[path]', 'Path to clean (default: current directory)', '.')
-  .option('--all',   'Remove indexes for ALL indexed repositories')
-  .option('--force', 'Required with --all to confirm the destructive operation')
+  .option('--all',        'Remove indexes for ALL indexed repositories')
+  .option('--force',      'Required with --all to confirm the destructive operation')
+  .option('--purge',      'Immediately hard-delete instead of moving to trash')
+  .option('--list-trash', 'List all trash directories and their ages')
   .addHelpText('after', `
-  Deletes the .code-intel/ directory and removes the entry from the registry.
+  By default, .code-intel/ is moved to .code-intel-trash-{date}/ for 30 days
+  before being permanently purged. Use --purge to skip the trash period.
 
-  ⚠  --all --force is irreversible — it deletes every indexed repo's data.
+  ⚠  --all --force is irreversible (with --purge) — use with care.
 
   Examples:
-    $ code-intel clean                   Remove index for current directory
-    $ code-intel clean ./my-project      Remove index for a specific path
-    $ code-intel clean --all --force     Remove ALL indexes (requires --force)
+    $ code-intel clean                       Soft-delete index for current directory
+    $ code-intel clean ./my-project          Soft-delete index for a specific path
+    $ code-intel clean --purge               Hard-delete immediately (no trash)
+    $ code-intel clean --all --force         Soft-delete ALL indexes
+    $ code-intel clean --all --force --purge Hard-delete ALL indexes immediately
+    $ code-intel clean --list-trash          List all trash directories
 `)
-  .action((targetPath: string, opts: { all?: boolean; force?: boolean }) => {
+  .action((targetPath: string, opts: { all?: boolean; force?: boolean; purge?: boolean; listTrash?: boolean }) => {
+    // ── list-trash ─────────────────────────────────────────────────────────
+    if (opts.listTrash) {
+      const repos = loadRegistry();
+      const roots = repos.map((r) => r.path);
+      if (roots.length === 0) roots.push(path.resolve('.'));
+      let found = 0;
+      for (const root of roots) {
+        try {
+          for (const entry of fs.readdirSync(root)) {
+            if (!entry.startsWith('.code-intel-trash-')) continue;
+            const fullPath = path.join(root, entry);
+            const metaPath = path.join(fullPath, 'TRASH_META.json');
+            let deletedAt = 'unknown';
+            if (fs.existsSync(metaPath)) {
+              try { deletedAt = (JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as { deletedAt: string }).deletedAt; } catch { /* skip */ }
+            }
+            const ageDays = Math.floor((Date.now() - new Date(deletedAt).getTime()) / (24 * 60 * 60 * 1000));
+            const purgeIn = Math.max(0, TRASH_TTL_DAYS - ageDays);
+            console.log(`  ${fullPath}  (deleted: ${deletedAt.slice(0, 10)}, purge in ${purgeIn} days)`);
+            found++;
+          }
+        } catch { /* skip */ }
+      }
+      if (found === 0) console.log('\n  No trash directories found.\n');
+      return;
+    }
+
+    // ── --all ──────────────────────────────────────────────────────────────
     if (opts.all) {
       if (!opts.force) {
         console.error('\n  ✗  --all requires --force to confirm the destructive operation.');
@@ -637,10 +761,15 @@ program
         return;
       }
       for (const r of repos) {
-        const codeIntelDir = path.join(r.path, '.code-intel');
-        if (fs.existsSync(codeIntelDir)) {
-          fs.rmSync(codeIntelDir, { recursive: true, force: true });
-          console.log(`  ✓  Removed ${codeIntelDir}`);
+        if (opts.purge) {
+          const codeIntelDir = path.join(r.path, '.code-intel');
+          if (fs.existsSync(codeIntelDir)) {
+            fs.rmSync(codeIntelDir, { recursive: true, force: true });
+            console.log(`  ✓  Hard-deleted ${codeIntelDir}`);
+          }
+        } else {
+          softDeleteCodeIntel(r.path);
+          purgeStaleTrashes(r.path);
         }
         removeRepo(r.path);
       }
@@ -648,11 +777,17 @@ program
       return;
     }
 
+    // ── single repo ────────────────────────────────────────────────────────
     const workspaceRoot = path.resolve(targetPath);
-    const codeIntelDir = path.join(workspaceRoot, '.code-intel');
-    if (fs.existsSync(codeIntelDir)) {
-      fs.rmSync(codeIntelDir, { recursive: true, force: true });
-      console.log(`\n  ✓  Removed ${codeIntelDir}`);
+    if (opts.purge) {
+      const codeIntelDir = path.join(workspaceRoot, '.code-intel');
+      if (fs.existsSync(codeIntelDir)) {
+        fs.rmSync(codeIntelDir, { recursive: true, force: true });
+        console.log(`\n  ✓  Hard-deleted ${codeIntelDir}`);
+      }
+    } else {
+      softDeleteCodeIntel(workspaceRoot);
+      purgeStaleTrashes(workspaceRoot);
     }
     removeRepo(workspaceRoot);
     console.log('  Index cleaned.\n');
@@ -1634,5 +1769,175 @@ authCmd
       console.log('\n  No stored token found.\n');
     }
   });
+
+// ─── auth rotate-token ────────────────────────────────────────────────────────
+authCmd
+  .command('rotate-token <id>')
+  .description('Rotate an API token — issues a new token with the same role/scope; old token works for a 24h grace period')
+  .addHelpText('after', `
+  The original token continues to work for 24 hours after rotation so that
+  running CI pipelines can be updated without an outage.
+
+  Examples:
+    $ code-intel auth rotate-token <token-id>
+`)
+  .action((id: string) => {
+    const db = getOrCreateUsersDB();
+    const tokens = db.listTokens();
+    const old = tokens.find((t) => t.id === id);
+    if (!old) {
+      console.error(`\n  ✗  Token "${id}" not found or already revoked.\n`);
+      process.exit(1);
+    }
+    // Create a replacement with the same config
+    const graceExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    // Schedule revocation of old token after grace period
+    // We encode the intended revocation time in the name so ops teams can audit it.
+    const newName = `${old.name} (rotated ${new Date().toISOString().slice(0, 10)})`;
+    const { token: newToken, rawToken } = db.createToken(
+      newName,
+      old.role,
+      old.expiresAt,
+      old.scopedRepos,
+      old.scopedTools,
+    );
+    // Store the old token id and grace expiry in the secrets store for
+    // the grace-period enforcement hook (checked by authMiddleware below).
+    const graceKey = `rotate-grace:${old.id}`;
+    try {
+      setSecret(graceKey, graceExpiry);
+    } catch {
+      // If secret store fails, still proceed — old token will be revoked immediately
+      db.revokeToken(id);
+    }
+
+    console.log('\n  ✅  Token rotated!\n');
+    console.log(`     OLD token  : ${id} → works until ${graceExpiry} (24h grace period)`);
+    console.log(`     NEW token ID   : ${newToken.id}`);
+    console.log(`     NEW token name : ${newToken.name}`);
+    console.log(`     NEW raw token  : ${rawToken}`);
+    console.log('\n  Save the new token now — it will NOT be shown again!\n');
+    console.log('  Usage: Authorization: Bearer <new-token>\n');
+  });
+
+// ─── 17. secrets ─────────────────────────────────────────────────────────────
+const secretsCmd = program
+  .command('secrets')
+  .description('Manage the encrypted .code-intel/.secrets store (AES-256-GCM)');
+
+secretsCmd
+  .command('set <key> <value>')
+  .description('Store a secret by key')
+  .action((key: string, value: string) => {
+    try {
+      setSecret(key, value);
+      console.log(`\n  ✅  Secret "${key}" stored.\n`);
+    } catch (err) {
+      console.error(`\n  ✗  Failed to store secret: ${err instanceof Error ? err.message : err}\n`);
+      process.exit(1);
+    }
+  });
+
+secretsCmd
+  .command('get <key>')
+  .description('Retrieve a secret by key')
+  .action((key: string) => {
+    try {
+      const value = getSecret(key);
+      if (value === undefined) {
+        console.log(`\n  (no secret named "${key}")\n`);
+      } else {
+        console.log(`\n  ${key}=${value}\n`);
+      }
+    } catch (err) {
+      console.error(`\n  ✗  Failed to read secrets: ${err instanceof Error ? err.message : err}\n`);
+      process.exit(1);
+    }
+  });
+
+secretsCmd
+  .command('delete <key>')
+  .description('Remove a secret by key')
+  .action((key: string) => {
+    try {
+      deleteSecret(key);
+      console.log(`\n  ✅  Secret "${key}" deleted.\n`);
+    } catch (err) {
+      console.error(`\n  ✗  Failed to delete secret: ${err instanceof Error ? err.message : err}\n`);
+      process.exit(1);
+    }
+  });
+
+secretsCmd
+  .command('list')
+  .description('List all stored secret keys (values are not shown)')
+  .action(() => {
+    try {
+      const keys = listSecretKeys();
+      if (keys.length === 0) {
+        console.log('\n  No secrets stored.\n');
+      } else {
+        console.log(`\n  Stored secrets (${keys.length}):\n`);
+        keys.forEach((k) => console.log(`    - ${k}`));
+        console.log('');
+      }
+    } catch (err) {
+      console.error(`\n  ✗  Failed to list secrets: ${err instanceof Error ? err.message : err}\n`);
+      process.exit(1);
+    }
+  });
+
+secretsCmd
+  .command('backend')
+  .description('Show which secret storage backend is active (keytar OS keychain or encrypted file)')
+  .action(async () => {
+    const { backend } = await keychainBackend();
+    console.log(`\n  Backend: ${backend}\n`);
+  });
+
+// ─── 18. config validate ──────────────────────────────────────────────────────
+program
+  .command('config-validate <file>')
+  .description('Validate a JSON config file — rejects plaintext secrets, requires $ENV_VAR references')
+  .addHelpText('after', `
+  Any secret-bearing key (password, api_key, client_secret, etc.) must reference
+  an environment variable using $ENV_VAR or \${ENV_VAR} syntax.
+
+  Examples:
+    $ code-intel config-validate ./config.json
+    $ code-intel config-validate ~/.code-intel/config.json
+`)
+  .action((file: string) => {
+    const filePath = path.resolve(file);
+    if (!fs.existsSync(filePath)) {
+      console.error(`\n  ✗  File not found: ${filePath}\n`);
+      process.exit(1);
+    }
+    let cfg: unknown;
+    try {
+      cfg = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    } catch (err) {
+      console.error(`\n  ✗  Could not parse JSON: ${err instanceof Error ? err.message : err}\n`);
+      process.exit(1);
+    }
+    try {
+      assertNoPlaintextSecrets(cfg, file);
+      console.log(`\n  ✅  ${file} — no plaintext secrets found.\n`);
+    } catch (err) {
+      console.error(`\n${err instanceof Error ? err.message : err}\n`);
+      process.exit(1);
+    }
+  });
+
+// ─── ensure .code-intel/ has correct permissions at startup ──────────────────
+(function ensurePermissions() {
+  try {
+    const dir = path.join(os.homedir(), '.code-intel');
+    secureMkdir(dir);
+    tightenDbFiles(dir);
+  } catch {
+    /* non-fatal */
+  }
+})();
 
 program.parse();

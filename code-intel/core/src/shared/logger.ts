@@ -6,6 +6,8 @@
  * - Otherwise: Daily-rotating file logs under ./logs/ + Console.
  * - Log level controlled by LOG_LEVEL env var (default: "info").
  * - Sensitive keys and patterns are masked before output.
+ * - Every log line includes { traceId, spanId } from the active OTel span
+ *   when tracing is enabled.
  *
  * @module shared/Logger
  */
@@ -14,6 +16,27 @@ import DailyRotateFile from 'winston-daily-rotate-file';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+
+// Lazy OTel trace context — loaded dynamically to avoid circular deps and to
+// remain a no-op when OTel is not enabled. The getter is synchronous once
+// the module is cached.
+type TraceContextFn = () => { traceId: string; spanId: string };
+let _getTraceCtx: TraceContextFn | null | 'pending' = null;
+
+function getActiveTraceCtx(): { traceId: string; spanId: string } {
+  if (_getTraceCtx === 'pending') return { traceId: '', spanId: '' };
+  if (_getTraceCtx) return _getTraceCtx();
+  // Attempt to lazy-load (once) without blocking
+  _getTraceCtx = 'pending';
+  import('../observability/tracing.js')
+    .then((mod) => {
+      _getTraceCtx = (mod as { getActiveTraceContext: TraceContextFn }).getActiveTraceContext;
+    })
+    .catch(() => {
+      _getTraceCtx = null;
+    });
+  return { traceId: '', spanId: '' };
+}
 
 // ─── Sensitive-data masking ───────────────────────────────────────────────────
 
@@ -147,7 +170,13 @@ class Logger {
               typeof arg === 'object' ? JSON.stringify(arg) : String(arg),
             );
             const suffix = formattedArgs.length ? ' ' + formattedArgs.join(' ') : '';
-            return `${timestamp} [${level.toUpperCase()}]: ${maskedMessage}${suffix}`;
+            // Include OTel trace context when available
+            let traceCtx = '';
+            try {
+              const { traceId, spanId } = getActiveTraceCtx();
+              if (traceId) traceCtx = ` [trace=${traceId} span=${spanId}]`;
+            } catch { /* OTel not loaded */ }
+            return `${timestamp} [${level.toUpperCase()}]${traceCtx}: ${maskedMessage}${suffix}`;
           }),
         ),
         transports,

@@ -3,8 +3,8 @@ import bcrypt from 'bcrypt';
 import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
-import fs from 'node:fs';
 import { v4 as uuidv4 } from 'uuid';
+import { secureMkdir, secureChmodFile, tightenDbFiles } from '../shared/fs-secure.js';
 
 export type Role = 'admin' | 'analyst' | 'viewer' | 'repo-owner';
 
@@ -43,11 +43,15 @@ export class UsersDB {
   private db: Database.Database;
 
   constructor(dbPath: string) {
-    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+    const dir = path.dirname(dbPath);
+    secureMkdir(dir);
     this.db = new Database(dbPath);
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
     this.createTables();
+    // Ensure 0o600 on the freshly created .db (and -wal/-shm) files.
+    secureChmodFile(dbPath);
+    tightenDbFiles(dir);
   }
 
   private createTables(): void {
@@ -382,6 +386,20 @@ export class UsersDB {
    */
   unlinkOIDCIdentity(identityId: string): void {
     this.db.prepare('DELETE FROM oidc_identities WHERE id = ?').run(identityId);
+  }
+
+  // ── Audit log query ────────────────────────────────────────────────────────
+
+  /**
+   * Retrieve recent audit log entries (most-recent first).
+   * Primarily intended for testing and admin inspection.
+   */
+  getAuditLog(limit = 100): { id: string; userId: string; resource: string; action: string; outcome: string; ip: string; timestamp: string }[] {
+    return this.db
+      .prepare(
+        'SELECT id, userId, resource, action, outcome, ip, timestamp FROM audit_log ORDER BY timestamp DESC LIMIT ?',
+      )
+      .all(limit) as { id: string; userId: string; resource: string; action: string; outcome: string; ip: string; timestamp: string }[];
   }
 
   // ── Bootstrap check ────────────────────────────────────────────────────────

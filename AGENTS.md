@@ -1,7 +1,7 @@
 
 
 # RULE
-1. DO NOT USE SUBAGENT WITHOUT GET APPROVAL 
+1. DO NOT USE SUB AGENT
 2. Before run git add and git commit should get confirm from me
 3. The message generate for git commit DO NOT CONTENT: 
     "Amp-Thread-ID:"

@@ -5,6 +5,7 @@ import bcrypt from 'bcrypt';
 import type { Role } from './users-db.js';
 import { getOrCreateUsersDB } from './users-db.js';
 import { ErrorCodes } from '../errors/codes.js';
+import { getSecret } from './secret-store.js';
 
 // ── Augment Express request ───────────────────────────────────────────────────
 
@@ -104,6 +105,20 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
       const db = getOrCreateUsersDB();
       const tokenRecord = db.findTokenByHash(hash);
       if (tokenRecord) {
+        // Check rotation grace period — if this token was rotated, allow it
+        // only until the grace expiry stored at rotate-grace:<id>.
+        const graceKey = `rotate-grace:${tokenRecord.id}`;
+        try {
+          const graceExpiry = getSecret(graceKey);
+          if (graceExpiry && new Date(graceExpiry) < new Date()) {
+            // Grace period has elapsed — revoke immediately and deny
+            setImmediate(() => db.revokeToken(tokenRecord.id));
+            next();
+            return;
+          }
+        } catch {
+          /* secret store unavailable — proceed normally */
+        }
         // Update last used asynchronously (fire-and-forget)
         setImmediate(() => db.updateLastUsed(tokenRecord.id));
         req.user = {
@@ -263,7 +278,7 @@ export function requireToolScope(
   };
 }
 
-function parseCookies(cookieHeader: string): Record<string, string> {
+export function parseCookies(cookieHeader: string): Record<string, string> {
   const result: Record<string, string> = {};
   for (const part of cookieHeader.split(';')) {
     const [key, ...vals] = part.trim().split('=');

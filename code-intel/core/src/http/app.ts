@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
 import { textSearch } from '../search/text-search.js';
 import { DbManager, getDbPath, getVectorDbPath } from '../storage/index.js';
+import { loadMetadata } from '../storage/metadata.js';
 import { VectorIndex } from '../search/vector-index.js';
 import fs from 'node:fs';
 import { listGroups, loadGroup, loadSyncResult, saveSyncResult } from '../multi-repo/group-registry.js';
@@ -35,6 +36,10 @@ import {
 } from '../auth/middleware.js';
 import { getOrCreateUsersDB } from '../auth/users-db.js';
 import type { Role } from '../auth/users-db.js';
+import { getOrCreateJobsDB } from '../jobs/jobs-db.js';
+import type { JobStatus } from '../jobs/jobs-db.js';
+import { governanceLogger } from '../governance/llm-governance.js';
+import { createBackupScheduler } from '../backup/backup-scheduler.js';
 import {
   isOIDCConfigured,
   getOIDCConfig,
@@ -55,6 +60,7 @@ import {
   activeSessionsTotal,
   authAttemptsTotal,
 } from '../observability/metrics.js';
+import { withSpan, isTracingEnabled } from '../observability/tracing.js';
 import { openApiSpec } from './openapi.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -70,20 +76,25 @@ function getAllowedOrigins(): string[] {
 
 // ── Rate limiters ─────────────────────────────────────────────────────────────
 
-const defaultLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  standardHeaders: true,
-  legacyHeaders: false,
-  skip: (req) => req.path.startsWith('/health') || req.path === '/metrics',
-  message: {
-    error: {
-      code: ErrorCodes.RATE_LIMIT_EXCEEDED,
-      message: 'Too many requests',
-      hint: 'Slow down — you are sending requests too fast. Try again after 15 minutes.',
+function createDefaultLimiter() {
+  const max = parseInt(process.env['CODE_INTEL_RATE_LIMIT_MAX'] ?? '100', 10);
+  const windowMs =
+    parseInt(process.env['CODE_INTEL_RATE_LIMIT_WINDOW_MS'] ?? `${15 * 60 * 1000}`, 10);
+  return rateLimit({
+    windowMs,
+    max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: (req) => req.path.startsWith('/health') || req.path === '/metrics',
+    message: {
+      error: {
+        code: ErrorCodes.RATE_LIMIT_EXCEEDED,
+        message: 'Too many requests',
+        hint: 'Slow down — you are sending requests too fast. Try again later.',
+      },
     },
-  },
-});
+  });
+}
 
 // ── App factory ───────────────────────────────────────────────────────────────
 
@@ -99,10 +110,27 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
       contentSecurityPolicy: false, // disabled to allow Web UI to load scripts
     }),
   );
-  app.use(cors({ origin: getAllowedOrigins(), credentials: true }));
+  // CORS: actively reject non-allowlisted Origins (no `*` in production).
+  // Requests without an Origin header (e.g. server-side, curl) are allowed
+  // through; the browser is the entity enforcing CORS, so this only matters
+  // for cross-origin browser requests.
+  const allowedOrigins = getAllowedOrigins();
+  app.use(
+    cors({
+      origin: (origin, callback) => {
+        if (!origin) { callback(null, true); return; }
+        if (allowedOrigins.includes(origin)) { callback(null, true); return; }
+        // Non-allowlisted origin: do not echo Access-Control-Allow-Origin
+        // (browser will block the response). Server-side request still
+        // proceeds so we can return a normal 403/401 from downstream handlers.
+        callback(null, false);
+      },
+      credentials: true,
+    }),
+  );
   app.use(cookieParser());
   app.use(express.json({ limit: '1mb' }));
-  app.use(defaultLimiter);
+  app.use(createDefaultLimiter());
 
   // ── CSRF protection setup ───────────────────────────────────────────────────
   const { generateCsrfToken, doubleCsrfProtection } = doubleCsrf({
@@ -128,17 +156,68 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
   app.use(requestIdMiddleware);
   app.use(authMiddleware);
 
-  // ── HTTP metrics instrumentation ────────────────────────────────────────────
+  // ── X-Index-Version header on every response ─────────────────────────────
+  app.use((_req: Request, res: Response, next: NextFunction): void => {
+    if (workspaceRoot) {
+      try {
+        const meta = loadMetadata(workspaceRoot);
+        if (meta?.indexVersion) res.setHeader('X-Index-Version', meta.indexVersion);
+      } catch { /* non-fatal */ }
+    }
+    next();
+  });
+
+  // ── Audit log: every authenticated request ──────────────────────────────────
+  // Writes an entry to the audit_log table on response finish.
+  // Skips /health/* and /metrics (high-frequency, unauthenticated).
+  app.use((req: Request, res: Response, next: NextFunction): void => {
+    res.on('finish', () => {
+      if (!req.user) return; // unauthenticated requests are not audited here
+      if (req.path.startsWith('/health') || req.path === '/metrics') return;
+      const outcome: 'allow' | 'deny' = res.statusCode < 400 ? 'allow' : 'deny';
+      try {
+        const db = getOrCreateUsersDB();
+        db.logAccess(req.user.id, req.path, req.method, outcome, req.ip ?? 'unknown');
+      } catch { /* never throw from audit — it must not affect the response */ }
+    });
+    next();
+  });
+
+  // ── HTTP metrics + OTel span per request ────────────────────────────────────
   app.use((req: Request, res: Response, next: NextFunction): void => {
     const start = Date.now();
-    res.on('finish', () => {
-      const route = req.route?.path ?? req.path ?? 'unknown';
-      const method = req.method;
-      const statusCode = String(res.statusCode);
-      const durationSec = (Date.now() - start) / 1000;
-      httpRequestsTotal.inc({ method, route, status_code: statusCode });
-      httpRequestDurationSeconds.observe({ method, route, status_code: statusCode }, durationSec);
-    });
+    if (isTracingEnabled()) {
+      // Import is already cached after the first call
+      void import('../observability/tracing.js').then(({ getTracer, sanitizeAttrs: sa }) => {
+        const span = getTracer().startSpan(`HTTP ${req.method} ${req.path}`, {
+          attributes: sa({
+            'http.method': req.method,
+            'http.url': req.path,
+            'http.request_id': req.requestId ?? '',
+          }),
+        });
+        res.on('finish', () => {
+          const route = req.route?.path ?? req.path ?? 'unknown';
+          const method = req.method;
+          const statusCode = String(res.statusCode);
+          const durationSec = (Date.now() - start) / 1000;
+          httpRequestsTotal.inc({ method, route, status_code: statusCode });
+          httpRequestDurationSeconds.observe({ method, route, status_code: statusCode }, durationSec);
+          span.setAttribute('http.status_code', res.statusCode);
+          span.setAttribute('http.route', route);
+          span.end();
+        });
+      });
+    } else {
+      res.on('finish', () => {
+        const route = req.route?.path ?? req.path ?? 'unknown';
+        const method = req.method;
+        const statusCode = String(res.statusCode);
+        const durationSec = (Date.now() - start) / 1000;
+        httpRequestsTotal.inc({ method, route, status_code: statusCode });
+        httpRequestDurationSeconds.observe({ method, route, status_code: statusCode }, durationSec);
+      });
+    }
     next();
   });
 
@@ -577,12 +656,18 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
   // ── Health (detailed) ───────────────────────────────────────────────────────
   app.get('/api/v1/health', (req: Request, res: Response) => {
     const db = getOrCreateUsersDB();
+    const memUsage = process.memoryUsage();
     res.json({
       status: 'ok',
       nodes: graph.size.nodes,
       edges: graph.size.edges,
       users: db.hasAnyUser(),
       workspaceRoot,
+      memory: {
+        heapUsedMb: Math.round(memUsage.heapUsed / 1024 / 1024),
+        heapTotalMb: Math.round(memUsage.heapTotal / 1024 / 1024),
+        rssMb: Math.round(memUsage.rss / 1024 / 1024),
+      },
       timestamp: new Date().toISOString(),
       requestId: req.requestId,
     });
@@ -866,6 +951,48 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     res.json({ clusters });
   });
 
+  // ── Jobs ────────────────────────────────────────────────────────────────────
+  app.get('/api/v1/jobs', (req: Request, res: Response) => {
+    const { status, repo } = req.query as { status?: string; repo?: string };
+    const jobsDB = getOrCreateJobsDB();
+    const filters: { status?: JobStatus; repoPath?: string } = {};
+    if (status) filters.status = status as JobStatus;
+    if (repo) filters.repoPath = repo;
+    const jobs = jobsDB.listJobs(filters);
+    res.json({ jobs });
+  });
+
+  app.delete('/api/v1/jobs/:id', (req: Request, res: Response) => {
+    const jobsDB = getOrCreateJobsDB();
+    const { id } = req.params;
+    const job = jobsDB.getJob(id as string);
+    if (!job) {
+      res.status(404).json({
+        error: {
+          code: ErrorCodes.NOT_FOUND,
+          message: `Job "${id}" not found`,
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+    const cancelled = jobsDB.cancel(id as string);
+    if (cancelled) {
+      res.json({ message: `Job "${id}" cancelled`, id });
+    } else {
+      res.status(409).json({
+        error: {
+          code: ErrorCodes.INVALID_REQUEST,
+          message: `Job "${id}" cannot be cancelled (status: ${job.status})`,
+          hint: 'Only pending or running jobs can be cancelled',
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
+  });
+
   // ── Groups ──────────────────────────────────────────────────────────────────
   app.get('/api/v1/groups', (_req, res) => {
     const groups = listGroups();
@@ -1001,6 +1128,13 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     res.json({ message: 'Token revoked' });
   });
 
+  // Governance log
+  app.get('/admin/governance/log', (req: Request, res: Response) => {
+    const limit = Math.min(parseInt((req.query['limit'] as string | undefined) ?? '100', 10), 1000);
+    const entries = governanceLogger.readLog(limit);
+    res.json({ entries, count: entries.length, enabled: governanceLogger.isEnabled() });
+  });
+
   // ── CSRF error handler ──────────────────────────────────────────────────────
   app.use((err: unknown, req: Request, res: Response, next: NextFunction): void => {
     if (err && typeof err === 'object' && 'code' in err && (err as { code: string }).code === 'EBADCSRFTOKEN') {
@@ -1032,17 +1166,49 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
           timestamp: new Date().toISOString(),
         },
       });
-    } else {
-      res.status(500).json({
+      return;
+    }
+    // body-parser errors carry a `status`/`statusCode` and a `type`.
+    // Honor them so payload-too-large (413), bad JSON (400), etc. surface
+    // with the correct HTTP status.
+    const e = err as Error & { status?: number; statusCode?: number; type?: string };
+    const bodyParserStatus = e.status ?? e.statusCode;
+    if (
+      typeof bodyParserStatus === 'number' &&
+      bodyParserStatus >= 400 &&
+      bodyParserStatus < 500
+    ) {
+      const code =
+        e.type === 'entity.too.large'
+          ? ErrorCodes.PAYLOAD_TOO_LARGE
+          : ErrorCodes.INVALID_REQUEST;
+      const message =
+        e.type === 'entity.too.large'
+          ? 'Request payload too large (max 1MB)'
+          : err.message;
+      res.status(bodyParserStatus).json({
         error: {
-          code: ErrorCodes.INTERNAL_ERROR,
-          message: 'Internal server error',
-          hint: 'Check server logs for details',
+          code,
+          message,
+          hint:
+            e.type === 'entity.too.large'
+              ? 'Reduce the request body size to under 1MB.'
+              : undefined,
           requestId: req.requestId,
           timestamp: new Date().toISOString(),
         },
       });
+      return;
     }
+    res.status(500).json({
+      error: {
+        code: ErrorCodes.INTERNAL_ERROR,
+        message: 'Internal server error',
+        hint: 'Check server logs for details',
+        requestId: req.requestId,
+        timestamp: new Date().toISOString(),
+      },
+    });
   });
 
   return app;
@@ -1066,5 +1232,9 @@ export function startHttpServer(
     Logger.info(`Code Intelligence server running at http://localhost:${port}`);
     Logger.info(`  Graph: ${graph.size.nodes} nodes, ${graph.size.edges} edges`);
     Logger.info(`  Auth: login at http://localhost:${port}/auth/login`);
+
+    // Start automated backup scheduler if enabled
+    const scheduler = createBackupScheduler();
+    scheduler.start(workspaceRoot);
   });
 }

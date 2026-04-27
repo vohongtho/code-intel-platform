@@ -4,12 +4,134 @@
  * Archives: graph.db, vector.db, meta.json, registry, config
  * Encryption: AES-256-GCM with a per-backup random IV
  * Manifest: SHA-256 hash of each file
+ * Optional S3 upload: set CODE_INTEL_BACKUP_S3_BUCKET + credentials
  */
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import https from 'node:https';
 import path from 'node:path';
 import os from 'node:os';
 import { v4 as uuidv4 } from 'uuid';
+
+// ── S3 configuration ──────────────────────────────────────────────────────────
+
+export interface S3Config {
+  bucket: string;
+  region: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  prefix: string;
+}
+
+export function getS3Config(): S3Config | null {
+  const bucket = process.env['CODE_INTEL_BACKUP_S3_BUCKET'];
+  const accessKeyId = process.env['CODE_INTEL_BACKUP_S3_ACCESS_KEY_ID'];
+  const secretAccessKey = process.env['CODE_INTEL_BACKUP_S3_SECRET_ACCESS_KEY'];
+  if (!bucket || !accessKeyId || !secretAccessKey) return null;
+  return {
+    bucket,
+    region: process.env['CODE_INTEL_BACKUP_S3_REGION'] ?? 'us-east-1',
+    accessKeyId,
+    secretAccessKey,
+    prefix: process.env['CODE_INTEL_BACKUP_S3_PREFIX'] ?? 'code-intel-backups/',
+  };
+}
+
+// ── AWS SigV4 signing (pure Node.js, no extra deps) ───────────────────────────
+
+function hmac(key: Buffer | string, data: string): Buffer {
+  return crypto.createHmac('sha256', key).update(data, 'utf-8').digest();
+}
+
+function sha256hex(data: Buffer | string): string {
+  return crypto.createHash('sha256').update(data).digest('hex');
+}
+
+function sigV4SigningKey(secret: string, date: string, region: string, service: string): Buffer {
+  const kDate = hmac(`AWS4${secret}`, date);
+  const kRegion = hmac(kDate, region);
+  const kService = hmac(kRegion, service);
+  return hmac(kService, 'aws4_request');
+}
+
+interface S3RequestOptions {
+  method: string;
+  cfg: S3Config;
+  key: string;           // S3 object key (without leading /)
+  body?: Buffer;
+  query?: Record<string, string>;
+}
+
+function s3Request(opts: S3RequestOptions): Promise<{ statusCode: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const { method, cfg, key, body, query } = opts;
+    const host = `${cfg.bucket}.s3.${cfg.region}.amazonaws.com`;
+    const now = new Date();
+    const amzDate = now.toISOString().replace(/[:\-]|\.\d{3}/g, '').slice(0, 15) + 'Z'; // YYYYMMDDTHHMMSSz
+    const dateStamp = amzDate.slice(0, 8); // YYYYMMDD
+
+    const payloadHash = body ? sha256hex(body) : sha256hex(Buffer.alloc(0));
+    const encodedPath = `/${key.split('/').map(encodeURIComponent).join('/')}`;
+
+    const queryStr = query
+      ? Object.keys(query).sort().map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(query[k]!)}`).join('&')
+      : '';
+
+    const canonicalHeaders =
+      `host:${host}\n` +
+      `x-amz-content-sha256:${payloadHash}\n` +
+      `x-amz-date:${amzDate}\n`;
+    const signedHeaders = 'host;x-amz-content-sha256;x-amz-date';
+
+    const canonicalRequest = [
+      method,
+      encodedPath,
+      queryStr,
+      canonicalHeaders,
+      signedHeaders,
+      payloadHash,
+    ].join('\n');
+
+    const credentialScope = `${dateStamp}/${cfg.region}/s3/aws4_request`;
+    const stringToSign = [
+      'AWS4-HMAC-SHA256',
+      amzDate,
+      credentialScope,
+      sha256hex(Buffer.from(canonicalRequest, 'utf-8')),
+    ].join('\n');
+
+    const signingKey = sigV4SigningKey(cfg.secretAccessKey, dateStamp, cfg.region, 's3');
+    const signature = hmac(signingKey, stringToSign).toString('hex');
+
+    const authorization =
+      `AWS4-HMAC-SHA256 Credential=${cfg.accessKeyId}/${credentialScope}, ` +
+      `SignedHeaders=${signedHeaders}, Signature=${signature}`;
+
+    const reqPath = encodedPath + (queryStr ? `?${queryStr}` : '');
+
+    const reqOptions: https.RequestOptions = {
+      hostname: host,
+      path: reqPath,
+      method,
+      headers: {
+        'Host': host,
+        'X-Amz-Date': amzDate,
+        'X-Amz-Content-Sha256': payloadHash,
+        'Authorization': authorization,
+        ...(body ? { 'Content-Length': String(body.length) } : {}),
+      },
+    };
+
+    const req = https.request(reqOptions, (res) => {
+      const chunks: Buffer[] = [];
+      res.on('data', (c: Buffer) => chunks.push(c));
+      res.on('end', () => resolve({ statusCode: res.statusCode ?? 0, body: Buffer.concat(chunks).toString('utf-8') }));
+    });
+    req.on('error', reject);
+    if (body) req.write(body);
+    req.end();
+  });
+}
 
 export interface BackupManifest {
   id: string;
@@ -165,7 +287,86 @@ export class BackupService {
     };
     this._appendIndex(entry);
 
+    // Auto-upload to S3 if configured
+    if (process.env['CODE_INTEL_BACKUP_S3_AUTO_UPLOAD'] === 'true') {
+      this.uploadToS3(entry).catch(() => { /* non-fatal */ });
+    }
+
     return entry;
+  }
+
+  // ── S3 methods ─────────────────────────────────────────────────────────────
+
+  /** Returns the parsed S3 config or null if not configured. */
+  getS3Config(): S3Config | null {
+    return getS3Config();
+  }
+
+  /**
+   * Upload a local backup file to S3.
+   * Returns the S3 object key.
+   */
+  async uploadToS3(entry: BackupEntry): Promise<string> {
+    const cfg = getS3Config();
+    if (!cfg) throw new Error('S3 not configured. Set CODE_INTEL_BACKUP_S3_BUCKET, CODE_INTEL_BACKUP_S3_ACCESS_KEY_ID, CODE_INTEL_BACKUP_S3_SECRET_ACCESS_KEY.');
+
+    const fileName = path.basename(entry.path);
+    const s3Key = `${cfg.prefix}${fileName}`;
+    const body = fs.readFileSync(entry.path);
+
+    const result = await s3Request({ method: 'PUT', cfg, key: s3Key, body });
+    if (result.statusCode < 200 || result.statusCode >= 300) {
+      throw new Error(`S3 upload failed (HTTP ${result.statusCode}): ${result.body.slice(0, 200)}`);
+    }
+    return s3Key;
+  }
+
+  /**
+   * Download a backup from S3 and save to destPath.
+   */
+  async downloadFromS3(s3Key: string, destPath: string): Promise<void> {
+    const cfg = getS3Config();
+    if (!cfg) throw new Error('S3 not configured.');
+
+    const result = await s3Request({ method: 'GET', cfg, key: s3Key });
+    if (result.statusCode < 200 || result.statusCode >= 300) {
+      throw new Error(`S3 download failed (HTTP ${result.statusCode}): ${result.body.slice(0, 200)}`);
+    }
+    fs.mkdirSync(path.dirname(destPath), { recursive: true });
+    fs.writeFileSync(destPath, Buffer.from(result.body, 'binary'));
+  }
+
+  /**
+   * List backup objects in S3 with the configured prefix.
+   */
+  async listS3Backups(): Promise<Array<{ key: string; size: number; lastModified: string }>> {
+    const cfg = getS3Config();
+    if (!cfg) throw new Error('S3 not configured.');
+
+    const result = await s3Request({
+      method: 'GET',
+      cfg,
+      key: '',
+      query: { 'list-type': '2', prefix: cfg.prefix },
+    });
+    if (result.statusCode < 200 || result.statusCode >= 300) {
+      throw new Error(`S3 list failed (HTTP ${result.statusCode}): ${result.body.slice(0, 200)}`);
+    }
+
+    // Parse S3 LIST XML response (simple regex approach — no xml parser needed)
+    const entries: Array<{ key: string; size: number; lastModified: string }> = [];
+    const contentsRegex = /<Contents>([\s\S]*?)<\/Contents>/g;
+    let match: RegExpExecArray | null;
+    while ((match = contentsRegex.exec(result.body)) !== null) {
+      const block = match[1]!;
+      const keyM = /<Key>(.*?)<\/Key>/.exec(block);
+      const sizeM = /<Size>(\d+)<\/Size>/.exec(block);
+      const lmM = /<LastModified>(.*?)<\/LastModified>/.exec(block);
+      if (keyM && sizeM && lmM) {
+        entries.push({ key: keyM[1]!, size: parseInt(sizeM[1]!, 10), lastModified: lmM[1]! });
+      }
+    }
+    return entries;
   }
 
   /**
