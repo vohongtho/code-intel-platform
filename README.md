@@ -16,12 +16,14 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 - **LadybugDB Persistence** — graph and vector index stored as embedded graph database
 - **HTTP API** — REST endpoints for graph, search, inspect, blast radius, flows
 - **MCP Server** — Model Context Protocol integration for LLM tooling
-- **CLI** — analyze, serve, search, inspect, impact, wiki commands
+- **CLI** — analyze, serve, search, inspect, impact commands with animated `█░` progress bars and braille spinners
 - **Multi-language** — TypeScript, JavaScript, Python, Java, Go, C, C++, C#, Rust, PHP, Kotlin, Ruby, Swift, Dart
 - **AI Context Files** — auto-generates `AGENTS.md` + `CLAUDE.md` at project root after every analysis with live stats, CLI reference, and skill links
 - **Skill Files** — generates `.claude/skills/code-intel/` with per-cluster SKILL.md files (hot symbols, entry points, impact guidance) for AI assistants
 - **Repository Groups** — multi-repo / monorepo service tracking with contract extraction and cross-repo dependency detection
 - **`.codeintelignore`** — exclude directories from analysis (like `.gitignore` but for code-intel)
+- **Structured Logging** — winston-based logger with daily-rotating log files at `~/.code-intel/logs/`, sensitive-data masking, and configurable log levels
+- **Performance** — parallel batch file I/O, shared file cache (zero double-reads), O(log n) binary-search enclosing-function lookup
 
 ---
 
@@ -291,7 +293,8 @@ code-intel-platform/
 │   │       │
 │   │       ├── http/              # Express REST API + static web UI serving
 │   │       ├── mcp-server/        # MCP stdio transport + all tool/resource handlers
-│   │       └── cli/               # Commander CLI
+│   │       ├── shared/            # Logger (winston, sensitive-data masking, ~/.code-intel/logs/)
+│   │       └── cli/               # Commander CLI (progress bars, spinners)
 │   │           ├── main.ts              # All CLI commands
 │   │           ├── skill-writer.ts      # Generates .claude/skills/code-intel/ SKILL.md files
 │   │           └── context-writer.ts    # Upserts AGENTS.md + CLAUDE.md blocks
@@ -316,12 +319,41 @@ code-intel-platform/
 
 | Phase | Description |
 |-------|-------------|
-| `scan` | Walk filesystem, collect source files, ignore `node_modules`, `dist`, etc. |
+| `scan` | Walk filesystem, collect source files (parallel batch I/O, 512 KB limit), ignore `node_modules`, `dist`, `.venv`, etc. |
 | `structure` | Create file and directory nodes in the graph |
-| `parse` | Parse files with web-tree-sitter, extract symbols (functions, classes, etc.) |
-| `resolve` | Resolve imports → edges, build call graph, detect heritage (extends/implements) |
+| `parse` | Read files in parallel batches of 64, extract symbols (functions, classes, etc.), build per-file sorted function index |
+| `resolve` | Resolve imports → edges, build call graph (O(log n) binary-search lookup), detect heritage (extends/implements) |
 | `cluster` | Directory-based community detection, add cluster nodes |
 | `flow` | Detect entry points, trace execution flows |
+
+Each phase streams live progress to the CLI via animated `█░` progress bars:
+
+```
+  [parse    ] ████████████████░░░░░░░░░░░░░░  53% (80/151)
+```
+
+Post-pipeline steps (DB persist, skill files, context files) show a braille spinner:
+
+```
+  ⠹ Persisting graph to DB…
+```
+
+---
+
+## 📋 Logging
+
+Logs are written to **`~/.code-intel/logs/`** using daily rotation (powered by [winston](https://github.com/winstonjs/winston)):
+
+| Setting | Default | Override |
+|---------|---------|----------|
+| Log directory | `~/.code-intel/logs/` | — |
+| Log file pattern | `YYYY-MM-DD-code-intel.log` | — |
+| Max file size | 20 MB | — |
+| Retention | 14 days | — |
+| Log level | `info` | `LOG_LEVEL=debug\|info\|warn\|error\|silent` |
+| Production mode | Console only | `NODE_ENV=production` |
+
+Sensitive data (passwords, tokens, API keys, emails, credit cards, etc.) is automatically **masked** before writing — only the first and last character are visible.
 
 ---
 
@@ -491,6 +523,7 @@ All generated files are stored locally — nothing is sent to external servers.
 | `~/.code-intel/registry.json` | Global registry of all indexed repos |
 | `~/.code-intel/groups/<name>.json` | Repository group configuration |
 | `~/.code-intel/groups/<name>.sync.json` | Last group sync results (contracts + cross-repo links) |
+| `~/.code-intel/logs/YYYY-MM-DD-code-intel.log` | Daily-rotating application logs (14-day retention) |
 
 ---
 
