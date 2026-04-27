@@ -133,12 +133,13 @@ async function analyzeWorkspace(targetPath: string, options?: {
 }) {
   const workspaceRoot = path.resolve(targetPath);
   if (!options?.silent) console.log(`Analyzing: ${workspaceRoot}`);
+  Logger.info(`analyze started: ${workspaceRoot}`);
 
   // --skip-git: skip the .git check (allow non-git folders)
   if (!options?.skipGit) {
     const gitDir = path.join(workspaceRoot, '.git');
     if (!fs.existsSync(gitDir)) {
-      Logger.warn(`  Warning: ${workspaceRoot} is not a Git repository. Use --skip-git to suppress this warning.`);
+      Logger.warn(`${workspaceRoot} is not a Git repository`);
     }
   }
 
@@ -236,14 +237,13 @@ async function analyzeWorkspace(targetPath: string, options?: {
     const { nodeCount, edgeCount } = await loadGraphToDB(graph, db);
     db.close();
     stopSpinner();
+    Logger.info(`DB persisted: ${nodeCount} nodes, ${edgeCount} edges`);
     if (!options?.silent) {
       console.log(`  ✓ DB: ${nodeCount} nodes, ${edgeCount} edges persisted`);
     }
   } catch (err) {
     stopSpinner();
-    if (!options?.silent) {
-      Logger.warn(`  DB persist warning: ${err instanceof Error ? err.message : err}`);
-    }
+    Logger.warn(`DB persist failed: ${err instanceof Error ? err.message : err}`);
   }
 
   // Vector embeddings (opt-in or --embeddings, skip if --skip-embeddings)
@@ -269,14 +269,13 @@ async function analyzeWorkspace(targetPath: string, options?: {
         },
       });
       stopSpinner();
+      Logger.info(`Embeddings built: ${nodes.length} vectors`);
       await idx.buildIndex(nodes);
       if (!options?.silent) console.log(`  ✓ Embeddings: ${nodes.length} vectors built`);
       vdb.close();
     } catch (err) {
       stopSpinner();
-      if (!options?.silent) {
-        Logger.warn(`  Embeddings warning: ${err instanceof Error ? err.message : err}`);
-      }
+      Logger.warn(`Embeddings failed: ${err instanceof Error ? err.message : err}`);
     }
   } else if (!options?.skipEmbeddings && !options?.silent) {
     console.log('  Embeddings: skipped (use --embeddings to enable)');
@@ -291,14 +290,13 @@ async function analyzeWorkspace(targetPath: string, options?: {
       const { skills } = await writeSkillFiles(graph, workspaceRoot, repoName);
       skillSummaries = skills;
       stopSpinner();
+      Logger.info(`Skills generated: ${skills.length}`);
       if (!options?.silent && skills.length > 0) {
         console.log(`  ✓ Skills: ${skills.length} generated → .claude/skills/code-intel/`);
       }
     } catch (err) {
       stopSpinner();
-      if (!options?.silent) {
-        Logger.warn(`  Skills warning: ${err instanceof Error ? err.message : err}`);
-      }
+      Logger.warn(`Skills generation failed: ${err instanceof Error ? err.message : err}`);
     }
   }
 
@@ -313,14 +311,13 @@ async function analyzeWorkspace(targetPath: string, options?: {
         duration: result.totalDuration,
       }, skillSummaries);
       stopSpinner();
+      Logger.info('Context files written: AGENTS.md + CLAUDE.md');
       if (!options?.silent) {
         console.log(`  ✓ Context: AGENTS.md + CLAUDE.md updated`);
       }
     } catch (err) {
       stopSpinner();
-      if (!options?.silent) {
-        Logger.warn(`  Context warning: ${err instanceof Error ? err.message : err}`);
-      }
+      Logger.warn(`Context file write failed: ${err instanceof Error ? err.message : err}`);
     }
   }
 
@@ -329,6 +326,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
     const durStr = dur >= 1000 ? `${(dur / 1000).toFixed(1)}s` : `${dur}ms`;
     console.log(`\n  ✅  Done in ${durStr}  —  ${graph.size.nodes} nodes · ${graph.size.edges} edges · ${context.filePaths.length} files`);
   }
+  Logger.info(`analyze complete: ${graph.size.nodes} nodes, ${graph.size.edges} edges, ${context.filePaths.length} files, ${result.totalDuration}ms`);
 
   return { graph, result, repoName, workspaceRoot };
 }

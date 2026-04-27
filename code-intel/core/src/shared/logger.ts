@@ -13,6 +13,7 @@ import winston from 'winston';
 import DailyRotateFile from 'winston-daily-rotate-file';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 
 // ─── Sensitive-data masking ───────────────────────────────────────────────────
 
@@ -104,30 +105,35 @@ class Logger {
     };
   }
 
+  /** Global log directory: ~/.code-intel/logs */
+  static readonly LOG_DIR = path.join(os.homedir(), '.code-intel', 'logs');
+
   static getLogger(): winston.Logger {
     if (!Logger.instance) {
       const isProduction = process.env.NODE_ENV === 'production';
       const logLevel = process.env.LOG_LEVEL ?? 'info';
       const transports: winston.transport[] = [];
 
-      if (isProduction) {
-        // Production / Lambda-like: console only
-        transports.push(new winston.transports.Console());
-      } else {
-        // Development: daily-rotating file + console
-        const logDir = 'logs';
-        if (!fs.existsSync(logDir)) {
-          fs.mkdirSync(logDir, { recursive: true });
+      // Always add console transport
+      transports.push(new winston.transports.Console());
+
+      if (!isProduction) {
+        // Dev + global installs: rotate logs into ~/.code-intel/logs/
+        try {
+          if (!fs.existsSync(Logger.LOG_DIR)) {
+            fs.mkdirSync(Logger.LOG_DIR, { recursive: true });
+          }
+          transports.push(
+            new DailyRotateFile({
+              filename: path.join(Logger.LOG_DIR, '%DATE%-code-intel.log'),
+              datePattern: 'YYYY-MM-DD',
+              maxSize: '20m',
+              maxFiles: '14d',
+            }),
+          );
+        } catch {
+          // If we can't write to the log dir (e.g. read-only FS), continue console-only
         }
-        transports.push(
-          new DailyRotateFile({
-            filename: path.join(logDir, '%DATE%-code-intel.log'),
-            datePattern: 'YYYY-MM-DD',
-            maxSize: '20m',
-            maxFiles: '14d',
-          }),
-          new winston.transports.Console(),
-        );
       }
 
       Logger.instance = winston.createLogger({
@@ -168,3 +174,7 @@ class Logger {
 }
 
 export default Logger;
+
+// Eagerly initialize so the log directory and file transport are created on import,
+// even if no log messages are emitted during a short run.
+Logger.getLogger();
