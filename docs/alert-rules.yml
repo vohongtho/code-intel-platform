@@ -1,0 +1,93 @@
+groups:
+  - name: code-intel
+    interval: 30s
+    rules:
+      # ── HTTP Error Rate ────────────────────────────────────────────────────
+      - alert: HighHTTPErrorRate
+        expr: |
+          sum(rate(http_requests_total{status_code=~"5.."}[5m]))
+          /
+          sum(rate(http_requests_total[5m])) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High HTTP 5xx error rate (> 5%)"
+          description: "{{ $value | humanizePercentage }} of requests are failing with 5xx errors."
+
+      # ── High Latency ───────────────────────────────────────────────────────
+      - alert: HighHTTPLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (le, route)
+          ) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p95 HTTP latency > 2s on route {{ $labels.route }}"
+          description: "95th percentile latency is {{ $value | humanizeDuration }}"
+
+      # ── Memory ────────────────────────────────────────────────────────────
+      - alert: HighHeapUsage
+        expr: process_heap_bytes / 1024 / 1024 > 1500
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "code-intel heap usage > 1.5 GB"
+          description: "Heap is {{ $value | humanize }} MB. Consider increasing --max-old-space-size."
+
+      - alert: CriticalHeapUsage
+        expr: process_heap_bytes / 1024 / 1024 > 3000
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "code-intel heap usage > 3 GB — OOM risk"
+          description: "Process may crash. Restart immediately and investigate."
+
+      # ── Stale Index ────────────────────────────────────────────────────────
+      - alert: StaleIndex
+        expr: |
+          time() - max by (repo) (pipeline_analyses_total * 0 + timestamp()) > 3600
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "code-intel index has not been updated in > 1 hour"
+          description: "Re-run code-intel analyze for repo {{ $labels.repo }}"
+
+      # ── High Auth Failure Rate ─────────────────────────────────────────────
+      - alert: HighAuthFailureRate
+        expr: |
+          sum(rate(auth_attempts_total{outcome="failure"}[15m]))
+          /
+          sum(rate(auth_attempts_total[15m])) > 0.3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High authentication failure rate (> 30%)"
+          description: "Possible brute-force attack. Check audit logs."
+
+      # ── Rate Limiting ──────────────────────────────────────────────────────
+      - alert: HighRateLimitHits
+        expr: |
+          sum(rate(http_requests_total{status_code="429"}[5m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High rate of 429 responses — clients are being rate limited"
+
+      # ── Graph Size Drop ────────────────────────────────────────────────────
+      - alert: GraphSizeDrop
+        expr: |
+          (pipeline_nodes_total - pipeline_nodes_total offset 1h) / pipeline_nodes_total offset 1h < -0.2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Graph node count dropped > 20% in the last hour"
+          description: "Possible corrupted re-index. Check analysis logs."

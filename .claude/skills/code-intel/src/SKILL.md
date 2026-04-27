@@ -1,6 +1,6 @@
 ---
 name: src
-description: "Covers the **src** subsystem of code-intel-platform. 12 symbols across 1 files. Key symbols: `new`, `create`, `find_by_id`. Internal call density: 0.1 calls/symbol."
+description: "Covers the **src** subsystem of code-intel-platform. 12 symbols across 1 files. Key symbols: `new`, `create`, `find_by_id`. Internal call density: 0.1 calls/symbol. Participates in 1 execution flow(s)."
 ---
 
 # src
@@ -38,7 +38,7 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `delete` | function | 6 | 0 | `src/lib.rs` |
+| `delete` | function | 9 | 0 | `src/lib.rs` |
 | `count` | function | 1 | 0 | `src/lib.rs` |
 | `internal_hash` | function | 1 | 0 | `src/lib.rs` |
 | `generate_token` | function | 0 | 1 | `src/lib.rs` |
@@ -50,6 +50,11 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | `find_by_id` | function | 0 | 0 | `src/lib.rs` |
 | `validate_email` | function | 0 | 0 | `src/lib.rs` |
 | `format_user` | function | 0 | 0 | `src/lib.rs` |
+
+## Execution Flows
+
+**1** execution path(s) pass through this area.
+Run `code-intel inspect <symbol>` on a hot symbol to trace the full call chain.
 
 ## Impact Guidance
 

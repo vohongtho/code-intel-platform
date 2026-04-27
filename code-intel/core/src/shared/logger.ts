@@ -53,7 +53,7 @@ const SENSITIVE_PATTERNS: RegExp[] = [
   /\b[A-Za-z0-9]{64}\b/gi,
   /(?:connection_string|db_uri|db_url|mongodb_uri)\s*[:=]\s*([^\s,]+)/gi,
   /(?:apikey|api_key|auth_key)\s*[:=]\s*([^\s,]+)/gi,
-  /(?:bearer\s+)[a-zA-Z0-9\-_]+\.[a-zA-Z0-9\-_]+\.[a-zA-Z0-9\-_]+/gi,
+  /(?:bearer\s+)([a-zA-Z0-9\-_]+\.[a-zA-Z0-9\-_]+\.[a-zA-Z0-9\-_]+)/gi,
 ];
 
 const SENSITIVE_KEYS_REGEX = new RegExp(`^(${SENSITIVE_KEYS.join('|')})$`, 'i');

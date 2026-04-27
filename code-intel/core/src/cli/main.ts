@@ -12,6 +12,7 @@ const _pkg = JSON.parse(readFileSync(join(__dirname, '../../package.json'), 'utf
 import { Command } from 'commander';
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
 import Logger from '../shared/logger.js';
 import { createKnowledgeGraph } from '../graph/knowledge-graph.js';
 import { runPipeline } from '../pipeline/orchestrator.js';
@@ -46,6 +47,11 @@ import {
 } from '../multi-repo/group-registry.js';
 import { syncGroup } from '../multi-repo/group-sync.js';
 import { queryGroup } from '../multi-repo/group-query.js';
+import { getOrCreateUsersDB } from '../auth/users-db.js';
+import type { Role } from '../auth/users-db.js';
+import { BackupService } from '../backup/backup-service.js';
+import { MigrationRunner, CURRENT_SCHEMA_VERSION } from '../migrations/migration-runner.js';
+import Database from 'better-sqlite3';
 
 const program = new Command();
 
@@ -1129,6 +1135,365 @@ groupCmd
         console.log(`  ✗  ${m.groupPath.padEnd(35)} [${m.registryName}]  — NOT INDEXED`);
         console.log(`       run: code-intel analyze ${regEntry.path}\n`);
       }
+    }
+  });
+
+// ─── 12. user ────────────────────────────────────────────────────────────────
+const userCmd = program
+  .command('user')
+  .description('Manage local user accounts');
+
+// user create <username>
+userCmd
+  .command('create <username>')
+  .description('Create a new local user account')
+  .requiredOption('--role <role>', 'Role: admin | analyst | viewer | repo-owner')
+  .option('--password <password>', 'Password (prompted if omitted)')
+  .addHelpText('after', `
+  Examples:
+    $ code-intel user create admin --role admin --password mypass
+    $ code-intel user create alice --role analyst
+`)
+  .action(async (username: string, opts: { role: string; password?: string }) => {
+    const validRoles = ['admin', 'analyst', 'viewer', 'repo-owner'];
+    if (!validRoles.includes(opts.role)) {
+      console.error(`\n  ✗  Invalid role "${opts.role}". Must be one of: ${validRoles.join(', ')}\n`);
+      process.exit(1);
+    }
+    let password = opts.password;
+    if (!password) {
+      // prompt for password
+      const readline = await import('node:readline');
+      const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+      password = await new Promise<string>((resolve) => {
+        rl.question(`  Password for ${username}: `, (ans) => {
+          rl.close();
+          resolve(ans);
+        });
+      });
+    }
+    const db = getOrCreateUsersDB();
+    try {
+      const user = db.createUser(username, password, opts.role as Role);
+      console.log(`\n  ✅  User created:`);
+      console.log(`     ID       : ${user.id}`);
+      console.log(`     Username : ${user.username}`);
+      console.log(`     Role     : ${user.role}`);
+      console.log(`     Created  : ${user.createdAt}\n`);
+    } catch (err) {
+      console.error(`\n  ✗  Failed to create user: ${err instanceof Error ? err.message : err}\n`);
+      process.exit(1);
+    }
+  });
+
+// user list
+userCmd
+  .command('list')
+  .description('List all local user accounts')
+  .action(() => {
+    const db = getOrCreateUsersDB();
+    const users = db.listUsers();
+    if (users.length === 0) {
+      console.log('\n  No users found. Create one with: code-intel user create <username> --role <role>\n');
+      return;
+    }
+    console.log(`\n  Local accounts (${users.length}):\n`);
+    for (const u of users) {
+      console.log(`  ◆  ${u.username.padEnd(20)} role: ${u.role.padEnd(12)} id: ${u.id}  created: ${u.createdAt}`);
+    }
+    console.log('');
+  });
+
+// user delete <username>
+userCmd
+  .command('delete <username>')
+  .description('Delete a local user account')
+  .action((username: string) => {
+    const db = getOrCreateUsersDB();
+    const user = db.findUserByUsername(username);
+    if (!user) {
+      console.error(`\n  ✗  User "${username}" not found.\n`);
+      process.exit(1);
+    }
+    db.deleteUser(username);
+    console.log(`\n  ✅  User "${username}" deleted.\n`);
+  });
+
+// user reset-password <username>
+userCmd
+  .command('reset-password <username>')
+  .description('Reset the password for a local user account')
+  .option('--password <password>', 'New password (prompted if omitted)')
+  .action(async (username: string, opts: { password?: string }) => {
+    const db = getOrCreateUsersDB();
+    const user = db.findUserByUsername(username);
+    if (!user) {
+      console.error(`\n  ✗  User "${username}" not found.\n`);
+      process.exit(1);
+    }
+    let password = opts.password;
+    if (!password) {
+      const readline = await import('node:readline');
+      const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+      password = await new Promise<string>((resolve) => {
+        rl.question(`  New password for ${username}: `, (ans) => {
+          rl.close();
+          resolve(ans);
+        });
+      });
+    }
+    db.resetPassword(username, password);
+    console.log(`\n  ✅  Password reset for "${username}".\n`);
+  });
+
+// user set-role <username> <role>
+userCmd
+  .command('set-role <username> <role>')
+  .description('Change the role of a local user account')
+  .action((username: string, role: string) => {
+    const validRoles = ['admin', 'analyst', 'viewer', 'repo-owner'];
+    if (!validRoles.includes(role)) {
+      console.error(`\n  ✗  Invalid role "${role}". Must be one of: ${validRoles.join(', ')}\n`);
+      process.exit(1);
+    }
+    const db = getOrCreateUsersDB();
+    const user = db.findUserByUsername(username);
+    if (!user) {
+      console.error(`\n  ✗  User "${username}" not found.\n`);
+      process.exit(1);
+    }
+    db.setRole(username, role as Role);
+    console.log(`\n  ✅  Role for "${username}" set to "${role}".\n`);
+  });
+
+// ─── 13. token ───────────────────────────────────────────────────────────────
+const tokenCmd = program
+  .command('token')
+  .description('Manage API tokens for programmatic access');
+
+// token create
+tokenCmd
+  .command('create')
+  .description('Create a new API token (raw token shown once)')
+  .requiredOption('--name <name>', 'Token name / description')
+  .requiredOption('--role <role>', 'Role: admin | analyst | viewer | repo-owner')
+  .option('--expires <duration>', 'Expiry duration, e.g. 90d, 30d, 365d (omit for no expiry)')
+  .option('--repos <repos>', 'Comma-separated list of repo names to scope this token to (omit for all repos)')
+  .option('--tools <tools>', 'Comma-separated list of tool names to scope this token to (omit for all tools)')
+  .addHelpText('after', `
+  Examples:
+    $ code-intel token create --name "CI bot" --role analyst
+    $ code-intel token create --name "Read-only" --role viewer --expires 90d
+    $ code-intel token create --name "Scoped bot" --role analyst --repos my-repo,other-repo
+    $ code-intel token create --name "Limited" --role viewer --tools search,inspect
+`)
+  .action((opts: { name: string; role: string; expires?: string; repos?: string; tools?: string }) => {
+    const validRoles = ['admin', 'analyst', 'viewer', 'repo-owner'];
+    if (!validRoles.includes(opts.role)) {
+      console.error(`\n  ✗  Invalid role "${opts.role}". Must be one of: ${validRoles.join(', ')}\n`);
+      process.exit(1);
+    }
+    let expiresAt: string | undefined;
+    if (opts.expires) {
+      const match = opts.expires.match(/^(\d+)d$/);
+      if (!match) {
+        console.error(`\n  ✗  Invalid expiry format "${opts.expires}". Use e.g. 90d\n`);
+        process.exit(1);
+      }
+      const days = parseInt(match[1]!, 10);
+      const exp = new Date();
+      exp.setDate(exp.getDate() + days);
+      expiresAt = exp.toISOString();
+    }
+    const scopedRepos = opts.repos ? opts.repos.split(',').map((r) => r.trim()).filter(Boolean) : undefined;
+    const scopedTools = opts.tools ? opts.tools.split(',').map((t) => t.trim()).filter(Boolean) : undefined;
+    const db = getOrCreateUsersDB();
+    const { token, rawToken } = db.createToken(opts.name, opts.role as Role, expiresAt, scopedRepos, scopedTools);
+    console.log('\n  ✅  Token created — save this token now; it will NOT be shown again!\n');
+    console.log(`     Token    : ${rawToken}`);
+    console.log(`     ID       : ${token.id}`);
+    console.log(`     Name     : ${token.name}`);
+    console.log(`     Role     : ${token.role}`);
+    if (token.expiresAt) console.log(`     Expires  : ${token.expiresAt}`);
+    if (token.scopedRepos) console.log(`     Repos    : ${token.scopedRepos.join(', ')}`);
+    if (token.scopedTools) console.log(`     Tools    : ${token.scopedTools.join(', ')}`);
+    console.log('\n  Usage: Authorization: Bearer <token>\n');
+  });
+
+// token list
+tokenCmd
+  .command('list')
+  .description('List all active API tokens')
+  .action(() => {
+    const db = getOrCreateUsersDB();
+    const tokens = db.listTokens();
+    if (tokens.length === 0) {
+      console.log('\n  No active tokens. Create one with: code-intel token create --name <name> --role <role>\n');
+      return;
+    }
+    console.log(`\n  Active API tokens (${tokens.length}):\n`);
+    for (const t of tokens) {
+      const exp = t.expiresAt ? `expires: ${t.expiresAt}` : 'no expiry';
+      const last = t.lastUsedAt ? `last used: ${t.lastUsedAt}` : 'never used';
+      console.log(`  ◆  ${t.name.padEnd(25)} role: ${t.role.padEnd(12)} ${exp}  ${last}`);
+      console.log(`     ID: ${t.id}  created: ${t.createdAt}`);
+    }
+    console.log('');
+  });
+
+// token revoke <id>
+tokenCmd
+  .command('revoke <id>')
+  .description('Revoke an API token immediately')
+  .action((id: string) => {
+    const db = getOrCreateUsersDB();
+    const tokens = db.listTokens();
+    const token = tokens.find((t) => t.id === id);
+    if (!token) {
+      console.error(`\n  ✗  Token "${id}" not found or already revoked.\n`);
+      process.exit(1);
+    }
+    db.revokeToken(id);
+    console.log(`\n  ✅  Token "${token.name}" (${id}) revoked immediately.\n`);
+  });
+
+// ─── 14. backup ──────────────────────────────────────────────────────────────
+const backupCmd = program
+  .command('backup')
+  .description('Backup and restore knowledge graph data');
+
+// backup create [path]
+backupCmd
+  .command('create [path]')
+  .description('Create an encrypted backup of the index for a repository')
+  .addHelpText('after', `
+  Backs up graph.db, vector.db, meta.json, registry.json, and users.db
+  into ~/.code-intel/backups/ using AES-256-GCM encryption.
+
+  Examples:
+    $ code-intel backup create
+    $ code-intel backup create ./my-project
+`)
+  .action((targetPath: string = '.') => {
+    const repoPath = path.resolve(targetPath);
+    const svc = new BackupService();
+    try {
+      const entry = svc.createBackup(repoPath);
+      console.log(`\n  ✅  Backup created:`);
+      console.log(`     ID       : ${entry.id}`);
+      console.log(`     Created  : ${entry.createdAt}`);
+      console.log(`     Size     : ${(entry.size / 1024).toFixed(1)} KB`);
+      console.log(`     Path     : ${entry.path}\n`);
+    } catch (err) {
+      console.error(`\n  ✗  Backup failed: ${err instanceof Error ? err.message : err}\n`);
+      process.exit(1);
+    }
+  });
+
+// backup list
+backupCmd
+  .command('list')
+  .description('List all available backups')
+  .action(() => {
+    const svc = new BackupService();
+    const entries = svc.listBackups();
+    if (entries.length === 0) {
+      console.log('\n  No backups found. Run: code-intel backup create\n');
+      return;
+    }
+    console.log(`\n  Backups (${entries.length}):\n`);
+    for (const e of entries) {
+      const exists = fs.existsSync(e.path);
+      const status = exists ? '✓' : '✗ (missing)';
+      console.log(`  ${status}  ${e.id.slice(0, 8)}  ${e.createdAt}  ${(e.size / 1024).toFixed(1)} KB  →  ${e.repoPath}`);
+    }
+    console.log('');
+  });
+
+// backup restore <id>
+backupCmd
+  .command('restore <id>')
+  .description('Restore a backup by ID')
+  .option('--target <path>', 'Restore to a different path (default: original repo path)')
+  .addHelpText('after', `
+  Examples:
+    $ code-intel backup restore abc123ef
+    $ code-intel backup restore abc123ef --target ./my-project-restored
+`)
+  .action((id: string, opts: { target?: string }) => {
+    const svc = new BackupService();
+    try {
+      const targetPath = opts.target ? path.resolve(opts.target) : undefined;
+      svc.restoreBackup(id, targetPath);
+      console.log(`\n  ✅  Backup "${id}" restored successfully.\n`);
+    } catch (err) {
+      console.error(`\n  ✗  Restore failed: ${err instanceof Error ? err.message : err}\n`);
+      process.exit(1);
+    }
+  });
+
+// ─── 15. migrate ──────────────────────────────────────────────────────────────
+program
+  .command('migrate')
+  .description('Manage database schema migrations')
+  .option('--dry-run', 'Preview pending migrations without applying them')
+  .option('--status', 'Show current migration status')
+  .option('--rollback', 'Roll back the last applied migration')
+  .option('--db <path>', 'Path to database file (default: ~/.code-intel/users.db)')
+  .addHelpText('after', `
+  Examples:
+    $ code-intel migrate --status
+    $ code-intel migrate --dry-run
+    $ code-intel migrate
+    $ code-intel migrate --rollback
+`)
+  .action((opts: { dryRun?: boolean; status?: boolean; rollback?: boolean; db?: string }) => {
+    const dbPath = opts.db ?? path.join(os.homedir(), '.code-intel', 'users.db');
+    if (!fs.existsSync(dbPath)) {
+      console.error(`\n  ✗  Database not found: ${dbPath}\n  Run \`code-intel serve\` or \`code-intel user create\` first.\n`);
+      process.exit(1);
+    }
+    const db = new Database(dbPath);
+    db.pragma('journal_mode = WAL');
+    const runner = new MigrationRunner(db);
+
+    try {
+      if (opts.status) {
+        const statuses = runner.getStatus();
+        console.log(`\n  Migration status (current schema: v${CURRENT_SCHEMA_VERSION})\n`);
+        for (const s of statuses) {
+          const mark = s.pending ? '○ pending' : `✓ applied ${s.appliedAt ?? ''}`;
+          console.log(`  v${String(s.version).padStart(3, '0')}  ${mark.padEnd(45)} ${s.description}`);
+        }
+        console.log('');
+        return;
+      }
+
+      if (opts.rollback) {
+        const ok = runner.migrateDown();
+        if (ok) {
+          console.log(`\n  ✅  Last migration rolled back.\n`);
+        } else {
+          console.log(`\n  No migrations to roll back.\n`);
+        }
+        return;
+      }
+
+      if (opts.dryRun) {
+        const count = runner.migrateUp(true);
+        console.log(`\n  Dry run: ${count} pending migration(s) would be applied.\n`);
+        return;
+      }
+
+      runner.checkCompatibility();
+      const count = runner.migrateUp();
+      if (count === 0) {
+        console.log(`\n  ✓  All migrations up to date (schema v${CURRENT_SCHEMA_VERSION}).\n`);
+      } else {
+        console.log(`\n  ✅  Applied ${count} migration(s). Schema is now v${runner.getCurrentVersion()}.\n`);
+      }
+    } finally {
+      db.close();
     }
   });
 

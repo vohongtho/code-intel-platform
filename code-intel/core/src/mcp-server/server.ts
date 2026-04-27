@@ -31,18 +31,23 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
 
   // ─── Tool Definitions ──────────────────────────────────────────────────────
 
+  // ── Shared _token property injected into every tool schema ─────────────────
+  const _tokenProp = {
+    _token: { type: 'string' as const, description: 'Required if CODE_INTEL_TOKEN is configured' },
+  };
+
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
       // ── Core repo tools ──────────────────────────────────────────────────
       {
         name: 'repos',
         description: 'List all indexed repositories with node and edge counts',
-        inputSchema: { type: 'object' as const, properties: {} },
+        inputSchema: { type: 'object' as const, properties: { ..._tokenProp } },
       },
       {
         name: 'overview',
         description: 'Repository summary: total nodes/edges and a full breakdown of node and edge counts by kind. Use this first to understand the shape of the codebase.',
-        inputSchema: { type: 'object' as const, properties: {} },
+        inputSchema: { type: 'object' as const, properties: { ..._tokenProp } },
       },
 
       // ── Search & inspect ─────────────────────────────────────────────────
@@ -54,6 +59,7 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
           properties: {
             query: { type: 'string', description: 'Search query (symbol name, keyword, or partial match)' },
             limit: { type: 'number', description: 'Max results to return (default: 20)' },
+            ..._tokenProp,
           },
           required: ['query'],
         },
@@ -65,6 +71,7 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
           type: 'object' as const,
           properties: {
             symbol_name: { type: 'string', description: 'Exact symbol name to inspect' },
+            ..._tokenProp,
           },
           required: ['symbol_name'],
         },
@@ -82,6 +89,7 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
               description: 'Which direction to trace — callers (who depends on it), callees (what it depends on), or both (default: both)',
             },
             max_hops: { type: 'number', description: 'Maximum traversal depth (default: 5)' },
+            ..._tokenProp,
           },
           required: ['target'],
         },
@@ -93,6 +101,7 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
           type: 'object' as const,
           properties: {
             file_path: { type: 'string', description: 'File path (partial match is supported, e.g. "auth/login.ts")' },
+            ..._tokenProp,
           },
           required: ['file_path'],
         },
@@ -106,6 +115,7 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
             from: { type: 'string', description: 'Source symbol name' },
             to: { type: 'string', description: 'Target symbol name' },
             max_hops: { type: 'number', description: 'Maximum path length to search (default: 8)' },
+            ..._tokenProp,
           },
           required: ['from', 'to'],
         },
@@ -121,6 +131,7 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
               description: 'Filter by node kind: function | class | interface | method | type_alias | constant | enum (optional)',
             },
             limit: { type: 'number', description: 'Max results (default: 100)' },
+            ..._tokenProp,
           },
         },
       },
@@ -129,7 +140,7 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
       {
         name: 'routes',
         description: 'List all HTTP route handler mappings detected in the codebase (kind=route or route/handler/controller files)',
-        inputSchema: { type: 'object' as const, properties: {} },
+        inputSchema: { type: 'object' as const, properties: { ..._tokenProp } },
       },
       {
         name: 'clusters',
@@ -138,6 +149,7 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
           type: 'object' as const,
           properties: {
             limit: { type: 'number', description: 'Max clusters to return (default: 50)' },
+            ..._tokenProp,
           },
         },
       },
@@ -148,6 +160,7 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
           type: 'object' as const,
           properties: {
             limit: { type: 'number', description: 'Max flows to return (default: 50)' },
+            ..._tokenProp,
           },
         },
       },
@@ -167,6 +180,7 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
               type: 'string',
               description: 'Raw unified diff text. If provided, base_ref is ignored and this diff is parsed directly.',
             },
+            ..._tokenProp,
           },
         },
       },
@@ -179,6 +193,7 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
           type: 'object' as const,
           properties: {
             cypher: { type: 'string', description: "Query string — e.g. name='runPipeline' or :function" },
+            ..._tokenProp,
           },
           required: ['cypher'],
         },
@@ -192,6 +207,7 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
           type: 'object' as const,
           properties: {
             name: { type: 'string', description: 'Group name to inspect (optional — omit to list all groups)' },
+            ..._tokenProp,
           },
         },
       },
@@ -202,6 +218,7 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
           type: 'object' as const,
           properties: {
             name: { type: 'string', description: 'Group name to sync' },
+            ..._tokenProp,
           },
           required: ['name'],
         },
@@ -220,6 +237,7 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
             },
             repo: { type: 'string', description: 'Filter by registry name (optional)' },
             min_confidence: { type: 'number', description: 'Minimum link confidence 0–1 (default: 0)' },
+            ..._tokenProp,
           },
           required: ['name'],
         },
@@ -233,6 +251,7 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
             name: { type: 'string', description: 'Group name' },
             query: { type: 'string', description: 'Search query' },
             limit: { type: 'number', description: 'Max results per repo (default: 10)' },
+            ..._tokenProp,
           },
           required: ['name', 'query'],
         },
@@ -244,6 +263,7 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
           type: 'object' as const,
           properties: {
             name: { type: 'string', description: 'Group name' },
+            ..._tokenProp,
           },
           required: ['name'],
         },
@@ -256,6 +276,18 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     const a = (args ?? {}) as Record<string, unknown>;
+
+    // ── Token authentication ───────────────────────────────────────────────
+    const expectedToken = process.env['CODE_INTEL_TOKEN'];
+    if (expectedToken) {
+      const providedToken = a._token;
+      if (providedToken !== expectedToken) {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ error: 'Unauthorized: invalid or missing CODE_INTEL_TOKEN' }) }],
+          isError: true,
+        };
+      }
+    }
 
     switch (name) {
 
@@ -851,6 +883,9 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
 }
 
 export async function startMcpStdio(graph: KnowledgeGraph, repoName: string, workspaceRoot?: string): Promise<void> {
+  if (process.env['CODE_INTEL_TOKEN']) {
+    process.stderr.write('[code-intel] CODE_INTEL_TOKEN is configured — all tool calls must include { "_token": "<value>" } in their arguments.\n');
+  }
   const server = createMcpServer(graph, repoName, workspaceRoot);
   const transport = new StdioServerTransport();
   await server.connect(transport);

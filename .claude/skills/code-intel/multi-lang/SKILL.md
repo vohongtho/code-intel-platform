@@ -38,11 +38,11 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `login` | function | 1 | 2 | `multi-lang/auth.py` |
+| `login` | function | 3 | 2 | `multi-lang/auth.py` |
+| `logout` | function | 3 | 0 | `multi-lang/auth.py` |
 | `User` | class | 1 | 0 | `multi-lang/auth.py` |
 | `__init__` | method | 1 | 0 | `multi-lang/auth.py` |
 | `register` | function | 0 | 1 | `multi-lang/auth.py` |
-| `logout` | function | 1 | 0 | `multi-lang/auth.py` |
 | `_find_user` | function | 1 | 0 | `multi-lang/auth.py` |
 | `_generate_token` | function | 1 | 0 | `multi-lang/auth.py` |
 | `AuthService` | class | 0 | 0 | `multi-lang/auth.py` |

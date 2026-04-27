@@ -29,7 +29,7 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `writeContextFiles` | function | 1 | 2 | `cli/context-writer.ts` |
+| `writeContextFiles` | function | 2 | 2 | `cli/context-writer.ts` |
 | `buildAreaMap` | function | 1 | 2 | `cli/skill-writer.ts` |
 | `upsertFile` | function | 1 | 1 | `cli/context-writer.ts` |
 | `renderSkill` | function | 1 | 1 | `cli/skill-writer.ts` |

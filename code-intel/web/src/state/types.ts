@@ -1,6 +1,12 @@
 import type { CodeNode, CodeEdge, NodeKind, EdgeKind } from '@code-intel/shared';
 
-export type AppView = 'connect' | 'loading' | 'exploring';
+export type AppView = 'login' | 'connect' | 'loading' | 'exploring';
+
+export interface CurrentUser {
+  id: string;
+  username: string;
+  role: 'admin' | 'analyst' | 'viewer' | 'repo-owner';
+}
 
 export interface SearchResult {
   nodeId: string;
@@ -45,6 +51,7 @@ export interface AppState {
   view: AppView;
   serverUrl: string;
   connected: boolean;
+  currentUser: CurrentUser | null;
   repoName: string;
   nodes: CodeNode[];
   edges: CodeEdge[];

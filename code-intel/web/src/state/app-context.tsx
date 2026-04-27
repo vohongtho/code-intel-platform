@@ -1,11 +1,12 @@
 import React, { createContext, useContext, useReducer } from 'react';
-import type { AppState, SearchResult, ChatMessage, FocusDepth } from './types';
+import type { AppState, SearchResult, ChatMessage, FocusDepth, CurrentUser } from './types';
 import type { CodeNode, CodeEdge, NodeKind, EdgeKind } from '@code-intel/shared';
 
 type Action =
   | { type: 'SET_VIEW'; view: AppState['view'] }
   | { type: 'SET_SERVER_URL'; url: string }
   | { type: 'SET_CONNECTED'; connected: boolean }
+  | { type: 'SET_CURRENT_USER'; user: CurrentUser | null }
   | { type: 'SET_REPO_NAME'; name: string }
   | { type: 'SET_GRAPH'; nodes: CodeNode[]; edges: CodeEdge[] }
   | { type: 'SELECT_NODE'; node: CodeNode | null }
@@ -25,9 +26,10 @@ type Action =
   | { type: 'SET_GROUP_CONTRACTS'; contracts: AppState['groupContracts']; links: AppState['groupLinks']; syncedAt: string };
 
 const initialState: AppState = {
-  view: 'connect',
+  view: 'login',
   serverUrl: 'http://localhost:4747',
   connected: false,
+  currentUser: null,
   repoName: '',
   nodes: [],
   edges: [],
@@ -56,6 +58,8 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, serverUrl: action.url };
     case 'SET_CONNECTED':
       return { ...state, connected: action.connected };
+    case 'SET_CURRENT_USER':
+      return { ...state, currentUser: action.user };
     case 'SET_REPO_NAME':
       return { ...state, repoName: action.name };
     case 'SET_GRAPH':

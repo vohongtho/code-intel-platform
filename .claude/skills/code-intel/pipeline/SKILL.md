@@ -29,7 +29,7 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `runPipeline` | function | 2 | 2 | `pipeline/orchestrator.ts` |
+| `runPipeline` | function | 3 | 2 | `pipeline/orchestrator.ts` |
 | `validateDAG` | function | 2 | 1 | `pipeline/dag-validator.ts` |
 | `dfs` | function | 1 | 2 | `pipeline/dag-validator.ts` |
 | `topologicalSort` | function | 2 | 0 | `pipeline/dag-validator.ts` |

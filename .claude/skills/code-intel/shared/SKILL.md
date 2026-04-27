@@ -1,11 +1,11 @@
 ---
 name: shared
-description: "Covers the **shared** subsystem of code-intel-platform. 12 symbols across 3 files. Key symbols: `Header`, `KeyboardShortcutsModal`, `StatusFooter`. Internal call density: 0 calls/symbol."
+description: "Covers the **shared** subsystem of code-intel-platform. 14 symbols across 3 files. Key symbols: `Header`, `KeyboardShortcutsModal`, `StatusFooter`. Internal call density: 0 calls/symbol."
 ---
 
 # shared
 
-> **12 symbols** | **3 files** | path: `code-intel/web/src/components/shared/` | call density: 0/sym
+> **14 symbols** | **3 files** | path: `code-intel/web/src/components/shared/` | call density: 0/sym
 
 ## When to Use
 
@@ -19,15 +19,15 @@ Load this skill when:
 
 | File | Symbols | Notes |
 |------|---------|-------|
+| `code-intel/web/src/components/shared/Header.tsx` | `Props`, `Header`, `check`, `onKey` +(3) | 1 exported |
 | `code-intel/web/src/components/shared/KeyboardShortcutsModal.tsx` | `KeyboardShortcutsModalProps`, `ShortcutEntry`, `ShortcutGroup`, `KeyboardShortcutsModal` +(2) | 1 exported |
-| `code-intel/web/src/components/shared/Header.tsx` | `Props`, `Header`, `check`, `onKey` +(1) | 1 exported |
 | `code-intel/web/src/components/shared/StatusFooter.tsx` | `StatusFooter` | 1 exported |
 
 ## Entry Points
 
 Start exploration here — exported symbols with no external callers:
 
-- **`Header`** `(function)` → `code-intel/web/src/components/shared/Header.tsx:12`
+- **`Header`** `(function)` → `code-intel/web/src/components/shared/Header.tsx:19`
 - **`KeyboardShortcutsModal`** `(function)` → `code-intel/web/src/components/shared/KeyboardShortcutsModal.tsx:43`
 - **`StatusFooter`** `(function)` → `code-intel/web/src/components/shared/StatusFooter.tsx:8`
 
@@ -37,18 +37,18 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
+| `handleLogout` | function | 1 | 2 | `shared/Header.tsx` |
 | `check` | function | 1 | 1 | `shared/Header.tsx` |
 | `handleSearch` | function | 1 | 1 | `shared/Header.tsx` |
 | `StatusFooter` | function | 0 | 2 | `shared/StatusFooter.tsx` |
 | `Props` | interface | 0 | 0 | `shared/Header.tsx` |
 | `Header` | function | 0 | 0 | `shared/Header.tsx` |
 | `onKey` | function | 0 | 0 | `shared/Header.tsx` |
+| `onClick` | function | 0 | 0 | `shared/Header.tsx` |
 | `KeyboardShortcutsModalProps` | interface | 0 | 0 | `shared/KeyboardShortcutsModal.tsx` |
 | `ShortcutEntry` | interface | 0 | 0 | `shared/KeyboardShortcutsModal.tsx` |
 | `ShortcutGroup` | interface | 0 | 0 | `shared/KeyboardShortcutsModal.tsx` |
 | `KeyboardShortcutsModal` | function | 0 | 0 | `shared/KeyboardShortcutsModal.tsx` |
-| `handleKeyDown` | function | 0 | 0 | `shared/KeyboardShortcutsModal.tsx` |
-| `handleOverlayClick` | function | 0 | 0 | `shared/KeyboardShortcutsModal.tsx` |
 
 ## Impact Guidance
 
@@ -61,7 +61,7 @@ Before modifying any symbol in this area:
 
 ```bash
 # Inspect most-connected symbol
-code-intel inspect check
+code-intel inspect handleLogout
 # Blast radius for entry point
 code-intel impact Header
 # Search this area

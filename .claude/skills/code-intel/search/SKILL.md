@@ -29,8 +29,8 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `textSearch` | function | 5 | 0 | `search/text-search.ts` |
-| `reciprocalRankFusion` | function | 3 | 0 | `search/text-search.ts` |
+| `textSearch` | function | 6 | 0 | `search/text-search.ts` |
+| `reciprocalRankFusion` | function | 4 | 0 | `search/text-search.ts` |
 | `embedNodes` | function | 2 | 0 | `search/embedder.ts` |
 | `VectorIndex` | class | 2 | 0 | `search/vector-index.ts` |
 | `getEmbedder` | function | 1 | 0 | `search/embedder.ts` |

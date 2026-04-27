@@ -13,3 +13,6 @@ screenshots/
 .playwright-mcp/
 ref-use/
 .env
+
+
+**/coverage/**
