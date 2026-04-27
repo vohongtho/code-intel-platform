@@ -26,6 +26,17 @@ export interface Token {
   createdAt: string;
 }
 
+export interface OIDCIdentity {
+  id: string;
+  userId: string;
+  provider: string;   // e.g. 'github', 'google', 'custom'
+  sub: string;        // Provider subject identifier
+  email?: string;
+  name?: string;
+  createdAt: string;
+  lastLoginAt?: string;
+}
+
 const BCRYPT_ROUNDS = 12;
 
 export class UsersDB {
@@ -68,6 +79,21 @@ export class UsersDB {
         outcome TEXT NOT NULL,
         ip TEXT NOT NULL,
         timestamp TEXT NOT NULL
+      );
+    `);
+
+    // OIDC identities — links a local user to an external provider subject
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS oidc_identities (
+        id TEXT PRIMARY KEY,
+        userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        provider TEXT NOT NULL,
+        sub TEXT NOT NULL,
+        email TEXT NULL,
+        name TEXT NULL,
+        createdAt TEXT NOT NULL,
+        lastLoginAt TEXT NULL,
+        UNIQUE (provider, sub)
       );
     `);
 
@@ -229,6 +255,133 @@ export class UsersDB {
         'INSERT INTO audit_log (id, userId, resource, action, outcome, ip, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)',
       )
       .run(uuidv4(), userId, resource, action, outcome, ip, new Date().toISOString());
+  }
+
+  // ── OIDC Identity management ────────────────────────────────────────────────
+
+  /**
+   * Find an existing local user linked to an OIDC provider + sub.
+   * Returns `null` if no such link exists yet (first login → auto-provision).
+   */
+  findUserByOIDC(provider: string, sub: string): (User & { oidcIdentityId: string }) | null {
+    const row = this.db
+      .prepare(`
+        SELECT u.id, u.username, u.role, u.createdAt, oi.id as oidcId
+        FROM oidc_identities oi
+        JOIN users u ON u.id = oi.userId
+        WHERE oi.provider = ? AND oi.sub = ?
+      `)
+      .get(provider, sub) as {
+        id: string; username: string; role: string; createdAt: string; oidcId: string
+      } | undefined;
+
+    if (!row) return null;
+    return {
+      id: row.id,
+      username: row.username,
+      role: row.role as Role,
+      createdAt: row.createdAt,
+      oidcIdentityId: row.oidcId,
+    };
+  }
+
+  /**
+   * Create a local user and link it to an OIDC identity in a single transaction.
+   * Password is set to a random 32-byte value — the user can only log in via OIDC.
+   */
+  provisionOIDCUser(
+    username: string,
+    role: Role,
+    provider: string,
+    sub: string,
+    email?: string,
+    name?: string,
+  ): { user: User; oidcIdentityId: string } {
+    // Random password — user cannot log in with it (OIDC only)
+    const randomPassword = crypto.randomBytes(32).toString('hex');
+    const passwordHash = bcrypt.hashSync(randomPassword, BCRYPT_ROUNDS);
+    const userId = uuidv4();
+    const identityId = uuidv4();
+    const now = new Date().toISOString();
+
+    const insertUser = this.db.prepare(
+      'INSERT INTO users (id, username, passwordHash, role, createdAt) VALUES (?, ?, ?, ?, ?)',
+    );
+    const insertIdentity = this.db.prepare(
+      'INSERT INTO oidc_identities (id, userId, provider, sub, email, name, createdAt, lastLoginAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    );
+
+    // Wrap in a transaction for atomicity
+    const run = this.db.transaction(() => {
+      insertUser.run(userId, username, passwordHash, role, now);
+      insertIdentity.run(identityId, userId, provider, sub, email ?? null, name ?? null, now, now);
+    });
+    run();
+
+    const user: User = { id: userId, username, role, createdAt: now };
+    return { user, oidcIdentityId: identityId };
+  }
+
+  /**
+   * Link an existing local user to a new OIDC identity.
+   */
+  linkOIDCIdentity(
+    userId: string,
+    provider: string,
+    sub: string,
+    email?: string,
+    name?: string,
+  ): string {
+    const id = uuidv4();
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        'INSERT OR REPLACE INTO oidc_identities (id, userId, provider, sub, email, name, createdAt, lastLoginAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      )
+      .run(id, userId, provider, sub, email ?? null, name ?? null, now, now);
+    return id;
+  }
+
+  /**
+   * Update lastLoginAt timestamp for an OIDC identity.
+   */
+  touchOIDCIdentity(provider: string, sub: string): void {
+    this.db
+      .prepare(
+        'UPDATE oidc_identities SET lastLoginAt = ? WHERE provider = ? AND sub = ?',
+      )
+      .run(new Date().toISOString(), provider, sub);
+  }
+
+  /**
+   * List all OIDC identities linked to a user.
+   */
+  listOIDCIdentities(userId: string): OIDCIdentity[] {
+    const rows = this.db
+      .prepare(
+        'SELECT id, userId, provider, sub, email, name, createdAt, lastLoginAt FROM oidc_identities WHERE userId = ?',
+      )
+      .all(userId) as {
+        id: string; userId: string; provider: string; sub: string;
+        email: string | null; name: string | null; createdAt: string; lastLoginAt: string | null
+      }[];
+    return rows.map((r) => ({
+      id: r.id,
+      userId: r.userId,
+      provider: r.provider,
+      sub: r.sub,
+      email: r.email ?? undefined,
+      name: r.name ?? undefined,
+      createdAt: r.createdAt,
+      lastLoginAt: r.lastLoginAt ?? undefined,
+    }));
+  }
+
+  /**
+   * Unlink an OIDC identity from a user (by identityId).
+   */
+  unlinkOIDCIdentity(identityId: string): void {
+    this.db.prepare('DELETE FROM oidc_identities WHERE id = ?').run(identityId);
   }
 
   // ── Bootstrap check ────────────────────────────────────────────────────────

@@ -1497,4 +1497,142 @@ program
     }
   });
 
+// ─── 16. auth login (OIDC Device Flow) ───────────────────────────────────────
+const authCmd = program
+  .command('auth')
+  .description('Authentication commands (OIDC / OAuth2)');
+
+authCmd
+  .command('login')
+  .description('Authenticate via OIDC device flow — opens a browser and stores the token')
+  .option('--server <url>', 'Code-intel server URL (default: http://localhost:4747)')
+  .addHelpText('after', `
+  Requires CODE_INTEL_OIDC_ISSUER, CODE_INTEL_OIDC_CLIENT_ID,
+  CODE_INTEL_OIDC_CLIENT_SECRET to be configured on the server.
+
+  Examples:
+    $ code-intel auth login
+    $ code-intel auth login --server https://code-intel.company.com
+`)
+  .action(async (opts: { server?: string }) => {
+    const serverUrl = (opts.server ?? 'http://localhost:4747').replace(/\/$/, '');
+
+    // ── Dynamic import so openid-client is only loaded when needed ────────────
+    const {
+      initiateDeviceFlow,
+      pollDeviceFlow,
+      isOIDCConfigured,
+    } = await import('../auth/oidc.js');
+
+    if (!isOIDCConfigured()) {
+      console.error('\n  ✗  OIDC is not configured on this installation.');
+      console.error('     Set CODE_INTEL_OIDC_ISSUER, CODE_INTEL_OIDC_CLIENT_ID,');
+      console.error('     and CODE_INTEL_OIDC_CLIENT_SECRET and restart the server.\n');
+      process.exit(1);
+    }
+
+    console.log('\n  ◈  Code Intelligence — OIDC Login (Device Flow)\n');
+
+    let deviceInit: Awaited<ReturnType<typeof initiateDeviceFlow>>;
+    try {
+      const result = await initiateDeviceFlow();
+      if (!result) {
+        console.error('\n  ✗  OIDC is not configured or provider is unreachable.\n');
+        process.exit(1);
+      }
+      deviceInit = result;
+    } catch (err) {
+      console.error(`\n  ✗  Failed to initiate device flow: ${err instanceof Error ? err.message : err}\n`);
+      process.exit(1);
+    }
+
+    const { deviceResponse, config } = deviceInit;
+    const dr = deviceResponse as {
+      user_code: string;
+      verification_uri: string;
+      verification_uri_complete?: string;
+      expires_in?: number;
+    };
+
+    console.log(`  1. Open this URL in your browser:\n`);
+    console.log(`     ${dr.verification_uri_complete ?? dr.verification_uri}\n`);
+    console.log(`  2. Enter the code:  ${dr.user_code}\n`);
+    console.log(`  Waiting for authorization${dr.expires_in ? ` (expires in ${dr.expires_in}s)` : ''}…\n`);
+
+    // Attempt to open the browser automatically
+    try {
+      const { exec } = await import('node:child_process');
+      const openUrl = dr.verification_uri_complete ?? dr.verification_uri;
+      const cmd =
+        process.platform === 'win32'
+          ? `start "" "${openUrl}"`
+          : process.platform === 'darwin'
+          ? `open "${openUrl}"`
+          : `xdg-open "${openUrl}"`;
+      exec(cmd, (err) => {
+        if (err) Logger.debug('[auth] Could not auto-open browser:', err.message);
+      });
+    } catch { /* not critical */ }
+
+    try {
+      const tokens = await pollDeviceFlow(config, deviceResponse);
+
+      // Store token in ~/.code-intel/oidc-token.json (simple OS keychain substitute)
+      const tokenPath = path.join(os.homedir(), '.code-intel', 'oidc-token.json');
+      const tokenData = {
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        server: serverUrl,
+        storedAt: new Date().toISOString(),
+      };
+      fs.mkdirSync(path.dirname(tokenPath), { recursive: true });
+      fs.writeFileSync(tokenPath, JSON.stringify(tokenData, null, 2), { mode: 0o600 });
+
+      console.log(`  ✅  Authenticated successfully!`);
+      console.log(`  Token stored at: ${tokenPath}`);
+      console.log(`  Use CODE_INTEL_TOKEN env var or --token flag to use it with CLI/MCP.\n`);
+    } catch (err) {
+      console.error(`\n  ✗  Authentication failed: ${err instanceof Error ? err.message : err}\n`);
+      process.exit(1);
+    }
+  });
+
+authCmd
+  .command('status')
+  .description('Show the current OIDC authentication status')
+  .action(() => {
+    const tokenPath = path.join(os.homedir(), '.code-intel', 'oidc-token.json');
+    if (!fs.existsSync(tokenPath)) {
+      console.log('\n  Not authenticated via OIDC. Run: code-intel auth login\n');
+      return;
+    }
+    try {
+      const data = JSON.parse(fs.readFileSync(tokenPath, 'utf-8')) as {
+        server?: string;
+        storedAt?: string;
+        accessToken?: string;
+      };
+      console.log(`\n  ✅  OIDC token stored`);
+      console.log(`  Server : ${data.server ?? 'unknown'}`);
+      console.log(`  Stored : ${data.storedAt ?? 'unknown'}`);
+      console.log(`  Token  : ${data.accessToken ? data.accessToken.slice(0, 12) + '…' : 'missing'}`);
+      console.log('');
+    } catch {
+      console.error('\n  ✗  Could not read token file. Try: code-intel auth login\n');
+    }
+  });
+
+authCmd
+  .command('logout')
+  .description('Remove locally stored OIDC token')
+  .action(() => {
+    const tokenPath = path.join(os.homedir(), '.code-intel', 'oidc-token.json');
+    if (fs.existsSync(tokenPath)) {
+      fs.unlinkSync(tokenPath);
+      console.log('\n  ✅  OIDC token removed. You are now logged out.\n');
+    } else {
+      console.log('\n  No stored token found.\n');
+    }
+  });
+
 program.parse();

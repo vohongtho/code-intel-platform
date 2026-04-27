@@ -5,7 +5,7 @@
 2. Before run git add and git commit should get confirm from me
 3. The message generate for git commit DO NOT CONTENT: 
     "Amp-Thread-ID:"
-    "Co-authored-by: Amp amp@ampcode.com"
+    "Co-authored-by: ***"
 3. Before run git add, if change need to update into readme.md, Should update
 <!-- code-intel:start -->
 # Code Intelligence — code-intel-platform

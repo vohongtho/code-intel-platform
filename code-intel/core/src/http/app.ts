@@ -36,6 +36,17 @@ import {
 import { getOrCreateUsersDB } from '../auth/users-db.js';
 import type { Role } from '../auth/users-db.js';
 import {
+  isOIDCConfigured,
+  getOIDCConfig,
+  getDiscoveredConfig,
+  buildOIDCLoginUrl,
+  handleOIDCCallback,
+  deriveUsername,
+  initiateDeviceFlow,
+  pollDeviceFlow,
+  refreshOIDCToken,
+} from '../auth/oidc.js';
+import {
   metricsRegistry,
   httpRequestsTotal,
   httpRequestDurationSeconds,
@@ -340,6 +351,180 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
       user: { id: req.user.id, username: req.user.username, role: req.user.role },
       authMethod: req.user.authMethod,
     });
+  });
+
+  // ── OIDC / OAuth2 routes (1.3) ──────────────────────────────────────────────
+
+  // Probe: is OIDC configured?
+  app.get('/auth/oidc/status', async (_req, res) => {
+    if (!isOIDCConfigured()) {
+      res.json({ enabled: false });
+      return;
+    }
+    const cfg = getOIDCConfig()!;
+    // Attempt discovery to confirm provider is reachable
+    const discovered = await getDiscoveredConfig();
+    res.json({
+      enabled: true,
+      issuer: cfg.issuer,
+      reachable: discovered !== null,
+    });
+  });
+
+  // Step 1: redirect to provider
+  app.get('/auth/oidc/login', async (req: Request, res: Response) => {
+    if (!isOIDCConfigured()) {
+      res.status(503).json({
+        error: {
+          code: 'CI-1005',
+          message: 'OIDC is not configured',
+          hint: 'Set CODE_INTEL_OIDC_ISSUER, CODE_INTEL_OIDC_CLIENT_ID, CODE_INTEL_OIDC_CLIENT_SECRET env vars',
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+
+    try {
+      const result = await buildOIDCLoginUrl();
+      if (!result) {
+        res.status(503).json({
+          error: {
+            code: 'CI-1005',
+            message: 'OIDC provider unreachable',
+            hint: 'The OIDC issuer could not be reached. Check CODE_INTEL_OIDC_ISSUER and network connectivity.',
+            requestId: req.requestId,
+            timestamp: new Date().toISOString(),
+          },
+        });
+        return;
+      }
+      res.redirect(302, result.redirectUrl);
+    } catch (err) {
+      Logger.warn('[oidc] Login redirect failed:', err instanceof Error ? err.message : err);
+      res.status(500).json({
+        error: {
+          code: 'CI-5000',
+          message: 'OIDC login initiation failed',
+          hint: err instanceof Error ? err.message : 'Unknown error',
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
+  });
+
+  // Step 2: provider redirects back here with code + state
+  app.get('/auth/callback', async (req: Request, res: Response) => {
+    const { state, error, error_description } = req.query as Record<string, string | undefined>;
+
+    // Provider error (e.g. user denied)
+    if (error) {
+      Logger.warn('[oidc] Provider returned error:', error, error_description);
+      res.redirect(302, `/?oidc_error=${encodeURIComponent(error_description ?? error)}`);
+      return;
+    }
+
+    if (!state) {
+      res.status(400).json({
+        error: {
+          code: 'CI-1200',
+          message: 'Missing state parameter in OIDC callback',
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+
+    try {
+      const currentUrl = new URL(
+        req.originalUrl,
+        getOIDCConfig()?.redirectUri ?? `http://localhost:4747`,
+      );
+      const { userInfo } = await handleOIDCCallback(currentUrl, state);
+
+      // Determine provider from issuer
+      const cfg = getOIDCConfig()!;
+      const provider = cfg.issuer;
+
+      const db = getOrCreateUsersDB();
+
+      // Find or provision user
+      let user = db.findUserByOIDC(provider, userInfo.sub);
+      if (user) {
+        // Existing user — update last login
+        db.touchOIDCIdentity(provider, userInfo.sub);
+        authAttemptsTotal.inc({ method: 'oidc', outcome: 'success' });
+      } else {
+        // New user — auto-provision with default role
+        const username = deriveUsername(userInfo);
+        // Ensure username uniqueness by appending a suffix if needed
+        let finalUsername = username;
+        let suffix = 1;
+        while (db.findUserByUsername(finalUsername)) {
+          finalUsername = `${username}_${suffix++}`;
+        }
+        const { user: newUser } = db.provisionOIDCUser(
+          finalUsername,
+          cfg.defaultRole,
+          provider,
+          userInfo.sub,
+          userInfo.email,
+          userInfo.name,
+        );
+        user = { ...newUser, oidcIdentityId: '' };
+        authAttemptsTotal.inc({ method: 'oidc', outcome: 'success' });
+        Logger.info(`[oidc] Auto-provisioned new user: ${finalUsername} (${cfg.defaultRole})`);
+      }
+
+      const sessionId = createSession({ id: user.id, username: user.username, role: user.role });
+      db.logAccess(user.id, '/auth/callback', 'oidc-login', 'allow', req.ip ?? 'unknown');
+      res.setHeader('Set-Cookie', buildSessionCookie(sessionId));
+      // Redirect back to the web UI
+      res.redirect(302, '/');
+    } catch (err) {
+      Logger.warn('[oidc] Callback failed:', err instanceof Error ? err.message : err);
+      authAttemptsTotal.inc({ method: 'oidc', outcome: 'failure' });
+      const msg = err instanceof Error ? err.message : 'OIDC callback failed';
+      res.redirect(302, `/?oidc_error=${encodeURIComponent(msg)}`);
+    }
+  });
+
+  // OIDC refresh — called by clients with a stored OIDC refresh token
+  app.post('/auth/oidc/refresh', async (req: Request, res: Response) => {
+    const { refresh_token } = req.body as { refresh_token?: string };
+    if (!refresh_token) {
+      res.status(400).json({
+        error: {
+          code: 'CI-1200',
+          message: 'refresh_token required',
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+    const result = await refreshOIDCToken(refresh_token);
+    if (!result) {
+      res.status(401).json({
+        error: {
+          code: 'CI-1000',
+          message: 'Refresh token invalid or OIDC provider unreachable',
+          hint: 'Re-login via /auth/oidc/login',
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+    res.json(result);
+  });
+
+  // Fallback: OIDC unavailable → redirect to local login
+  app.get('/auth/oidc/fallback', (_req, res) => {
+    res.redirect(302, '/login');
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
