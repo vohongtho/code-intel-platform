@@ -16,8 +16,9 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 - **LadybugDB Persistence** — graph and vector index stored as embedded graph database
 - **HTTP API** — REST endpoints for graph, search, inspect, blast radius, flows
 - **MCP Server** — Model Context Protocol integration for LLM tooling
-- **CLI** — analyze, serve, search, inspect, impact commands
+- **CLI** — analyze, serve, search, inspect, impact commands with animated progress bars and spinners
 - **Multi-language** — TypeScript, JavaScript, Python, Java, Go, C, C++, C#, Rust, PHP, Kotlin, Ruby, Swift, Dart
+- **Structured Logging** — winston-based logger with daily-rotating log files, sensitive-data masking, and configurable log levels
 
 ---
 
@@ -78,7 +79,9 @@ code-intel-platform/
 │   │       ├── storage/       # LadybugDB persistence, repo registry
 │   │       ├── http/          # Express REST API + static web UI serving
 │   │       ├── mcp-server/    # MCP stdio transport
-│   │       └── cli/           # Commander CLI
+│   │       ├── multi-repo/    # Group registry, group sync, cross-repo query
+│   │       ├── shared/        # Logger, language detection utilities
+│   │       └── cli/           # Commander CLI (progress bars, spinners)
 │   └── web/          # React + Sigma.js frontend
 │       └── src/
 │           ├── components/    # GraphView, NodeDetail, SidebarChat, SidebarFiles, Filters
@@ -86,19 +89,54 @@ code-intel-platform/
 │           ├── api/           # ApiClient (search, vector-search, inspect, blast-radius)
 │           ├── graph/         # Colors palette, layout utilities
 │           └── state/         # React context + reducer
-└── .code-intel/      # Generated: graph.db, vector.db, meta.json
+└── .code-intel/      # Generated per-repo: graph.db, vector.db, meta.json
 ```
 
 ### Pipeline Phases
 
 | Phase | Description |
 |-------|-------------|
-| `scan` | Walk filesystem, collect source files, ignore `node_modules`, `dist`, etc. |
+| `scan` | Walk filesystem, collect source files (parallel batch I/O), ignore `node_modules`, `dist`, large files, etc. |
 | `structure` | Create file and directory nodes in the graph |
-| `parse` | Parse files with web-tree-sitter, extract symbols (functions, classes, etc.) |
-| `resolve` | Resolve imports → edges, build call graph, detect heritage (extends/implements) |
+| `parse` | Read files in parallel batches of 64, extract symbols (functions, classes, etc.), build per-file function index |
+| `resolve` | Resolve imports → edges, build call graph (O(log n) lookup), detect heritage (extends/implements) |
 | `cluster` | Directory-based community detection, add cluster nodes |
 | `flow` | Detect entry points, trace execution flows |
+
+Each phase reports live progress to the CLI via animated `█░` progress bars.
+
+---
+
+## 🖥️ CLI Progress Display
+
+When running `code-intel analyze`, each pipeline phase shows a real-time progress bar:
+
+```
+  [parse    ] ████████████████░░░░░░░░░░░░░░  53% (80/151)
+```
+
+Post-pipeline steps (DB persist, skill generation, context files) show a braille spinner:
+
+```
+  ⠹ Persisting graph to DB…
+```
+
+---
+
+## 📋 Logging
+
+Logs are written to **`~/.code-intel/logs/`** using daily rotation:
+
+| Setting | Default | Override |
+|---------|---------|----------|
+| Log directory | `~/.code-intel/logs/` | — |
+| Log file pattern | `YYYY-MM-DD-code-intel.log` | — |
+| Max file size | 20 MB | — |
+| Retention | 14 days | — |
+| Log level | `info` | `LOG_LEVEL=debug\|info\|warn\|error\|silent` |
+| Production mode | Console only | `NODE_ENV=production` |
+
+Sensitive data (passwords, tokens, API keys, emails, etc.) is automatically masked before writing.
 
 ---
 
