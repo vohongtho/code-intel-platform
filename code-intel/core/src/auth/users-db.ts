@@ -397,7 +397,7 @@ export class UsersDB {
 }
 
 export function getUsersDBPath(): string {
-  return path.join(os.homedir(), '.code-intel', 'users.db');
+  return process.env['CODE_INTEL_USERS_DB_PATH'] ?? path.join(os.homedir(), '.code-intel', 'users.db');
 }
 
 let _usersDB: UsersDB | null = null;
@@ -407,4 +407,15 @@ export function getOrCreateUsersDB(): UsersDB {
     _usersDB = new UsersDB(getUsersDBPath());
   }
   return _usersDB;
+}
+
+/**
+ * Reset the UsersDB singleton. Used in tests to isolate per-test databases.
+ * DO NOT call in production code.
+ */
+export function resetUsersDBForTesting(): void {
+  if (_usersDB) {
+    try { _usersDB.close(); } catch { /* ignore */ }
+  }
+  _usersDB = null;
 }
