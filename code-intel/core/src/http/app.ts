@@ -15,6 +15,7 @@ import { queryGroup } from '../multi-repo/group-query.js';
 import { createKnowledgeGraph } from '../graph/knowledge-graph.js';
 import { loadGraphFromDB } from '../multi-repo/graph-from-db.js';
 import { loadRegistry } from '../storage/repo-registry.js';
+import Logger from '../shared/logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Resolve web dist: <core>/dist/http -> ../../web/dist
@@ -44,23 +45,23 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
       await idx.init();
       const alreadyBuilt = await idx.isBuilt();
       if (!alreadyBuilt) {
-        console.log('  [vector] Building embeddings…');
+        Logger.info('  [vector] Building embeddings…');
         const nodes = await embedNodes(graph, {
           onProgress: (done, total) => {
             if (done % 50 === 0 || done === total) process.stdout.write(`\r  [vector] ${done}/${total}`);
           },
         });
-        console.log('');
+        Logger.info('');
         await idx.buildIndex(nodes);
-        console.log(`  [vector] Index built: ${nodes.length} embeddings`);
+        Logger.info(`  [vector] Index built: ${nodes.length} embeddings`);
       } else {
-        console.log('  [vector] Index already exists, skipping rebuild.');
+        Logger.info('  [vector] Index already exists, skipping rebuild.');
       }
       vectorIndex = idx;
       vectorIndexReady = true;
       return idx;
     } catch (err) {
-      console.warn('  [vector] Index build failed:', err instanceof Error ? err.message : err);
+      Logger.warn('  [vector] Index build failed:', err instanceof Error ? err.message : err);
       return null;
     } finally {
       vectorIndexBuilding = false;
@@ -492,7 +493,7 @@ export function startHttpServer(
 ): void {
   const app = createApp(graph, repoName, workspaceRoot);
   app.listen(port, () => {
-    console.log(`Code Intelligence server running at http://localhost:${port}`);
-    console.log(`  Graph: ${graph.size.nodes} nodes, ${graph.size.edges} edges`);
+    Logger.info(`Code Intelligence server running at http://localhost:${port}`);
+    Logger.info(`  Graph: ${graph.size.nodes} nodes, ${graph.size.edges} edges`);
   });
 }

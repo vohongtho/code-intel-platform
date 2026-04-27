@@ -11,6 +11,7 @@ import { loadRegistry } from '../storage/repo-registry.js';
 import { DbManager } from '../storage/db-manager.js';
 import { createKnowledgeGraph, type KnowledgeGraph } from '../graph/knowledge-graph.js';
 import { loadGraphFromDB } from './graph-from-db.js';
+import Logger from '../shared/logger.js';
 
 // ─── Extract contracts from a single repo's graph ────────────────────────────
 
@@ -166,13 +167,13 @@ export async function syncGroup(group: RepoGroup): Promise<GroupSyncResult> {
     // Resolve the actual repo path from the registry
     const regEntry = registry.find((r) => r.name === member.registryName);
     if (!regEntry) {
-      console.warn(`  ⚠ Registry entry "${member.registryName}" not found — skipping ${member.groupPath}`);
+      Logger.warn(`  ⚠ Registry entry "${member.registryName}" not found — skipping ${member.groupPath}`);
       continue;
     }
 
     const dbPath = path.join(regEntry.path, '.code-intel', 'graph.db');
     if (!fs.existsSync(dbPath)) {
-      console.warn(`  ⚠ No index at ${dbPath} — run \`code-intel analyze ${regEntry.path}\` first`);
+      Logger.warn(`  ⚠ No index at ${dbPath} — run \`code-intel analyze ${regEntry.path}\` first`);
       continue;
     }
 
@@ -184,12 +185,12 @@ export async function syncGroup(group: RepoGroup): Promise<GroupSyncResult> {
       db.close();
     } catch (err) {
       db.close();
-      console.warn(`  ⚠ Could not load graph for "${member.registryName}": ${err instanceof Error ? err.message : err}`);
+      Logger.warn(`  ⚠ Could not load graph for "${member.registryName}": ${err instanceof Error ? err.message : err}`);
       continue;
     }
 
     const contracts = extractContracts(graph, member.registryName, regEntry.path);
-    console.log(`  ✓ ${member.registryName} (${member.groupPath}): ${contracts.length} contracts`);
+    Logger.info(`  ✓ ${member.registryName} (${member.groupPath}): ${contracts.length} contracts`);
     allContracts.push(...contracts);
   }
 

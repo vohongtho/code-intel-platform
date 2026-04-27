@@ -12,6 +12,7 @@ const _pkg = JSON.parse(readFileSync(join(__dirname, '../../package.json'), 'utf
 import { Command } from 'commander';
 import path from 'node:path';
 import fs from 'node:fs';
+import Logger from '../shared/logger.js';
 import { createKnowledgeGraph } from '../graph/knowledge-graph.js';
 import { runPipeline } from '../pipeline/orchestrator.js';
 import {
@@ -137,7 +138,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
   if (!options?.skipGit) {
     const gitDir = path.join(workspaceRoot, '.git');
     if (!fs.existsSync(gitDir)) {
-      console.warn(`  Warning: ${workspaceRoot} is not a Git repository. Use --skip-git to suppress this warning.`);
+      Logger.warn(`  Warning: ${workspaceRoot} is not a Git repository. Use --skip-git to suppress this warning.`);
     }
   }
 
@@ -241,7 +242,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
   } catch (err) {
     stopSpinner();
     if (!options?.silent) {
-      console.warn(`  DB persist warning: ${err instanceof Error ? err.message : err}`);
+      Logger.warn(`  DB persist warning: ${err instanceof Error ? err.message : err}`);
     }
   }
 
@@ -274,7 +275,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
     } catch (err) {
       stopSpinner();
       if (!options?.silent) {
-        console.warn(`  Embeddings warning: ${err instanceof Error ? err.message : err}`);
+        Logger.warn(`  Embeddings warning: ${err instanceof Error ? err.message : err}`);
       }
     }
   } else if (!options?.skipEmbeddings && !options?.silent) {
@@ -296,7 +297,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
     } catch (err) {
       stopSpinner();
       if (!options?.silent) {
-        console.warn(`  Skills warning: ${err instanceof Error ? err.message : err}`);
+        Logger.warn(`  Skills warning: ${err instanceof Error ? err.message : err}`);
       }
     }
   }
@@ -318,7 +319,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
     } catch (err) {
       stopSpinner();
       if (!options?.silent) {
-        console.warn(`  Context warning: ${err instanceof Error ? err.message : err}`);
+        Logger.warn(`  Context warning: ${err instanceof Error ? err.message : err}`);
       }
     }
   }
@@ -381,7 +382,7 @@ program
         fs.writeFileSync(configFile, JSON.stringify(merged, null, 2) + '\n', 'utf-8');
         console.log(`\n  ✅  Written to ${configFile}`);
       } catch (err) {
-        console.warn(`\n  ⚠   Could not auto-write config: ${err instanceof Error ? err.message : err}`);
+        Logger.warn(`\n  ⚠   Could not auto-write config: ${err instanceof Error ? err.message : err}`);
         console.log('  Please add the config above manually.');
       }
     }

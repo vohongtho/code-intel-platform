@@ -4,6 +4,7 @@ import { detectLanguage, Language } from '../../shared/index.js';
 import type { Phase, PhaseResult, PipelineContext } from '../types.js';
 import { generateNodeId, generateEdgeId } from '../../graph/id-generator.js';
 import type { CodeNode, CodeEdge } from '../../shared/index.js';
+import Logger from '../../shared/logger.js';
 
 export const parsePhase: Phase = {
   name: 'parse',
@@ -43,7 +44,7 @@ export const parsePhase: Phase = {
       if (!lang) {
         if (context.verbose) {
           const relativePath = path.relative(context.workspaceRoot, filePath);
-          console.log(`  [parse] skipped (no parser): ${relativePath}`);
+          Logger.info(`  [parse] skipped (no parser): ${relativePath}`);
         }
         continue;
       }
