@@ -1,5 +1,11 @@
 import type { CodeNode, CodeEdge } from '@code-intel/shared';
-import type { SearchResult } from '../state/types';
+import type { SearchResult, CurrentUser } from '../state/types';
+
+export interface AuthStatus {
+  authenticated: boolean;
+  user?: CurrentUser;
+  authMethod?: 'session' | 'token';
+}
 
 export interface NodeInspectInfo {
   node: CodeNode;
@@ -28,16 +34,86 @@ export interface GrepHit {
 export class ApiClient {
   constructor(private baseUrl: string) {}
 
+  private csrfToken: string | null = null;
+
+  private async getCsrfToken(): Promise<string> {
+    if (this.csrfToken) return this.csrfToken;
+    const res = await fetch(`${this.baseUrl}/auth/csrf-token`, { credentials: 'include' });
+    const data = await res.json() as { csrfToken: string };
+    this.csrfToken = data.csrfToken;
+    return this.csrfToken;
+  }
+
+  // ── Auth ───────────────────────────────────────────────────────────────────
+
+  async bootstrapStatus(): Promise<{ needsBootstrap: boolean }> {
+    const res = await fetch(`${this.baseUrl}/auth/bootstrap-status`, { credentials: 'include' });
+    if (!res.ok) return { needsBootstrap: false };
+    return res.json() as Promise<{ needsBootstrap: boolean }>;
+  }
+
+  async bootstrap(username: string, password: string): Promise<{ user: CurrentUser }> {
+    const csrfToken = await this.getCsrfToken();
+    const res = await fetch(`${this.baseUrl}/auth/bootstrap`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      credentials: 'include',
+      body: JSON.stringify({ username, password }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { error?: { message?: string } };
+      throw new Error(body?.error?.message ?? 'Bootstrap failed');
+    }
+    return res.json() as Promise<{ user: CurrentUser }>;
+  }
+
+  async login(username: string, password: string): Promise<{ user: CurrentUser }> {
+    const csrfToken = await this.getCsrfToken();
+    const res = await fetch(`${this.baseUrl}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      credentials: 'include',
+      body: JSON.stringify({ username, password }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { error?: { message?: string } };
+      throw new Error(body?.error?.message ?? 'Login failed');
+    }
+    return res.json() as Promise<{ user: CurrentUser }>;
+  }
+
+  async logout(): Promise<void> {
+    const csrfToken = await this.getCsrfToken();
+    await fetch(`${this.baseUrl}/auth/logout`, {
+      method: 'POST',
+      headers: { 'X-CSRF-Token': csrfToken },
+      credentials: 'include',
+    });
+    this.csrfToken = null;
+  }
+
+  async authStatus(): Promise<AuthStatus> {
+    const res = await fetch(`${this.baseUrl}/auth/status`, {
+      credentials: 'include',
+    });
+    if (!res.ok) return { authenticated: false };
+    return res.json() as Promise<AuthStatus>;
+  }
+
+  // ── Graph & repos ──────────────────────────────────────────────────────────
+
   async fetchGraph(repo: string): Promise<{ nodes: CodeNode[]; edges: CodeEdge[] }> {
-    const res = await fetch(`${this.baseUrl}/api/graph/${repo}`);
+    const res = await fetch(`${this.baseUrl}/api/v1/graph/${repo}`, { credentials: 'include' });
     if (!res.ok) throw new Error(`Failed to fetch graph: ${res.statusText}`);
     return res.json() as Promise<{ nodes: CodeNode[]; edges: CodeEdge[] }>;
   }
 
   async search(query: string, limit = 20): Promise<{ results: SearchResult[] }> {
-    const res = await fetch(`${this.baseUrl}/api/search`, {
+    const csrfToken = await this.getCsrfToken();
+    const res = await fetch(`${this.baseUrl}/api/v1/search`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      credentials: 'include',
       body: JSON.stringify({ query, limit }),
     });
     if (!res.ok) throw new Error(`Search failed: ${res.statusText}`);
@@ -45,9 +121,11 @@ export class ApiClient {
   }
 
   async vectorSearch(query: string, limit = 10): Promise<{ results: SearchResult[]; source: string; vectorReady: boolean }> {
-    const res = await fetch(`${this.baseUrl}/api/vector-search`, {
+    const csrfToken = await this.getCsrfToken();
+    const res = await fetch(`${this.baseUrl}/api/v1/vector-search`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      credentials: 'include',
       body: JSON.stringify({ query, limit }),
     });
     if (!res.ok) throw new Error(`Vector search failed: ${res.statusText}`);
@@ -55,21 +133,23 @@ export class ApiClient {
   }
 
   async vectorStatus(): Promise<{ ready: boolean; building: boolean }> {
-    const res = await fetch(`${this.baseUrl}/api/vector-status`);
+    const res = await fetch(`${this.baseUrl}/api/v1/vector-status`, { credentials: 'include' });
     if (!res.ok) return { ready: false, building: false };
     return res.json() as Promise<{ ready: boolean; building: boolean }>;
   }
 
   async listRepos(): Promise<{ name: string; path: string; nodes: number; edges: number; indexedAt: string | null; active?: boolean }[]> {
-    const res = await fetch(`${this.baseUrl}/api/repos`);
+    const res = await fetch(`${this.baseUrl}/api/v1/repos`, { credentials: 'include' });
     if (!res.ok) throw new Error(`Failed to list repos: ${res.statusText}`);
     return res.json() as Promise<{ name: string; path: string; nodes: number; edges: number; indexedAt: string | null; active?: boolean }[]>;
   }
 
   async readFile(filePath: string): Promise<{ content: string }> {
-    const res = await fetch(`${this.baseUrl}/api/files/read`, {
+    const csrfToken = await this.getCsrfToken();
+    const res = await fetch(`${this.baseUrl}/api/v1/files/read`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      credentials: 'include',
       body: JSON.stringify({ file_path: filePath }),
     });
     if (!res.ok) throw new Error(`Failed to read file: ${res.statusText}`);
@@ -77,7 +157,7 @@ export class ApiClient {
   }
 
   async inspectNode(nodeId: string): Promise<NodeInspectInfo> {
-    const res = await fetch(`${this.baseUrl}/api/nodes/${encodeURIComponent(nodeId)}`);
+    const res = await fetch(`${this.baseUrl}/api/v1/nodes/${encodeURIComponent(nodeId)}`, { credentials: 'include' });
     if (!res.ok) throw new Error(`Inspect failed: ${res.statusText}`);
     return res.json() as Promise<NodeInspectInfo>;
   }
@@ -87,9 +167,11 @@ export class ApiClient {
     direction: 'callers' | 'callees' | 'both' = 'both',
     maxHops = 3,
   ): Promise<BlastRadiusResult> {
-    const res = await fetch(`${this.baseUrl}/api/blast-radius`, {
+    const csrfToken = await this.getCsrfToken();
+    const res = await fetch(`${this.baseUrl}/api/v1/blast-radius`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      credentials: 'include',
       body: JSON.stringify({ target, direction, max_hops: maxHops }),
     });
     if (!res.ok) throw new Error(`Blast radius failed: ${res.statusText}`);
@@ -97,9 +179,11 @@ export class ApiClient {
   }
 
   async grep(pattern: string): Promise<{ results: GrepHit[] }> {
-    const res = await fetch(`${this.baseUrl}/api/grep`, {
+    const csrfToken = await this.getCsrfToken();
+    const res = await fetch(`${this.baseUrl}/api/v1/grep`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      credentials: 'include',
       body: JSON.stringify({ pattern }),
     });
     if (!res.ok) throw new Error(`Grep failed: ${res.statusText}`);
@@ -107,43 +191,47 @@ export class ApiClient {
   }
 
   async listFlows(): Promise<{ flows: { id: string; name: string; steps: unknown }[] }> {
-    const res = await fetch(`${this.baseUrl}/api/flows`);
+    const res = await fetch(`${this.baseUrl}/api/v1/flows`, { credentials: 'include' });
     if (!res.ok) throw new Error(`List flows failed: ${res.statusText}`);
     return res.json() as Promise<{ flows: { id: string; name: string; steps: unknown }[] }>;
   }
 
   async listGroups(): Promise<{ name: string; memberCount: number; lastSync: string | null; createdAt: string }[]> {
-    const res = await fetch(`${this.baseUrl}/api/groups`);
+    const res = await fetch(`${this.baseUrl}/api/v1/groups`, { credentials: 'include' });
     if (!res.ok) throw new Error(`Failed to list groups: ${res.statusText}`);
     return res.json() as Promise<{ name: string; memberCount: number; lastSync: string | null; createdAt: string }[]>;
   }
 
   async getGroup(name: string): Promise<{ name: string; members: { groupPath: string; registryName: string }[]; lastSync?: string; createdAt: string }> {
-    const res = await fetch(`${this.baseUrl}/api/groups/${encodeURIComponent(name)}`);
+    const res = await fetch(`${this.baseUrl}/api/v1/groups/${encodeURIComponent(name)}`, { credentials: 'include' });
     if (!res.ok) throw new Error(`Group not found: ${res.statusText}`);
     return res.json() as Promise<{ name: string; members: { groupPath: string; registryName: string }[]; lastSync?: string; createdAt: string }>;
   }
 
   async getGroupContracts(name: string): Promise<{ contracts: unknown[]; links: unknown[]; syncedAt: string } | null> {
-    const res = await fetch(`${this.baseUrl}/api/groups/${encodeURIComponent(name)}/contracts`);
+    const res = await fetch(`${this.baseUrl}/api/v1/groups/${encodeURIComponent(name)}/contracts`, { credentials: 'include' });
     if (res.status === 404) return null;
     if (!res.ok) throw new Error(`Failed to get contracts: ${res.statusText}`);
     return res.json() as Promise<{ contracts: unknown[]; links: unknown[]; syncedAt: string }>;
   }
 
   async syncGroup(name: string): Promise<{ contracts: unknown[]; links: unknown[]; syncedAt: string; memberCount: number }> {
-    const res = await fetch(`${this.baseUrl}/api/groups/${encodeURIComponent(name)}/sync`, {
+    const csrfToken = await this.getCsrfToken();
+    const res = await fetch(`${this.baseUrl}/api/v1/groups/${encodeURIComponent(name)}/sync`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      credentials: 'include',
     });
     if (!res.ok) throw new Error(`Sync failed: ${res.statusText}`);
     return res.json() as Promise<{ contracts: unknown[]; links: unknown[]; syncedAt: string; memberCount: number }>;
   }
 
   async searchGroup(name: string, q: string, limit = 20): Promise<{ perRepo: { repoName: string; groupPath: string; results: SearchResult[] }[]; merged: SearchResult[] }> {
-    const res = await fetch(`${this.baseUrl}/api/groups/${encodeURIComponent(name)}/search`, {
+    const csrfToken = await this.getCsrfToken();
+    const res = await fetch(`${this.baseUrl}/api/v1/groups/${encodeURIComponent(name)}/search`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      credentials: 'include',
       body: JSON.stringify({ q, limit }),
     });
     if (!res.ok) throw new Error(`Group search failed: ${res.statusText}`);
@@ -151,7 +239,7 @@ export class ApiClient {
   }
 
   async fetchGroupGraph(name: string): Promise<{ nodes: import('@code-intel/shared').CodeNode[]; edges: import('@code-intel/shared').CodeEdge[] }> {
-    const res = await fetch(`${this.baseUrl}/api/groups/${encodeURIComponent(name)}/graph`);
+    const res = await fetch(`${this.baseUrl}/api/v1/groups/${encodeURIComponent(name)}/graph`, { credentials: 'include' });
     if (!res.ok) throw new Error(`Failed to fetch group graph: ${res.statusText}`);
     return res.json() as Promise<{ nodes: import('@code-intel/shared').CodeNode[]; edges: import('@code-intel/shared').CodeEdge[] }>;
   }

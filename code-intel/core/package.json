@@ -1,6 +1,6 @@
 {
   "name": "@vohongtho.infotech/code-intel",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "Static code analysis platform — builds a Knowledge Graph from source code with Web UI, HTTP API, CLI, and MCP server",
   "license": "MIT",
   "type": "module",
@@ -41,28 +41,54 @@
     "typecheck": "tsc -b --noEmit",
     "prepublishOnly": "npm run build",
     "clean": "rm -rf dist dist-tests *.tsbuildinfo",
-    "test": "tsc -b tsconfig.test.json && node --test dist-tests/tests/**/*.test.js"
+    "test": "tsc -b tsconfig.test.json && node --test --test-concurrency=1 dist-tests/tests/**/*.test.js",
+    "test:coverage": "tsc -b tsconfig.test.json && npx c8 --all --include='dist-tests/src/**/*.js' --exclude='dist-tests/src/cli/main.js' --exclude='dist-tests/src/mcp-server/**' --reporter=text --reporter=lcov --reporter=json-summary node --test --test-concurrency=1 dist-tests/tests/**/*.test.js"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
     "@ladybugdb/core": "^0.15.3",
     "@modelcontextprotocol/sdk": "^1.0.0",
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/auto-instrumentations-node": "^0.73.0",
+    "@opentelemetry/exporter-otlp-http": "^0.26.0",
+    "@opentelemetry/resources": "^2.7.0",
+    "@opentelemetry/sdk-node": "^0.215.0",
+    "@opentelemetry/semantic-conventions": "^1.40.0",
+    "bcrypt": "^6.0.0",
+    "better-sqlite3": "^11.10.0",
     "code-intel-shared": "^0.1.0",
     "commander": "^14.0.3",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
+    "csrf-csrf": "^4.0.3",
     "express": "^5.2.1",
+    "express-rate-limit": "^7.5.0",
     "graphology": "^0.26.0",
     "graphology-communities-louvain": "^2.0.1",
+    "helmet": "^8.1.0",
+    "openid-client": "^6.8.3",
+    "prom-client": "^15.1.3",
+    "uuid": "^14.0.0",
     "web-tree-sitter": "^0.26.8",
     "winston": "^3.19.0",
-    "winston-daily-rotate-file": "^5.0.0"
+    "winston-daily-rotate-file": "^5.0.0",
+    "ws": "^8.20.0"
   },
   "devDependencies": {
+    "@types/bcrypt": "^5.0.2",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.6",
     "@types/node": "^22.0.0",
+    "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.18.1",
+    "c8": "^11.0.0",
     "esbuild": "^0.27.0",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3"
+  },
+  "optionalDependencies": {
+    "keytar": "^7.9.0"
   }
 }

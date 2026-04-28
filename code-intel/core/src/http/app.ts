@@ -1,14 +1,18 @@
 import express from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import cookieParser from 'cookie-parser';
+import { doubleCsrf } from 'csrf-csrf';
+import { rateLimit } from 'express-rate-limit';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
 import { textSearch } from '../search/text-search.js';
-import { findEntryPoints, traceFlow } from '../flow-detection/entry-point-finder.js';
 import { DbManager, getDbPath, getVectorDbPath } from '../storage/index.js';
+import { loadMetadata } from '../storage/metadata.js';
 import { VectorIndex } from '../search/vector-index.js';
 import fs from 'node:fs';
-import os from 'node:os';
 import { listGroups, loadGroup, loadSyncResult, saveSyncResult } from '../multi-repo/group-registry.js';
 import { syncGroup } from '../multi-repo/group-sync.js';
 import { queryGroup } from '../multi-repo/group-query.js';
@@ -16,18 +20,208 @@ import { createKnowledgeGraph } from '../graph/knowledge-graph.js';
 import { loadGraphFromDB } from '../multi-repo/graph-from-db.js';
 import { loadRegistry } from '../storage/repo-registry.js';
 import Logger from '../shared/logger.js';
+import { AppError, ErrorCodes } from '../errors/codes.js';
+import {
+  requestIdMiddleware,
+  authMiddleware,
+  requireAuth,
+  requireRole,
+  requireRepoAccess,
+  requireToolScope,
+  buildSessionCookie,
+  clearSessionCookie,
+  createSession,
+  verifyPassword,
+  sessionStore,
+} from '../auth/middleware.js';
+import { getOrCreateUsersDB } from '../auth/users-db.js';
+import type { Role } from '../auth/users-db.js';
+import { getOrCreateJobsDB } from '../jobs/jobs-db.js';
+import type { JobStatus } from '../jobs/jobs-db.js';
+import { governanceLogger } from '../governance/llm-governance.js';
+import { createBackupScheduler } from '../backup/backup-scheduler.js';
+import {
+  isOIDCConfigured,
+  getOIDCConfig,
+  getDiscoveredConfig,
+  buildOIDCLoginUrl,
+  handleOIDCCallback,
+  deriveUsername,
+  initiateDeviceFlow,
+  pollDeviceFlow,
+  refreshOIDCToken,
+} from '../auth/oidc.js';
+import {
+  metricsRegistry,
+  httpRequestsTotal,
+  httpRequestDurationSeconds,
+  pipelineNodesTotal,
+  pipelineEdgesTotal,
+  activeSessionsTotal,
+  authAttemptsTotal,
+} from '../observability/metrics.js';
+import { withSpan, isTracingEnabled } from '../observability/tracing.js';
+import { openApiSpec } from './openapi.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// Resolve web dist: <core>/dist/http -> ../../web/dist
 const WEB_DIST = path.resolve(__dirname, '..', '..', '..', 'web', 'dist');
+
+// ── CORS allowed origins ──────────────────────────────────────────────────────
+
+function getAllowedOrigins(): string[] {
+  const env = process.env['CODE_INTEL_CORS_ORIGINS'];
+  if (env) return env.split(',').map((s) => s.trim());
+  return ['http://localhost:3000', 'http://localhost:4747', 'http://localhost:4748'];
+}
+
+// ── Rate limiters ─────────────────────────────────────────────────────────────
+
+function createDefaultLimiter() {
+  const max = parseInt(process.env['CODE_INTEL_RATE_LIMIT_MAX'] ?? '100', 10);
+  const windowMs =
+    parseInt(process.env['CODE_INTEL_RATE_LIMIT_WINDOW_MS'] ?? `${15 * 60 * 1000}`, 10);
+  return rateLimit({
+    windowMs,
+    max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: (req) => req.path.startsWith('/health') || req.path === '/metrics',
+    message: {
+      error: {
+        code: ErrorCodes.RATE_LIMIT_EXCEEDED,
+        message: 'Too many requests',
+        hint: 'Slow down — you are sending requests too fast. Try again later.',
+      },
+    },
+  });
+}
+
+// ── App factory ───────────────────────────────────────────────────────────────
 
 export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot?: string): express.Application {
   const app = express();
 
-  app.use(cors({ origin: true }));
-  app.use(express.json({ limit: '10mb' }));
+  // Trust proxy (for correct IP detection behind nginx/caddy)
+  app.set('trust proxy', 1);
 
-  // Lazy-init vector index state
+  // ── Security middleware ─────────────────────────────────────────────────────
+  app.use(
+    helmet({
+      contentSecurityPolicy: false, // disabled to allow Web UI to load scripts
+    }),
+  );
+  // CORS: actively reject non-allowlisted Origins (no `*` in production).
+  // Requests without an Origin header (e.g. server-side, curl) are allowed
+  // through; the browser is the entity enforcing CORS, so this only matters
+  // for cross-origin browser requests.
+  const allowedOrigins = getAllowedOrigins();
+  app.use(
+    cors({
+      origin: (origin, callback) => {
+        if (!origin) { callback(null, true); return; }
+        if (allowedOrigins.includes(origin)) { callback(null, true); return; }
+        // Non-allowlisted origin: do not echo Access-Control-Allow-Origin
+        // (browser will block the response). Server-side request still
+        // proceeds so we can return a normal 403/401 from downstream handlers.
+        callback(null, false);
+      },
+      credentials: true,
+    }),
+  );
+  app.use(cookieParser());
+  app.use(express.json({ limit: '1mb' }));
+  app.use(createDefaultLimiter());
+
+  // ── CSRF protection setup ───────────────────────────────────────────────────
+  const { generateCsrfToken, doubleCsrfProtection } = doubleCsrf({
+    getSecret: () => process.env['CODE_INTEL_CSRF_SECRET'] ?? 'csrf-secret-change-in-production',
+    getSessionIdentifier: (req) => {
+      // Use the session cookie value or IP as the session identifier
+      const cookieHeader = req.headers['cookie'] ?? '';
+      const match = cookieHeader.match(/code_intel_session=([^;]+)/);
+      return match ? decodeURIComponent(match[1] ?? '') : (req.ip ?? 'anonymous');
+    },
+    cookieName: process.env['NODE_ENV'] === 'production' ? '__Host-csrf-token' : 'csrf-token',
+    cookieOptions: {
+      sameSite: 'strict',
+      path: '/',
+      secure: process.env['NODE_ENV'] === 'production',
+      httpOnly: true,
+    },
+    size: 64,
+    getCsrfTokenFromRequest: (req) => req.headers['x-csrf-token'],
+  });
+
+  // ── Request ID + Auth middleware ────────────────────────────────────────────
+  app.use(requestIdMiddleware);
+  app.use(authMiddleware);
+
+  // ── X-Index-Version header on every response ─────────────────────────────
+  app.use((_req: Request, res: Response, next: NextFunction): void => {
+    if (workspaceRoot) {
+      try {
+        const meta = loadMetadata(workspaceRoot);
+        if (meta?.indexVersion) res.setHeader('X-Index-Version', meta.indexVersion);
+      } catch { /* non-fatal */ }
+    }
+    next();
+  });
+
+  // ── Audit log: every authenticated request ──────────────────────────────────
+  // Writes an entry to the audit_log table on response finish.
+  // Skips /health/* and /metrics (high-frequency, unauthenticated).
+  app.use((req: Request, res: Response, next: NextFunction): void => {
+    res.on('finish', () => {
+      if (!req.user) return; // unauthenticated requests are not audited here
+      if (req.path.startsWith('/health') || req.path === '/metrics') return;
+      const outcome: 'allow' | 'deny' = res.statusCode < 400 ? 'allow' : 'deny';
+      try {
+        const db = getOrCreateUsersDB();
+        db.logAccess(req.user.id, req.path, req.method, outcome, req.ip ?? 'unknown');
+      } catch { /* never throw from audit — it must not affect the response */ }
+    });
+    next();
+  });
+
+  // ── HTTP metrics + OTel span per request ────────────────────────────────────
+  app.use((req: Request, res: Response, next: NextFunction): void => {
+    const start = Date.now();
+    if (isTracingEnabled()) {
+      // Import is already cached after the first call
+      void import('../observability/tracing.js').then(({ getTracer, sanitizeAttrs: sa }) => {
+        const span = getTracer().startSpan(`HTTP ${req.method} ${req.path}`, {
+          attributes: sa({
+            'http.method': req.method,
+            'http.url': req.path,
+            'http.request_id': req.requestId ?? '',
+          }),
+        });
+        res.on('finish', () => {
+          const route = req.route?.path ?? req.path ?? 'unknown';
+          const method = req.method;
+          const statusCode = String(res.statusCode);
+          const durationSec = (Date.now() - start) / 1000;
+          httpRequestsTotal.inc({ method, route, status_code: statusCode });
+          httpRequestDurationSeconds.observe({ method, route, status_code: statusCode }, durationSec);
+          span.setAttribute('http.status_code', res.statusCode);
+          span.setAttribute('http.route', route);
+          span.end();
+        });
+      });
+    } else {
+      res.on('finish', () => {
+        const route = req.route?.path ?? req.path ?? 'unknown';
+        const method = req.method;
+        const statusCode = String(res.statusCode);
+        const durationSec = (Date.now() - start) / 1000;
+        httpRequestsTotal.inc({ method, route, status_code: statusCode });
+        httpRequestDurationSeconds.observe({ method, route, status_code: statusCode }, durationSec);
+      });
+    }
+    next();
+  });
+
+  // ── Lazy-init vector index ──────────────────────────────────────────────────
   let vectorIndex: VectorIndex | null = null;
   let vectorIndexBuilding = false;
   let vectorIndexReady = false;
@@ -68,21 +262,421 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     }
   }
 
-  // Kick off in background when workspace is available
   if (workspaceRoot) {
     setImmediate(() => ensureVectorIndex().catch(() => {}));
   }
 
-  // Health check
-  app.get('/api/health', (_req, res) => {
-    res.json({ status: 'ok', nodes: graph.size.nodes, edges: graph.size.edges });
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PUBLIC routes (no auth required)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // ── Prometheus metrics ──────────────────────────────────────────────────────
+
+  app.get('/metrics', async (_req, res) => {
+    try {
+      // Update live gauges before scrape
+      pipelineNodesTotal.set({ repo: repoName }, graph.size.nodes);
+      pipelineEdgesTotal.set({ repo: repoName }, graph.size.edges);
+      activeSessionsTotal.set(sessionStore.size);
+      const output = await metricsRegistry.metrics();
+      res.set('Content-Type', metricsRegistry.contentType);
+      res.end(output);
+    } catch (err) {
+      res.status(500).end(String(err));
+    }
   });
 
-  // List ALL indexed repos from the global registry (not just the current one)
-  app.get('/api/repos', (_req, res) => {
+  // ── Health checks ───────────────────────────────────────────────────────────
+
+  app.get('/health/live', (_req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  });
+
+  app.get('/health/ready', (_req, res) => {
+    if (graph.size.nodes === 0 && workspaceRoot) {
+      res.status(503).json({ status: 'error', reason: 'Index not loaded yet' });
+      return;
+    }
+    res.json({
+      status: 'ok',
+      nodes: graph.size.nodes,
+      edges: graph.size.edges,
+      timestamp: new Date().toISOString(),
+    });
+  });
+
+  app.get('/health/startup', (_req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  });
+
+  // ── Auth routes ─────────────────────────────────────────────────────────────
+
+  // Public CSRF token endpoint — clients must call this first
+  app.get('/auth/csrf-token', (req, res) => {
+    const token = generateCsrfToken(req, res);
+    res.json({ csrfToken: token });
+  });
+
+  // Bootstrap status — tells UI whether first-run setup is needed
+  app.get('/auth/bootstrap-status', (_req, res) => {
+    const db = getOrCreateUsersDB();
+    res.json({ needsBootstrap: !db.hasAnyUser() });
+  });
+
+  // Apply CSRF protection to all state-changing routes
+  app.use(doubleCsrfProtection);
+
+  // Bootstrap — create first admin (only works when no users exist)
+  app.post('/auth/bootstrap', async (req: Request, res: Response) => {
+    const db = getOrCreateUsersDB();
+    if (db.hasAnyUser()) {
+      res.status(400).json({
+        error: {
+          code: 'CI-1004',
+          message: 'Bootstrap already completed',
+          hint: 'An admin account already exists. Use /auth/login instead.',
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+    const { username, password } = req.body as { username?: string; password?: string };
+    if (!username || !password || password.length < 8) {
+      res.status(400).json({
+        error: {
+          code: ErrorCodes.INVALID_REQUEST,
+          message: 'username and password (min 8 chars) are required',
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+    const user = db.createUser(username, password, 'admin');
+    const sessionId = createSession({ id: user.id, username: user.username, role: user.role });
+    res.setHeader('Set-Cookie', buildSessionCookie(sessionId));
+    res.status(201).json({ user: { id: user.id, username: user.username, role: user.role } });
+  });
+
+  app.post('/auth/login', async (req: Request, res: Response) => {
+    const { username, password } = req.body as { username?: string; password?: string };
+    if (!username || !password) {
+      res.status(400).json({
+        error: {
+          code: ErrorCodes.INVALID_REQUEST,
+          message: 'username and password are required',
+          hint: 'Provide { "username": "...", "password": "..." } in request body',
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+
+    const db = getOrCreateUsersDB();
+    const user = db.findUserByUsername(username);
+
+    if (!user) {
+      db.logAccess('unknown', `/auth/login`, 'login', 'deny', req.ip ?? 'unknown');
+      authAttemptsTotal.inc({ method: 'local', outcome: 'failure' });
+      res.status(401).json({
+        error: {
+          code: ErrorCodes.UNAUTHORIZED,
+          message: 'Invalid username or password',
+          hint: 'Check your credentials and try again',
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+
+    const valid = await verifyPassword(password, user.passwordHash);
+    if (!valid) {
+      db.logAccess(user.id, `/auth/login`, 'login', 'deny', req.ip ?? 'unknown');
+      authAttemptsTotal.inc({ method: 'local', outcome: 'failure' });
+      res.status(401).json({
+        error: {
+          code: ErrorCodes.UNAUTHORIZED,
+          message: 'Invalid username or password',
+          hint: 'Check your credentials and try again',
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+
+    const sessionId = createSession({ id: user.id, username: user.username, role: user.role });
+    db.logAccess(user.id, '/auth/login', 'login', 'allow', req.ip ?? 'unknown');
+    authAttemptsTotal.inc({ method: 'local', outcome: 'success' });
+    res.setHeader('Set-Cookie', buildSessionCookie(sessionId));
+    res.json({ user: { id: user.id, username: user.username, role: user.role } });
+  });
+
+  app.post('/auth/logout', (req: Request, res: Response) => {
+    res.setHeader('Set-Cookie', clearSessionCookie());
+    res.json({ message: 'Logged out successfully' });
+  });
+
+  app.get('/auth/status', (req: Request, res: Response) => {
+    if (!req.user) {
+      res.status(401).json({ authenticated: false });
+      return;
+    }
+    res.json({
+      authenticated: true,
+      user: { id: req.user.id, username: req.user.username, role: req.user.role },
+      authMethod: req.user.authMethod,
+    });
+  });
+
+  // ── OIDC / OAuth2 routes (1.3) ──────────────────────────────────────────────
+
+  // Probe: is OIDC configured?
+  app.get('/auth/oidc/status', async (_req, res) => {
+    if (!isOIDCConfigured()) {
+      res.json({ enabled: false });
+      return;
+    }
+    const cfg = getOIDCConfig()!;
+    // Attempt discovery to confirm provider is reachable
+    const discovered = await getDiscoveredConfig();
+    res.json({
+      enabled: true,
+      issuer: cfg.issuer,
+      reachable: discovered !== null,
+    });
+  });
+
+  // Step 1: redirect to provider
+  app.get('/auth/oidc/login', async (req: Request, res: Response) => {
+    if (!isOIDCConfigured()) {
+      res.status(503).json({
+        error: {
+          code: 'CI-1005',
+          message: 'OIDC is not configured',
+          hint: 'Set CODE_INTEL_OIDC_ISSUER, CODE_INTEL_OIDC_CLIENT_ID, CODE_INTEL_OIDC_CLIENT_SECRET env vars',
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+
+    try {
+      const result = await buildOIDCLoginUrl();
+      if (!result) {
+        res.status(503).json({
+          error: {
+            code: 'CI-1005',
+            message: 'OIDC provider unreachable',
+            hint: 'The OIDC issuer could not be reached. Check CODE_INTEL_OIDC_ISSUER and network connectivity.',
+            requestId: req.requestId,
+            timestamp: new Date().toISOString(),
+          },
+        });
+        return;
+      }
+      res.redirect(302, result.redirectUrl);
+    } catch (err) {
+      Logger.warn('[oidc] Login redirect failed:', err instanceof Error ? err.message : err);
+      res.status(500).json({
+        error: {
+          code: 'CI-5000',
+          message: 'OIDC login initiation failed',
+          hint: err instanceof Error ? err.message : 'Unknown error',
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
+  });
+
+  // Step 2: provider redirects back here with code + state
+  app.get('/auth/callback', async (req: Request, res: Response) => {
+    const { state, error, error_description } = req.query as Record<string, string | undefined>;
+
+    // Provider error (e.g. user denied)
+    if (error) {
+      Logger.warn('[oidc] Provider returned error:', error, error_description);
+      res.redirect(302, `/?oidc_error=${encodeURIComponent(error_description ?? error)}`);
+      return;
+    }
+
+    if (!state) {
+      res.status(400).json({
+        error: {
+          code: 'CI-1200',
+          message: 'Missing state parameter in OIDC callback',
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+
+    try {
+      const currentUrl = new URL(
+        req.originalUrl,
+        getOIDCConfig()?.redirectUri ?? `http://localhost:4747`,
+      );
+      const { userInfo } = await handleOIDCCallback(currentUrl, state);
+
+      // Determine provider from issuer
+      const cfg = getOIDCConfig()!;
+      const provider = cfg.issuer;
+
+      const db = getOrCreateUsersDB();
+
+      // Find or provision user
+      let user = db.findUserByOIDC(provider, userInfo.sub);
+      if (user) {
+        // Existing user — update last login
+        db.touchOIDCIdentity(provider, userInfo.sub);
+        authAttemptsTotal.inc({ method: 'oidc', outcome: 'success' });
+      } else {
+        // New user — auto-provision with default role
+        const username = deriveUsername(userInfo);
+        // Ensure username uniqueness by appending a suffix if needed
+        let finalUsername = username;
+        let suffix = 1;
+        while (db.findUserByUsername(finalUsername)) {
+          finalUsername = `${username}_${suffix++}`;
+        }
+        const { user: newUser } = db.provisionOIDCUser(
+          finalUsername,
+          cfg.defaultRole,
+          provider,
+          userInfo.sub,
+          userInfo.email,
+          userInfo.name,
+        );
+        user = { ...newUser, oidcIdentityId: '' };
+        authAttemptsTotal.inc({ method: 'oidc', outcome: 'success' });
+        Logger.info(`[oidc] Auto-provisioned new user: ${finalUsername} (${cfg.defaultRole})`);
+      }
+
+      const sessionId = createSession({ id: user.id, username: user.username, role: user.role });
+      db.logAccess(user.id, '/auth/callback', 'oidc-login', 'allow', req.ip ?? 'unknown');
+      res.setHeader('Set-Cookie', buildSessionCookie(sessionId));
+      // Redirect back to the web UI
+      res.redirect(302, '/');
+    } catch (err) {
+      Logger.warn('[oidc] Callback failed:', err instanceof Error ? err.message : err);
+      authAttemptsTotal.inc({ method: 'oidc', outcome: 'failure' });
+      const msg = err instanceof Error ? err.message : 'OIDC callback failed';
+      res.redirect(302, `/?oidc_error=${encodeURIComponent(msg)}`);
+    }
+  });
+
+  // OIDC refresh — called by clients with a stored OIDC refresh token
+  app.post('/auth/oidc/refresh', async (req: Request, res: Response) => {
+    const { refresh_token } = req.body as { refresh_token?: string };
+    if (!refresh_token) {
+      res.status(400).json({
+        error: {
+          code: 'CI-1200',
+          message: 'refresh_token required',
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+    const result = await refreshOIDCToken(refresh_token);
+    if (!result) {
+      res.status(401).json({
+        error: {
+          code: 'CI-1000',
+          message: 'Refresh token invalid or OIDC provider unreachable',
+          hint: 'Re-login via /auth/oidc/login',
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+    res.json(result);
+  });
+
+  // Fallback: OIDC unavailable → redirect to local login
+  app.get('/auth/oidc/fallback', (_req, res) => {
+    res.redirect(302, '/login');
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PROTECTED routes — require authentication
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  app.use('/api/v1', requireAuth);
+
+  // ── Legacy /api/* → redirect to /api/v1/* ──────────────────────────────────
+  app.use('/api', (req: Request, res: Response, next: NextFunction) => {
+    if (!req.path.startsWith('/v1')) {
+      res.redirect(301, `/api/v1${req.path}`);
+      return;
+    }
+    next();
+  });
+
+  // ── OpenAPI spec + Swagger UI (dev only) ────────────────────────────────────
+  app.get('/api/v1/openapi.json', (_req, res) => {
+    res.json(openApiSpec);
+  });
+
+  if (process.env['NODE_ENV'] !== 'production') {
+    app.get('/api/v1/docs', (_req, res) => {
+      res.setHeader('Content-Type', 'text/html');
+      res.end(`<!DOCTYPE html>
+<html>
+<head>
+  <title>Code Intel API Docs</title>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" type="text/css" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" >
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"> </script>
+  <script>
+    SwaggerUIBundle({
+      url: "/api/v1/openapi.json",
+      dom_id: '#swagger-ui',
+      presets: [SwaggerUIBundle.presets.apis, SwaggerUIBundle.SwaggerUIStandalonePreset],
+      layout: "BaseLayout"
+    })
+  </script>
+</body>
+</html>`);
+    });
+  }
+
+  // ── Health (detailed) ───────────────────────────────────────────────────────
+  app.get('/api/v1/health', (req: Request, res: Response) => {
+    const db = getOrCreateUsersDB();
+    const memUsage = process.memoryUsage();
+    res.json({
+      status: 'ok',
+      nodes: graph.size.nodes,
+      edges: graph.size.edges,
+      users: db.hasAnyUser(),
+      workspaceRoot,
+      memory: {
+        heapUsedMb: Math.round(memUsage.heapUsed / 1024 / 1024),
+        heapTotalMb: Math.round(memUsage.heapTotal / 1024 / 1024),
+        rssMb: Math.round(memUsage.rss / 1024 / 1024),
+      },
+      timestamp: new Date().toISOString(),
+      requestId: req.requestId,
+    });
+  });
+
+  // ── Repos ───────────────────────────────────────────────────────────────────
+  app.get('/api/v1/repos', (_req, res) => {
     const registry = loadRegistry();
     if (registry.length === 0) {
-      // Fallback: return only the in-memory repo
       res.json([{ name: repoName, path: workspaceRoot ?? '', nodes: graph.size.nodes, edges: graph.size.edges, indexedAt: null }]);
       return;
     }
@@ -96,19 +690,14 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     })));
   });
 
-  // Helper: load graph for a repo by name from its DB (returns in-memory graph if it matches)
+  // ── Graph helpers ───────────────────────────────────────────────────────────
   async function loadRepoGraph(requestedRepo: string): Promise<KnowledgeGraph | null> {
-    // If the requested repo is the currently loaded in-memory graph, return it directly
     if (requestedRepo === repoName) return graph;
-
-    // Otherwise look up in the global registry and load from DB
     const registry = loadRegistry();
     const entry = registry.find((r) => r.name === requestedRepo || r.path === requestedRepo);
     if (!entry) return null;
-
     const dbPath = path.join(entry.path, '.code-intel', 'graph.db');
     if (!fs.existsSync(dbPath)) return null;
-
     const repoGraph = createKnowledgeGraph();
     const db = new DbManager(dbPath);
     try {
@@ -122,122 +711,122 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     }
   }
 
-  // Download full graph — supports any registered repo by name
-  app.get('/api/graph/:repo', async (req, res) => {
-    const requestedRepo = decodeURIComponent(req.params.repo);
-    const g = await loadRepoGraph(requestedRepo);
-    if (!g) {
-      res.status(404).json({ error: `Repo "${requestedRepo}" not found or not indexed. Run: code-intel analyze <path>` });
-      return;
-    }
-    const nodes = [...g.allNodes()];
-    const edges = [...g.allEdges()];
-    res.json({ nodes, edges });
-  });
-
-  // Helper: resolve graph for a repo (in-memory if matches, else load from DB)
   async function getGraphForRepo(requestedRepo: string | undefined): Promise<KnowledgeGraph> {
     if (!requestedRepo || requestedRepo === repoName) return graph;
     const g = await loadRepoGraph(requestedRepo);
-    return g ?? graph; // fallback to in-memory
+    return g ?? graph;
   }
 
-  // Hybrid search (BM25-like text) — repo-aware
-  app.post('/api/search', async (req, res) => {
-    const { query, limit, repo } = req.body;
-    const g = await getGraphForRepo(repo as string | undefined);
-    const results = textSearch(g, query, limit ?? 20);
+  // ── Graph download ──────────────────────────────────────────────────────────
+  app.get('/api/v1/graph/:repo', requireRepoAccess((req) => {
+    const p = req.params['repo'];
+    const repo = Array.isArray(p) ? p[0] : p;
+    return repo ? decodeURIComponent(repo) : undefined;
+  }), async (req, res) => {
+    const rawRepo = req.params['repo'];
+    const requestedRepo = decodeURIComponent(Array.isArray(rawRepo) ? (rawRepo[0] ?? '') : (rawRepo ?? ''));
+    const g = await loadRepoGraph(requestedRepo);
+    if (!g) {
+      res.status(404).json({
+        error: {
+          code: ErrorCodes.NOT_FOUND,
+          message: `Repo "${requestedRepo}" not found or not indexed`,
+          hint: `Run: code-intel analyze <path>`,
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+    res.json({ nodes: [...g.allNodes()], edges: [...g.allEdges()] });
+  });
+
+  // ── Search ──────────────────────────────────────────────────────────────────
+  app.post('/api/v1/search', requireToolScope('search'), async (req, res) => {
+    const { query, limit, repo } = req.body as { query?: string; limit?: number; repo?: string };
+    const g = await getGraphForRepo(repo);
+    const results = textSearch(g, query ?? '', limit ?? 20);
     res.json({ results });
   });
 
-  // Vector search (semantic)
-  app.post('/api/vector-search', async (req, res) => {
-    const { query, limit = 10 } = req.body;
-    if (!query) { res.status(400).json({ error: 'Missing query' }); return; }
-
+  // ── Vector search ───────────────────────────────────────────────────────────
+  app.post('/api/v1/vector-search', async (req, res) => {
+    const { query, limit = 10 } = req.body as { query?: string; limit?: number };
+    if (!query) { res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: 'Missing query', hint: 'Provide { "query": "..." } in request body' } }); return; }
     const idx = await ensureVectorIndex();
     if (!idx) {
-      // Fall back to text search
       const results = textSearch(graph, query, limit);
       res.json({ results, source: 'text-fallback', vectorReady: false });
       return;
     }
-
     try {
-      // Embed the query using @huggingface/transformers
       const { pipeline } = await import('@huggingface/transformers');
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const embedder = (await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2')) as unknown as (text: string, opts: Record<string, unknown>) => Promise<{ data: Float32Array }>;
       const out = await embedder(query, { pooling: 'mean', normalize: true });
       const queryEmbedding = Array.from(out.data);
       const hits = await idx.search(queryEmbedding, limit);
-      // Map to SearchResult shape
-      const results = hits.map((h) => ({
-        nodeId: h.nodeId,
-        name: h.name,
-        kind: h.kind,
-        filePath: h.filePath,
-        score: h.score,
-      }));
-      res.json({ results, source: 'vector', vectorReady: true });
+      res.json({ results: hits.map((h) => ({ nodeId: h.nodeId, name: h.name, kind: h.kind, filePath: h.filePath, score: h.score })), source: 'vector', vectorReady: true });
     } catch (err) {
       const results = textSearch(graph, query, limit);
       res.json({ results, source: 'text-fallback', vectorReady: false, error: err instanceof Error ? err.message : String(err) });
     }
   });
 
-  // Vector index status
-  app.get('/api/vector-status', (_req, res) => {
+  // ── Vector status ───────────────────────────────────────────────────────────
+  app.get('/api/v1/vector-status', (_req, res) => {
     res.json({ ready: vectorIndexReady, building: vectorIndexBuilding });
   });
 
-  // Read file
-  app.post('/api/files/read', (req, res) => {
-    const { file_path } = req.body;
+  // ── File read ───────────────────────────────────────────────────────────────
+  app.post('/api/v1/files/read', requireToolScope('read_file'), (req, res) => {
+    const { file_path } = req.body as { file_path?: string };
+    if (!file_path) { res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: 'Missing file_path' } }); return; }
+    // Security: must be within a known repo path
+    const registry = loadRegistry();
+    const isAllowed = workspaceRoot
+      ? file_path.startsWith(workspaceRoot)
+      : registry.some((r) => file_path.startsWith(r.path));
+    if (!isAllowed) {
+      res.status(403).json({ error: { code: ErrorCodes.FORBIDDEN, message: 'Access denied', hint: 'File path must be within an indexed repository' } });
+      return;
+    }
     try {
       const content = fs.readFileSync(file_path, 'utf-8');
       res.json({ content });
     } catch {
-      res.status(404).json({ error: 'File not found' });
+      res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: 'File not found' } });
     }
   });
 
-  // Grep (regex search in files)
-  app.post('/api/grep', (req, res) => {
-    const { pattern, file_paths } = req.body;
+  // ── Grep ────────────────────────────────────────────────────────────────────
+  app.post('/api/v1/grep', requireToolScope('grep'), (req, res) => {
+    const { pattern, file_paths } = req.body as { pattern?: string; file_paths?: string[] };
     const results: { file: string; line: number; text: string }[] = [];
-
     try {
-      const regex = new RegExp(pattern, 'gi');
+      const regex = new RegExp(pattern ?? '', 'gi');
       const paths: string[] = file_paths ?? [];
-
-      // If no paths, search from graph nodes
       if (paths.length === 0) {
         for (const node of graph.allNodes()) {
           if (node.kind === 'file' && node.content) {
             const lines = node.content.split('\n');
             for (let i = 0; i < lines.length; i++) {
-              if (regex.test(lines[i])) {
-                results.push({ file: node.filePath, line: i + 1, text: lines[i].trim() });
-              }
+              if (regex.test(lines[i]!)) results.push({ file: node.filePath, line: i + 1, text: lines[i]!.trim() });
               regex.lastIndex = 0;
             }
           }
         }
       }
-
       res.json({ results: results.slice(0, 100) });
     } catch {
-      res.status(400).json({ error: 'Invalid regex pattern' });
+      res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: 'Invalid regex pattern' } });
     }
   });
 
-  // Cypher query — routed to LadybugDB if available, else falls back to in-memory
-  app.post('/api/cypher', async (req, res) => {
-    const { query: q } = req.body;
-    if (!q) { res.status(400).json({ error: 'Missing query' }); return; }
-
-    // Try LadybugDB first
+  // ── Cypher query ────────────────────────────────────────────────────────────
+  app.post('/api/v1/cypher', async (req, res) => {
+    const { query: q } = req.body as { query?: string };
+    if (!q) { res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: 'Missing query' } }); return; }
     if (workspaceRoot) {
       try {
         const dbPath = getDbPath(workspaceRoot);
@@ -247,28 +836,22 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
         dbm.close();
         res.json({ results: rows });
         return;
-      } catch (err) {
-        // Fall through to in-memory fallback
-      }
+      } catch { /* fall through */ }
     }
-
-    // In-memory fallback
     try {
-      const nameMatch = q?.match(/name\s*=\s*['"]([^'"]+)['"]/i);
+      const nameMatch = q.match(/name\s*=\s*['"]([^'"]+)['"]/i);
       if (nameMatch) {
         const name = nameMatch[1];
         const results = [];
         for (const node of graph.allNodes()) {
           if (node.name === name) {
-            const incoming = [...graph.findEdgesTo(node.id)];
-            const outgoing = [...graph.findEdgesFrom(node.id)];
-            results.push({ node, incoming: incoming.length, outgoing: outgoing.length });
+            results.push({ node, incoming: [...graph.findEdgesTo(node.id)].length, outgoing: [...graph.findEdgesFrom(node.id)].length });
           }
         }
         res.json({ results });
         return;
       }
-      const kindMatch = q?.match(/:\s*(\w+)/);
+      const kindMatch = q.match(/:\s*(\w+)/);
       if (kindMatch) {
         const kind = kindMatch[1];
         const results = [];
@@ -281,86 +864,55 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
       }
       res.json({ results: [], message: 'Query not recognized.' });
     } catch {
-      res.status(400).json({ error: 'Invalid query' });
+      res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: 'Invalid query' } });
     }
   });
 
-  // Get node detail (inspect) — repo-aware via ?repo= query param
-  app.get('/api/nodes/:id', async (req, res) => {
+  // ── Node detail ─────────────────────────────────────────────────────────────
+  app.get('/api/v1/nodes/:id', async (req, res) => {
     const nodeId = decodeURIComponent(req.params.id);
-    const g = await getGraphForRepo(req.query.repo as string | undefined);
+    const g = await getGraphForRepo(req.query['repo'] as string | undefined);
     const node = g.getNode(nodeId);
     if (!node) {
-      res.status(404).json({ error: 'Node not found' });
+      res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: 'Node not found', requestId: req.requestId } });
       return;
     }
-
     const incoming = [...g.findEdgesTo(nodeId)];
     const outgoing = [...g.findEdgesFrom(nodeId)];
-
     res.json({
       node,
-      callers: incoming.filter((e) => e.kind === 'calls').map((e) => ({
-        id: e.source,
-        name: g.getNode(e.source)?.name,
-        weight: e.weight,
-      })),
-      callees: outgoing.filter((e) => e.kind === 'calls').map((e) => ({
-        id: e.target,
-        name: g.getNode(e.target)?.name,
-        weight: e.weight,
-      })),
-      imports: outgoing.filter((e) => e.kind === 'imports').map((e) => ({
-        id: e.target,
-        name: g.getNode(e.target)?.name,
-      })),
-      importedBy: incoming.filter((e) => e.kind === 'imports').map((e) => ({
-        id: e.source,
-        name: g.getNode(e.source)?.name,
-      })),
-      extends: outgoing.filter((e) => e.kind === 'extends').map((e) => ({
-        id: e.target,
-        name: g.getNode(e.target)?.name,
-      })),
-      implementsEdges: outgoing.filter((e) => e.kind === 'implements').map((e) => ({
-        id: e.target,
-        name: g.getNode(e.target)?.name,
-      })),
-      members: outgoing.filter((e) => e.kind === 'has_member').map((e) => ({
-        id: e.target,
-        name: g.getNode(e.target)?.name,
-        kind: g.getNode(e.target)?.kind,
-      })),
+      callers: incoming.filter((e) => e.kind === 'calls').map((e) => ({ id: e.source, name: g.getNode(e.source)?.name, weight: e.weight })),
+      callees: outgoing.filter((e) => e.kind === 'calls').map((e) => ({ id: e.target, name: g.getNode(e.target)?.name, weight: e.weight })),
+      imports: outgoing.filter((e) => e.kind === 'imports').map((e) => ({ id: e.target, name: g.getNode(e.target)?.name })),
+      importedBy: incoming.filter((e) => e.kind === 'imports').map((e) => ({ id: e.source, name: g.getNode(e.source)?.name })),
+      extends: outgoing.filter((e) => e.kind === 'extends').map((e) => ({ id: e.target, name: g.getNode(e.target)?.name })),
+      implementsEdges: outgoing.filter((e) => e.kind === 'implements').map((e) => ({ id: e.target, name: g.getNode(e.target)?.name })),
+      members: outgoing.filter((e) => e.kind === 'has_member').map((e) => ({ id: e.target, name: g.getNode(e.target)?.name, kind: g.getNode(e.target)?.kind })),
       cluster: incoming.filter((e) => e.kind === 'belongs_to').map((e) => g.getNode(e.target)?.name)[0],
     });
   });
 
-  // Blast radius — repo-aware
-  app.post('/api/blast-radius', async (req, res) => {
-    const { target, direction = 'both', max_hops = 5, repo } = req.body;
-    const g = await getGraphForRepo(repo as string | undefined);
-
+  // ── Blast radius ────────────────────────────────────────────────────────────
+  app.post('/api/v1/blast-radius', async (req, res) => {
+    const { target, direction = 'both', max_hops = 5, repo } = req.body as { target?: string; direction?: string; max_hops?: number; repo?: string };
+    const g = await getGraphForRepo(repo);
     let targetNode = null;
     for (const node of g.allNodes()) {
       if (node.name === target || node.id === target) { targetNode = node; break; }
     }
-
     if (!targetNode) {
-      res.status(404).json({ error: `Symbol "${target}" not found` });
+      res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: `Symbol "${target}" not found`, requestId: req.requestId } });
       return;
     }
-
     const affected = new Map<string, { name: string; kind: string; depth: number }>();
     const queue: { id: string; depth: number }[] = [{ id: targetNode.id, depth: 0 }];
     const visited = new Set<string>();
-
     while (queue.length > 0) {
       const { id, depth } = queue.shift()!;
       if (visited.has(id) || depth > max_hops) continue;
       visited.add(id);
       const node = g.getNode(id);
       if (node) affected.set(id, { name: node.name, kind: node.kind, depth });
-
       if (direction === 'callers' || direction === 'both') {
         for (const edge of g.findEdgesTo(id)) {
           if (edge.kind === 'calls' || edge.kind === 'imports') queue.push({ id: edge.source, depth: depth + 1 });
@@ -372,7 +924,6 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
         }
       }
     }
-
     res.json({
       target: targetNode.name,
       affectedCount: [...affected.values()].filter((a) => a.depth > 0).length,
@@ -380,9 +931,9 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     });
   });
 
-  // Flows — repo-aware via ?repo=
-  app.get('/api/flows', async (req, res) => {
-    const g = await getGraphForRepo(req.query.repo as string | undefined);
+  // ── Flows ───────────────────────────────────────────────────────────────────
+  app.get('/api/v1/flows', async (req, res) => {
+    const g = await getGraphForRepo(req.query['repo'] as string | undefined);
     const flows: { id: string; name: string; steps: unknown }[] = [];
     for (const node of g.allNodes()) {
       if (node.kind === 'flow') flows.push({ id: node.id, name: node.name, steps: node.metadata?.steps });
@@ -390,73 +941,107 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     res.json({ flows });
   });
 
-  // Clusters — repo-aware via ?repo=
-  app.get('/api/clusters', async (req, res) => {
-    const g = await getGraphForRepo(req.query.repo as string | undefined);
+  // ── Clusters ────────────────────────────────────────────────────────────────
+  app.get('/api/v1/clusters', async (req, res) => {
+    const g = await getGraphForRepo(req.query['repo'] as string | undefined);
     const clusters: { id: string; name: string; memberCount: number }[] = [];
     for (const node of g.allNodes()) {
-      if (node.kind === 'cluster') {
-        clusters.push({ id: node.id, name: node.name, memberCount: (node.metadata?.memberCount as number) ?? 0 });
-      }
+      if (node.kind === 'cluster') clusters.push({ id: node.id, name: node.name, memberCount: (node.metadata?.memberCount as number) ?? 0 });
     }
     res.json({ clusters });
   });
 
-  // ── Group routes ──────────────────────────────────────────────────────────────
-  app.get('/api/groups', (_req, res) => {
-    const groups = listGroups();
-    res.json(groups.map((g) => ({
-      name: g.name,
-      memberCount: g.members.length,
-      lastSync: g.lastSync ?? null,
-      createdAt: g.createdAt,
-    })));
+  // ── Jobs ────────────────────────────────────────────────────────────────────
+  app.get('/api/v1/jobs', (req: Request, res: Response) => {
+    const { status, repo } = req.query as { status?: string; repo?: string };
+    const jobsDB = getOrCreateJobsDB();
+    const filters: { status?: JobStatus; repoPath?: string } = {};
+    if (status) filters.status = status as JobStatus;
+    if (repo) filters.repoPath = repo;
+    const jobs = jobsDB.listJobs(filters);
+    res.json({ jobs });
   });
 
-  app.get('/api/groups/:name', (req, res) => {
+  app.delete('/api/v1/jobs/:id', (req: Request, res: Response) => {
+    const jobsDB = getOrCreateJobsDB();
+    const { id } = req.params;
+    const job = jobsDB.getJob(id as string);
+    if (!job) {
+      res.status(404).json({
+        error: {
+          code: ErrorCodes.NOT_FOUND,
+          message: `Job "${id}" not found`,
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+    const cancelled = jobsDB.cancel(id as string);
+    if (cancelled) {
+      res.json({ message: `Job "${id}" cancelled`, id });
+    } else {
+      res.status(409).json({
+        error: {
+          code: ErrorCodes.INVALID_REQUEST,
+          message: `Job "${id}" cannot be cancelled (status: ${job.status})`,
+          hint: 'Only pending or running jobs can be cancelled',
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
+  });
+
+  // ── Groups ──────────────────────────────────────────────────────────────────
+  app.get('/api/v1/groups', (_req, res) => {
+    const groups = listGroups();
+    res.json(groups.map((g) => ({ name: g.name, memberCount: g.members.length, lastSync: g.lastSync ?? null, createdAt: g.createdAt })));
+  });
+
+  app.get('/api/v1/groups/:name', (req, res) => {
     const group = loadGroup(req.params.name);
-    if (!group) { res.status(404).json({ error: 'Group not found' }); return; }
+    if (!group) { res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: 'Group not found' } }); return; }
     res.json(group);
   });
 
-  app.get('/api/groups/:name/contracts', (req, res) => {
+  app.get('/api/v1/groups/:name/contracts', (req, res) => {
     const result = loadSyncResult(req.params.name);
-    if (!result) { res.status(404).json({ error: 'No sync result. Run sync first.' }); return; }
+    if (!result) { res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: 'No sync result. Run sync first.' } }); return; }
     res.json(result);
   });
 
-  app.post('/api/groups/:name/sync', async (req, res) => {
+  app.post('/api/v1/groups/:name/sync', async (req, res) => {
     const group = loadGroup(req.params.name);
-    if (!group) { res.status(404).json({ error: 'Group not found' }); return; }
+    if (!group) { res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: 'Group not found' } }); return; }
     try {
       const result = await syncGroup(group);
       saveSyncResult(result);
-      // Update lastSync on group
       group.lastSync = result.syncedAt;
       const { saveGroup } = await import('../multi-repo/group-registry.js');
       saveGroup(group);
       res.json(result);
     } catch (err) {
-      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ error: { code: ErrorCodes.INTERNAL_ERROR, message: err instanceof Error ? err.message : String(err) } });
     }
   });
 
-  app.post('/api/groups/:name/search', async (req, res) => {
+  app.post('/api/v1/groups/:name/search', async (req, res) => {
     const group = loadGroup(req.params.name);
-    if (!group) { res.status(404).json({ error: 'Group not found' }); return; }
-    const { q, limit = 20 } = req.body;
-    if (!q) { res.status(400).json({ error: 'Missing query q' }); return; }
+    if (!group) { res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: 'Group not found' } }); return; }
+    const { q, limit = 20 } = req.body as { q?: string; limit?: number };
+    if (!q) { res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: 'Missing query q' } }); return; }
     try {
       const { perRepo, merged } = await queryGroup(group, q, limit);
       res.json({ perRepo, merged });
     } catch (err) {
-      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ error: { code: ErrorCodes.INTERNAL_ERROR, message: err instanceof Error ? err.message : String(err) } });
     }
   });
 
-  app.get('/api/groups/:name/graph', async (req, res) => {
+  app.get('/api/v1/groups/:name/graph', async (req, res) => {
     const group = loadGroup(req.params.name);
-    if (!group) { res.status(404).json({ error: 'Group not found' }); return; }
+    if (!group) { res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: 'Group not found' } }); return; }
     const registry = loadRegistry();
     const mergedGraph = createKnowledgeGraph();
     for (const member of group.members) {
@@ -474,13 +1059,157 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     res.json({ nodes: [...mergedGraph.allNodes()], edges: [...mergedGraph.allEdges()] });
   });
 
-  // Serve web UI static files
+  // ── Web UI static files ─────────────────────────────────────────────────────
   if (fs.existsSync(WEB_DIST)) {
     app.use(express.static(WEB_DIST));
     app.get('/{*path}', (_req, res) => {
       res.sendFile(path.join(WEB_DIST, 'index.html'));
     });
   }
+
+  // ── Admin API — requires admin role ──────────────────────────────────────────
+  app.use('/admin', requireRole('admin'));
+
+  // List users
+  app.get('/admin/users', (_req, res) => {
+    const db = getOrCreateUsersDB();
+    res.json({ users: db.listUsers() });
+  });
+
+  // Create user
+  app.post('/admin/users', async (req: Request, res: Response) => {
+    const { username, password, role } = req.body as { username?: string; password?: string; role?: string };
+    if (!username || !password || !role) {
+      res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: 'username, password, role required', requestId: req.requestId, timestamp: new Date().toISOString() } });
+      return;
+    }
+    const validRoles: Role[] = ['admin', 'analyst', 'viewer', 'repo-owner'];
+    if (!validRoles.includes(role as Role)) {
+      res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: `role must be one of: ${validRoles.join(', ')}`, requestId: req.requestId, timestamp: new Date().toISOString() } });
+      return;
+    }
+    const db = getOrCreateUsersDB();
+    const user = db.createUser(username, password, role as Role);
+    res.status(201).json({ user });
+  });
+
+  // Delete user
+  app.delete('/admin/users/:username', (req: Request, res: Response) => {
+    const { username } = req.params;
+    const db = getOrCreateUsersDB();
+    db.deleteUser(username as string);
+    res.json({ message: `User ${username} deleted` });
+  });
+
+  // Set user role
+  app.patch('/admin/users/:username/role', (req: Request, res: Response) => {
+    const { username } = req.params;
+    const { role } = req.body as { role?: string };
+    const validRoles: Role[] = ['admin', 'analyst', 'viewer', 'repo-owner'];
+    if (!role || !validRoles.includes(role as Role)) {
+      res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: 'valid role required', requestId: req.requestId, timestamp: new Date().toISOString() } });
+      return;
+    }
+    const db = getOrCreateUsersDB();
+    db.setRole(username as string, role as Role);
+    res.json({ message: `Role updated` });
+  });
+
+  // List tokens
+  app.get('/admin/tokens', (_req, res) => {
+    const db = getOrCreateUsersDB();
+    res.json({ tokens: db.listTokens() });
+  });
+
+  // Revoke token
+  app.delete('/admin/tokens/:id', (req: Request, res: Response) => {
+    const db = getOrCreateUsersDB();
+    db.revokeToken(req.params.id as string);
+    res.json({ message: 'Token revoked' });
+  });
+
+  // Governance log
+  app.get('/admin/governance/log', (req: Request, res: Response) => {
+    const limit = Math.min(parseInt((req.query['limit'] as string | undefined) ?? '100', 10), 1000);
+    const entries = governanceLogger.readLog(limit);
+    res.json({ entries, count: entries.length, enabled: governanceLogger.isEnabled() });
+  });
+
+  // ── CSRF error handler ──────────────────────────────────────────────────────
+  app.use((err: unknown, req: Request, res: Response, next: NextFunction): void => {
+    if (err && typeof err === 'object' && 'code' in err && (err as { code: string }).code === 'EBADCSRFTOKEN') {
+      res.status(403).json({
+        error: {
+          code: 'CI-1003',
+          message: 'Invalid CSRF token',
+          hint: 'Fetch a fresh CSRF token from GET /auth/csrf-token and include it as X-CSRF-Token header',
+          requestId: (req as Request & { requestId?: string }).requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+    next(err);
+  });
+
+  // ── Global error handler ────────────────────────────────────────────────────
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
+    Logger.error('Unhandled error:', err.message);
+    if (err instanceof AppError) {
+      res.status(err.statusCode).json({
+        error: {
+          code: err.code,
+          message: err.message,
+          hint: err.hint,
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+    // body-parser errors carry a `status`/`statusCode` and a `type`.
+    // Honor them so payload-too-large (413), bad JSON (400), etc. surface
+    // with the correct HTTP status.
+    const e = err as Error & { status?: number; statusCode?: number; type?: string };
+    const bodyParserStatus = e.status ?? e.statusCode;
+    if (
+      typeof bodyParserStatus === 'number' &&
+      bodyParserStatus >= 400 &&
+      bodyParserStatus < 500
+    ) {
+      const code =
+        e.type === 'entity.too.large'
+          ? ErrorCodes.PAYLOAD_TOO_LARGE
+          : ErrorCodes.INVALID_REQUEST;
+      const message =
+        e.type === 'entity.too.large'
+          ? 'Request payload too large (max 1MB)'
+          : err.message;
+      res.status(bodyParserStatus).json({
+        error: {
+          code,
+          message,
+          hint:
+            e.type === 'entity.too.large'
+              ? 'Reduce the request body size to under 1MB.'
+              : undefined,
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+    res.status(500).json({
+      error: {
+        code: ErrorCodes.INTERNAL_ERROR,
+        message: 'Internal server error',
+        hint: 'Check server logs for details',
+        requestId: req.requestId,
+        timestamp: new Date().toISOString(),
+      },
+    });
+  });
 
   return app;
 }
@@ -491,9 +1220,21 @@ export function startHttpServer(
   port = 4747,
   workspaceRoot?: string,
 ): void {
+  // Bootstrap check
+  const db = getOrCreateUsersDB();
+  if (!db.hasAnyUser()) {
+    console.log('\n  ⚠  No admin account found.');
+    console.log('     Run: code-intel user create admin --role admin\n');
+  }
+
   const app = createApp(graph, repoName, workspaceRoot);
   app.listen(port, () => {
     Logger.info(`Code Intelligence server running at http://localhost:${port}`);
     Logger.info(`  Graph: ${graph.size.nodes} nodes, ${graph.size.edges} edges`);
+    Logger.info(`  Auth: login at http://localhost:${port}/auth/login`);
+
+    // Start automated backup scheduler if enabled
+    const scheduler = createBackupScheduler();
+    scheduler.start(workspaceRoot);
   });
 }

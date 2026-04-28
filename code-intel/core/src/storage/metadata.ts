@@ -3,6 +3,7 @@ import path from 'node:path';
 
 export interface IndexMetadata {
   indexedAt: string;
+  indexVersion?: string;   // UUID, bumped on every successful analysis
   commitHash?: string;
   stats: {
     nodes: number;

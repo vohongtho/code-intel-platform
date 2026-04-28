@@ -1,0 +1,18 @@
+{
+  "language": "Python",
+  "fixture": "python-sample.py",
+  "description": "Canonical symbol extraction baseline for Python. CI gate: recall must not decrease.",
+  "expectedSymbols": [
+    { "kind": "class",    "name": "UserService",  "exported": true  },
+    { "kind": "class",    "name": "AdminService", "exported": true  },
+    { "kind": "function", "name": "create_user",  "exported": true  }
+  ],
+  "prohibitedSymbols": [
+    "_private_helper"
+  ],
+  "notes": [
+    "__init__ and _internal are private (leading underscore) — exported=false, may or may not appear in output",
+    "greet is a method (no leading underscore) — may appear as function or method",
+    "_private_helper must never appear in exported symbols"
+  ]
+}

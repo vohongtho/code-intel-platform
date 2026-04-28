@@ -12,6 +12,7 @@ const _pkg = JSON.parse(readFileSync(join(__dirname, '../../package.json'), 'utf
 import { Command } from 'commander';
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
 import Logger from '../shared/logger.js';
 import { createKnowledgeGraph } from '../graph/knowledge-graph.js';
 import { runPipeline } from '../pipeline/orchestrator.js';
@@ -46,6 +47,27 @@ import {
 } from '../multi-repo/group-registry.js';
 import { syncGroup } from '../multi-repo/group-sync.js';
 import { queryGroup } from '../multi-repo/group-query.js';
+import { getOrCreateUsersDB } from '../auth/users-db.js';
+import type { Role } from '../auth/users-db.js';
+import { BackupService } from '../backup/backup-service.js';
+import { v4 as uuidv4 } from 'uuid';
+import { MigrationRunner, CURRENT_SCHEMA_VERSION } from '../migrations/migration-runner.js';
+import Database from 'better-sqlite3';
+import {
+  loadSecrets,
+  saveSecrets,
+  setSecret,
+  getSecret,
+  deleteSecret,
+  listSecretKeys,
+} from '../auth/secret-store.js';
+import { keychainBackend } from '../auth/keychain.js';
+import { assertNoPlaintextSecrets } from '../shared/config-validator.js';
+import { secureMkdir, tightenDbFiles } from '../shared/fs-secure.js';
+import { initTracing } from '../observability/tracing.js';
+
+// Bootstrap OTel tracing if enabled (must be called before any auto-instrumented code).
+initTracing();
 
 const program = new Command();
 
@@ -215,10 +237,12 @@ async function analyzeWorkspace(targetPath: string, options?: {
   const phases = [scanPhase, structurePhase, parsePhase, resolvePhase, clusterPhase, flowPhase];
   const result = await runPipeline(phases, context);
 
-  // Save metadata
+  // Save metadata (bump indexVersion on every successful analysis)
   const repoName = path.basename(workspaceRoot);
+  const indexVersion = uuidv4();
   saveMetadata(workspaceRoot, {
     indexedAt: new Date().toISOString(),
+    indexVersion,
     stats: {
       nodes: graph.size.nodes,
       edges: graph.size.edges,
@@ -238,11 +262,26 @@ async function analyzeWorkspace(targetPath: string, options?: {
     },
   });
 
-  // Persist graph to LadybugDB
+  // Persist graph to LadybugDB — atomic swap: write to graph.db.new then rename
   startSpinner('Persisting graph to DB');
   try {
     const dbPath = getDbPath(workspaceRoot);
-    // Remove stale / incompatible DB files before writing (handles both -wal and .wal suffixes)
+    const dbPathNew = `${dbPath}.new`;
+    // Clean up any previous failed .new file
+    const newStaleFiles = [
+      dbPathNew,
+      `${dbPathNew}-shm`, `${dbPathNew}-wal`,
+      `${dbPathNew}.shm`, `${dbPathNew}.wal`,
+    ];
+    for (const f of newStaleFiles) {
+      try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* ignore */ }
+    }
+    // Write to the .new file
+    const db = new DbManager(dbPathNew);
+    await db.init();
+    const { nodeCount, edgeCount } = await loadGraphToDB(graph, db);
+    db.close();
+    // Atomic swap: remove old DB files, rename .new → live
     const staleFiles = [
       dbPath,
       `${dbPath}-shm`, `${dbPath}-wal`,
@@ -251,10 +290,14 @@ async function analyzeWorkspace(targetPath: string, options?: {
     for (const f of staleFiles) {
       try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* ignore */ }
     }
-    const db = new DbManager(dbPath);
-    await db.init();
-    const { nodeCount, edgeCount } = await loadGraphToDB(graph, db);
-    db.close();
+    // Rename .new and its WAL/SHM companions atomically
+    for (const f of newStaleFiles) {
+      if (fs.existsSync(f)) {
+        const dest = f.replace(dbPathNew, dbPath);
+        try { fs.renameSync(f, dest); } catch { /* ignore */ }
+      }
+    }
+    fs.renameSync(dbPathNew, dbPath);
     stopSpinner();
     Logger.info(`DB persisted: ${nodeCount} nodes, ${edgeCount} edges`);
     if (!options?.silent) {
@@ -602,23 +645,110 @@ program
   });
 
 // ─── 7. clean ────────────────────────────────────────────────────────────────
+
+// Soft-delete helpers ──────────────────────────────────────────────────────────
+
+const TRASH_TTL_DAYS = 30;
+
+function trashDirName(repoPath: string): string {
+  const date = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  return `.code-intel-trash-${date}`;
+}
+
+function softDeleteCodeIntel(repoPath: string): void {
+  const codeIntelDir = path.join(repoPath, '.code-intel');
+  if (!fs.existsSync(codeIntelDir)) return;
+
+  const trashName = trashDirName(repoPath);
+  const trashDir = path.join(repoPath, trashName);
+
+  // If a trash dir already exists for today, append a counter
+  let dest = trashDir;
+  let counter = 1;
+  while (fs.existsSync(dest)) {
+    dest = `${trashDir}-${counter++}`;
+  }
+
+  fs.renameSync(codeIntelDir, dest);
+  fs.writeFileSync(
+    path.join(dest, 'TRASH_META.json'),
+    JSON.stringify({ deletedAt: new Date().toISOString(), repoPath, permanent: false }, null, 2),
+  );
+  console.log(`  ✓  Moved to trash: ${dest}`);
+  console.log(`     (auto-purge in ${TRASH_TTL_DAYS} days, or run --purge to delete immediately)`);
+}
+
+function purgeStaleTrashes(repoPath: string): void {
+  const cutoff = Date.now() - TRASH_TTL_DAYS * 24 * 60 * 60 * 1000;
+  try {
+    for (const entry of fs.readdirSync(repoPath)) {
+      if (!entry.startsWith('.code-intel-trash-')) continue;
+      const fullPath = path.join(repoPath, entry);
+      const metaPath = path.join(fullPath, 'TRASH_META.json');
+      if (fs.existsSync(metaPath)) {
+        try {
+          const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as { deletedAt: string };
+          if (new Date(meta.deletedAt).getTime() < cutoff) {
+            fs.rmSync(fullPath, { recursive: true, force: true });
+            console.log(`  ✓  Auto-purged stale trash: ${fullPath}`);
+          }
+        } catch { /* skip corrupt meta */ }
+      }
+    }
+  } catch { /* ignore if dir not readable */ }
+}
+
 program
   .command('clean')
-  .description('Remove the knowledge graph index for a repository')
+  .description('Soft-delete the knowledge graph index for a repository (30-day trash)')
   .argument('[path]', 'Path to clean (default: current directory)', '.')
-  .option('--all',   'Remove indexes for ALL indexed repositories')
-  .option('--force', 'Required with --all to confirm the destructive operation')
+  .option('--all',        'Remove indexes for ALL indexed repositories')
+  .option('--force',      'Required with --all to confirm the destructive operation')
+  .option('--purge',      'Immediately hard-delete instead of moving to trash')
+  .option('--list-trash', 'List all trash directories and their ages')
   .addHelpText('after', `
-  Deletes the .code-intel/ directory and removes the entry from the registry.
+  By default, .code-intel/ is moved to .code-intel-trash-{date}/ for 30 days
+  before being permanently purged. Use --purge to skip the trash period.
 
-  ⚠  --all --force is irreversible — it deletes every indexed repo's data.
+  ⚠  --all --force is irreversible (with --purge) — use with care.
 
   Examples:
-    $ code-intel clean                   Remove index for current directory
-    $ code-intel clean ./my-project      Remove index for a specific path
-    $ code-intel clean --all --force     Remove ALL indexes (requires --force)
+    $ code-intel clean                       Soft-delete index for current directory
+    $ code-intel clean ./my-project          Soft-delete index for a specific path
+    $ code-intel clean --purge               Hard-delete immediately (no trash)
+    $ code-intel clean --all --force         Soft-delete ALL indexes
+    $ code-intel clean --all --force --purge Hard-delete ALL indexes immediately
+    $ code-intel clean --list-trash          List all trash directories
 `)
-  .action((targetPath: string, opts: { all?: boolean; force?: boolean }) => {
+  .action((targetPath: string, opts: { all?: boolean; force?: boolean; purge?: boolean; listTrash?: boolean }) => {
+    // ── list-trash ─────────────────────────────────────────────────────────
+    if (opts.listTrash) {
+      const repos = loadRegistry();
+      const roots = repos.map((r) => r.path);
+      if (roots.length === 0) roots.push(path.resolve('.'));
+      let found = 0;
+      for (const root of roots) {
+        try {
+          for (const entry of fs.readdirSync(root)) {
+            if (!entry.startsWith('.code-intel-trash-')) continue;
+            const fullPath = path.join(root, entry);
+            const metaPath = path.join(fullPath, 'TRASH_META.json');
+            let deletedAt = 'unknown';
+            if (fs.existsSync(metaPath)) {
+              try { deletedAt = (JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as { deletedAt: string }).deletedAt; } catch { /* skip */ }
+            }
+            const ageDays = Math.floor((Date.now() - new Date(deletedAt).getTime()) / (24 * 60 * 60 * 1000));
+            const purgeIn = Math.max(0, TRASH_TTL_DAYS - ageDays);
+            console.log(`  ${fullPath}  (deleted: ${deletedAt.slice(0, 10)}, purge in ${purgeIn} days)`);
+            found++;
+          }
+        } catch { /* skip */ }
+      }
+      if (found === 0) console.log('\n  No trash directories found.\n');
+      return;
+    }
+
+    // ── --all ──────────────────────────────────────────────────────────────
     if (opts.all) {
       if (!opts.force) {
         console.error('\n  ✗  --all requires --force to confirm the destructive operation.');
@@ -631,10 +761,15 @@ program
         return;
       }
       for (const r of repos) {
-        const codeIntelDir = path.join(r.path, '.code-intel');
-        if (fs.existsSync(codeIntelDir)) {
-          fs.rmSync(codeIntelDir, { recursive: true, force: true });
-          console.log(`  ✓  Removed ${codeIntelDir}`);
+        if (opts.purge) {
+          const codeIntelDir = path.join(r.path, '.code-intel');
+          if (fs.existsSync(codeIntelDir)) {
+            fs.rmSync(codeIntelDir, { recursive: true, force: true });
+            console.log(`  ✓  Hard-deleted ${codeIntelDir}`);
+          }
+        } else {
+          softDeleteCodeIntel(r.path);
+          purgeStaleTrashes(r.path);
         }
         removeRepo(r.path);
       }
@@ -642,15 +777,43 @@ program
       return;
     }
 
+    // ── single repo ────────────────────────────────────────────────────────
     const workspaceRoot = path.resolve(targetPath);
-    const codeIntelDir = path.join(workspaceRoot, '.code-intel');
-    if (fs.existsSync(codeIntelDir)) {
-      fs.rmSync(codeIntelDir, { recursive: true, force: true });
-      console.log(`\n  ✓  Removed ${codeIntelDir}`);
+    if (opts.purge) {
+      const codeIntelDir = path.join(workspaceRoot, '.code-intel');
+      if (fs.existsSync(codeIntelDir)) {
+        fs.rmSync(codeIntelDir, { recursive: true, force: true });
+        console.log(`\n  ✓  Hard-deleted ${codeIntelDir}`);
+      }
+    } else {
+      softDeleteCodeIntel(workspaceRoot);
+      purgeStaleTrashes(workspaceRoot);
     }
     removeRepo(workspaceRoot);
     console.log('  Index cleaned.\n');
   });
+
+// ─── loadOrAnalyzeWorkspace ───────────────────────────────────────────────────
+// Shared helper for read-only commands (search, inspect, impact).
+// If an existing .code-intel/graph.db index is found it loads directly from DB —
+// no re-analysis needed. Falls back to a full analysis only when no index exists.
+async function loadOrAnalyzeWorkspace(targetPath: string) {
+  const workspaceRoot = path.resolve(targetPath);
+  const dbPath = getDbPath(workspaceRoot);
+  const existingIndex = fs.existsSync(dbPath) && loadMetadata(workspaceRoot) !== null;
+
+  if (existingIndex) {
+    const graph = createKnowledgeGraph();
+    const db = new DbManager(dbPath);
+    await db.init();
+    await loadGraphFromDB(graph, db);
+    db.close();
+    return { graph, workspaceRoot, repoName: path.basename(workspaceRoot) };
+  }
+
+  // No index yet — run full analysis and persist for next time
+  return analyzeWorkspace(targetPath, { silent: true });
+}
 
 // ─── 8. search ───────────────────────────────────────────────────────────────
 program
@@ -669,7 +832,7 @@ program
     $ code-intel search "UserService" --path ./backend
 `)
   .action(async (query: string, options: { limit: string; path: string }) => {
-    const { graph } = await analyzeWorkspace(options.path, { silent: true });
+    const { graph } = await loadOrAnalyzeWorkspace(options.path);
     const results = textSearch(graph, query, parseInt(options.limit, 10));
     if (results.length === 0) {
       console.log(`\n  No results found for "${query}".\n`);
@@ -699,7 +862,7 @@ program
     $ code-intel inspect ApiClient --path ./frontend
 `)
   .action(async (symbol: string, options: { path: string }) => {
-    const { graph } = await analyzeWorkspace(options.path, { silent: true });
+    const { graph } = await loadOrAnalyzeWorkspace(options.path);
 
     let found = false;
     for (const node of graph.allNodes()) {
@@ -760,7 +923,7 @@ program
     $ code-intel impact UserService --path ./backend
 `)
   .action(async (symbol: string, options: { path: string; depth: string }) => {
-    const { graph } = await analyzeWorkspace(options.path, { silent: true });
+    const { graph } = await loadOrAnalyzeWorkspace(options.path);
     const maxHops = parseInt(options.depth, 10);
 
     let targetNode = null;
@@ -1131,5 +1294,672 @@ groupCmd
       }
     }
   });
+
+// ─── 12. user ────────────────────────────────────────────────────────────────
+const userCmd = program
+  .command('user')
+  .description('Manage local user accounts');
+
+// user create <username>
+userCmd
+  .command('create <username>')
+  .description('Create a new local user account')
+  .requiredOption('--role <role>', 'Role: admin | analyst | viewer | repo-owner')
+  .option('--password <password>', 'Password (prompted if omitted)')
+  .addHelpText('after', `
+  Examples:
+    $ code-intel user create admin --role admin --password mypass
+    $ code-intel user create alice --role analyst
+`)
+  .action(async (username: string, opts: { role: string; password?: string }) => {
+    const validRoles = ['admin', 'analyst', 'viewer', 'repo-owner'];
+    if (!validRoles.includes(opts.role)) {
+      console.error(`\n  ✗  Invalid role "${opts.role}". Must be one of: ${validRoles.join(', ')}\n`);
+      process.exit(1);
+    }
+    let password = opts.password;
+    if (!password) {
+      // prompt for password
+      const readline = await import('node:readline');
+      const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+      password = await new Promise<string>((resolve) => {
+        rl.question(`  Password for ${username}: `, (ans) => {
+          rl.close();
+          resolve(ans);
+        });
+      });
+    }
+    const db = getOrCreateUsersDB();
+    try {
+      const user = db.createUser(username, password, opts.role as Role);
+      console.log(`\n  ✅  User created:`);
+      console.log(`     ID       : ${user.id}`);
+      console.log(`     Username : ${user.username}`);
+      console.log(`     Role     : ${user.role}`);
+      console.log(`     Created  : ${user.createdAt}\n`);
+    } catch (err) {
+      console.error(`\n  ✗  Failed to create user: ${err instanceof Error ? err.message : err}\n`);
+      process.exit(1);
+    }
+  });
+
+// user list
+userCmd
+  .command('list')
+  .description('List all local user accounts')
+  .action(() => {
+    const db = getOrCreateUsersDB();
+    const users = db.listUsers();
+    if (users.length === 0) {
+      console.log('\n  No users found. Create one with: code-intel user create <username> --role <role>\n');
+      return;
+    }
+    console.log(`\n  Local accounts (${users.length}):\n`);
+    for (const u of users) {
+      console.log(`  ◆  ${u.username.padEnd(20)} role: ${u.role.padEnd(12)} id: ${u.id}  created: ${u.createdAt}`);
+    }
+    console.log('');
+  });
+
+// user delete <username>
+userCmd
+  .command('delete <username>')
+  .description('Delete a local user account')
+  .action((username: string) => {
+    const db = getOrCreateUsersDB();
+    const user = db.findUserByUsername(username);
+    if (!user) {
+      console.error(`\n  ✗  User "${username}" not found.\n`);
+      process.exit(1);
+    }
+    db.deleteUser(username);
+    console.log(`\n  ✅  User "${username}" deleted.\n`);
+  });
+
+// user reset-password <username>
+userCmd
+  .command('reset-password <username>')
+  .description('Reset the password for a local user account')
+  .option('--password <password>', 'New password (prompted if omitted)')
+  .action(async (username: string, opts: { password?: string }) => {
+    const db = getOrCreateUsersDB();
+    const user = db.findUserByUsername(username);
+    if (!user) {
+      console.error(`\n  ✗  User "${username}" not found.\n`);
+      process.exit(1);
+    }
+    let password = opts.password;
+    if (!password) {
+      const readline = await import('node:readline');
+      const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+      password = await new Promise<string>((resolve) => {
+        rl.question(`  New password for ${username}: `, (ans) => {
+          rl.close();
+          resolve(ans);
+        });
+      });
+    }
+    db.resetPassword(username, password);
+    console.log(`\n  ✅  Password reset for "${username}".\n`);
+  });
+
+// user set-role <username> <role>
+userCmd
+  .command('set-role <username> <role>')
+  .description('Change the role of a local user account')
+  .action((username: string, role: string) => {
+    const validRoles = ['admin', 'analyst', 'viewer', 'repo-owner'];
+    if (!validRoles.includes(role)) {
+      console.error(`\n  ✗  Invalid role "${role}". Must be one of: ${validRoles.join(', ')}\n`);
+      process.exit(1);
+    }
+    const db = getOrCreateUsersDB();
+    const user = db.findUserByUsername(username);
+    if (!user) {
+      console.error(`\n  ✗  User "${username}" not found.\n`);
+      process.exit(1);
+    }
+    db.setRole(username, role as Role);
+    console.log(`\n  ✅  Role for "${username}" set to "${role}".\n`);
+  });
+
+// ─── 13. token ───────────────────────────────────────────────────────────────
+const tokenCmd = program
+  .command('token')
+  .description('Manage API tokens for programmatic access');
+
+// token create
+tokenCmd
+  .command('create')
+  .description('Create a new API token (raw token shown once)')
+  .requiredOption('--name <name>', 'Token name / description')
+  .requiredOption('--role <role>', 'Role: admin | analyst | viewer | repo-owner')
+  .option('--expires <duration>', 'Expiry duration, e.g. 90d, 30d, 365d (omit for no expiry)')
+  .option('--repos <repos>', 'Comma-separated list of repo names to scope this token to (omit for all repos)')
+  .option('--tools <tools>', 'Comma-separated list of tool names to scope this token to (omit for all tools)')
+  .addHelpText('after', `
+  Examples:
+    $ code-intel token create --name "CI bot" --role analyst
+    $ code-intel token create --name "Read-only" --role viewer --expires 90d
+    $ code-intel token create --name "Scoped bot" --role analyst --repos my-repo,other-repo
+    $ code-intel token create --name "Limited" --role viewer --tools search,inspect
+`)
+  .action((opts: { name: string; role: string; expires?: string; repos?: string; tools?: string }) => {
+    const validRoles = ['admin', 'analyst', 'viewer', 'repo-owner'];
+    if (!validRoles.includes(opts.role)) {
+      console.error(`\n  ✗  Invalid role "${opts.role}". Must be one of: ${validRoles.join(', ')}\n`);
+      process.exit(1);
+    }
+    let expiresAt: string | undefined;
+    if (opts.expires) {
+      const match = opts.expires.match(/^(\d+)d$/);
+      if (!match) {
+        console.error(`\n  ✗  Invalid expiry format "${opts.expires}". Use e.g. 90d\n`);
+        process.exit(1);
+      }
+      const days = parseInt(match[1]!, 10);
+      const exp = new Date();
+      exp.setDate(exp.getDate() + days);
+      expiresAt = exp.toISOString();
+    }
+    const scopedRepos = opts.repos ? opts.repos.split(',').map((r) => r.trim()).filter(Boolean) : undefined;
+    const scopedTools = opts.tools ? opts.tools.split(',').map((t) => t.trim()).filter(Boolean) : undefined;
+    const db = getOrCreateUsersDB();
+    const { token, rawToken } = db.createToken(opts.name, opts.role as Role, expiresAt, scopedRepos, scopedTools);
+    console.log('\n  ✅  Token created — save this token now; it will NOT be shown again!\n');
+    console.log(`     Token    : ${rawToken}`);
+    console.log(`     ID       : ${token.id}`);
+    console.log(`     Name     : ${token.name}`);
+    console.log(`     Role     : ${token.role}`);
+    if (token.expiresAt) console.log(`     Expires  : ${token.expiresAt}`);
+    if (token.scopedRepos) console.log(`     Repos    : ${token.scopedRepos.join(', ')}`);
+    if (token.scopedTools) console.log(`     Tools    : ${token.scopedTools.join(', ')}`);
+    console.log('\n  Usage: Authorization: Bearer <token>\n');
+  });
+
+// token list
+tokenCmd
+  .command('list')
+  .description('List all active API tokens')
+  .action(() => {
+    const db = getOrCreateUsersDB();
+    const tokens = db.listTokens();
+    if (tokens.length === 0) {
+      console.log('\n  No active tokens. Create one with: code-intel token create --name <name> --role <role>\n');
+      return;
+    }
+    console.log(`\n  Active API tokens (${tokens.length}):\n`);
+    for (const t of tokens) {
+      const exp = t.expiresAt ? `expires: ${t.expiresAt}` : 'no expiry';
+      const last = t.lastUsedAt ? `last used: ${t.lastUsedAt}` : 'never used';
+      console.log(`  ◆  ${t.name.padEnd(25)} role: ${t.role.padEnd(12)} ${exp}  ${last}`);
+      console.log(`     ID: ${t.id}  created: ${t.createdAt}`);
+    }
+    console.log('');
+  });
+
+// token revoke <id>
+tokenCmd
+  .command('revoke <id>')
+  .description('Revoke an API token immediately')
+  .action((id: string) => {
+    const db = getOrCreateUsersDB();
+    const tokens = db.listTokens();
+    const token = tokens.find((t) => t.id === id);
+    if (!token) {
+      console.error(`\n  ✗  Token "${id}" not found or already revoked.\n`);
+      process.exit(1);
+    }
+    db.revokeToken(id);
+    console.log(`\n  ✅  Token "${token.name}" (${id}) revoked immediately.\n`);
+  });
+
+// ─── 14. backup ──────────────────────────────────────────────────────────────
+const backupCmd = program
+  .command('backup')
+  .description('Backup and restore knowledge graph data');
+
+// backup create [path]
+backupCmd
+  .command('create [path]')
+  .description('Create an encrypted backup of the index for a repository')
+  .addHelpText('after', `
+  Backs up graph.db, vector.db, meta.json, registry.json, and users.db
+  into ~/.code-intel/backups/ using AES-256-GCM encryption.
+
+  Examples:
+    $ code-intel backup create
+    $ code-intel backup create ./my-project
+`)
+  .action((targetPath: string = '.') => {
+    const repoPath = path.resolve(targetPath);
+    const svc = new BackupService();
+    try {
+      const entry = svc.createBackup(repoPath);
+      console.log(`\n  ✅  Backup created:`);
+      console.log(`     ID       : ${entry.id}`);
+      console.log(`     Created  : ${entry.createdAt}`);
+      console.log(`     Size     : ${(entry.size / 1024).toFixed(1)} KB`);
+      console.log(`     Path     : ${entry.path}\n`);
+    } catch (err) {
+      console.error(`\n  ✗  Backup failed: ${err instanceof Error ? err.message : err}\n`);
+      process.exit(1);
+    }
+  });
+
+// backup list
+backupCmd
+  .command('list')
+  .description('List all available backups')
+  .action(() => {
+    const svc = new BackupService();
+    const entries = svc.listBackups();
+    if (entries.length === 0) {
+      console.log('\n  No backups found. Run: code-intel backup create\n');
+      return;
+    }
+    console.log(`\n  Backups (${entries.length}):\n`);
+    for (const e of entries) {
+      const exists = fs.existsSync(e.path);
+      const status = exists ? '✓' : '✗ (missing)';
+      console.log(`  ${status}  ${e.id.slice(0, 8)}  ${e.createdAt}  ${(e.size / 1024).toFixed(1)} KB  →  ${e.repoPath}`);
+    }
+    console.log('');
+  });
+
+// backup restore <id>
+backupCmd
+  .command('restore <id>')
+  .description('Restore a backup by ID')
+  .option('--target <path>', 'Restore to a different path (default: original repo path)')
+  .addHelpText('after', `
+  Examples:
+    $ code-intel backup restore abc123ef
+    $ code-intel backup restore abc123ef --target ./my-project-restored
+`)
+  .action((id: string, opts: { target?: string }) => {
+    const svc = new BackupService();
+    try {
+      const targetPath = opts.target ? path.resolve(opts.target) : undefined;
+      svc.restoreBackup(id, targetPath);
+      console.log(`\n  ✅  Backup "${id}" restored successfully.\n`);
+    } catch (err) {
+      console.error(`\n  ✗  Restore failed: ${err instanceof Error ? err.message : err}\n`);
+      process.exit(1);
+    }
+  });
+
+// ─── 15. migrate ──────────────────────────────────────────────────────────────
+program
+  .command('migrate')
+  .description('Manage database schema migrations')
+  .option('--dry-run', 'Preview pending migrations without applying them')
+  .option('--status', 'Show current migration status')
+  .option('--rollback', 'Roll back the last applied migration')
+  .option('--db <path>', 'Path to database file (default: ~/.code-intel/users.db)')
+  .addHelpText('after', `
+  Examples:
+    $ code-intel migrate --status
+    $ code-intel migrate --dry-run
+    $ code-intel migrate
+    $ code-intel migrate --rollback
+`)
+  .action((opts: { dryRun?: boolean; status?: boolean; rollback?: boolean; db?: string }) => {
+    const dbPath = opts.db ?? path.join(os.homedir(), '.code-intel', 'users.db');
+    if (!fs.existsSync(dbPath)) {
+      console.error(`\n  ✗  Database not found: ${dbPath}\n  Run \`code-intel serve\` or \`code-intel user create\` first.\n`);
+      process.exit(1);
+    }
+    const db = new Database(dbPath);
+    db.pragma('journal_mode = WAL');
+    const runner = new MigrationRunner(db);
+
+    try {
+      if (opts.status) {
+        const statuses = runner.getStatus();
+        console.log(`\n  Migration status (current schema: v${CURRENT_SCHEMA_VERSION})\n`);
+        for (const s of statuses) {
+          const mark = s.pending ? '○ pending' : `✓ applied ${s.appliedAt ?? ''}`;
+          console.log(`  v${String(s.version).padStart(3, '0')}  ${mark.padEnd(45)} ${s.description}`);
+        }
+        console.log('');
+        return;
+      }
+
+      if (opts.rollback) {
+        const ok = runner.migrateDown();
+        if (ok) {
+          console.log(`\n  ✅  Last migration rolled back.\n`);
+        } else {
+          console.log(`\n  No migrations to roll back.\n`);
+        }
+        return;
+      }
+
+      if (opts.dryRun) {
+        const count = runner.migrateUp(true);
+        console.log(`\n  Dry run: ${count} pending migration(s) would be applied.\n`);
+        return;
+      }
+
+      runner.checkCompatibility();
+      const count = runner.migrateUp();
+      if (count === 0) {
+        console.log(`\n  ✓  All migrations up to date (schema v${CURRENT_SCHEMA_VERSION}).\n`);
+      } else {
+        console.log(`\n  ✅  Applied ${count} migration(s). Schema is now v${runner.getCurrentVersion()}.\n`);
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+// ─── 16. auth login (OIDC Device Flow) ───────────────────────────────────────
+const authCmd = program
+  .command('auth')
+  .description('Authentication commands (OIDC / OAuth2)');
+
+authCmd
+  .command('login')
+  .description('Authenticate via OIDC device flow — opens a browser and stores the token')
+  .option('--server <url>', 'Code-intel server URL (default: http://localhost:4747)')
+  .addHelpText('after', `
+  Requires CODE_INTEL_OIDC_ISSUER, CODE_INTEL_OIDC_CLIENT_ID,
+  CODE_INTEL_OIDC_CLIENT_SECRET to be configured on the server.
+
+  Examples:
+    $ code-intel auth login
+    $ code-intel auth login --server https://code-intel.company.com
+`)
+  .action(async (opts: { server?: string }) => {
+    const serverUrl = (opts.server ?? 'http://localhost:4747').replace(/\/$/, '');
+
+    // ── Dynamic import so openid-client is only loaded when needed ────────────
+    const {
+      initiateDeviceFlow,
+      pollDeviceFlow,
+      isOIDCConfigured,
+    } = await import('../auth/oidc.js');
+
+    if (!isOIDCConfigured()) {
+      console.error('\n  ✗  OIDC is not configured on this installation.');
+      console.error('     Set CODE_INTEL_OIDC_ISSUER, CODE_INTEL_OIDC_CLIENT_ID,');
+      console.error('     and CODE_INTEL_OIDC_CLIENT_SECRET and restart the server.\n');
+      process.exit(1);
+    }
+
+    console.log('\n  ◈  Code Intelligence — OIDC Login (Device Flow)\n');
+
+    let deviceInit: Awaited<ReturnType<typeof initiateDeviceFlow>>;
+    try {
+      const result = await initiateDeviceFlow();
+      if (!result) {
+        console.error('\n  ✗  OIDC is not configured or provider is unreachable.\n');
+        process.exit(1);
+      }
+      deviceInit = result;
+    } catch (err) {
+      console.error(`\n  ✗  Failed to initiate device flow: ${err instanceof Error ? err.message : err}\n`);
+      process.exit(1);
+    }
+
+    const { deviceResponse, config } = deviceInit;
+    const dr = deviceResponse as {
+      user_code: string;
+      verification_uri: string;
+      verification_uri_complete?: string;
+      expires_in?: number;
+    };
+
+    console.log(`  1. Open this URL in your browser:\n`);
+    console.log(`     ${dr.verification_uri_complete ?? dr.verification_uri}\n`);
+    console.log(`  2. Enter the code:  ${dr.user_code}\n`);
+    console.log(`  Waiting for authorization${dr.expires_in ? ` (expires in ${dr.expires_in}s)` : ''}…\n`);
+
+    // Attempt to open the browser automatically
+    try {
+      const { exec } = await import('node:child_process');
+      const openUrl = dr.verification_uri_complete ?? dr.verification_uri;
+      const cmd =
+        process.platform === 'win32'
+          ? `start "" "${openUrl}"`
+          : process.platform === 'darwin'
+          ? `open "${openUrl}"`
+          : `xdg-open "${openUrl}"`;
+      exec(cmd, (err) => {
+        if (err) Logger.debug('[auth] Could not auto-open browser:', err.message);
+      });
+    } catch { /* not critical */ }
+
+    try {
+      const tokens = await pollDeviceFlow(config, deviceResponse);
+
+      // Store token in ~/.code-intel/oidc-token.json (simple OS keychain substitute)
+      const tokenPath = path.join(os.homedir(), '.code-intel', 'oidc-token.json');
+      const tokenData = {
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        server: serverUrl,
+        storedAt: new Date().toISOString(),
+      };
+      fs.mkdirSync(path.dirname(tokenPath), { recursive: true });
+      fs.writeFileSync(tokenPath, JSON.stringify(tokenData, null, 2), { mode: 0o600 });
+
+      console.log(`  ✅  Authenticated successfully!`);
+      console.log(`  Token stored at: ${tokenPath}`);
+      console.log(`  Use CODE_INTEL_TOKEN env var or --token flag to use it with CLI/MCP.\n`);
+    } catch (err) {
+      console.error(`\n  ✗  Authentication failed: ${err instanceof Error ? err.message : err}\n`);
+      process.exit(1);
+    }
+  });
+
+authCmd
+  .command('status')
+  .description('Show the current OIDC authentication status')
+  .action(() => {
+    const tokenPath = path.join(os.homedir(), '.code-intel', 'oidc-token.json');
+    if (!fs.existsSync(tokenPath)) {
+      console.log('\n  Not authenticated via OIDC. Run: code-intel auth login\n');
+      return;
+    }
+    try {
+      const data = JSON.parse(fs.readFileSync(tokenPath, 'utf-8')) as {
+        server?: string;
+        storedAt?: string;
+        accessToken?: string;
+      };
+      console.log(`\n  ✅  OIDC token stored`);
+      console.log(`  Server : ${data.server ?? 'unknown'}`);
+      console.log(`  Stored : ${data.storedAt ?? 'unknown'}`);
+      console.log(`  Token  : ${data.accessToken ? data.accessToken.slice(0, 12) + '…' : 'missing'}`);
+      console.log('');
+    } catch {
+      console.error('\n  ✗  Could not read token file. Try: code-intel auth login\n');
+    }
+  });
+
+authCmd
+  .command('logout')
+  .description('Remove locally stored OIDC token')
+  .action(() => {
+    const tokenPath = path.join(os.homedir(), '.code-intel', 'oidc-token.json');
+    if (fs.existsSync(tokenPath)) {
+      fs.unlinkSync(tokenPath);
+      console.log('\n  ✅  OIDC token removed. You are now logged out.\n');
+    } else {
+      console.log('\n  No stored token found.\n');
+    }
+  });
+
+// ─── auth rotate-token ────────────────────────────────────────────────────────
+authCmd
+  .command('rotate-token <id>')
+  .description('Rotate an API token — issues a new token with the same role/scope; old token works for a 24h grace period')
+  .addHelpText('after', `
+  The original token continues to work for 24 hours after rotation so that
+  running CI pipelines can be updated without an outage.
+
+  Examples:
+    $ code-intel auth rotate-token <token-id>
+`)
+  .action((id: string) => {
+    const db = getOrCreateUsersDB();
+    const tokens = db.listTokens();
+    const old = tokens.find((t) => t.id === id);
+    if (!old) {
+      console.error(`\n  ✗  Token "${id}" not found or already revoked.\n`);
+      process.exit(1);
+    }
+    // Create a replacement with the same config
+    const graceExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    // Schedule revocation of old token after grace period
+    // We encode the intended revocation time in the name so ops teams can audit it.
+    const newName = `${old.name} (rotated ${new Date().toISOString().slice(0, 10)})`;
+    const { token: newToken, rawToken } = db.createToken(
+      newName,
+      old.role,
+      old.expiresAt,
+      old.scopedRepos,
+      old.scopedTools,
+    );
+    // Store the old token id and grace expiry in the secrets store for
+    // the grace-period enforcement hook (checked by authMiddleware below).
+    const graceKey = `rotate-grace:${old.id}`;
+    try {
+      setSecret(graceKey, graceExpiry);
+    } catch {
+      // If secret store fails, still proceed — old token will be revoked immediately
+      db.revokeToken(id);
+    }
+
+    console.log('\n  ✅  Token rotated!\n');
+    console.log(`     OLD token  : ${id} → works until ${graceExpiry} (24h grace period)`);
+    console.log(`     NEW token ID   : ${newToken.id}`);
+    console.log(`     NEW token name : ${newToken.name}`);
+    console.log(`     NEW raw token  : ${rawToken}`);
+    console.log('\n  Save the new token now — it will NOT be shown again!\n');
+    console.log('  Usage: Authorization: Bearer <new-token>\n');
+  });
+
+// ─── 17. secrets ─────────────────────────────────────────────────────────────
+const secretsCmd = program
+  .command('secrets')
+  .description('Manage the encrypted .code-intel/.secrets store (AES-256-GCM)');
+
+secretsCmd
+  .command('set <key> <value>')
+  .description('Store a secret by key')
+  .action((key: string, value: string) => {
+    try {
+      setSecret(key, value);
+      console.log(`\n  ✅  Secret "${key}" stored.\n`);
+    } catch (err) {
+      console.error(`\n  ✗  Failed to store secret: ${err instanceof Error ? err.message : err}\n`);
+      process.exit(1);
+    }
+  });
+
+secretsCmd
+  .command('get <key>')
+  .description('Retrieve a secret by key')
+  .action((key: string) => {
+    try {
+      const value = getSecret(key);
+      if (value === undefined) {
+        console.log(`\n  (no secret named "${key}")\n`);
+      } else {
+        console.log(`\n  ${key}=${value}\n`);
+      }
+    } catch (err) {
+      console.error(`\n  ✗  Failed to read secrets: ${err instanceof Error ? err.message : err}\n`);
+      process.exit(1);
+    }
+  });
+
+secretsCmd
+  .command('delete <key>')
+  .description('Remove a secret by key')
+  .action((key: string) => {
+    try {
+      deleteSecret(key);
+      console.log(`\n  ✅  Secret "${key}" deleted.\n`);
+    } catch (err) {
+      console.error(`\n  ✗  Failed to delete secret: ${err instanceof Error ? err.message : err}\n`);
+      process.exit(1);
+    }
+  });
+
+secretsCmd
+  .command('list')
+  .description('List all stored secret keys (values are not shown)')
+  .action(() => {
+    try {
+      const keys = listSecretKeys();
+      if (keys.length === 0) {
+        console.log('\n  No secrets stored.\n');
+      } else {
+        console.log(`\n  Stored secrets (${keys.length}):\n`);
+        keys.forEach((k) => console.log(`    - ${k}`));
+        console.log('');
+      }
+    } catch (err) {
+      console.error(`\n  ✗  Failed to list secrets: ${err instanceof Error ? err.message : err}\n`);
+      process.exit(1);
+    }
+  });
+
+secretsCmd
+  .command('backend')
+  .description('Show which secret storage backend is active (keytar OS keychain or encrypted file)')
+  .action(async () => {
+    const { backend } = await keychainBackend();
+    console.log(`\n  Backend: ${backend}\n`);
+  });
+
+// ─── 18. config validate ──────────────────────────────────────────────────────
+program
+  .command('config-validate <file>')
+  .description('Validate a JSON config file — rejects plaintext secrets, requires $ENV_VAR references')
+  .addHelpText('after', `
+  Any secret-bearing key (password, api_key, client_secret, etc.) must reference
+  an environment variable using $ENV_VAR or \${ENV_VAR} syntax.
+
+  Examples:
+    $ code-intel config-validate ./config.json
+    $ code-intel config-validate ~/.code-intel/config.json
+`)
+  .action((file: string) => {
+    const filePath = path.resolve(file);
+    if (!fs.existsSync(filePath)) {
+      console.error(`\n  ✗  File not found: ${filePath}\n`);
+      process.exit(1);
+    }
+    let cfg: unknown;
+    try {
+      cfg = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    } catch (err) {
+      console.error(`\n  ✗  Could not parse JSON: ${err instanceof Error ? err.message : err}\n`);
+      process.exit(1);
+    }
+    try {
+      assertNoPlaintextSecrets(cfg, file);
+      console.log(`\n  ✅  ${file} — no plaintext secrets found.\n`);
+    } catch (err) {
+      console.error(`\n${err instanceof Error ? err.message : err}\n`);
+      process.exit(1);
+    }
+  });
+
+// ─── ensure .code-intel/ has correct permissions at startup ──────────────────
+(function ensurePermissions() {
+  try {
+    const dir = path.join(os.homedir(), '.code-intel');
+    secureMkdir(dir);
+    tightenDbFiles(dir);
+  } catch {
+    /* non-fatal */
+  }
+})();
 
 program.parse();

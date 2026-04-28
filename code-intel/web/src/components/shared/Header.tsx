@@ -9,6 +9,13 @@ interface Props {
   aiOpen: boolean;
 }
 
+const ROLE_COLORS: Record<string, string> = {
+  admin: 'text-red-400 border-red-700/50 bg-red-900/20',
+  analyst: 'text-cyan-400 border-cyan-700/50 bg-cyan-900/20',
+  viewer: 'text-gray-400 border-gray-700/50 bg-gray-800/30',
+  'repo-owner': 'text-indigo-400 border-indigo-700/50 bg-indigo-900/20',
+};
+
 export function Header({ onToggleAI, aiOpen }: Props) {
   const { state, dispatch } = useAppState();
   const [query, setQuery] = useState('');
@@ -16,7 +23,10 @@ export function Header({ onToggleAI, aiOpen }: Props) {
   const [vectorMode, setVectorMode] = useState(false);
   const [vectorReady, setVectorReady] = useState<boolean | null>(null);
   const [searching, setSearching] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const userMenuRef = useRef<HTMLDivElement>(null);
 
   // Poll vector status
   useEffect(() => {
@@ -39,11 +49,22 @@ export function Header({ onToggleAI, aiOpen }: Props) {
         inputRef.current?.focus();
         setOpen(true);
       }
-      if (e.key === 'Escape') setOpen(false);
+      if (e.key === 'Escape') { setOpen(false); setUserMenuOpen(false); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+
+  // Close user menu on outside click
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setUserMenuOpen(false);
+      }
+    };
+    if (userMenuOpen) document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [userMenuOpen]);
 
   const handleSearch = async (q: string) => {
     if (!q.trim()) { setOpen(false); return; }
@@ -65,6 +86,23 @@ export function Header({ onToggleAI, aiOpen }: Props) {
       setSearching(false);
     }
   };
+
+  const handleLogout = async () => {
+    setLoggingOut(true);
+    try {
+      const client = new ApiClient(state.serverUrl);
+      await client.logout();
+    } catch { /* ignore */ } finally {
+      dispatch({ type: 'SET_CURRENT_USER', user: null });
+      dispatch({ type: 'SET_CONNECTED', connected: false });
+      dispatch({ type: 'SET_GRAPH', nodes: [], edges: [] });
+      dispatch({ type: 'SET_VIEW', view: 'login' });
+      setLoggingOut(false);
+      setUserMenuOpen(false);
+    }
+  };
+
+  const user = state.currentUser;
 
   return (
     <div className="h-12 bg-[#0a0a0f] border-b border-gray-800 flex items-center px-4 gap-4 relative z-30">
@@ -182,6 +220,66 @@ export function Header({ onToggleAI, aiOpen }: Props) {
         <span>✦</span>
         Code AI
       </button>
+
+      {/* User menu */}
+      {user && (
+        <div className="relative" ref={userMenuRef}>
+          <button
+            onClick={() => setUserMenuOpen((o) => !o)}
+            className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-gray-800 border border-gray-700/60 transition"
+          >
+            {/* Avatar */}
+            <div className="w-6 h-6 rounded-full bg-gradient-to-br from-cyan-600 to-blue-600 flex items-center justify-center text-white text-xs font-bold select-none">
+              {user.username.charAt(0).toUpperCase()}
+            </div>
+            <span className="text-sm text-gray-200 max-w-[80px] truncate">{user.username}</span>
+            <span className={`text-[9px] px-1.5 py-0.5 rounded border font-mono ${ROLE_COLORS[user.role] ?? ROLE_COLORS['viewer']}`}>
+              {user.role}
+            </span>
+            <svg className={`w-3 h-3 text-gray-500 transition-transform ${userMenuOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+
+          {/* Dropdown */}
+          {userMenuOpen && (
+            <div className="absolute right-0 top-full mt-1 w-52 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl py-1 z-50">
+              {/* User info */}
+              <div className="px-4 py-2.5 border-b border-gray-800">
+                <p className="text-sm text-white font-semibold">{user.username}</p>
+                <p className="text-xs text-gray-500 mt-0.5 capitalize">{user.role}</p>
+              </div>
+              {/* Switch repo */}
+              <button
+                onClick={() => {
+                  setUserMenuOpen(false);
+                  dispatch({ type: 'SET_CONNECTED', connected: false });
+                  dispatch({ type: 'SET_VIEW', view: 'connect' });
+                }}
+                className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition flex items-center gap-2"
+              >
+                <span className="text-gray-500">⬡</span>
+                Switch Repository
+              </button>
+              {/* Logout */}
+              <button
+                onClick={handleLogout}
+                disabled={loggingOut}
+                className="w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-red-950/30 hover:text-red-300 transition flex items-center gap-2 disabled:opacity-50"
+              >
+                {loggingOut ? (
+                  <span className="animate-spin inline-block text-xs">⟳</span>
+                ) : (
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                  </svg>
+                )}
+                {loggingOut ? 'Signing out…' : 'Sign out'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

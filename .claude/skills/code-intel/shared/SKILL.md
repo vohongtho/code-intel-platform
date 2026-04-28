@@ -1,17 +1,17 @@
 ---
 name: shared
-description: "Covers the **shared** subsystem of code-intel-platform. 12 symbols across 3 files. Key symbols: `Header`, `KeyboardShortcutsModal`, `StatusFooter`. Internal call density: 0 calls/symbol."
+description: "Covers the **shared** subsystem of code-intel-platform. 25 symbols across 7 files. Key symbols: `detectLanguage`, `getSupportedExtensions`. Internal call density: 0.4 calls/symbol."
 ---
 
 # shared
 
-> **12 symbols** | **3 files** | path: `code-intel/web/src/components/shared/` | call density: 0/sym
+> **25 symbols** | **7 files** | path: `code-intel/core/src/shared/` | call density: 0.4/sym
 
 ## When to Use
 
 Load this skill when:
-- The task involves code in `code-intel/web/src/components/shared/`
-- The user mentions `Header`, `KeyboardShortcutsModal`, `StatusFooter` or asks how they work
+- The task involves code in `code-intel/core/src/shared/`
+- The user mentions `detectLanguage`, `getSupportedExtensions` or asks how they work
 - Adding, modifying, or debugging shared-related functionality
 - Tracing call chains that pass through the shared layer
 
@@ -19,17 +19,20 @@ Load this skill when:
 
 | File | Symbols | Notes |
 |------|---------|-------|
-| `code-intel/web/src/components/shared/KeyboardShortcutsModal.tsx` | `KeyboardShortcutsModalProps`, `ShortcutEntry`, `ShortcutGroup`, `KeyboardShortcutsModal` +(2) | 1 exported |
-| `code-intel/web/src/components/shared/Header.tsx` | `Props`, `Header`, `check`, `onKey` +(1) | 1 exported |
-| `code-intel/web/src/components/shared/StatusFooter.tsx` | `StatusFooter` | 1 exported |
+| `code-intel/core/src/shared/config-validator.ts` | `ConfigValidationError`, `ConfigValidationResult`, `isSecretKey`, `looksLikeEnvRef` +(5) | 5 exported |
+| `code-intel/core/src/shared/logger.ts` | `getActiveTraceCtx`, `Logger`, `maskString`, `deepMask` +(1) | internal |
+| `code-intel/core/src/shared/fs-secure.ts` | `secureMkdir`, `secureChmodFile`, `secureWriteFile`, `tightenDbFiles` | 4 exported |
+| `code-intel/core/src/shared/detection.ts` | `detectLanguage`, `getSupportedExtensions` | 2 exported |
+| `code-intel/core/src/shared/graph-types.ts` | `CodeNode`, `CodeEdge` | 2 exported |
+| `code-intel/core/src/shared/pipeline-types.ts` | `PipelineProgress`, `PipelineResult` | 2 exported |
+| `code-intel/core/src/shared/languages.ts` | `Language` | 1 exported |
 
 ## Entry Points
 
 Start exploration here — exported symbols with no external callers:
 
-- **`Header`** `(function)` → `code-intel/web/src/components/shared/Header.tsx:12`
-- **`KeyboardShortcutsModal`** `(function)` → `code-intel/web/src/components/shared/KeyboardShortcutsModal.tsx:43`
-- **`StatusFooter`** `(function)` → `code-intel/web/src/components/shared/StatusFooter.tsx:8`
+- **`detectLanguage`** `(function)` → `code-intel/core/src/shared/detection.ts:33`
+- **`getSupportedExtensions`** `(function)` → `code-intel/core/src/shared/detection.ts:38`
 
 ## Hot Symbols
 
@@ -37,18 +40,18 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `check` | function | 1 | 1 | `shared/Header.tsx` |
-| `handleSearch` | function | 1 | 1 | `shared/Header.tsx` |
-| `StatusFooter` | function | 0 | 2 | `shared/StatusFooter.tsx` |
-| `Props` | interface | 0 | 0 | `shared/Header.tsx` |
-| `Header` | function | 0 | 0 | `shared/Header.tsx` |
-| `onKey` | function | 0 | 0 | `shared/Header.tsx` |
-| `KeyboardShortcutsModalProps` | interface | 0 | 0 | `shared/KeyboardShortcutsModal.tsx` |
-| `ShortcutEntry` | interface | 0 | 0 | `shared/KeyboardShortcutsModal.tsx` |
-| `ShortcutGroup` | interface | 0 | 0 | `shared/KeyboardShortcutsModal.tsx` |
-| `KeyboardShortcutsModal` | function | 0 | 0 | `shared/KeyboardShortcutsModal.tsx` |
-| `handleKeyDown` | function | 0 | 0 | `shared/KeyboardShortcutsModal.tsx` |
-| `handleOverlayClick` | function | 0 | 0 | `shared/KeyboardShortcutsModal.tsx` |
+| `resolve` | function | 33 | 1 | `shared/config-validator.ts` |
+| `secureMkdir` | function | 5 | 0 | `shared/fs-secure.ts` |
+| `assertNoPlaintextSecrets` | function | 3 | 1 | `shared/config-validator.ts` |
+| `secureChmodFile` | function | 4 | 0 | `shared/fs-secure.ts` |
+| `secureWriteFile` | function | 2 | 2 | `shared/fs-secure.ts` |
+| `validateConfigForSecrets` | function | 2 | 1 | `shared/config-validator.ts` |
+| `walk` | function | 1 | 2 | `shared/config-validator.ts` |
+| `looksLikeEnvRef` | function | 2 | 0 | `shared/config-validator.ts` |
+| `resolveConfigEnvRefs` | function | 1 | 1 | `shared/config-validator.ts` |
+| `tightenDbFiles` | function | 2 | 0 | `shared/fs-secure.ts` |
+| `maskString` | function | 2 | 0 | `shared/logger.ts` |
+| `deepMask` | function | 1 | 1 | `shared/logger.ts` |
 
 ## Impact Guidance
 
@@ -61,9 +64,9 @@ Before modifying any symbol in this area:
 
 ```bash
 # Inspect most-connected symbol
-code-intel inspect check
+code-intel inspect resolve
 # Blast radius for entry point
-code-intel impact Header
+code-intel impact detectLanguage
 # Search this area
 code-intel search "shared"
 ```

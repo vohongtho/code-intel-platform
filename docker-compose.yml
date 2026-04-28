@@ -1,0 +1,40 @@
+version: '3.9'
+
+services:
+  code-intel:
+    image: ghcr.io/vohongtho/code-intel:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: code-intel
+    ports:
+      - "4747:4747"
+    volumes:
+      # Mount source code to analyze (read-only)
+      - ${REPO_PATH:-./}:/data:ro
+      # Persist index and user data
+      - code-intel-data:/home/codeuser/.code-intel
+    environment:
+      - NODE_ENV=production
+      - PORT=4747
+      # Optional: customize session TTL (hours)
+      - CODE_INTEL_SESSION_TTL_HOURS=${CODE_INTEL_SESSION_TTL_HOURS:-8}
+      # Optional: allowed CORS origins (comma-separated)
+      - CODE_INTEL_CORS_ORIGINS=${CODE_INTEL_CORS_ORIGINS:-http://localhost:4747}
+      # Optional: backup encryption key (64 hex chars = 256 bits)
+      - CODE_INTEL_BACKUP_KEY=${CODE_INTEL_BACKUP_KEY:-}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:4747/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    read_only: false
+    user: "1001:1001"
+
+volumes:
+  code-intel-data:
+    driver: local

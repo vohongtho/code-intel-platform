@@ -1,11 +1,11 @@
 ---
 name: pipeline
-description: "Covers the **pipeline** subsystem of code-intel-platform. 10 symbols across 3 files. Key symbols: `runPipeline`, `validateDAG`, `dfs`. Internal call density: 0.2 calls/symbol."
+description: "Covers the **pipeline** subsystem of code-intel-platform. 12 symbols across 3 files. Key symbols: `runPipeline`, `validateDAG`, `dfs`. Internal call density: 0.2 calls/symbol."
 ---
 
 # pipeline
 
-> **10 symbols** | **3 files** | path: `code-intel/core/src/pipeline/` | call density: 0.2/sym
+> **12 symbols** | **3 files** | path: `code-intel/core/src/pipeline/` | call density: 0.2/sym
 
 ## When to Use
 
@@ -20,8 +20,8 @@ Load this skill when:
 | File | Symbols | Notes |
 |------|---------|-------|
 | `code-intel/core/src/pipeline/dag-validator.ts` | `ValidationError`, `validateDAG`, `dfs`, `topologicalSort` +(1) | 3 exported |
+| `code-intel/core/src/pipeline/orchestrator.ts` | `PipelineRunResult`, `runPipeline`, `runPhase`, `durationSec` | 2 exported |
 | `code-intel/core/src/pipeline/types.ts` | `PhaseResult`, `PipelineContext`, `Phase` | 3 exported |
-| `code-intel/core/src/pipeline/orchestrator.ts` | `PipelineRunResult`, `runPipeline` | 2 exported |
 
 ## Hot Symbols
 
@@ -29,13 +29,15 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `runPipeline` | function | 2 | 2 | `pipeline/orchestrator.ts` |
+| `runPipeline` | function | 3 | 2 | `pipeline/orchestrator.ts` |
 | `validateDAG` | function | 2 | 1 | `pipeline/dag-validator.ts` |
 | `dfs` | function | 1 | 2 | `pipeline/dag-validator.ts` |
 | `topologicalSort` | function | 2 | 0 | `pipeline/dag-validator.ts` |
+| `runPhase` | function | 1 | 0 | `pipeline/orchestrator.ts` |
 | `ValidationError` | interface | 0 | 0 | `pipeline/dag-validator.ts` |
 | `newDegree` | function | 0 | 0 | `pipeline/dag-validator.ts` |
 | `PipelineRunResult` | interface | 0 | 0 | `pipeline/orchestrator.ts` |
+| `durationSec` | function | 0 | 0 | `pipeline/orchestrator.ts` |
 | `PhaseResult` | interface | 0 | 0 | `pipeline/types.ts` |
 | `PipelineContext` | interface | 0 | 0 | `pipeline/types.ts` |
 | `Phase` | interface | 0 | 0 | `pipeline/types.ts` |

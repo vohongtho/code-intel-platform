@@ -1,6 +1,6 @@
 ---
 name: eval
-description: "Covers the **eval** subsystem of code-intel-platform. 25 symbols across 6 files. Key symbols: `col`, `readFile`, `baselineAnswer`. Internal call density: 0.4 calls/symbol."
+description: "Covers the **eval** subsystem of code-intel-platform. 25 symbols across 6 files. Key symbols: `run`, `col`, `readFile`. Internal call density: 0.4 calls/symbol."
 ---
 
 # eval
@@ -11,7 +11,7 @@ description: "Covers the **eval** subsystem of code-intel-platform. 25 symbols a
 
 Load this skill when:
 - The task involves code in `eval/`
-- The user mentions `col`, `readFile`, `baselineAnswer` or asks how they work
+- The user mentions `run`, `col`, `readFile` or asks how they work
 - Adding, modifying, or debugging eval-related functionality
 - Tracing call chains that pass through the eval layer
 
@@ -32,6 +32,7 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
+| `run` | function | 6 | 0 | `eval/run-eval.mjs` |
 | `col` | function | 1 | 3 | `eval/run-agent-bench.mjs` |
 | `readFile` | function | 3 | 0 | `eval/run-agent-bench.mjs` |
 | `baselineAnswer` | function | 1 | 2 | `eval/run-agent-bench.mjs` |
@@ -43,7 +44,6 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | `blockCount` | function | 0 | 2 | `eval/run-eval.mjs` |
 | `grepFile` | function | 1 | 0 | `eval/run-agent-bench.mjs` |
 | `score` | function | 1 | 0 | `eval/run-agent-bench.mjs` |
-| `runCLI` | function | 1 | 0 | `eval/run-eval-langs.mjs` |
 
 ## Impact Guidance
 
@@ -56,9 +56,9 @@ Before modifying any symbol in this area:
 
 ```bash
 # Inspect most-connected symbol
-code-intel inspect col
+code-intel inspect run
 # Blast radius for entry point
-code-intel impact col
+code-intel impact run
 # Search this area
 code-intel search "eval"
 ```

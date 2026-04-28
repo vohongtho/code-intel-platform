@@ -4,6 +4,131 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [0.2.0] — 2026-04-28 — Platform Foundations
+
+> **Theme:** Make the platform safe, operable, and governable.  
+> All networked deployments require this release or later.
+
+### 🔐 Security & Authentication
+
+#### Authentication
+- **Local account system** (`~/.code-intel/users.db`): `code-intel user create/list/delete/reset-password/set-role`
+- **Session management**: HTTP-only cookies, configurable TTL (default 8h), refresh token rotation, CSRF double-submit cookie protection
+- **First-run bootstrap**: prompts to create admin if no users exist; `autoLoginOnLocalhost` dev shortcut
+- **API tokens**: SHA-256 hashed, `--expires`, `--repos`, `--tools` scoping; revocation takes effect immediately; `CODE_INTEL_TOKEN` env var for MCP
+- **OIDC / OAuth2**: `openid-client` integration; supports GitHub, GitLab, Google, Okta, Azure AD; PKCE, auto-provisioning, device flow CLI (`code-intel auth login`), refresh rotation, fallback to local accounts
+- **RBAC**: roles `admin | analyst | viewer | repo-owner`; `requireRole`, `requireRepoAccess`, `requireToolScope` Express middleware; audit log on every auth check
+
+#### Transport Security
+- `helmet`: CSP, HSTS, X-Frame-Options, X-Content-Type-Options
+- CORS: configurable `CODE_INTEL_CORS_ORIGINS` (no `*` in production)
+- CSRF: `csrf-csrf` middleware on all state-changing routes
+- WebSocket: session token required in handshake
+- Payload cap: `express.json({ limit: '1mb' })` → 413 on oversize
+- Rate limiting: per-IP (100 req/15min) + per-token (1000 req/15min) via `express-rate-limit`
+- TLS reverse proxy guidance: `docs/tls-guidance.md` (nginx + Caddy examples)
+
+#### Secrets & Encryption
+- Config validation: rejects plaintext secrets; requires `$ENV_VAR` syntax
+- `keytar` OS keychain integration for CLI token storage; graceful fallback to AES-256-GCM encrypted file (`src/auth/secret-store.ts`, scrypt KDF)
+- `code-intel auth rotate-token` with 24h grace period
+- `chmod 700 .code-intel/` + `chmod 600 *.db` enforced at startup
+- Sensitive-data masking extended to stack traces and OTel spans
+- Encryption-at-rest guidance: `docs/encryption-at-rest.md` (LUKS, fscrypt, APFS, BitLocker, S3 SSE, SQLCipher roadmap)
+
+---
+
+### 📊 Observability
+
+- **Prometheus metrics** (`/metrics`): counters `http_requests_total`, `pipeline_analyses_total`, `mcp_tool_calls_total`; histograms `http_request_duration_seconds`, `pipeline_phase_duration_seconds`; gauges `pipeline_nodes_total`, `job_queue_depth`, `process_heap_bytes`
+- **Grafana dashboard**: `docs/grafana-dashboard.json`
+- **Alert rules**: `docs/alert-rules.yml` — HighHTTPErrorRate, HighHeapUsage, CriticalHeapUsage, StaleIndex, HighAuthFailureRate, HighRateLimitHits, GraphSizeDrop
+- **OpenTelemetry tracing**: `@opentelemetry/sdk-node` + auto-instrumentation; OTLP exporter; `withSpan` wrapping all HTTP requests, pipeline phases, MCP tool calls; `sanitizeAttrs` strips secrets from span attributes; opt-in via `CODE_INTEL_OTEL_ENABLED=true`
+- **Log correlation**: every log line includes `traceId` + `spanId` from active OTel span; `X-Request-ID` header on every response
+- **Health endpoints**: `/health/live`, `/health/ready` (503 when index not ready), `/health/startup`, `/api/v1/health` (detailed: nodes, edges, memory, timestamp)
+- **Audit log**: every authenticated request written to `users.db` (userId, resource, action, outcome, IP); `/health/*` and `/metrics` excluded
+
+---
+
+### 💾 Backup & Recovery
+
+- `BackupService`: AES-256-GCM encrypted archives of `graph.db`, `vector.db`, `meta.json`, registry, `users.db`; SHA-256 manifest per backup
+- `code-intel backup create / list / restore <id>`
+- S3 upload support (`CODE_INTEL_BACKUP_S3_*` env vars)
+- Automated schedule via cron config (default: daily 2am, `CODE_INTEL_BACKUP_SCHEDULE_*`)
+- Retention policy: 7 daily, 4 weekly, 12 monthly
+- Data deletion: `code-intel clean` — 30-day soft-delete to `.code-intel-trash-{date}/`; `--purge` for hard-delete
+- AI governance: opt-in LLM call log (`CODE_INTEL_GOVERNANCE_LOGGING=true`); no raw source code recorded — model, userId, purpose, token counts only
+- DR runbook: `docs/runbooks/disaster-recovery.md` (RTO < 30 min)
+
+---
+
+### 🔁 Reliability
+
+- **Atomic index swap**: writes to `graph.db.new` → renames on success; failed analysis leaves existing DB untouched; `indexVersion` UUID in `meta.json` + `X-Index-Version` response header
+- **Durable job model** (`jobs.db`): state machine `pending → running → success | failed | cancelled`; survives process restart; exponential backoff retries (3 attempts: 5s/30s/120s); dead-letter queue; idempotent submission; stuck-job detection (> 30min → auto-fail); `GET /api/v1/jobs`, `DELETE /api/v1/jobs/:id`
+- **Schema versioning**: `schemaVersion` in `meta.json`; ordered idempotent `up()/down()` migration runner; auto-backup before every migration; `code-intel migrate --dry-run / --status / --rollback`
+
+---
+
+### 🔌 API Stability & Error Model
+
+- All routes renamed to `/api/v1/...`; old `/api/...` → 301 redirect
+- OpenAPI 3.1 spec at `GET /api/v1/openapi.json`; Swagger UI at `/api/v1/docs` (dev only)
+- `CI-XXXX` error code registry: CI-1000 (Unauthorized), CI-1001 (Forbidden), CI-1002 (Not found), CI-1042 (DB corrupt), CI-1100 (Rate limit)
+- `AppError` class: `{ code, message, hint, requestId, timestamp, docs }`
+- Global error handler: all errors → `AppError` JSON; no stack traces in API responses
+
+---
+
+### 🧪 Testing
+
+- Unit test coverage ≥ 80% (`c8`); auth module 100% path coverage
+- Parser regression corpus: `tests/parser-corpus/` with TypeScript + Python golden files; CI gate prevents recall regression
+- Integration tests: all HTTP routes and auth paths
+- **End-to-end test suite**: `tests/integration/e2e/e2e.test.ts` — full lifecycle in-process: analyze → serve → query → backup → restore
+- Security tests: OWASP Top 10 automated — auth bypass, path traversal, XSS, regex injection, query injection, payload size, CORS, CSRF, sensitive data leak
+- `npm audit --audit-level=high --omit=dev` gate enforced in CI; 0 vulnerabilities
+
+---
+
+### 🚀 Deployment & CI/CD
+
+- `Dockerfile`: Node 22 Alpine, multi-stage, non-root user (uid=1001), `HEALTHCHECK` via `wget`
+- `docker-compose.yml`: self-hosted setup with volume mounts, env vars, `no-new-privileges`
+- **Multi-arch image**: `linux/amd64` + `linux/arm64`
+- **Published to GHCR**: `ghcr.io/vohongtho/code-intel`
+- **Image scanning**: Trivy CRITICAL CVE gate; SARIF results uploaded to GitHub Security tab
+- **Image signing**: keyless cosign signing via Sigstore OIDC on every release
+- **CI/CD pipeline**: typecheck → unit tests → npm audit → license gate → publish npm (with provenance) → build + push multi-arch image → Trivy scan → cosign sign → GitHub Release with CycloneDX SBOM + auto-generated release notes
+- **Dependabot**: weekly npm + GitHub Actions dependency updates
+- **License gate**: blocks GPL/AGPL/LGPL/CPAL dependencies in CI
+
+---
+
+### 📚 Operational Runbooks
+
+All runbooks in `docs/runbooks/`:
+
+- `disaster-recovery.md` — full data loss recovery; RTO < 30 min
+- `stale-wal-cleanup.md` — SQLite WAL growth; safe + forced cleanup procedures
+- `index-drift.md` — stale index detection; incremental and forced re-index; Prometheus alert rule
+- `llm-outage.md` — embedding failures; automatic BM25 text-search fallback; offline model cache
+- `memory-exhaustion.md` — OOM diagnosis; heap tuning; `.codeintelignore` mitigation
+- `stuck-job.md` — long-running jobs; cancellation via API and database; root-cause reference table
+- `bad-release-rollback.md` — rollback to a previous npm version + schema; target < 15 min
+- `auth-provider-outage.md` — corrupted users database; session loss; token recreation; break-glass access
+
+---
+
+### 🔧 Other Changes
+
+- **`.env.example`** — all `CODE_INTEL_*` environment variables documented with defaults, generation commands, and security guidance
+- **Dependency upgrades**: `bcrypt` 5→6, `uuid` <14→14 — resolves 3 high CVEs (tar path traversal) and 1 moderate CVE (buffer bounds); `npm audit` clean
+- **Docker fix**: changed `codeuser` to uid/gid 1001 to avoid conflict with the built-in `node` user in `node:22-alpine`
+
+---
+
 ## [Unreleased] — 2026-04-27
 
 ### 🐛 Bug Fixes

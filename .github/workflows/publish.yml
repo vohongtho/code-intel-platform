@@ -5,19 +5,55 @@ on:
     tags:
       - 'v*.*.*'
 
+# Permissions required across all jobs (jobs can restrict further)
+permissions:
+  contents: write        # create GitHub releases + upload SBOM
+  packages: write        # push image to GHCR
+  id-token: write        # cosign keyless signing + npm provenance
+  security-events: write # upload Trivy SARIF to GitHub Security tab
+
 jobs:
-  build-and-publish:
+  # ── 1. Validate: typecheck, tests, audits ──────────────────────────────────
+  validate:
+    name: Validate
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write   # needed for provenance attestation
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Typecheck (shared + core + web)
+        run: npx tsc -b code-intel/shared code-intel/core code-intel/web
+
+      - name: Unit tests
+        run: npm test --workspace=code-intel/core
+
+      - name: npm audit — 0 high/critical CVEs (production deps only)
+        run: npm audit --audit-level=high --omit=dev
+
+      - name: License audit — no GPL-incompatible deps
+        run: |
+          npx --yes license-checker \
+            --production \
+            --excludePrivatePackages \
+            --failOn "GPL-2.0;GPL-3.0;AGPL-1.0;AGPL-3.0;LGPL-2.0;LGPL-2.1;LGPL-3.0;CPAL-1.0" \
+          || (echo "❌ GPL-incompatible license detected — review output above." && exit 1)
+
+  # ── 2. Publish npm (with provenance attestation) ───────────────────────────
+  publish-npm:
+    name: Publish npm
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: 'npm'
@@ -26,55 +62,209 @@ jobs:
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
 
-      - name: Typecheck (shared + core)
-        run: npx tsc -b code-intel/shared code-intel/core
-
-      - name: Typecheck (web)
-        run: npx tsc -b code-intel/web
-
-      - name: Run tests
-        run: npm test --workspace=code-intel/core
-
       - name: Build core
         run: npm run build --workspace=code-intel/core
 
       - name: Build web
         run: npm run build --workspace=code-intel/web
 
-      - name: Publish to npm
-        run: npm publish --workspace=code-intel/core --access public
+      - name: Publish to npm (with provenance)
+        run: npm publish --workspace=code-intel/core --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+  # ── 3. Build & push multi-arch Docker image to GHCR ───────────────────────
+  publish-docker:
+    name: Build & Push Docker (multi-arch)
+    needs: validate
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+      image: ghcr.io/vohongtho/code-intel
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU (ARM emulation)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/vohongtho/code-intel
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest
+
+      - name: Build and push (linux/amd64 + linux/arm64)
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true   # generate build provenance attestation
+          sbom: false        # SBOM generated separately via CycloneDX below
+
+  # ── 4. Trivy image scan — block on CRITICAL CVEs ──────────────────────────
+  scan-image:
+    name: Trivy Image Scan
+    needs: publish-docker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Produce SARIF for the GitHub Security tab (CRITICAL + HIGH, no fail)
+      - name: Trivy — SARIF report (CRITICAL + HIGH)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '${{ needs.publish-docker.outputs.image }}@${{ needs.publish-docker.outputs.digest }}'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          exit-code: '0'
+
+      - name: Upload Trivy SARIF to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      # Gate: fail the job on any CRITICAL CVE
+      - name: Trivy — gate on CRITICAL CVEs
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '${{ needs.publish-docker.outputs.image }}@${{ needs.publish-docker.outputs.digest }}'
+          format: 'table'
+          severity: 'CRITICAL'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          exit-code: '1'
+
+  # ── 5. Sign image with cosign (keyless, Sigstore OIDC) ────────────────────
+  sign-image:
+    name: Sign Docker Image
+    needs: [publish-docker, scan-image]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Keyless signing: identity bound to this GitHub Actions workflow OIDC token
+      - name: Sign image
+        run: |
+          cosign sign --yes \
+            '${{ needs.publish-docker.outputs.image }}@${{ needs.publish-docker.outputs.digest }}'
+
+  # ── 6. GitHub Release: SBOM (CycloneDX) + auto release notes ─────────────
+  release:
+    name: GitHub Release
+    needs: [publish-npm, sign-image]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # needed for accurate release notes
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Generate CycloneDX SBOM
+        run: |
+          npx --yes @cyclonedx/cyclonedx-npm \
+            --package-lock-only \
+            --output-format JSON \
+            --output-file sbom-${{ github.ref_name }}.cdx.json
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: sbom-${{ github.ref_name }}.cdx.json
+          body: |
+            ## 🐳 Docker Image
+
+            ```bash
+            docker pull ghcr.io/vohongtho/code-intel:${{ github.ref_name }}
+            ```
+
+            **Verify signature (cosign keyless):**
+            ```bash
+            cosign verify ghcr.io/vohongtho/code-intel:${{ github.ref_name }} \
+              --certificate-identity-regexp="https://github.com/vohongtho/code-intel-platform/.github/workflows/publish.yml" \
+              --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
+            ```
+
+            ## 📦 npm Package
+
+            ```bash
+            npm install @vohongtho.infotech/code-intel@${{ github.ref_name }}
+            ```
+
+            ## 🗂 SBOM
+
+            A CycloneDX JSON SBOM is attached to this release (`sbom-${{ github.ref_name }}.cdx.json`).
+
+  # ── 7. Notify ──────────────────────────────────────────────────────────────
   notify:
     name: Discord Notification
-    needs: build-and-publish
+    needs: release
     runs-on: ubuntu-latest
     if: always()
     steps:
       - name: Discord notification (success)
-        if: ${{ needs.build-and-publish.result == 'success' }}
+        if: ${{ needs.release.result == 'success' }}
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         run: |
           curl -H "Content-Type: application/json" \
             -d "{\"embeds\": [{
-              \"title\": \"📦 code-intel ${{ github.ref_name }} published to npm!\",
-              \"description\": \"**Package:** \`@vohongtho.infotech/code-intel\`\n**Version:** \`${{ github.ref_name }}\`\n\n[View on npm](https://www.npmjs.com/package/@vohongtho.infotech/code-intel)\n[View Release](${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ github.ref_name }})\",
+              \"title\": \"📦 code-intel ${{ github.ref_name }} published!\",
+              \"description\": \"**npm:** \`@vohongtho.infotech/code-intel@${{ github.ref_name }}\`\n**Docker:** \`ghcr.io/vohongtho/code-intel:${{ github.ref_name }}\`\n\n[View Release](${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ github.ref_name }})\",
               \"color\": 5763719,
               \"footer\": {\"text\": \"Triggered by ${{ github.actor }}\"}
             }]}" \
             $DISCORD_WEBHOOK
 
       - name: Discord notification (failure)
-        if: ${{ needs.build-and-publish.result == 'failure' }}
+        if: ${{ needs.release.result != 'success' }}
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         run: |
           curl -H "Content-Type: application/json" \
             -d "{\"embeds\": [{
               \"title\": \"❌ code-intel ${{ github.ref_name }} publish failed\",
-              \"description\": \"**Package:** \`@vohongtho.infotech/code-intel\`\n**Tag:** \`${{ github.ref_name }}\`\n\n[View Logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})\",
+              \"description\": \"**Tag:** \`${{ github.ref_name }}\`\n\n[View Logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})\",
               \"color\": 15158332,
               \"footer\": {\"text\": \"Triggered by ${{ github.actor }}\"}
             }]}" \
