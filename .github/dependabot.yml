@@ -1,0 +1,32 @@
+version: 2
+updates:
+  # npm workspaces — weekly security + dependency updates
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+    groups:
+      # Group minor/patch bumps for each workspace to reduce PR noise
+      shared-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+        applies-to: version-updates
+
+  # GitHub Actions — keep action versions fresh
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "github-actions"
