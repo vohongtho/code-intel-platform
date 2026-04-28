@@ -5,6 +5,8 @@ export interface IndexMetadata {
   indexedAt: string;
   indexVersion?: string;   // UUID, bumped on every successful analysis
   commitHash?: string;
+  /** Parser used during analysis: 'tree-sitter' | 'regex' */
+  parser?: 'tree-sitter' | 'regex';
   stats: {
     nodes: number;
     edges: number;

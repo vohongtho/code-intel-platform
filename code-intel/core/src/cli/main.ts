@@ -243,6 +243,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
   saveMetadata(workspaceRoot, {
     indexedAt: new Date().toISOString(),
     indexVersion,
+    parser: context.parserUsed ?? 'regex',
     stats: {
       nodes: graph.size.nodes,
       edges: graph.size.edges,
@@ -572,15 +573,23 @@ program
 
     if (existingIndex) {
       // Load graph from persisted DB — no re-analysis needed
-      console.log(`Loading index: ${workspaceRoot}`);
+      // 1.1: Warn + re-analyze if old regex index
       const meta = loadMetadata(workspaceRoot)!;
-      console.log(`  ◈  ${meta.stats.nodes} nodes · ${meta.stats.edges} edges · ${meta.stats.files} files  (indexed ${meta.indexedAt})`);
-      const graph = createKnowledgeGraph();
-      const db = new DbManager(dbPath);
-      await db.init();
-      await loadGraphFromDB(graph, db);
-      db.close();
-      startHttpServer(graph, repoName, parseInt(options.port, 10), workspaceRoot);
+      if (meta.parser === 'regex' || meta.parser === undefined) {
+        Logger.warn(`  [serve] Index was built with regex parser — running full re-analysis to upgrade to tree-sitter`);
+        console.log(`Re-analyzing with tree-sitter parser: ${workspaceRoot}`);
+        const { graph: newGraph, workspaceRoot: root, repoName: name } = await analyzeWorkspace(targetPath, { force: true });
+        startHttpServer(newGraph, name, parseInt(options.port, 10), root);
+      } else {
+        console.log(`Loading index: ${workspaceRoot}`);
+        console.log(`  ◈  ${meta.stats.nodes} nodes · ${meta.stats.edges} edges · ${meta.stats.files} files  (indexed ${meta.indexedAt})`);
+        const graph = createKnowledgeGraph();
+        const db = new DbManager(dbPath);
+        await db.init();
+        await loadGraphFromDB(graph, db);
+        db.close();
+        startHttpServer(graph, repoName, parseInt(options.port, 10), workspaceRoot);
+      }
     } else {
       // No index or --force: run full analysis then serve
       const { graph, workspaceRoot: root, repoName: name } = await analyzeWorkspace(targetPath, { force: options.force });

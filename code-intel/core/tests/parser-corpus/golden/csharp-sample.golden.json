@@ -1,0 +1,16 @@
+{
+  "language": "C#",
+  "fixture": "csharp-sample.cs",
+  "description": "Canonical C# symbol extraction baseline.",
+  "expectedSymbols": [
+    { "kind": "class",     "name": "UserService",     "exported": true },
+    { "kind": "method",    "name": "GetUser",         "exported": true },
+    { "kind": "method",    "name": "SaveUser",        "exported": true },
+    { "kind": "interface", "name": "IUserRepository", "exported": true },
+    { "kind": "enum",      "name": "UserRole",        "exported": true },
+    { "kind": "struct",    "name": "Point",           "exported": true }
+  ],
+  "notes": [
+    "Private method FormatName intentionally not in expected set"
+  ]
+}

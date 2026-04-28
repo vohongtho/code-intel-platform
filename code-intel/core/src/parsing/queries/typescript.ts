@@ -79,5 +79,5 @@ export const typescriptQueries = `
 ;; Class heritage — implements
 (class_heritage
   (implements_clause
-    (type_reference (type_identifier) @inherit.implements)))
+    (type_identifier) @inherit.implements))
 `;

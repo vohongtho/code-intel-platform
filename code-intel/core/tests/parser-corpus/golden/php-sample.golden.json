@@ -1,0 +1,15 @@
+{
+  "language": "PHP",
+  "fixture": "php-sample.php",
+  "description": "Canonical PHP symbol extraction baseline.",
+  "expectedSymbols": [
+    { "kind": "class",     "name": "UserService",    "exported": true },
+    { "kind": "method",    "name": "getUser",        "exported": true },
+    { "kind": "method",    "name": "saveUser",       "exported": true },
+    { "kind": "interface", "name": "UserRepository", "exported": true },
+    { "kind": "trait",     "name": "Loggable",       "exported": true }
+  ],
+  "notes": [
+    "PHP classes are always 'exported' at the module level"
+  ]
+}

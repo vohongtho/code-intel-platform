@@ -1,0 +1,15 @@
+{
+  "language": "C",
+  "fixture": "c-sample.c",
+  "description": "Canonical C symbol extraction baseline.",
+  "expectedSymbols": [
+    { "kind": "struct",   "name": "Point",        "exported": true },
+    { "kind": "function", "name": "server_init",  "exported": true },
+    { "kind": "function", "name": "server_start", "exported": true },
+    { "kind": "function", "name": "parse_config", "exported": true }
+  ],
+  "notes": [
+    "typedef struct may produce type_alias; direct struct specifier produces struct",
+    "static functions may or may not appear depending on query"
+  ]
+}

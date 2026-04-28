@@ -1,0 +1,16 @@
+{
+  "language": "Ruby",
+  "fixture": "ruby-sample.rb",
+  "description": "Canonical Ruby symbol extraction baseline.",
+  "expectedSymbols": [
+    { "kind": "module",  "name": "Services",    "exported": true },
+    { "kind": "class",   "name": "UserService", "exported": true },
+    { "kind": "method",  "name": "get_user",    "exported": true },
+    { "kind": "method",  "name": "save_user",   "exported": true },
+    { "kind": "module",  "name": "Helpers",     "exported": true }
+  ],
+  "notes": [
+    "initialize constructor method may be extracted",
+    "top_level_helper is a method in Ruby at top level"
+  ]
+}

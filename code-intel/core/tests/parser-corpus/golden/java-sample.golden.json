@@ -1,0 +1,15 @@
+{
+  "language": "Java",
+  "fixture": "java-sample.java",
+  "description": "Canonical Java symbol extraction baseline.",
+  "expectedSymbols": [
+    { "kind": "class",     "name": "UserService",    "exported": true },
+    { "kind": "method",    "name": "getUser",        "exported": true },
+    { "kind": "method",    "name": "saveUser",       "exported": true },
+    { "kind": "interface", "name": "UserRepository", "exported": true },
+    { "kind": "enum",      "name": "Role",           "exported": true }
+  ],
+  "notes": [
+    "Constructor may or may not be extracted depending on parser version"
+  ]
+}
