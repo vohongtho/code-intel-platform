@@ -1,0 +1,21 @@
+{
+  "language": "TypeScript",
+  "fixture": "typescript-sample.ts",
+  "description": "Canonical symbol extraction baseline for TypeScript. CI gate: recall must not decrease.",
+  "expectedSymbols": [
+    { "kind": "class",      "name": "UserService",  "exported": true  },
+    { "kind": "method",     "name": "constructor",  "exported": true  },
+    { "kind": "method",     "name": "greet",        "exported": true  },
+    { "kind": "function",   "name": "createUser",   "exported": true  },
+    { "kind": "interface",  "name": "IUser",        "exported": true  },
+    { "kind": "enum",       "name": "Status",       "exported": true  }
+  ],
+  "prohibitedSymbols": [
+    "internalHelper"
+  ],
+  "notes": [
+    "DEFAULT_ROLE is SCREAMING_SNAKE_CASE — parser may emit it as 'constant', acceptable if present",
+    "UserId type alias — parser may or may not detect it, but must not lose existing detections",
+    "constructor / greet are method detections via method regex inside class body"
+  ]
+}
