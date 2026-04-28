@@ -121,9 +121,20 @@ describe('Observability — /health/ready 503 when not ready', () => {
 
 describe('Observability — /api/v1/health detailed endpoint', () => {
   let server: http.Server;
+  let usersDbPath: string;
+  let usersDb: UsersDB;
 
   before(() => {
+    // Create a temp users DB with a single admin so DEV_AUTO_LOGIN activates.
+    // Without this, the CI runner starts with an empty DB and auto-login never
+    // fires (it requires exactly one admin user to exist).
+    usersDbPath = path.join(os.tmpdir(), `obs-health-users-${Date.now()}.db`);
+    process.env['CODE_INTEL_USERS_DB_PATH'] = usersDbPath;
     process.env['CODE_INTEL_DEV_AUTO_LOGIN'] = 'true';
+    resetUsersDBForTesting();
+    usersDb = new UsersDB(usersDbPath);
+    usersDb.createUser('admin', 'password123', 'admin');
+
     const graph = createKnowledgeGraph();
     const app = createApp(graph, 'test-repo');
     server = http.createServer(app);
@@ -132,6 +143,10 @@ describe('Observability — /api/v1/health detailed endpoint', () => {
 
   after(() => {
     delete process.env['CODE_INTEL_DEV_AUTO_LOGIN'];
+    delete process.env['CODE_INTEL_USERS_DB_PATH'];
+    resetUsersDBForTesting();
+    try { usersDb.close(); } catch { /* ignore */ }
+    try { fs.unlinkSync(usersDbPath); } catch { /* ignore */ }
     return new Promise<void>((resolve, reject) =>
       server.close((err) => (err ? reject(err) : resolve())),
     );
