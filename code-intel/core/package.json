@@ -87,5 +87,8 @@
     "esbuild": "^0.27.0",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3"
+  },
+  "optionalDependencies": {
+    "keytar": "^7.9.0"
   }
 }
