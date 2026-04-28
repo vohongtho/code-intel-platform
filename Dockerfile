@@ -21,8 +21,8 @@ RUN npm run build --workspace=code-intel/web
 # ── Production stage ──────────────────────────────────────────────────────────
 FROM node:22-alpine AS production
 
-# Security: run as non-root user (uid=1000)
-RUN addgroup -g 1000 codeuser && adduser -u 1000 -G codeuser -s /bin/sh -D codeuser
+# Security: run as non-root user (uid=1001, avoids clash with node:alpine's built-in node user at 1000)
+RUN addgroup -g 1001 codeuser && adduser -u 1001 -G codeuser -s /bin/sh -D codeuser
 
 WORKDIR /app
 

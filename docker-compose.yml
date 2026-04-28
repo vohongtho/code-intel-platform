@@ -33,7 +33,7 @@ services:
     security_opt:
       - no-new-privileges:true
     read_only: false
-    user: "1000:1000"
+    user: "1001:1001"
 
 volumes:
   code-intel-data:
