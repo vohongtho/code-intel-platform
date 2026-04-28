@@ -40,7 +40,7 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `resolve` | function | 29 | 1 | `shared/config-validator.ts` |
+| `resolve` | function | 33 | 1 | `shared/config-validator.ts` |
 | `secureMkdir` | function | 5 | 0 | `shared/fs-secure.ts` |
 | `assertNoPlaintextSecrets` | function | 3 | 1 | `shared/config-validator.ts` |
 | `secureChmodFile` | function | 4 | 0 | `shared/fs-secure.ts` |

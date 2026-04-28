@@ -1,6 +1,6 @@
 ---
 name: mcp-server
-description: "Covers the **mcp-server** subsystem of code-intel-platform. 13 symbols across 1 files. Key symbols: `dispatch`, `dispatchTool`, `startMcpStdio`. Internal call density: 0.2 calls/symbol. Participates in 8 execution flow(s)."
+description: "Covers the **mcp-server** subsystem of code-intel-platform. 13 symbols across 1 files. Key symbols: `dispatch`, `dispatchTool`, `limit`. Internal call density: 0.2 calls/symbol. Participates in 8 execution flow(s)."
 ---
 
 # mcp-server
@@ -11,7 +11,7 @@ description: "Covers the **mcp-server** subsystem of code-intel-platform. 13 sym
 
 Load this skill when:
 - The task involves code in `code-intel/core/src/mcp-server/`
-- The user mentions `dispatch`, `dispatchTool`, `startMcpStdio` or asks how they work
+- The user mentions `dispatch`, `dispatchTool`, `limit` or asks how they work
 - Adding, modifying, or debugging mcp-server-related functionality
 - Tracing call chains that pass through the mcp-server layer
 
@@ -29,10 +29,10 @@ Sorted by call graph degree (changing these has the highest blast radius):
 |--------|------|-----:|------:|------|
 | `dispatch` | function | 18 | 4 | `mcp-server/server.ts` |
 | `dispatchTool` | function | 1 | 1 | `mcp-server/server.ts` |
+| `limit` | function | 1 | 1 | `mcp-server/server.ts` |
 | `startMcpStdio` | function | 1 | 1 | `mcp-server/server.ts` |
 | `findNodeByName` | function | 2 | 0 | `mcp-server/server.ts` |
 | `createMcpServer` | function | 1 | 0 | `mcp-server/server.ts` |
-| `limit` | function | 0 | 1 | `mcp-server/server.ts` |
 | `maxHops` | function | 0 | 1 | `mcp-server/server.ts` |
 | `minConf` | function | 0 | 1 | `mcp-server/server.ts` |
 | `registerResources` | function | 1 | 0 | `mcp-server/server.ts` |

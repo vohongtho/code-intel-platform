@@ -1,17 +1,17 @@
 ---
 name: http-2
-description: "Covers the **http** subsystem of code-intel-platform. 12 symbols across 4 files. Key symbols: `makeTestCtx`, `createToken`, `login`. Internal call density: 0.2 calls/symbol."
+description: "Covers the **http** subsystem of code-intel-platform. 14 symbols across 2 files. Key symbols: `createApp`, `loadRepoGraph`, `ensureVectorIndex`. Internal call density: 0.4 calls/symbol."
 ---
 
 # http
 
-> **12 symbols** | **4 files** | path: `code-intel/core/tests/integration/http/` | call density: 0.2/sym
+> **14 symbols** | **2 files** | path: `code-intel/core/src/http/` | call density: 0.4/sym
 
 ## When to Use
 
 Load this skill when:
-- The task involves code in `code-intel/core/tests/integration/http/`
-- The user mentions `makeTestCtx`, `createToken`, `login` or asks how they work
+- The task involves code in `code-intel/core/src/http/`
+- The user mentions `createApp`, `loadRepoGraph`, `ensureVectorIndex` or asks how they work
 - Adding, modifying, or debugging http-related functionality
 - Tracing call chains that pass through the http layer
 
@@ -19,10 +19,8 @@ Load this skill when:
 
 | File | Symbols | Notes |
 |------|---------|-------|
-| `code-intel/core/tests/integration/http/rbac.test.ts` | `rawReq`, `getCsrf`, `authReq`, `TestCtx` +(4) | internal |
-| `code-intel/core/tests/integration/http/api.test.ts` | `rawReq`, `req` | internal |
-| `code-intel/core/tests/integration/http/observability.test.ts` | `rawReq` | internal |
-| `code-intel/core/tests/integration/http/transport-security.test.ts` | `rawReq` | internal |
+| `code-intel/core/src/http/app.ts` | `getAllowedOrigins`, `createDefaultLimiter`, `createApp`, `durationSec` +(5) | 2 exported |
+| `code-intel/core/src/http/websocket-auth.ts` | `WebSocketUser`, `verifyWebSocketHandshake`, `cookieHeader`, `authHeader` +(1) | 2 exported |
 
 ## Hot Symbols
 
@@ -30,18 +28,18 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `makeTestCtx` | function | 1 | 4 | `http/rbac.test.ts` |
-| `createToken` | function | 5 | 0 | `http/rbac.test.ts` |
-| `login` | function | 1 | 2 | `http/rbac.test.ts` |
-| `closeTestCtx` | function | 1 | 2 | `http/rbac.test.ts` |
-| `rawReq` | function | 2 | 0 | `http/rbac.test.ts` |
-| `getCsrf` | function | 2 | 0 | `http/rbac.test.ts` |
-| `rawReq` | function | 1 | 0 | `http/api.test.ts` |
-| `req` | function | 1 | 0 | `http/api.test.ts` |
-| `rawReq` | function | 1 | 0 | `http/observability.test.ts` |
-| `authReq` | function | 1 | 0 | `http/rbac.test.ts` |
-| `rawReq` | function | 1 | 0 | `http/transport-security.test.ts` |
-| `TestCtx` | interface | 0 | 0 | `http/rbac.test.ts` |
+| `createApp` | function | 7 | 6 | `http/app.ts` |
+| `loadRepoGraph` | function | 2 | 4 | `http/app.ts` |
+| `ensureVectorIndex` | function | 1 | 4 | `http/app.ts` |
+| `startHttpServer` | function | 1 | 3 | `http/app.ts` |
+| `lookupTokenUser` | function | 2 | 1 | `http/websocket-auth.ts` |
+| `getGraphForRepo` | function | 1 | 1 | `http/app.ts` |
+| `embedder` | function | 2 | 0 | `http/app.ts` |
+| `cookieHeader` | function | 0 | 2 | `http/websocket-auth.ts` |
+| `getAllowedOrigins` | function | 1 | 0 | `http/app.ts` |
+| `createDefaultLimiter` | function | 1 | 0 | `http/app.ts` |
+| `verifyWebSocketHandshake` | function | 1 | 0 | `http/websocket-auth.ts` |
+| `authHeader` | function | 0 | 1 | `http/websocket-auth.ts` |
 
 ## Impact Guidance
 
@@ -54,9 +52,9 @@ Before modifying any symbol in this area:
 
 ```bash
 # Inspect most-connected symbol
-code-intel inspect makeTestCtx
+code-intel inspect createApp
 # Blast radius for entry point
-code-intel impact makeTestCtx
+code-intel impact createApp
 # Search this area
 code-intel search "http"
 ```

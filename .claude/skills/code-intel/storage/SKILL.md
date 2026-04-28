@@ -33,11 +33,11 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
 | `loadRegistry` | function | 10 | 0 | `storage/repo-registry.ts` |
-| `DbManager` | class | 6 | 0 | `storage/db-manager.ts` |
-| `loadMetadata` | function | 4 | 0 | `storage/metadata.ts` |
+| `DbManager` | class | 7 | 0 | `storage/db-manager.ts` |
+| `loadMetadata` | function | 5 | 0 | `storage/metadata.ts` |
+| `getDbPath` | function | 4 | 0 | `storage/metadata.ts` |
 | `upsertRepo` | function | 2 | 2 | `storage/repo-registry.ts` |
 | `removeRepo` | function | 2 | 2 | `storage/repo-registry.ts` |
-| `getDbPath` | function | 3 | 0 | `storage/metadata.ts` |
 | `getVectorDbPath` | function | 3 | 0 | `storage/metadata.ts` |
 | `saveRegistry` | function | 3 | 0 | `storage/repo-registry.ts` |
 | `writeNodeCSVs` | function | 1 | 1 | `storage/csv-writer.ts` |
