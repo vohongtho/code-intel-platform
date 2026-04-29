@@ -64,7 +64,15 @@ import { withSpan, isTracingEnabled } from '../observability/tracing.js';
 import { openApiSpec } from './openapi.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const WEB_DIST = path.resolve(__dirname, '..', '..', '..', 'web', 'dist');
+// Web UI is bundled into dist/web/ at publish time.
+// Fallback to the monorepo sibling path for local dev.
+const WEB_DIST = (() => {
+  // dist/cli/main.js → ../web = dist/web/  (global install & npm pack)
+  const bundled = path.resolve(__dirname, '..', 'web');
+  if (fs.existsSync(bundled)) return bundled;
+  // Monorepo dev: dist/cli/ → ../../../web/dist = code-intel/web/dist
+  return path.resolve(__dirname, '..', '..', '..', 'web', 'dist');
+})();
 
 // ── CORS allowed origins ──────────────────────────────────────────────────────
 

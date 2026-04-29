@@ -46,3 +46,25 @@ if (copied === 0) {
 } else {
   console.log(`  ✓ ${copied}/${grammars.length} grammar WASMs ready in dist/wasm/`);
 }
+
+// ─── Also copy the web UI dist into dist/web/ ─────────────────────────────────
+const webSrc = path.join(__dirname, '..', '..', 'web', 'dist');
+const webDest = path.join(__dirname, '..', 'dist', 'web');
+
+if (fs.existsSync(webSrc)) {
+  fs.mkdirSync(webDest, { recursive: true });
+  // Recursive copy helper
+  function copyDir(src, dst) {
+    fs.mkdirSync(dst, { recursive: true });
+    for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+      const srcPath = path.join(src, entry.name);
+      const dstPath = path.join(dst, entry.name);
+      if (entry.isDirectory()) copyDir(srcPath, dstPath);
+      else fs.copyFileSync(srcPath, dstPath);
+    }
+  }
+  copyDir(webSrc, webDest);
+  console.log('  ✓ web UI copied → dist/web/');
+} else {
+  console.warn('  ⚠ web/dist not found — run npm run build in code-intel/web first');
+}
