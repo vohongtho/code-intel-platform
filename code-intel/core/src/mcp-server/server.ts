@@ -934,16 +934,6 @@ export async function startMcpStdio(graph: KnowledgeGraph, repoName: string, wor
     process.stderr.write('[code-intel] CODE_INTEL_TOKEN is configured — all tool calls must include { "_token": "<value>" } in their arguments.\n');
   }
   const server = createMcpServer(graph, repoName, workspaceRoot);
-
-  // Log available tools to stderr so editors (VS Code, Claude Desktop) show them in the MCP log.
-  const toolNames = [
-    'repos', 'overview', 'search', 'inspect', 'blast_radius', 'file_symbols',
-    'find_path', 'list_exports', 'routes', 'clusters', 'flows', 'detect_changes',
-    'raw_query', 'group_list', 'group_sync', 'group_contracts', 'group_query', 'group_status',
-  ];
-  process.stderr.write(`[code-intel] MCP server ready — repo: ${repoName}, ${toolNames.length} tools:\n`);
-  process.stderr.write(`[code-intel]   ${toolNames.join(', ')}\n`);
-
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
