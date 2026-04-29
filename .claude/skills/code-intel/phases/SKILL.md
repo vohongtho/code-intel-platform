@@ -31,7 +31,7 @@ Start exploration here — exported symbols with no external callers:
 
 - **`execute`** `(method)` → `code-intel/core/src/pipeline/phases/cluster-phase.ts:7`
 - **`execute`** `(method)` → `code-intel/core/src/pipeline/phases/flow-phase.ts:7`
-- **`execute`** `(method)` → `code-intel/core/src/pipeline/phases/parse-phase.ts:458`
+- **`execute`** `(method)` → `code-intel/core/src/pipeline/phases/parse-phase.ts:460`
 - **`execute`** `(method)` → `code-intel/core/src/pipeline/phases/resolve-phase.ts:37`
 
 ## Hot Symbols

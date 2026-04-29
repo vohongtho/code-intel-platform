@@ -1,7 +1,7 @@
 {
-  "name": "@vohongtho.infotech/code-intel",
+  "name": "code-intel",
   "version": "0.3.0",
-  "description": "Static code analysis platform — builds a Knowledge Graph from source code with Web UI, HTTP API, CLI, and MCP server",
+  "description": "Static code analysis platform \u2014 builds a Knowledge Graph from source code with Web UI, HTTP API, CLI, and MCP server",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -37,7 +37,7 @@
     "node": ">=22.0.0"
   },
   "scripts": {
-    "build": "tsup --config tsup.config.ts && node scripts/add-shebang.mjs",
+    "build": "tsup --config tsup.config.ts && node scripts/add-shebang.mjs && node scripts/copy-grammars.mjs",
     "typecheck": "tsc -b --noEmit",
     "prepublishOnly": "npm run build",
     "clean": "rm -rf dist dist-tests *.tsbuildinfo",
@@ -101,6 +101,9 @@
     "typescript": "^5.9.3"
   },
   "optionalDependencies": {
-    "keytar": "^7.9.0"
+    "keytar": "^7.9.0",
+    "tree-sitter-swift": "^0.7.1",
+    "tree-sitter-kotlin": "^0.3.8",
+    "tree-sitter-dart": "^1.0.0"
   }
 }

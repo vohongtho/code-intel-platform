@@ -32,7 +32,7 @@ Start exploration here — exported symbols with no external callers:
 - **`set`** `(method)` → `code-intel/core/src/parsing/ast-cache.ts:22`
 - **`clear`** `(method)` → `code-intel/core/src/parsing/ast-cache.ts:33`
 - **`size`** `(method)` → `code-intel/core/src/parsing/ast-cache.ts:37`
-- **`isTreeSitterAvailable`** `(function)` → `code-intel/core/src/parsing/parser-manager.ts:106`
+- **`isTreeSitterAvailable`** `(function)` → `code-intel/core/src/parsing/parser-manager.ts:111`
 
 ## Hot Symbols
 

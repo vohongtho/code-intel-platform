@@ -19,7 +19,7 @@ import type { ParseTask, ParseResult } from './parse-worker.js';
 import {
   typescriptQueries, javascriptQueries, pythonQueries, javaQueries, goQueries,
   cQueries, cppQueries, csharpQueries, rustQueries, phpQueries,
-  kotlinQueries, rubyQueries, swiftQueries,
+  kotlinQueries, rubyQueries, swiftQueries, dartQueries,
 } from '../../parsing/queries/index.js';
 
 const LANG_QUERIES: Partial<Record<Language, string>> = {
@@ -36,6 +36,7 @@ const LANG_QUERIES: Partial<Record<Language, string>> = {
   [Language.Kotlin]:     kotlinQueries,
   [Language.Ruby]:       rubyQueries,
   [Language.Swift]:      swiftQueries,
+  [Language.Dart]:       dartQueries,
 };
 
 // Resolve the compiled worker script path (dist/pipeline/workers/parse-worker.js)

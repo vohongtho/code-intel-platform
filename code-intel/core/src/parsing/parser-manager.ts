@@ -1,16 +1,51 @@
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import nodePath from 'node:path';
+import { existsSync } from 'node:fs';
 import { Language } from '../shared/index.js';
 import { Parser, Language as TSLanguage } from 'web-tree-sitter';
 
 const _require = createRequire(import.meta.url);
 
 /**
+ * Locate the bundled wasm/ directory at runtime.
+ *
+ * tsup compiles parser-manager.ts into two bundles:
+ *   dist/index.js      → import.meta.url dirname = dist/   → ./wasm  = dist/wasm/ ✅
+ *   dist/cli/main.js   → import.meta.url dirname = dist/cli → ../wasm = dist/wasm/ ✅
+ *
+ * We try both candidates and return the first that exists.
+ */
+function findBundledWasmDir(): string {
+  const fileDir = nodePath.dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    nodePath.join(fileDir, 'wasm'),    // dist/index.js → dist/wasm/
+    nodePath.join(fileDir, '../wasm'), // dist/cli/main.js → dist/wasm/
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return candidates[0]; // fallback (will just not find files)
+}
+
+const _bundledWasmDir = findBundledWasmDir();
+
+/**
  * Resolve the absolute path to a language WASM file.
- * Each grammar is shipped by its own `tree-sitter-<lang>` npm package (dylink.0 format,
- * compatible with web-tree-sitter 0.26.x).
- * Returns null when no compatible WASM is bundled.
+ *
+ * Resolution order:
+ *   1. Try the grammar's own npm package (e.g. tree-sitter-typescript).
+ *   2. Fall back to the bundled wasm/ directory inside this package.
+ *
+ * The bundled WASMs (Swift, Kotlin, Dart) are dylink.0 format, compatible
+ * with web-tree-sitter 0.26.x.  They are copied into wasm/ at build/publish
+ * time and listed in the package.json "files" array so they are always
+ * available to consumers without needing the optional grammar packages installed.
+ *
+ * Returns null when no compatible WASM can be found.
  */
 function wasmPath(lang: Language): string | null {
+  // Grammars that ship their own dylink.0 WASM inside their npm package.
   const WASM_PACKAGE_MAP: Partial<Record<Language, string>> = {
     [Language.TypeScript]: 'tree-sitter-typescript/tree-sitter-typescript.wasm',
     [Language.JavaScript]: 'tree-sitter-javascript/tree-sitter-javascript.wasm',
@@ -23,16 +58,39 @@ function wasmPath(lang: Language): string | null {
     [Language.Rust]:       'tree-sitter-rust/tree-sitter-rust.wasm',
     [Language.PHP]:        'tree-sitter-php/tree-sitter-php.wasm',
     [Language.Ruby]:       'tree-sitter-ruby/tree-sitter-ruby.wasm',
-    // Swift, Kotlin, Dart: no compatible WASM available — regex fallback used
+    // These are optional dependencies; their packages may or may not include
+    // a WASM.  If require.resolve fails we fall back to the bundled wasm/.
+    [Language.Swift]:      'tree-sitter-swift/tree-sitter-swift.wasm',
+    [Language.Kotlin]:     'tree-sitter-kotlin/tree-sitter-kotlin.wasm',
+    [Language.Dart]:       'tree-sitter-dart/tree-sitter-dart.wasm',
   };
 
+  // Grammars bundled inside this package's wasm/ directory as a reliable
+  // fallback (dylink.0 format, confirmed working with web-tree-sitter 0.26.x).
+  const BUNDLED_WASM_MAP: Partial<Record<Language, string>> = {
+    [Language.Swift]:  'tree-sitter-swift.wasm',
+    [Language.Kotlin]: 'tree-sitter-kotlin.wasm',
+    [Language.Dart]:   'tree-sitter-dart.wasm',
+  };
+
+  // 1. Try resolving via the grammar's own npm package.
   const relative = WASM_PACKAGE_MAP[lang];
-  if (!relative) return null;
-  try {
-    return _require.resolve(relative);
-  } catch {
-    return null;
+  if (relative) {
+    try {
+      return _require.resolve(relative);
+    } catch {
+      // Package not installed or WASM not present — fall through.
+    }
   }
+
+  // 2. Fall back to the WASM bundled inside this package.
+  const bundled = BUNDLED_WASM_MAP[lang];
+  if (bundled) {
+    const bundledPath = nodePath.join(_bundledWasmDir, bundled);
+    if (existsSync(bundledPath)) return bundledPath;
+  }
+
+  return null;
 }
 
 let initPromise: Promise<void> | null = null;

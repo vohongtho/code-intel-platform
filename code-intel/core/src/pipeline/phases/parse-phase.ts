@@ -22,6 +22,7 @@ import {
   kotlinQueries,
   rubyQueries,
   swiftQueries,
+  dartQueries,
 } from '../../parsing/queries/index.js';
 
 // ─── Query map ───────────────────────────────────────────────────────────────
@@ -40,6 +41,7 @@ const LANG_QUERIES: Partial<Record<Language, string>> = {
   [Language.Kotlin]:     kotlinQueries,
   [Language.Ruby]:       rubyQueries,
   [Language.Swift]:      swiftQueries,
+  [Language.Dart]:       dartQueries,
 };
 
 // ─── Capture-name → NodeKind map ─────────────────────────────────────────────

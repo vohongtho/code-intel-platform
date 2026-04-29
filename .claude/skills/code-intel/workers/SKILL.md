@@ -29,7 +29,7 @@ Load this skill when:
 
 Start exploration here — exported symbols with no external callers:
 
-- **`execute`** `(method)` → `code-intel/core/src/pipeline/workers/parse-phase-parallel.ts:51`
+- **`execute`** `(method)` → `code-intel/core/src/pipeline/workers/parse-phase-parallel.ts:52`
 - **`execute`** `(method)` → `code-intel/core/src/pipeline/workers/resolve-phase-parallel.ts:28`
 - **`constructor`** `(method)` → `code-intel/core/src/pipeline/workers/worker-pool.ts:43`
 - **`init`** `(method)` → `code-intel/core/src/pipeline/workers/worker-pool.ts:52`

@@ -11,3 +11,4 @@ export { phpQueries } from './php.js';
 export { kotlinQueries } from './kotlin.js';
 export { rubyQueries } from './ruby.js';
 export { swiftQueries } from './swift.js';
+export { dartQueries } from './dart.js';

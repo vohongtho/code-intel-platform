@@ -47,18 +47,18 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `log` | method | 20 | 0 | `fixtures/php-sample.php` |
+| `log` | method | 24 | 0 | `fixtures/php-sample.php` |
 | `createUser` | function | 8 | 1 | `fixtures/typescript-sample.ts` |
 | `HttpServer` | class | 2 | 0 | `fixtures/cpp-sample.cpp` |
 | `TcpServer` | function | 0 | 1 | `fixtures/cpp-sample.cpp` |
 | `UserService` | class | 1 | 0 | `fixtures/csharp-sample.cs` |
+| `Point` | struct | 1 | 0 | `fixtures/csharp-sample.cs` |
 | `Start` | method | 0 | 1 | `fixtures/go-sample.go` |
 | `Stop` | method | 0 | 1 | `fixtures/go-sample.go` |
+| `helper` | function | 1 | 0 | `fixtures/go-sample.go` |
 | `UserService` | class | 1 | 0 | `fixtures/java-sample.java` |
 | `UserService` | class | 1 | 0 | `fixtures/python-sample.py` |
 | `create_user` | function | 0 | 1 | `fixtures/python-sample.py` |
-| `Server` | class | 1 | 0 | `fixtures/rust-sample.rs` |
-| `UserService` | class | 1 | 0 | `fixtures/typescript-sample.ts` |
 
 ## Impact Guidance
 

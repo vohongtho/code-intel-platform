@@ -4,7 +4,7 @@
 > ⚠ This section is auto-managed by `code-intel analyze`. Do **not** edit between the markers — your changes will be overwritten.
 > Add your own notes below the `<!-- code-intel:end -->` marker.
 
-Indexed: **3,748 nodes** | **6,636 edges** | **232 files** | analyzed in 4.0s
+Indexed: **3,750 nodes** | **6,649 edges** | **235 files** | analyzed in 3.5s
 
 > Index stale? Re-run: `code-intel analyze`
 
