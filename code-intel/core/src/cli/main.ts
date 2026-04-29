@@ -288,7 +288,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
   const noopScanPhase = {
     name: 'scan',
     dependencies: [] as string[],
-    async execute() { return { success: true as const, duration: 0, nodesAdded: 0, edgesAdded: 0 }; },
+    async execute() { return { status: 'completed' as const, duration: 0 }; },
   };
 
   const phases = isIncremental
