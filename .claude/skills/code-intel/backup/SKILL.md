@@ -1,17 +1,17 @@
 ---
 name: backup
-description: "Covers the **backup** subsystem of code-intel-platform. 17 symbols across 2 files. Key symbols: `BackupService`, `createBackupScheduler`, `hmac`. Internal call density: 0.1 calls/symbol."
+description: "Covers the **backup** subsystem of code-intel-platform. 37 symbols across 2 files. Key symbols: `constructor`, `stop`, `getS3Config`. Internal call density: 0.9 calls/symbol."
 ---
 
 # backup
 
-> **17 symbols** | **2 files** | path: `code-intel/core/src/backup/` | call density: 0.1/sym
+> **37 symbols** | **2 files** | path: `code-intel/core/src/backup/` | call density: 0.9/sym
 
 ## When to Use
 
 Load this skill when:
 - The task involves code in `code-intel/core/src/backup/`
-- The user mentions `BackupService`, `createBackupScheduler`, `hmac` or asks how they work
+- The user mentions `constructor`, `stop`, `getS3Config` or asks how they work
 - Adding, modifying, or debugging backup-related functionality
 - Tracing call chains that pass through the backup layer
 
@@ -19,8 +19,19 @@ Load this skill when:
 
 | File | Symbols | Notes |
 |------|---------|-------|
-| `code-intel/core/src/backup/backup-service.ts` | `S3Config`, `getS3Config`, `hmac`, `sha256hex` +(11) | 7 exported |
-| `code-intel/core/src/backup/backup-scheduler.ts` | `BackupScheduler`, `createBackupScheduler` | 2 exported |
+| `code-intel/core/src/backup/backup-service.ts` | `S3Config`, `getS3Config`, `hmac`, `sha256hex` +(24) | 20 exported |
+| `code-intel/core/src/backup/backup-scheduler.ts` | `BackupScheduler`, `constructor`, `isEnabled`, `start` +(5) | 9 exported |
+
+## Entry Points
+
+Start exploration here — exported symbols with no external callers:
+
+- **`constructor`** `(method)` → `code-intel/core/src/backup/backup-scheduler.ts:18`
+- **`stop`** `(method)` → `code-intel/core/src/backup/backup-scheduler.ts:58`
+- **`getS3Config`** `(function)` → `code-intel/core/src/backup/backup-service.ts:26`
+- **`constructor`** `(method)` → `code-intel/core/src/backup/backup-service.ts:197`
+- **`downloadFromS3`** `(method)` → `code-intel/core/src/backup/backup-service.ts:327`
+- **`listS3Backups`** `(method)` → `code-intel/core/src/backup/backup-service.ts:342`
 
 ## Hot Symbols
 
@@ -28,18 +39,18 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `BackupService` | class | 3 | 0 | `backup/backup-service.ts` |
-| `createBackupScheduler` | function | 1 | 1 | `backup/backup-scheduler.ts` |
-| `hmac` | function | 2 | 0 | `backup/backup-service.ts` |
-| `sigV4SigningKey` | function | 1 | 1 | `backup/backup-service.ts` |
-| `BackupScheduler` | class | 1 | 0 | `backup/backup-scheduler.ts` |
-| `getS3Config` | function | 1 | 0 | `backup/backup-service.ts` |
-| `sha256hex` | function | 1 | 0 | `backup/backup-service.ts` |
-| `s3Request` | function | 1 | 0 | `backup/backup-service.ts` |
-| `getBackupDir` | function | 1 | 0 | `backup/backup-service.ts` |
-| `getBackupKey` | function | 1 | 0 | `backup/backup-service.ts` |
-| `encryptBuffer` | function | 1 | 0 | `backup/backup-service.ts` |
-| `decryptBuffer` | function | 1 | 0 | `backup/backup-service.ts` |
+| `s3Request` | function | 3 | 8 | `backup/backup-service.ts` |
+| `createBackup` | method | 4 | 4 | `backup/backup-service.ts` |
+| `start` | method | 1 | 6 | `backup/backup-scheduler.ts` |
+| `_runBackups` | method | 1 | 5 | `backup/backup-scheduler.ts` |
+| `applyRetention` | method | 2 | 4 | `backup/backup-service.ts` |
+| `restoreBackup` | method | 3 | 2 | `backup/backup-service.ts` |
+| `_loadIndex` | method | 4 | 1 | `backup/backup-service.ts` |
+| `BackupService` | class | 4 | 0 | `backup/backup-service.ts` |
+| `listBackups` | method | 3 | 1 | `backup/backup-service.ts` |
+| `getS3Config` | method | 3 | 0 | `backup/backup-service.ts` |
+| `uploadToS3` | method | 1 | 2 | `backup/backup-service.ts` |
+| `downloadFromS3` | method | 0 | 3 | `backup/backup-service.ts` |
 
 ## Impact Guidance
 
@@ -52,9 +63,9 @@ Before modifying any symbol in this area:
 
 ```bash
 # Inspect most-connected symbol
-code-intel inspect BackupService
+code-intel inspect s3Request
 # Blast radius for entry point
-code-intel impact BackupService
+code-intel impact constructor
 # Search this area
 code-intel search "backup"
 ```

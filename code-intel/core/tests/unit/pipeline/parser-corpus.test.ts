@@ -23,6 +23,7 @@ import { Language } from '../../../src/shared/index.js';
 import type { NodeKind } from '../../../src/shared/index.js';
 import {
   typescriptQueries,
+  javascriptQueries,
   pythonQueries,
   javaQueries,
   goQueries,
@@ -117,7 +118,7 @@ const EXT_TO_LANG: Record<string, Language> = {
 
 const LANG_QUERIES: Partial<Record<Language, string>> = {
   [Language.TypeScript]: typescriptQueries,
-  [Language.JavaScript]: typescriptQueries,
+  [Language.JavaScript]: javascriptQueries,
   [Language.Python]:     pythonQueries,
   [Language.Java]:       javaQueries,
   [Language.Go]:         goQueries,

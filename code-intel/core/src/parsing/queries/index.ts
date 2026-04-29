@@ -1,4 +1,5 @@
 export { typescriptQueries } from './typescript.js';
+export { javascriptQueries } from './javascript.js';
 export { pythonQueries } from './python.js';
 export { javaQueries } from './java.js';
 export { goQueries } from './go.js';

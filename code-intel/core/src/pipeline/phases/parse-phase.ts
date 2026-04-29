@@ -10,6 +10,7 @@ import { runQueryMatches } from '../../parsing/query-runner.js';
 import type { Node as TSNode, Language as TSLanguage } from 'web-tree-sitter';
 import {
   typescriptQueries,
+  javascriptQueries,
   pythonQueries,
   javaQueries,
   goQueries,
@@ -27,7 +28,7 @@ import {
 
 const LANG_QUERIES: Partial<Record<Language, string>> = {
   [Language.TypeScript]: typescriptQueries,
-  [Language.JavaScript]: typescriptQueries, // TS grammar handles JS too
+  [Language.JavaScript]: javascriptQueries,
   [Language.Python]:     pythonQueries,
   [Language.Java]:       javaQueries,
   [Language.Go]:         goQueries,

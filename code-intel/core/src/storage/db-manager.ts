@@ -36,11 +36,14 @@ export class DbManager {
   }
 
   close(): void {
+    // Use closeSync() so the DB flushes/checkpoints to disk before returning.
+    // Calling the async close() without await causes a 60-90s delay at process
+    // exit as Node waits for the pending flush promises to resolve.
     try {
-      this.conn?.close();
+      this.conn?.closeSync();
     } catch { /* ignore */ }
     try {
-      this.db?.close();
+      this.db?.closeSync();
     } catch { /* ignore */ }
     this.conn = null;
     this.db = null;

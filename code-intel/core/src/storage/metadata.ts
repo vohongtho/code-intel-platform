@@ -7,6 +7,8 @@ export interface IndexMetadata {
   commitHash?: string;
   /** Parser used during analysis: 'tree-sitter' | 'regex' */
   parser?: 'tree-sitter' | 'regex';
+  /** mtime (ms since epoch) for each indexed file path (relative to workspace root) */
+  lastAnalyzedMtimes?: Record<string, number>;
   stats: {
     nodes: number;
     edges: number;

@@ -39,10 +39,11 @@ export function getCreateNodeTableDDL(tableName: string): string {
 }
 
 export function getCreateEdgeTableDDL(): string[] {
-  const ddls: string[] = [];
   const uniqueTables = ALL_NODE_TABLES;
 
-  // Create edge table connecting all node table pairs
+  // Create edge table group connecting all node table pairs.
+  // REL TABLE GROUP supports multiple FROM-TO pairs without duplicate errors,
+  // and allows per-pair COPY: COPY code_edges FROM '...' (HEADER=TRUE, FROM='x', TO='y')
   const fromToPairs: string[] = [];
   for (const from of uniqueTables) {
     for (const to of uniqueTables) {
@@ -50,12 +51,10 @@ export function getCreateEdgeTableDDL(): string[] {
     }
   }
 
-  ddls.push(`CREATE REL TABLE IF NOT EXISTS code_edges (
+  return [`CREATE REL TABLE GROUP IF NOT EXISTS code_edges (
   ${fromToPairs.join(',\n  ')},
   kind STRING,
   weight DOUBLE,
   label STRING
-)`);
-
-  return ddls;
+)`];
 }

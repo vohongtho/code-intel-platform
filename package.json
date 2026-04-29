@@ -1,6 +1,6 @@
 {
   "name": "code-intel-platform",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "license": "MIT",
   "workspaces": [
@@ -33,7 +33,7 @@
     "vite": "^8.0.10"
   },
   "dependencies": {
-    "@vohongtho.infotech/code-intel": "^0.2.0",
+    "@vohongtho.infotech/code-intel": "^0.3.0",
     "tree-sitter-c": "^0.24.1",
     "tree-sitter-c-sharp": "^0.23.5",
     "tree-sitter-cpp": "^0.23.4",
