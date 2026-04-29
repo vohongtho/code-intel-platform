@@ -41,8 +41,8 @@
     "typecheck": "tsc -b --noEmit",
     "prepublishOnly": "npm run build",
     "clean": "rm -rf dist dist-tests *.tsbuildinfo",
-    "test": "tsc -b tsconfig.test.json && node --test --test-concurrency=1 dist-tests/tests/**/*.test.js",
-    "test:coverage": "tsc -b tsconfig.test.json && npx c8 --all --include='dist-tests/src/**/*.js' --exclude='dist-tests/src/cli/main.js' --exclude='dist-tests/src/mcp-server/**' --reporter=text --reporter=lcov --reporter=json-summary node --test --test-concurrency=1 dist-tests/tests/**/*.test.js"
+    "test": "tsc -b tsconfig.test.json && NODE_ENV=test node --test --test-concurrency=1 dist-tests/tests/**/*.test.js",
+    "test:coverage": "tsc -b tsconfig.test.json && NODE_ENV=test npx c8 --all --include='dist-tests/src/**/*.js' --exclude='dist-tests/src/cli/main.js' --exclude='dist-tests/src/mcp-server/**' --reporter=text --reporter=lcov --reporter=json-summary node --test --test-concurrency=1 dist-tests/tests/**/*.test.js"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
