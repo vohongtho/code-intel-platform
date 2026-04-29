@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { getLanguageModule, getAllLanguageModules } from '../../../src/languages/registry.js';
-import { Language } from '@code-intel/shared';
+import { Language } from 'code-intel-shared';
 
 describe('Language Registry', () => {
   it('should return module for all languages', () => {

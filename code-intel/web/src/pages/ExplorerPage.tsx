@@ -118,7 +118,7 @@ function ExplorerTab() {
           <p className="text-[10px] text-gray-500 mb-2 truncate">"{state.search.query}"</p>
           <div className="space-y-0.5">
             {state.search.results.map((r) => {
-              const color = NODE_COLORS[r.kind as import('@code-intel/shared').NodeKind] ?? '#6b7280';
+              const color = NODE_COLORS[r.kind as import('code-intel-shared').NodeKind] ?? '#6b7280';
               return (
                 <button
                   key={r.nodeId}
@@ -145,7 +145,7 @@ function ExplorerTab() {
         </h3>
         <div className="space-y-2">
           {sortedKinds.map(([kind, n]) => {
-            const color = NODE_COLORS[kind as import('@code-intel/shared').NodeKind] ?? '#6b7280';
+            const color = NODE_COLORS[kind as import('code-intel-shared').NodeKind] ?? '#6b7280';
             const pct = (n / maxCount) * 100;
             return (
               <div key={kind}>

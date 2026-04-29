@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import type { CodeNode } from '@code-intel/shared';
+import type { CodeNode } from 'code-intel-shared';
 import { ApiClient } from '../../api/client';
 import { useAppState } from '../../state/app-context';
 

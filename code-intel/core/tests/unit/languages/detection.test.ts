@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { detectLanguage, getSupportedExtensions } from '@code-intel/shared';
-import { Language } from '@code-intel/shared';
+import { detectLanguage, getSupportedExtensions } from 'code-intel-shared';
+import { Language } from 'code-intel-shared';
 
 describe('Language Detection', () => {
   it('should detect TypeScript', () => {

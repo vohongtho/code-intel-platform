@@ -1,4 +1,4 @@
-import type { CodeNode, CodeEdge, NodeKind, EdgeKind } from '@code-intel/shared';
+import type { CodeNode, CodeEdge, NodeKind, EdgeKind } from 'code-intel-shared';
 
 export type AppView = 'login' | 'connect' | 'loading' | 'exploring';
 
