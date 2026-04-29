@@ -1,11 +1,11 @@
 ---
 name: parsing
-description: "Covers the **parsing** subsystem of code-intel-platform. 18 symbols across 3 files. Key symbols: `AstCache`, `constructor`, `set`. Internal call density: 0.5 calls/symbol. Participates in 4 execution flow(s)."
+description: "Covers the **parsing** subsystem of code-intel-platform. 19 symbols across 3 files. Key symbols: `AstCache`, `constructor`, `set`. Internal call density: 0.6 calls/symbol. Participates in 6 execution flow(s)."
 ---
 
 # parsing
 
-> **18 symbols** | **3 files** | path: `code-intel/core/src/parsing/` | call density: 0.5/sym
+> **19 symbols** | **3 files** | path: `code-intel/core/src/parsing/` | call density: 0.6/sym
 
 ## When to Use
 
@@ -21,7 +21,7 @@ Load this skill when:
 |------|---------|-------|
 | `code-intel/core/src/parsing/ast-cache.ts` | `AstCache`, `constructor`, `get`, `set` +(4) | 8 exported |
 | `code-intel/core/src/parsing/parser-manager.ts` | `wasmPath`, `initParser`, `getLanguage`, `getParser` +(2) | 5 exported |
-| `code-intel/core/src/parsing/query-runner.ts` | `QueryCapture`, `QueryMatch`, `runQuery`, `runQueryMatches` | 4 exported |
+| `code-intel/core/src/parsing/query-runner.ts` | `QueryCapture`, `QueryMatch`, `getOrCompileQuery`, `runQuery` +(1) | 4 exported |
 
 ## Entry Points
 
@@ -40,22 +40,22 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `get` | method | 68 | 1 | `parsing/ast-cache.ts` |
+| `get` | method | 69 | 1 | `parsing/ast-cache.ts` |
 | `has` | method | 55 | 0 | `parsing/ast-cache.ts` |
 | `getLanguage` | function | 5 | 5 | `parsing/parser-manager.ts` |
+| `runQueryMatches` | function | 3 | 2 | `parsing/query-runner.ts` |
 | `getParser` | function | 1 | 3 | `parsing/parser-manager.ts` |
 | `parseSource` | function | 3 | 1 | `parsing/parser-manager.ts` |
-| `runQueryMatches` | function | 3 | 1 | `parsing/query-runner.ts` |
+| `getOrCompileQuery` | function | 2 | 2 | `parsing/query-runner.ts` |
 | `set` | method | 0 | 2 | `parsing/ast-cache.ts` |
 | `evictLRU` | method | 1 | 1 | `parsing/ast-cache.ts` |
 | `wasmPath` | function | 1 | 1 | `parsing/parser-manager.ts` |
 | `initParser` | function | 1 | 1 | `parsing/parser-manager.ts` |
-| `isTreeSitterAvailable` | function | 0 | 1 | `parsing/parser-manager.ts` |
-| `runQuery` | function | 0 | 1 | `parsing/query-runner.ts` |
+| `runQuery` | function | 0 | 2 | `parsing/query-runner.ts` |
 
 ## Execution Flows
 
-**4** execution path(s) pass through this area.
+**6** execution path(s) pass through this area.
 Run `code-intel inspect <symbol>` on a hot symbol to trace the full call chain.
 
 ## Impact Guidance

@@ -47,7 +47,7 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `log` | method | 19 | 0 | `fixtures/php-sample.php` |
+| `log` | method | 20 | 0 | `fixtures/php-sample.php` |
 | `createUser` | function | 8 | 1 | `fixtures/typescript-sample.ts` |
 | `HttpServer` | class | 2 | 0 | `fixtures/cpp-sample.cpp` |
 | `TcpServer` | function | 0 | 1 | `fixtures/cpp-sample.cpp` |

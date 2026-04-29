@@ -1,11 +1,11 @@
 ---
 name: cli
-description: "Covers the **cli** subsystem of code-intel-platform. 22 symbols across 3 files. Key symbols: `loadOrAnalyzeWorkspace`, `analyzeWorkspace`, `buildAreaMap`. Internal call density: 0.5 calls/symbol."
+description: "Covers the **cli** subsystem of code-intel-platform. 23 symbols across 3 files. Key symbols: `loadOrAnalyzeWorkspace`, `analyzeWorkspace`, `buildAreaMap`. Internal call density: 0.4 calls/symbol."
 ---
 
 # cli
 
-> **22 symbols** | **3 files** | path: `code-intel/core/src/cli/` | call density: 0.5/sym
+> **23 symbols** | **3 files** | path: `code-intel/core/src/cli/` | call density: 0.4/sym
 
 ## When to Use
 
@@ -19,7 +19,7 @@ Load this skill when:
 
 | File | Symbols | Notes |
 |------|---------|-------|
-| `code-intel/core/src/cli/main.ts` | `analyzeWorkspace`, `renderBar`, `clearBar`, `startSpinner` +(5) | internal |
+| `code-intel/core/src/cli/main.ts` | `analyzeWorkspace`, `renderBar`, `clearBar`, `startSpinner` +(6) | internal |
 | `code-intel/core/src/cli/skill-writer.ts` | `SkillSummary`, `AreaInfo`, `writeSkillFiles`, `buildAreaMap` +(4) | 2 exported |
 | `code-intel/core/src/cli/context-writer.ts` | `ContextStats`, `writeContextFiles`, `buildBlock`, `upsertFile` +(1) | 2 exported |
 

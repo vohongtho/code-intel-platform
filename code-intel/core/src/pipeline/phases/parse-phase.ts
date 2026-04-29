@@ -611,6 +611,9 @@ function extractFromTree(
   const edges: CodeEdge[] = [];
   const seen = new Set<string>();
 
+  // Hoist line-split so we don't re-split source on every match iteration.
+  const sourceLines = source.split('\n');
+
   // Run the query to get all pattern matches
   const matches = runQueryMatches(
     { rootNode: root } as unknown as import('web-tree-sitter').Tree,
@@ -675,7 +678,7 @@ function extractFromTree(
       startLine,
       endLine,
       exported: isExported(defNode, lang, name),
-      content: source.split('\n').slice(startLine - 1, Math.min(startLine + 19, endLine)).join('\n'),
+      content: sourceLines.slice(startLine - 1, Math.min(startLine + 19, endLine)).join('\n'),
       metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
     });
 

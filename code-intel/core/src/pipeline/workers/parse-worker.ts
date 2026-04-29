@@ -72,6 +72,9 @@ async function extractTreeSitter(
   const edges: CodeEdge[] = [];
   const seen = new Set<string>();
 
+  // Hoist line-split so we don't re-split source on every match iteration.
+  const sourceLines = source.split('\n');
+
   const matches = runQueryMatches(tree as unknown as import('web-tree-sitter').Tree, tsLang, queryStr);
 
   for (const match of matches) {
@@ -98,7 +101,7 @@ async function extractTreeSitter(
     nodes.push({
       id: nodeId, kind, name, filePath: relativePath,
       startLine, endLine,
-      content: source.split('\n').slice(startLine - 1, Math.min(startLine + 19, endLine)).join('\n'),
+      content: sourceLines.slice(startLine - 1, Math.min(startLine + 19, endLine)).join('\n'),
     });
     edges.push({
       id: generateEdgeId(fileNodeId, nodeId, 'contains'),

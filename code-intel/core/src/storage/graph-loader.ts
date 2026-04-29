@@ -66,6 +66,8 @@ export async function loadGraphToDB(
     // ── COPY nodes ──────────────────────────────────────────────────────────
     // PARALLEL=FALSE is required because node `content` fields contain real source
     // code with embedded newlines, which the parallel CSV reader does not support.
+    // Newlines are escaped to \n literals in the CSV (see csv-writer.ts) to prevent
+    // LadybugDB's sequential reader from mis-parsing quoted multi-line fields.
     let nodeCount = 0;
     for (const [table, csvPath] of nodeTableFiles) {
       if (!fs.existsSync(csvPath)) continue;

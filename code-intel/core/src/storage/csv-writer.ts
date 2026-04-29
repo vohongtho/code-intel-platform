@@ -7,6 +7,12 @@ import { NODE_TABLE_MAP } from './schema.js';
 /**
  * Write per-node-table CSV files synchronously.
  * Returns a Map of tableName → absolute file path.
+ *
+ * Content and metadata fields have actual newlines escaped to the 2-char
+ * sequence `\n` (backslash + n) before writing.  This avoids LadybugDB's
+ * PARALLEL=FALSE CSV reader bug where quoted fields spanning multiple lines
+ * are mis-parsed when they contain no `""` escapes — causing "expected N
+ * values per row, but got N-1" errors for code with embedded newlines.
  */
 export function writeNodeCSVs(graph: KnowledgeGraph, outputDir: string): Map<string, string> {
   fs.mkdirSync(outputDir, { recursive: true });
@@ -29,8 +35,12 @@ export function writeNodeCSVs(graph: KnowledgeGraph, outputDir: string): Map<str
         String(node.startLine ?? ''),
         String(node.endLine ?? ''),
         String(node.exported ?? false),
-        (node.content ?? '').slice(0, 1000),
-        node.metadata ? JSON.stringify(node.metadata) : '',
+        // Escape embedded newlines so the CSV never contains multi-line
+        // quoted fields.  LadybugDB PARALLEL=FALSE has a bug where it
+        // mis-parses quoted fields with embedded newlines that contain no
+        // internal "" sequences (treating them as truncated records).
+        escapeNewlines((node.content ?? '').slice(0, 1000)),
+        node.metadata ? escapeNewlines(JSON.stringify(node.metadata)) : '',
       ]) + '\n',
     );
   }
@@ -99,4 +109,22 @@ function csvRow(fields: string[]): string {
     }
     return f;
   }).join(',');
+}
+
+/**
+ * Escape literal newlines (LF and CR) to the two-character sequences `\n`
+ * and `\r`.  This prevents multi-line quoted CSV fields, which LadybugDB's
+ * sequential CSV reader (PARALLEL=FALSE) mis-parses under certain conditions:
+ * if a quoted field contains a raw newline but no `""` sequences the reader
+ * occasionally treats the line break as a record separator and produces
+ * "expected N values per row, but got N-1" errors.
+ *
+ * Callers that need to read the value back can unescape with:
+ *   value.replace(/\\n/g, '\n').replace(/\\r/g, '\r')
+ */
+function escapeNewlines(s: string): string {
+  // Only do the work when actually needed — avoids churning the string
+  // for the common case (short names, file paths, metadata without newlines).
+  if (!s.includes('\n') && !s.includes('\r')) return s;
+  return s.replace(/\r/g, '\\r').replace(/\n/g, '\\n');
 }

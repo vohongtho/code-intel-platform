@@ -4,7 +4,7 @@
 > ⚠ This section is auto-managed by `code-intel analyze`. Do **not** edit between the markers — your changes will be overwritten.
 > Add your own notes below the `<!-- code-intel:end -->` marker.
 
-Indexed: **3,707 nodes** | **6,576 edges** | **231 files** | analyzed in 17.1s
+Indexed: **3,748 nodes** | **6,636 edges** | **232 files** | analyzed in 4.0s
 
 > Index stale? Re-run: `code-intel analyze`
 
@@ -45,17 +45,17 @@ code-intel clean [path]            # Remove index data
 | Work in `backup` (37 symbols) | `.claude/skills/code-intel/backup/SKILL.md` |
 | Work in `workers` (34 symbols) | `.claude/skills/code-intel/workers/SKILL.md` |
 | Work in `phases` (33 symbols) | `.claude/skills/code-intel/phases/SKILL.md` |
-| Work in `storage` (32 symbols) | `.claude/skills/code-intel/storage/SKILL.md` |
+| Work in `storage` (33 symbols) | `.claude/skills/code-intel/storage/SKILL.md` |
 | Work in `shared` (31 symbols) | `.claude/skills/code-intel/shared/SKILL.md` |
 | Work in `multi-repo` (30 symbols) | `.claude/skills/code-intel/multi-repo/SKILL.md` |
 | Work in `eval` (29 symbols) | `.claude/skills/code-intel/eval/SKILL.md` |
 | Work in `api` (28 symbols) | `.claude/skills/code-intel/api/SKILL.md` |
-| Work in `cli` (22 symbols) | `.claude/skills/code-intel/cli/SKILL.md` |
+| Work in `cli` (23 symbols) | `.claude/skills/code-intel/cli/SKILL.md` |
 | Work in `multi-lang` (21 symbols) | `.claude/skills/code-intel/multi-lang/SKILL.md` |
 | Work in `graph` (19 symbols) | `.claude/skills/code-intel/graph/SKILL.md` |
+| Work in `parsing` (19 symbols) | `.claude/skills/code-intel/parsing/SKILL.md` |
 | Work in `auth` (19 symbols) | `.claude/skills/code-intel/auth-2/SKILL.md` |
 | Work in `jobs` (18 symbols) | `.claude/skills/code-intel/jobs/SKILL.md` |
-| Work in `parsing` (18 symbols) | `.claude/skills/code-intel/parsing/SKILL.md` |
 | Work in `http` (18 symbols) | `.claude/skills/code-intel/http/SKILL.md` |
 | Work in `search` (17 symbols) | `.claude/skills/code-intel/search/SKILL.md` |
 | Work in `pipeline` (16 symbols) | `.claude/skills/code-intel/pipeline/SKILL.md` |
