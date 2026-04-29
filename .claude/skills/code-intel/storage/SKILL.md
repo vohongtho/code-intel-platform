@@ -41,8 +41,8 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
 | `close` | method | 21 | 0 | `storage/db-manager.ts` |
-| `init` | method | 13 | 0 | `storage/db-manager.ts` |
 | `loadGraphToDB` | function | 1 | 12 | `storage/graph-loader.ts` |
+| `init` | method | 10 | 0 | `storage/db-manager.ts` |
 | `writeEdgeCSV` | function | 2 | 7 | `storage/csv-writer.ts` |
 | `loadRegistry` | function | 9 | 0 | `storage/repo-registry.ts` |
 | `writeNodeCSVs` | function | 2 | 6 | `storage/csv-writer.ts` |

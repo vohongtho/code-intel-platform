@@ -1,11 +1,11 @@
 ---
 name: parsing
-description: "Covers the **parsing** subsystem of code-intel-platform. 19 symbols across 3 files. Key symbols: `AstCache`, `constructor`, `set`. Internal call density: 0.6 calls/symbol. Participates in 6 execution flow(s)."
+description: "Covers the **parsing** subsystem of code-intel-platform. 20 symbols across 3 files. Key symbols: `AstCache`, `constructor`, `set`. Internal call density: 0.6 calls/symbol. Participates in 6 execution flow(s)."
 ---
 
 # parsing
 
-> **19 symbols** | **3 files** | path: `code-intel/core/src/parsing/` | call density: 0.6/sym
+> **20 symbols** | **3 files** | path: `code-intel/core/src/parsing/` | call density: 0.6/sym
 
 ## When to Use
 
@@ -20,7 +20,7 @@ Load this skill when:
 | File | Symbols | Notes |
 |------|---------|-------|
 | `code-intel/core/src/parsing/ast-cache.ts` | `AstCache`, `constructor`, `get`, `set` +(4) | 8 exported |
-| `code-intel/core/src/parsing/parser-manager.ts` | `wasmPath`, `initParser`, `getLanguage`, `getParser` +(2) | 5 exported |
+| `code-intel/core/src/parsing/parser-manager.ts` | `findBundledWasmDir`, `wasmPath`, `initParser`, `getLanguage` +(3) | 5 exported |
 | `code-intel/core/src/parsing/query-runner.ts` | `QueryCapture`, `QueryMatch`, `getOrCompileQuery`, `runQuery` +(1) | 4 exported |
 
 ## Entry Points
@@ -32,7 +32,7 @@ Start exploration here — exported symbols with no external callers:
 - **`set`** `(method)` → `code-intel/core/src/parsing/ast-cache.ts:22`
 - **`clear`** `(method)` → `code-intel/core/src/parsing/ast-cache.ts:33`
 - **`size`** `(method)` → `code-intel/core/src/parsing/ast-cache.ts:37`
-- **`isTreeSitterAvailable`** `(function)` → `code-intel/core/src/parsing/parser-manager.ts:111`
+- **`isTreeSitterAvailable`** `(function)` → `code-intel/core/src/parsing/parser-manager.ts:164`
 
 ## Hot Symbols
 
