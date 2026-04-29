@@ -9,7 +9,6 @@ dist/
 *.tsbuildinfo
 .amp/
 .amp/
-screenshots/
 .playwright-mcp/
 ref-use/
 .env
