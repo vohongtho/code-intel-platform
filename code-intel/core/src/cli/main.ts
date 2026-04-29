@@ -281,8 +281,18 @@ async function analyzeWorkspace(targetPath: string, options?: {
   const chosenParsePhase  = useParallel ? parsePhaseParallel  : parsePhase;
   const chosenResolvePhase = useParallel ? resolvePhaseParallel : resolvePhase;
 
+  // In incremental mode, the scan phase already ran (to discover all files for the
+  // change-set decision).  We still need a phase named 'scan' in the pipeline so
+  // the DAG validator can resolve structurePhase's dependency.  This no-op fulfils
+  // that contract without touching context.filePaths (already set to changed files).
+  const noopScanPhase = {
+    name: 'scan',
+    dependencies: [] as string[],
+    async execute() { return { success: true as const, duration: 0, nodesAdded: 0, edgesAdded: 0 }; },
+  };
+
   const phases = isIncremental
-    ? [structurePhase, chosenParsePhase, chosenResolvePhase, clusterPhase, flowPhase]
+    ? [noopScanPhase, structurePhase, chosenParsePhase, chosenResolvePhase, clusterPhase, flowPhase]
     : [scanPhase, structurePhase, chosenParsePhase, chosenResolvePhase, clusterPhase, flowPhase];
   const result = await runPipeline(phases, context);
 
