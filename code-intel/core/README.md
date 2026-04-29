@@ -32,6 +32,11 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 npm install -g @vohongtho.infotech/code-intel
 ```
 
+> **Note:** You may see `npm warn ERESOLVE overriding peer dependency` warnings about `tree-sitter`. These are **harmless** — they relate to the native Node.js bindings which are not used. The CLI uses `web-tree-sitter` (WASM) exclusively. If you prefer a warning-free install, use:
+> ```bash
+> npm install -g @vohongtho.infotech/code-intel --legacy-peer-deps
+> ```
+
 The `code-intel` binary is placed in your `$PATH` automatically (via the `bin` field in `package.json`).
 
 Verify:
