@@ -1,5 +1,5 @@
 {
-  "name": "code-intel",
+  "name": "@vohongtho.infotech/code-intel",
   "version": "0.3.0",
   "description": "Static code analysis platform \u2014 builds a Knowledge Graph from source code with Web UI, HTTP API, CLI, and MCP server",
   "license": "MIT",

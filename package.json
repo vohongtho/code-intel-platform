@@ -3,6 +3,7 @@
   "version": "0.3.0",
   "private": true,
   "license": "MIT",
+  "files": [],
   "workspaces": [
     "code-intel/shared",
     "code-intel/core",
