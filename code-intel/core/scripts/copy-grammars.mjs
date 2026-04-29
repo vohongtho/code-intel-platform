@@ -30,14 +30,27 @@ fs.mkdirSync(destDir, { recursive: true });
 
 let copied = 0;
 for (const { pkg, dest } of grammars) {
+  const dst = path.join(destDir, dest);
+
+  // 1. Try resolving the WASM from the npm package
   try {
     const src = req.resolve(pkg);
-    const dst = path.join(destDir, dest);
     fs.copyFileSync(src, dst);
     console.log(`  ✓ copied ${pkg} → dist/wasm/${dest}`);
     copied++;
-  } catch (e) {
-    console.warn(`  ⚠ ${pkg} not found, skipping (${e.message})`);
+    continue;
+  } catch {
+    // Package not installed or doesn't ship a WASM — try bundled fallback
+  }
+
+  // 2. Fall back to the pre-bundled wasm/ directory in this package
+  const bundledSrc = path.join(__dirname, '..', 'wasm', dest);
+  if (fs.existsSync(bundledSrc)) {
+    fs.copyFileSync(bundledSrc, dst);
+    console.log(`  ✓ copied (bundled) ${dest} → dist/wasm/${dest}`);
+    copied++;
+  } else {
+    console.warn(`  ⚠ ${pkg} not found, skipping (no npm wasm and no bundled fallback)`);
   }
 }
 
