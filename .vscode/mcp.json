@@ -1,0 +1,9 @@
+{
+  "servers": {
+    "code-intel": {
+      "type": "stdio",
+      "command": "code-intel",
+      "args": ["mcp", "${workspaceFolder}"]
+    }
+  }
+}

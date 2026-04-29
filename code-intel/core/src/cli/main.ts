@@ -532,7 +532,7 @@ program
       mcpServers: {
         'code-intel': {
           command: 'npx',
-          args: ['@vohongtho.infotech/code-intel', 'mcp', '.'],
+          args: ['code-intel', 'mcp', '.'],
         },
       },
     };
@@ -563,7 +563,9 @@ program
       }
     }
 
-    console.log('\n  VS Code / Cursor — add the same mcpServers block to settings.json or .vscode/mcp.json');
+    console.log('\n  VS Code / Cursor — add to .vscode/mcp.json in your project:');
+    console.log('  ' + JSON.stringify({ servers: { 'code-intel': { type: 'stdio', command: 'npx', args: ['code-intel', 'mcp', '.'] } } }, null, 2).split('\n').join('\n  '));
+    console.log('\n  To verify in VS Code: open Command Palette → "MCP: List Servers" and confirm code-intel is Running.');
     console.log('\n  Next: run `code-intel analyze` inside your project to build the knowledge graph.\n');
   });
 
