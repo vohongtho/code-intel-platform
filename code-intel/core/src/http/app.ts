@@ -270,7 +270,7 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     }
   }
 
-  if (workspaceRoot) {
+  if (workspaceRoot && process.env['NODE_ENV'] !== 'test') {
     setImmediate(() => ensureVectorIndex().catch(() => {}));
   }
 
