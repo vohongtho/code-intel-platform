@@ -9,14 +9,18 @@ export interface EmbeddedNode {
   embedding: number[];
 }
 
+const EMBED_DIM = 384; // all-MiniLM-L6-v2 output dimension
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-let pipelineInstance: ((text: string, opts: Record<string, unknown>) => Promise<{ data: Float32Array }>) | null = null;
+let pipelineInstance: ((text: string | string[], opts: Record<string, unknown>) => Promise<{ data: Float32Array }>) | null = null;
 
 async function getEmbedder() {
   if (!pipelineInstance) {
     const { pipeline } = await import('@huggingface/transformers');
+    // dtype:'q8' loads the int8-quantized ONNX weights — ~2-4× faster on CPU,
+    // negligible quality difference for code-symbol embeddings.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    pipelineInstance = (await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2')) as unknown as typeof pipelineInstance;
+    pipelineInstance = (await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', { dtype: 'q8' } as any)) as unknown as typeof pipelineInstance;
   }
   return pipelineInstance!;
 }
@@ -25,7 +29,8 @@ export async function embedNodes(
   graph: KnowledgeGraph,
   opts: { batchSize?: number; onProgress?: (done: number, total: number) => void } = {},
 ): Promise<EmbeddedNode[]> {
-  const { batchSize = 32, onProgress } = opts;
+  // Larger batch = fewer forward passes = faster overall
+  const { batchSize = 64, onProgress } = opts;
 
   // Collect candidates — skip cluster/directory/flow to save time
   const candidates: { id: string; name: string; kind: string; filePath: string; text: string }[] = [];
@@ -42,9 +47,16 @@ export async function embedNodes(
     const batch = candidates.slice(i, i + batchSize);
     const texts = batch.map((c) => c.text);
 
-    for (let j = 0; j < texts.length; j++) {
-      const out = await embedder(texts[j], { pooling: 'mean', normalize: true });
-      results.push({ ...batch[j], embedding: Array.from(out.data) });
+    // ── True batch inference ──────────────────────────────────────────────────
+    // Pass the entire texts array in one forward pass instead of N sequential
+    // calls.  The pipeline returns a flat Float32Array of shape [B * EMBED_DIM].
+    const out = await embedder(texts, { pooling: 'mean', normalize: true });
+
+    for (let j = 0; j < batch.length; j++) {
+      const start = j * EMBED_DIM;
+      // subarray() gives a view (no copy) into the underlying buffer
+      const embedding = Array.from(out.data.subarray(start, start + EMBED_DIM));
+      results.push({ ...batch[j], embedding });
     }
 
     onProgress?.(Math.min(i + batchSize, candidates.length), candidates.length);
