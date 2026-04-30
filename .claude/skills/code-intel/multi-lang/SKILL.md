@@ -41,12 +41,12 @@ Sorted by call graph degree (changing these has the highest blast radius):
 |--------|------|-----:|------:|------|
 | `registerRoutes` | method | 1 | 4 | `multi-lang/router.ts` |
 | `handle` | method | 1 | 2 | `multi-lang/router.ts` |
+| `login` | method | 3 | 0 | `multi-lang/router.ts` |
 | `login` | function | 0 | 2 | `multi-lang/auth.py` |
 | `_find_user` | function | 1 | 1 | `multi-lang/auth.py` |
 | `_generate_token` | function | 1 | 1 | `multi-lang/auth.py` |
 | `handleLogin` | method | 1 | 1 | `multi-lang/router.ts` |
 | `handleLogout` | method | 1 | 1 | `multi-lang/router.ts` |
-| `login` | method | 2 | 0 | `multi-lang/router.ts` |
 | `logout` | method | 2 | 0 | `multi-lang/router.ts` |
 | `User` | class | 1 | 0 | `multi-lang/auth.py` |
 | `__init__` | function | 1 | 0 | `multi-lang/auth.py` |

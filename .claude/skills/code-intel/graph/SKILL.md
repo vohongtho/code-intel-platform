@@ -1,6 +1,6 @@
 ---
 name: graph
-description: "Covers the **graph** subsystem of code-intel-platform. 19 symbols across 2 files. Key symbols: `size`. Internal call density: 0.2 calls/symbol. Participates in 3 execution flow(s)."
+description: "Covers the **graph** subsystem of code-intel-platform. 19 symbols across 2 files. Key symbols: `size`. Internal call density: 0.2 calls/symbol."
 ---
 
 # graph
@@ -34,23 +34,18 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `allNodes` | method | 26 | 1 | `graph/knowledge-graph.ts` |
-| `createKnowledgeGraph` | function | 26 | 0 | `graph/knowledge-graph.ts` |
-| `addNode` | method | 18 | 1 | `graph/knowledge-graph.ts` |
-| `addEdge` | method | 15 | 2 | `graph/knowledge-graph.ts` |
-| `getNode` | method | 14 | 1 | `graph/knowledge-graph.ts` |
+| `createKnowledgeGraph` | function | 42 | 0 | `graph/knowledge-graph.ts` |
+| `addNode` | method | 34 | 1 | `graph/knowledge-graph.ts` |
+| `getNode` | method | 31 | 1 | `graph/knowledge-graph.ts` |
+| `addEdge` | method | 24 | 2 | `graph/knowledge-graph.ts` |
+| `findEdgesFrom` | method | 16 | 1 | `graph/knowledge-graph.ts` |
+| `findEdgesTo` | method | 15 | 1 | `graph/knowledge-graph.ts` |
 | `generateEdgeId` | function | 14 | 0 | `graph/id-generator.ts` |
 | `generateNodeId` | function | 13 | 0 | `graph/id-generator.ts` |
-| `findEdgesByKind` | method | 8 | 1 | `graph/knowledge-graph.ts` |
-| `findEdgesFrom` | method | 8 | 1 | `graph/knowledge-graph.ts` |
+| `findEdgesByKind` | method | 11 | 1 | `graph/knowledge-graph.ts` |
 | `allEdges` | method | 7 | 1 | `graph/knowledge-graph.ts` |
-| `findEdgesTo` | method | 5 | 1 | `graph/knowledge-graph.ts` |
-| `removeNodeCascade` | method | 2 | 3 | `graph/knowledge-graph.ts` |
-
-## Execution Flows
-
-**3** execution path(s) pass through this area.
-Run `code-intel inspect <symbol>` on a hot symbol to trace the full call chain.
+| `removeNodeCascade` | method | 3 | 3 | `graph/knowledge-graph.ts` |
+| `getEdge` | method | 4 | 1 | `graph/knowledge-graph.ts` |
 
 ## Impact Guidance
 
@@ -63,7 +58,7 @@ Before modifying any symbol in this area:
 
 ```bash
 # Inspect most-connected symbol
-code-intel inspect allNodes
+code-intel inspect createKnowledgeGraph
 # Blast radius for entry point
 code-intel impact size
 # Search this area

@@ -1,6 +1,6 @@
 ---
 name: workers
-description: "Covers the **workers** subsystem of code-intel-platform. 34 symbols across 5 files. Key symbols: `execute`, `execute`, `constructor`. Internal call density: 0.3 calls/symbol. Participates in 7 execution flow(s)."
+description: "Covers the **workers** subsystem of code-intel-platform. 34 symbols across 5 files. Key symbols: `execute`, `execute`, `constructor`. Internal call density: 0.3 calls/symbol. Participates in 6 execution flow(s)."
 ---
 
 # workers
@@ -44,7 +44,7 @@ Sorted by call graph degree (changing these has the highest blast radius):
 |--------|------|-----:|------:|------|
 | `execute` | method | 0 | 19 | `workers/parse-phase-parallel.ts` |
 | `execute` | method | 0 | 18 | `workers/resolve-phase-parallel.ts` |
-| `extractTreeSitter` | function | 1 | 10 | `workers/parse-worker.ts` |
+| `extractTreeSitter` | function | 1 | 11 | `workers/parse-worker.ts` |
 | `spawnWorker` | method | 1 | 7 | `workers/worker-pool.ts` |
 | `extractCalls` | function | 1 | 2 | `workers/resolve-worker.ts` |
 | `drainQueue` | method | 2 | 1 | `workers/worker-pool.ts` |
@@ -57,7 +57,7 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 ## Execution Flows
 
-**7** execution path(s) pass through this area.
+**6** execution path(s) pass through this area.
 Run `code-intel inspect <symbol>` on a hot symbol to trace the full call chain.
 
 ## Impact Guidance

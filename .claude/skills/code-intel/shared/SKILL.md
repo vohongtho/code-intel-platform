@@ -1,6 +1,6 @@
 ---
 name: shared
-description: "Covers the **shared** subsystem of code-intel-platform. 31 symbols across 7 files. Key symbols: `detectLanguage`, `getSupportedExtensions`. Internal call density: 0.5 calls/symbol. Participates in 6 execution flow(s)."
+description: "Covers the **shared** subsystem of code-intel-platform. 31 symbols across 7 files. Key symbols: `detectLanguage`, `getSupportedExtensions`. Internal call density: 0.5 calls/symbol. Participates in 8 execution flow(s)."
 ---
 
 # shared
@@ -40,8 +40,8 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `resolve` | function | 41 | 2 | `shared/config-validator.ts` |
-| `warn` | method | 18 | 1 | `shared/logger.ts` |
+| `resolve` | function | 43 | 2 | `shared/config-validator.ts` |
+| `warn` | method | 21 | 1 | `shared/logger.ts` |
 | `getLogger` | method | 5 | 2 | `shared/logger.ts` |
 | `error` | method | 5 | 1 | `shared/logger.ts` |
 | `secureMkdir` | function | 5 | 0 | `shared/fs-secure.ts` |
@@ -55,7 +55,7 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 ## Execution Flows
 
-**6** execution path(s) pass through this area.
+**8** execution path(s) pass through this area.
 Run `code-intel inspect <symbol>` on a hot symbol to trace the full call chain.
 
 ## Impact Guidance

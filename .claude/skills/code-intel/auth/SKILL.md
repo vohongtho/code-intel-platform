@@ -1,6 +1,6 @@
 ---
 name: auth
-description: "Covers the **auth** subsystem of code-intel-platform. 84 symbols across 5 files. Key symbols: `authMiddleware`, `constructor`, `createUser`. Internal call density: 0.6 calls/symbol. Participates in 5 execution flow(s)."
+description: "Covers the **auth** subsystem of code-intel-platform. 84 symbols across 5 files. Key symbols: `authMiddleware`, `constructor`, `createUser`. Internal call density: 0.6 calls/symbol."
 ---
 
 # auth
@@ -52,11 +52,6 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | `createSession` | function | 3 | 3 | `auth/middleware.ts` |
 | `requireRole` | function | 3 | 3 | `auth/middleware.ts` |
 | `buildOIDCLoginUrl` | function | 2 | 4 | `auth/oidc.ts` |
-
-## Execution Flows
-
-**5** execution path(s) pass through this area.
-Run `code-intel inspect <symbol>` on a hot symbol to trace the full call chain.
 
 ## Impact Guidance
 

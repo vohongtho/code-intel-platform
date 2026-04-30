@@ -42,10 +42,10 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | `s3Request` | function | 3 | 8 | `backup/backup-service.ts` |
 | `createBackup` | method | 4 | 4 | `backup/backup-service.ts` |
 | `start` | method | 1 | 6 | `backup/backup-scheduler.ts` |
+| `restoreBackup` | method | 3 | 4 | `backup/backup-service.ts` |
 | `_runBackups` | method | 1 | 5 | `backup/backup-scheduler.ts` |
 | `applyRetention` | method | 2 | 4 | `backup/backup-service.ts` |
-| `restoreBackup` | method | 3 | 2 | `backup/backup-service.ts` |
-| `_loadIndex` | method | 4 | 1 | `backup/backup-service.ts` |
+| `_loadIndex` | method | 4 | 2 | `backup/backup-service.ts` |
 | `BackupService` | class | 4 | 0 | `backup/backup-service.ts` |
 | `listBackups` | method | 3 | 1 | `backup/backup-service.ts` |
 | `getS3Config` | method | 3 | 0 | `backup/backup-service.ts` |

@@ -45,17 +45,17 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `queryGroup` | function | 3 | 8 | `multi-repo/group-query.ts` |
+| `queryGroup` | function | 3 | 9 | `multi-repo/group-query.ts` |
+| `syncGroup` | function | 0 | 11 | `multi-repo/group-sync.ts` |
 | `loadGraphFromDB` | function | 6 | 4 | `multi-repo/graph-from-db.ts` |
-| `syncGroup` | function | 0 | 10 | `multi-repo/group-sync.ts` |
-| `loadGroup` | function | 6 | 1 | `multi-repo/group-registry.ts` |
+| `loadGroup` | function | 6 | 2 | `multi-repo/group-registry.ts` |
 | `saveGroup` | function | 6 | 1 | `multi-repo/group-registry.ts` |
+| `loadSyncResult` | function | 4 | 1 | `multi-repo/group-registry.ts` |
 | `matchContracts` | function | 1 | 4 | `multi-repo/group-sync.ts` |
 | `groupFile` | function | 4 | 0 | `multi-repo/group-registry.ts` |
 | `addMember` | function | 2 | 2 | `multi-repo/group-registry.ts` |
 | `removeMember` | function | 2 | 2 | `multi-repo/group-registry.ts` |
 | `saveSyncResult` | function | 4 | 0 | `multi-repo/group-registry.ts` |
-| `loadSyncResult` | function | 4 | 0 | `multi-repo/group-registry.ts` |
 | `loadGroupConfig` | function | 3 | 0 | `multi-repo/group-config.ts` |
 
 ## Impact Guidance
