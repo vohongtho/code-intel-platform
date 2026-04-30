@@ -14,7 +14,7 @@ const EMBED_DIM = 384; // all-MiniLM-L6-v2 output dimension
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let pipelineInstance: ((text: string | string[], opts: Record<string, unknown>) => Promise<{ data: Float32Array }>) | null = null;
 
-async function getEmbedder() {
+export async function getEmbedder() {
   if (!pipelineInstance) {
     const { pipeline } = await import('@huggingface/transformers');
     // dtype:'q8' loads the int8-quantized ONNX weights — ~2-4× faster on CPU,
@@ -33,11 +33,11 @@ export async function embedNodes(
   const { batchSize = 64, onProgress } = opts;
 
   // Collect candidates — skip cluster/directory/flow to save time
-  const candidates: { id: string; name: string; kind: string; filePath: string; text: string }[] = [];
+  const candidates: { id: string; name: string; kind: string; filePath: string; text: string; embeddingSource: 'summary' | 'code' }[] = [];
   for (const node of graph.allNodes()) {
     if (['cluster', 'directory', 'flow'].includes(node.kind)) continue;
-    const text = buildText(node);
-    candidates.push({ id: node.id, name: node.name, kind: node.kind, filePath: node.filePath, text });
+    const { text, embeddingSource } = buildText(node);
+    candidates.push({ id: node.id, name: node.name, kind: node.kind, filePath: node.filePath, text, embeddingSource });
   }
 
   const embedder = await getEmbedder();
@@ -56,7 +56,16 @@ export async function embedNodes(
       const start = j * EMBED_DIM;
       // subarray() gives a view (no copy) into the underlying buffer
       const embedding = Array.from(out.data.subarray(start, start + EMBED_DIM));
-      results.push({ ...batch[j], embedding });
+      const candidate = batch[j];
+
+      // Mark the node with embeddingSource so callers know which path was used
+      const graphNode = graph.getNode(candidate.id);
+      if (graphNode) {
+        if (!graphNode.metadata) (graphNode as { metadata: Record<string, unknown> }).metadata = {};
+        graphNode.metadata!['embeddingSource'] = candidate.embeddingSource;
+      }
+
+      results.push({ id: candidate.id, name: candidate.name, kind: candidate.kind, filePath: candidate.filePath, text: candidate.text, embedding });
     }
 
     onProgress?.(Math.min(i + batchSize, candidates.length), candidates.length);
@@ -65,11 +74,20 @@ export async function embedNodes(
   return results;
 }
 
-function buildText(node: { name: string; kind: string; filePath: string; content?: string | null; metadata?: Record<string, unknown> | null }): string {
-  const parts: string[] = [`${node.kind} ${node.name}`];
+export function buildText(node: { name: string; kind: string; filePath: string; content?: string | null; metadata?: Record<string, unknown> | null }): { text: string; embeddingSource: 'summary' | 'code' } {
   const sig = node.metadata?.signature as string | undefined;
+  const summary = node.metadata?.summary as string | undefined;
+
+  if (summary) {
+    // Summary-based text: "[{kind}] {name}\n{signature}\n{summary}" capped at 512
+    const text = `[${node.kind}] ${node.name}\n${sig ?? ''}\n${summary}`.slice(0, 512);
+    return { text, embeddingSource: 'summary' };
+  }
+
+  // Code-based fallback (original behaviour)
+  const parts: string[] = [`${node.kind} ${node.name}`];
   if (sig) parts.push(sig);
   if (node.content) parts.push(node.content.slice(0, 256));
   parts.push(node.filePath);
-  return parts.join(' ').slice(0, 512);
+  return { text: parts.join(' ').slice(0, 512), embeddingSource: 'code' };
 }

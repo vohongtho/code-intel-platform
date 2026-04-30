@@ -9,6 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
 import { textSearch } from '../search/text-search.js';
+import { hybridSearch } from '../search/hybrid-search.js';
 import { DbManager, getDbPath, getVectorDbPath } from '../storage/index.js';
 import { loadMetadata } from '../storage/metadata.js';
 import { VectorIndex } from '../search/vector-index.js';
@@ -107,7 +108,7 @@ function createDefaultLimiter() {
 
 // ── App factory ───────────────────────────────────────────────────────────────
 
-export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot?: string): express.Application {
+export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot?: string, watcherState?: { watching: boolean; lastEventAt: number | null }): express.Application {
   const app = express();
 
   // Trust proxy (for correct IP detection behind nginx/caddy)
@@ -670,6 +671,10 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
       edges: graph.size.edges,
       users: db.hasAnyUser(),
       workspaceRoot,
+      watching: watcherState?.watching ?? false,
+      lastWatchEvent: watcherState?.lastEventAt
+        ? new Date(watcherState.lastEventAt).toISOString()
+        : null,
       memory: {
         heapUsedMb: Math.round(memUsage.heapUsed / 1024 / 1024),
         heapTotalMb: Math.round(memUsage.heapTotal / 1024 / 1024),
@@ -752,8 +757,9 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
   app.post('/api/v1/search', requireToolScope('search'), async (req, res) => {
     const { query, limit, repo } = req.body as { query?: string; limit?: number; repo?: string };
     const g = await getGraphForRepo(repo);
-    const results = textSearch(g, query ?? '', limit ?? 20);
-    res.json({ results });
+    const vdbPath = workspaceRoot ? getVectorDbPath(workspaceRoot) : undefined;
+    const { results, searchMode } = await hybridSearch(g, query ?? '', limit ?? 20, { vectorDbPath: vdbPath });
+    res.json({ results, searchMode });
   });
 
   // ── Vector search ───────────────────────────────────────────────────────────
@@ -1221,12 +1227,17 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
   return app;
 }
 
-export function startHttpServer(
+export interface HttpServerInstance {
+  wsServer: import('./websocket-server.js').WsServer | null;
+}
+
+export async function startHttpServer(
   graph: KnowledgeGraph,
   repoName: string,
   port = 4747,
   workspaceRoot?: string,
-): void {
+  watcherState?: { watching: boolean; lastEventAt: number | null },
+): Promise<HttpServerInstance> {
   // Bootstrap check
   const db = getOrCreateUsersDB();
   if (!db.hasAnyUser()) {
@@ -1234,14 +1245,29 @@ export function startHttpServer(
     console.log('     Run: code-intel user create admin --role admin\n');
   }
 
-  const app = createApp(graph, repoName, workspaceRoot);
-  app.listen(port, () => {
-    Logger.info(`Code Intelligence server running at http://localhost:${port}`);
-    Logger.info(`  Graph: ${graph.size.nodes} nodes, ${graph.size.edges} edges`);
-    Logger.info(`  Auth: login at http://localhost:${port}/auth/login`);
+  const app = createApp(graph, repoName, workspaceRoot, watcherState);
 
-    // Start automated backup scheduler if enabled
-    const scheduler = createBackupScheduler();
-    scheduler.start(workspaceRoot);
+  return new Promise((resolve) => {
+    const httpServer = app.listen(port, () => {
+      Logger.info(`Code Intelligence server running at http://localhost:${port}`);
+      Logger.info(`  Graph: ${graph.size.nodes} nodes, ${graph.size.edges} edges`);
+      Logger.info(`  Auth: login at http://localhost:${port}/auth/login`);
+      if (watcherState?.watching) {
+        Logger.info(`  WebSocket: ws://localhost:${port}/ws (graph:updated push enabled)`);
+      }
+
+      // Start automated backup scheduler if enabled
+      const scheduler = createBackupScheduler();
+      scheduler.start(workspaceRoot);
+
+      // Attach WebSocket server
+      let wsServer: import('./websocket-server.js').WsServer | null = null;
+      try {
+        const { WsServer } = require('./websocket-server.js') as typeof import('./websocket-server.js');
+        wsServer = new WsServer(httpServer as import('node:http').Server);
+      } catch { /* ws not available in test env */ }
+
+      resolve({ wsServer });
+    }) as import('node:http').Server;
   });
 }
