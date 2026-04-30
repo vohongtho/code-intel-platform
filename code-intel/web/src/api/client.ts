@@ -265,6 +265,18 @@ export class ApiClient {
     return res.json() as Promise<{ content: string; language: string; startLine: number; endLine: number }>;
   }
 
+  async getGroupTopology(name: string): Promise<{
+    repos: { name: string; groupPath: string; nodeCount: number; edgeCount: number }[];
+    edges: { source: string; target: string; contractName: string; confidence: number; kind: string }[];
+  }> {
+    const res = await fetch(`${this.baseUrl}/api/v1/groups/${encodeURIComponent(name)}/topology`, { credentials: 'include' });
+    if (!res.ok) throw new Error(`Failed to get topology: ${res.statusText}`);
+    return res.json() as Promise<{
+      repos: { name: string; groupPath: string; nodeCount: number; edgeCount: number }[];
+      edges: { source: string; target: string; contractName: string; confidence: number; kind: string }[];
+    }>;
+  }
+
   async queryGQL(gql: string): Promise<GQLResult> {
     const csrfToken = await this.getCsrfToken();
     const res = await fetch(`${this.baseUrl}/api/v1/query`, {

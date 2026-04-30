@@ -409,6 +409,30 @@ export const openApiSpec = {
         },
       },
     },
+    '/groups/{name}/topology': {
+      get: {
+        tags: ['Groups'],
+        summary: 'Get the topology of repos and cross-repo contract edges for a group',
+        parameters: [{ name: 'name', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': {
+            description: 'Repos and cross-repo edges',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    repos: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, groupPath: { type: 'string' }, nodeCount: { type: 'integer' }, edgeCount: { type: 'integer' } } } },
+                    edges: { type: 'array', items: { type: 'object', properties: { source: { type: 'string' }, target: { type: 'string' }, contractName: { type: 'string' }, confidence: { type: 'number' }, kind: { type: 'string' } } } },
+                  },
+                },
+              },
+            },
+          },
+          '404': { description: 'Group not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
     '/query': {
       post: {
         tags: ['GQL'],

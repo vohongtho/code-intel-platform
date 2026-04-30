@@ -18,7 +18,7 @@ export interface RepoGroup {
 
 // ─── Contract model ──────────────────────────────────────────────────────────
 
-export type ContractKind = 'export' | 'route' | 'schema' | 'event';
+export type ContractKind = 'export' | 'route' | 'schema' | 'event' | 'graphql' | 'grpc';
 
 /**
  * A contract is an observable boundary point of a repo:
@@ -33,6 +33,9 @@ export interface Contract {
   nodeKind: string;
   filePath: string;
   signature?: string;
+  parameters?: Array<{ name: string; type?: string }>;
+  returnType?: string;
+  exported?: boolean;
 }
 
 export type LinkKind = 'name-match' | 'route-match' | 'import-match';

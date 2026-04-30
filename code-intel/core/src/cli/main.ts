@@ -55,6 +55,7 @@ import {
 } from '../multi-repo/group-registry.js';
 import { syncGroup } from '../multi-repo/group-sync.js';
 import { queryGroup } from '../multi-repo/group-query.js';
+import { detectWorkspace } from '../multi-repo/workspace-detector.js';
 import { getOrCreateUsersDB } from '../auth/users-db.js';
 import type { Role } from '../auth/users-db.js';
 import { BackupService } from '../backup/backup-service.js';
@@ -169,6 +170,8 @@ async function analyzeWorkspace(targetPath: string, options?: {
   llmModel?: string;
   llmBatchSize?: number;
   llmMaxNodes?: number;
+  /** v0.7.0: skip automatic group sync after analysis */
+  noGroupSync?: boolean;
 }) {
   const workspaceRoot = path.resolve(targetPath);
   if (!options?.silent) console.log(`Analyzing: ${workspaceRoot}`);
@@ -524,6 +527,34 @@ async function analyzeWorkspace(targetPath: string, options?: {
   }
   Logger.info(`analyze complete: ${graph.size.nodes} nodes, ${graph.size.edges} edges, ${context.filePaths.length} files, ${result.totalDuration}ms`);
 
+  // Auto-sync groups containing this repo (unless --no-group-sync)
+  if (!options?.noGroupSync) {
+    const registry = loadRegistry();
+    const repoEntry = registry.find(r => r.path === workspaceRoot);
+    if (repoEntry) {
+      const allGroups = listGroups();
+      for (const g of allGroups) {
+        const group = loadGroup(g.name);
+        if (!group) continue;
+        const isMember = group.members.some(m => m.registryName === repoEntry.name);
+        if (!isMember) continue;
+        if (!options?.silent) console.log(`  ⠹ Syncing group '${g.name}'…`);
+        try {
+          const { syncGroup: doSyncGroup } = await import('../multi-repo/group-sync.js');
+          const { saveSyncResult: doSaveSyncResult } = await import('../multi-repo/group-registry.js');
+          const syncResult = await doSyncGroup(group);
+          doSaveSyncResult(syncResult);
+          group.lastSync = syncResult.syncedAt;
+          const { saveGroup: doSaveGroup } = await import('../multi-repo/group-registry.js');
+          doSaveGroup(group);
+          if (!options?.silent) console.log(`  ✅ Group '${g.name}' synced`);
+        } catch (err) {
+          if (!options?.silent) console.warn(`  ⚠  Group sync failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    }
+  }
+
   return { graph, result, repoName, workspaceRoot };
 }
 
@@ -606,6 +637,7 @@ program
   .option('--llm-model <model>',       'LLM model name (e.g. gpt-4o-mini, claude-haiku-4-5, llama3)')
   .option('--llm-batch-size <n>',      'Concurrent LLM calls per batch (default: 20)', '20')
   .option('--llm-max-nodes <n>',       'Max nodes to summarize per run (cost guard)')
+  .option('--no-group-sync',           'Skip automatic group sync after analysis')
   .addHelpText('after', `
   Parses your source code with tree-sitter, builds a Knowledge Graph of
   symbols and their relationships, persists it to .code-intel/graph.db,
@@ -642,6 +674,7 @@ program
     llmModel?: string;
     llmBatchSize?: string;
     llmMaxNodes?: string;
+    groupSync?: boolean;
   }) => {
     await analyzeWorkspace(targetPath, {
       force: opts.force,
@@ -658,6 +691,7 @@ program
       llmModel: opts.llmModel,
       llmBatchSize: opts.llmBatchSize ? parseInt(opts.llmBatchSize, 10) : undefined,
       llmMaxNodes:  opts.llmMaxNodes  ? parseInt(opts.llmMaxNodes,  10) : undefined,
+      noGroupSync: opts.groupSync === false,
     });
     // LadybugDB keeps background checkpoint threads alive after close(),
     // preventing Node from exiting naturally.  Force-exit once the work is done.
@@ -1544,6 +1578,111 @@ groupCmd
         console.log(`       run: code-intel analyze ${regEntry.path}\n`);
       }
     }
+  });
+
+// group init-workspace [path]
+groupCmd
+  .command('init-workspace [path]')
+  .description('Auto-discover workspace packages and create a group')
+  .option('--name <name>', 'Group name (default: workspace root dirname)')
+  .option('--no-analyze', 'Register packages without running analysis')
+  .option('--yes', 'Skip confirmation prompt')
+  .option('--parallel <n>', 'Concurrent analyses (default: 2)', '2')
+  .action(async (targetPath: string | undefined, opts: {
+    name?: string; analyze: boolean; yes?: boolean; parallel: string;
+  }) => {
+    const root = path.resolve(targetPath ?? '.');
+    const ws = await detectWorkspace(root);
+    if (!ws) {
+      console.error(`\n  ✗  No workspace config found in: ${root}`);
+      console.error(`     Expected: package.json with workspaces, pnpm-workspace.yaml, nx.json, or turbo.json\n`);
+      process.exit(1);
+    }
+
+    const groupName = opts.name ?? path.basename(root);
+
+    console.log(`\n  ◈  Workspace detected: ${ws.type}`);
+    console.log(`     Group name    : ${groupName}`);
+    console.log(`     Packages (${ws.packages.length}):\n`);
+    for (const pkg of ws.packages) {
+      console.log(`       ${pkg.name.padEnd(35)} ${pkg.path}`);
+    }
+
+    if (!opts.yes) {
+      // Prompt
+      const answer = await new Promise<string>((resolve) => {
+        process.stdout.write('\n  Proceed? [y/N] ');
+        process.stdin.once('data', (data) => resolve(data.toString().trim().toLowerCase()));
+      });
+      if (answer !== 'y' && answer !== 'yes') {
+        console.log('\n  Aborted.\n');
+        process.exit(0);
+      }
+    }
+
+    // Create group
+    if (groupExists(groupName)) {
+      console.log(`\n  ℹ  Group "${groupName}" already exists — will update.`);
+    } else {
+      saveGroup({ name: groupName, createdAt: new Date().toISOString(), members: [] });
+      console.log(`\n  ✅  Group "${groupName}" created.`);
+    }
+
+    const parallel = Math.max(1, parseInt(opts.parallel, 10));
+
+    // Analyze packages in batches
+    const results: Array<{ name: string; status: string; nodes?: number; edges?: number }> = [];
+
+    if (opts.analyze !== false) {
+      console.log(`\n  Analyzing ${ws.packages.length} packages (parallel: ${parallel})…\n`);
+
+      // Process in chunks of `parallel`
+      for (let i = 0; i < ws.packages.length; i += parallel) {
+        const chunk = ws.packages.slice(i, i + parallel);
+        await Promise.all(chunk.map(async (pkg, j) => {
+          const idx = i + j + 1;
+          console.log(`  [${idx}/${ws.packages.length}] Analyzing ${pkg.name}…`);
+          try {
+            await analyzeWorkspace(pkg.path, { silent: true });
+            results.push({ name: pkg.name, status: '✅' });
+          } catch (err) {
+            results.push({ name: pkg.name, status: `✗ ${err instanceof Error ? err.message : String(err)}` });
+          }
+        }));
+      }
+    } else {
+      for (const pkg of ws.packages) {
+        results.push({ name: pkg.name, status: '--no-analyze' });
+      }
+    }
+
+    // Register each package in group
+    for (const pkg of ws.packages) {
+      try {
+        upsertRepo({ name: pkg.name, path: pkg.path, indexedAt: new Date().toISOString(), stats: { nodes: 0, edges: 0, files: 0 } });
+        addMember(groupName, { groupPath: pkg.name, registryName: pkg.name });
+      } catch { /* already a member */ }
+    }
+
+    // Sync group
+    console.log(`\n  ⟳ Syncing group "${groupName}"…`);
+    try {
+      const group = loadGroup(groupName)!;
+      const syncResult = await syncGroup(group);
+      saveSyncResult(syncResult);
+      group.lastSync = syncResult.syncedAt;
+      saveGroup(group);
+      console.log(`  ✅  Sync complete — ${syncResult.contracts.length} contracts, ${syncResult.links.length} cross-links`);
+    } catch (err) {
+      console.warn(`  ⚠  Sync failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    // Summary table
+    console.log(`\n  Summary:\n`);
+    for (const r of results) {
+      console.log(`    ${r.status.padEnd(4)} ${r.name}`);
+    }
+    console.log('');
   });
 
 // ─── 12. user ────────────────────────────────────────────────────────────────
@@ -2537,6 +2676,134 @@ program
         console.log(`  ${n.kind.padEnd(14)} ${n.name.padEnd(32)} ${n.filePath}`);
       }
       console.log(`\n  Execution time: ${result.executionTimeMs}ms\n`);
+    }
+  });
+
+// ─── pr-impact ───────────────────────────────────────────────────────────────
+program
+  .command('pr-impact')
+  .description('Compute PR blast radius and risk scores using git diff')
+  .option('--base <ref>', 'Base git ref (default: main)', 'main')
+  .option('--head <ref>', 'Head git ref (default: HEAD)', 'HEAD')
+  .option('--fail-on <level>', 'Exit code 1 if this risk level found: HIGH|MEDIUM', '')
+  .option('--format <fmt>', 'Output format: text|json|sarif (default: text)', 'text')
+  .option('--path <path>', 'Repo path (default: current dir)')
+  .addHelpText('after', `
+  Computes the blast radius for files changed between two git refs.
+
+  Examples:
+    $ code-intel pr-impact --base main --head HEAD
+    $ code-intel pr-impact --base main --head HEAD --fail-on HIGH
+    $ code-intel pr-impact --base main --head HEAD --format sarif
+    $ code-intel pr-impact --base main --head HEAD --format json
+`)
+  .action(async (opts: {
+    base: string;
+    head: string;
+    failOn: string;
+    format: string;
+    path?: string;
+  }) => {
+    const repoPath = path.resolve(opts.path ?? '.');
+
+    // 1. Get changed files via git diff
+    const { execSync } = await import('node:child_process');
+    let diff: string;
+    try {
+      diff = execSync(`git diff --name-only ${opts.base}..${opts.head}`, {
+        cwd: repoPath,
+        encoding: 'utf-8',
+      });
+    } catch (err) {
+      console.error(`\n  ✗  git diff failed: ${(err as Error).message}\n`);
+      process.exit(1);
+    }
+    const changedFiles = diff.trim().split('\n').filter(Boolean);
+
+    if (changedFiles.length === 0) {
+      if (opts.format === 'json') {
+        console.log(JSON.stringify({ changedSymbols: [], impactedSymbols: [], riskSummary: { HIGH: 0, MEDIUM: 0, LOW: 0 }, coverageGaps: [], filesToReview: [], crossRepoImpact: null }, null, 2));
+      } else {
+        console.log('\n  ◈  PR Impact Report\n\n  No changed files detected.\n');
+      }
+      return;
+    }
+
+    // 2. Load graph from DB
+    const { graph } = await loadOrAnalyzeWorkspace(repoPath);
+
+    // 3. Compute PR impact
+    const { computePRImpact } = await import('../query/pr-impact.js');
+    const result = computePRImpact(graph, changedFiles, 5);
+
+    // 4. Output based on --format
+    const fmt = (opts.format ?? 'text').toLowerCase();
+
+    if (fmt === 'json') {
+      console.log(JSON.stringify(result, null, 2));
+    } else if (fmt === 'sarif') {
+      const { buildSARIF } = await import('./sarif-builder.js');
+      const sarif = buildSARIF(result, _pkg.version);
+      console.log(JSON.stringify(sarif, null, 2));
+    } else {
+      // text format
+      const highSymbols = result.changedSymbols.filter((s) => s.risk === 'HIGH');
+      const medSymbols = result.changedSymbols.filter((s) => s.risk === 'MEDIUM');
+      const lowSymbols = result.changedSymbols.filter((s) => s.risk === 'LOW');
+
+      console.log('\n  ◈  PR Impact Report\n');
+      console.log(`  Changed files: ${changedFiles.length}`);
+      console.log(`  High-risk symbols: ${result.riskSummary.HIGH} | Medium: ${result.riskSummary.MEDIUM} | Low: ${result.riskSummary.LOW}\n`);
+
+      if (highSymbols.length > 0) {
+        console.log('  HIGH RISK:');
+        for (const s of highSymbols) {
+          const testNote = s.testCoverage ? '' : '  no tests';
+          console.log(`    ◆ ${s.name.padEnd(24)} callers: ${s.callerCount}${testNote}`);
+        }
+        console.log('');
+      }
+
+      if (medSymbols.length > 0) {
+        console.log('  MEDIUM RISK:');
+        for (const s of medSymbols) {
+          const testNote = s.testCoverage ? '' : '  no tests';
+          console.log(`    ◆ ${s.name.padEnd(24)} callers: ${s.callerCount}${testNote}`);
+        }
+        console.log('');
+      }
+
+      if (lowSymbols.length > 0) {
+        console.log('  LOW RISK:');
+        for (const s of lowSymbols) {
+          console.log(`    ◆ ${s.name.padEnd(24)} callers: ${s.callerCount}`);
+        }
+        console.log('');
+      }
+
+      if (result.filesToReview.length > 0) {
+        console.log('  Files to review:');
+        for (const f of result.filesToReview) {
+          console.log(`    ${f}`);
+        }
+        console.log('');
+      }
+
+      if (result.coverageGaps.length > 0) {
+        console.log('  Coverage gaps:');
+        for (const gap of result.coverageGaps) {
+          console.log(`    ${gap}`);
+        }
+        console.log('');
+      }
+    }
+
+    // 5. --fail-on handling
+    const failOn = (opts.failOn ?? '').toUpperCase();
+    if (failOn === 'HIGH' && result.riskSummary.HIGH > 0) {
+      process.exit(1);
+    } else if (failOn === 'MEDIUM' && (result.riskSummary.HIGH > 0 || result.riskSummary.MEDIUM > 0)) {
+      process.exit(1);
     }
   });
 

@@ -8,12 +8,13 @@ import { SidebarChat } from '../components/panels/SidebarChat';
 import { SidebarFiles } from '../components/panels/SidebarFiles';
 import { SidebarFilters } from '../components/panels/SidebarFilters';
 import { QueryPanel } from '../components/panels/QueryPanel';
+import { GroupPanel } from '../components/panels/GroupPanel';
 import { StatusFooter } from '../components/shared/StatusFooter';
 import { Header } from '../components/shared/Header';
 import { KeyboardShortcutsModal } from '../components/shared/KeyboardShortcutsModal';
 import { NODE_COLORS } from '../graph/colors';
 
-type SidebarTab = 'explorer' | 'filters' | 'files' | 'query' | 'group';
+type SidebarTab = 'explorer' | 'filters' | 'files' | 'query' | 'group' | 'groups';
 
 export function ExplorerPage() {
   const { state, dispatch } = useAppState();
@@ -61,6 +62,7 @@ export function ExplorerPage() {
           <div className="flex border-b border-gray-800/50">
             {(['explorer', 'filters', 'files', 'query'] as SidebarTab[])
               .concat(state.mode === 'group' ? ['group' as SidebarTab] : [])
+              .concat(['groups' as SidebarTab])
               .map((tab) => (
                 <button
                   key={tab}
@@ -71,7 +73,7 @@ export function ExplorerPage() {
                       : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800/30'
                   }`}
                 >
-                  {tab === 'group' ? '⬢ group' : tab}
+                  {tab === 'group' ? '⬢ group' : tab === 'groups' ? '⬡ groups' : tab}
                 </button>
               ))}
           </div>
@@ -81,6 +83,7 @@ export function ExplorerPage() {
             {activeTab === 'files' && <SidebarFiles />}
             {activeTab === 'query' && <QueryPanel />}
             {activeTab === 'group' && state.mode === 'group' && <GroupTab />}
+            {activeTab === 'groups' && <GroupPanel />}
           </div>
         </div>
 
