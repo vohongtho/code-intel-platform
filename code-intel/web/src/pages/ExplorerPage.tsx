@@ -3,21 +3,24 @@ import { useAppState } from '../state/app-context';
 import { ApiClient } from '../api/client';
 import { GraphView } from '../components/graph/GraphView';
 import { NodeDetail } from '../components/panels/NodeDetail';
+import { SourcePanel } from '../components/panels/SourcePanel';
 import { SidebarChat } from '../components/panels/SidebarChat';
 import { SidebarFiles } from '../components/panels/SidebarFiles';
 import { SidebarFilters } from '../components/panels/SidebarFilters';
+import { QueryPanel } from '../components/panels/QueryPanel';
 import { StatusFooter } from '../components/shared/StatusFooter';
 import { Header } from '../components/shared/Header';
 import { KeyboardShortcutsModal } from '../components/shared/KeyboardShortcutsModal';
 import { NODE_COLORS } from '../graph/colors';
 
-type SidebarTab = 'explorer' | 'filters' | 'files' | 'group';
+type SidebarTab = 'explorer' | 'filters' | 'files' | 'query' | 'group';
 
 export function ExplorerPage() {
   const { state, dispatch } = useAppState();
   const [activeTab, setActiveTab] = useState<SidebarTab>('explorer');
   const [aiOpen, setAiOpen] = useState(true);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [sourcePanelOpen, setSourcePanelOpen] = useState(false);
 
   // Toggle shortcuts modal on `?` keypress (not inside an input/textarea)
   useEffect(() => {
@@ -35,6 +38,19 @@ export function ExplorerPage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  // Open SourcePanel when a node with filePath + startLine is selected
+  useEffect(() => {
+    if (state.selectedNode && state.selectedNode.filePath && state.selectedNode.startLine) {
+      setSourcePanelOpen(true);
+    } else {
+      setSourcePanelOpen(false);
+    }
+  }, [state.selectedNode?.id]);
+
+  const handleCloseSource = () => {
+    setSourcePanelOpen(false);
+  };
+
   return (
     <div className="flex flex-col h-screen bg-[#040812] text-white">
       <Header onToggleAI={() => setAiOpen((v) => !v)} aiOpen={aiOpen} />
@@ -43,7 +59,7 @@ export function ExplorerPage() {
         {/* Left Sidebar */}
         <div className="w-72 bg-[#080b14] border-r border-gray-800/50 flex flex-col">
           <div className="flex border-b border-gray-800/50">
-            {(['explorer', 'filters', 'files'] as SidebarTab[])
+            {(['explorer', 'filters', 'files', 'query'] as SidebarTab[])
               .concat(state.mode === 'group' ? ['group' as SidebarTab] : [])
               .map((tab) => (
                 <button
@@ -63,11 +79,12 @@ export function ExplorerPage() {
             {activeTab === 'explorer' && <ExplorerTab />}
             {activeTab === 'filters' && <SidebarFilters />}
             {activeTab === 'files' && <SidebarFiles />}
+            {activeTab === 'query' && <QueryPanel />}
             {activeTab === 'group' && state.mode === 'group' && <GroupTab />}
           </div>
         </div>
 
-        {/* Center: Graph + NodeDetail */}
+        {/* Center: Graph + NodeDetail + SourcePanel */}
         <div className="flex-1 flex flex-col overflow-hidden">
           <div className="flex-1 relative">
             <GraphView />
@@ -76,6 +93,14 @@ export function ExplorerPage() {
             <NodeDetail
               node={state.selectedNode}
               onClose={() => dispatch({ type: 'SELECT_NODE', node: null })}
+            />
+          )}
+          {sourcePanelOpen && state.selectedNode?.filePath && state.selectedNode?.startLine && (
+            <SourcePanel
+              file={state.selectedNode.filePath}
+              startLine={state.selectedNode.startLine}
+              endLine={state.selectedNode.endLine ?? state.selectedNode.startLine}
+              onClose={handleCloseSource}
             />
           )}
         </div>

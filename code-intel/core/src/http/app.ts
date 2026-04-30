@@ -1072,6 +1072,248 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     res.json({ nodes: [...mergedGraph.allNodes()], edges: [...mergedGraph.allEdges()] });
   });
 
+  // ── Source preview ──────────────────────────────────────────────────────────
+  // GET /api/v1/source?file=<path>&startLine=<n>&endLine=<n>
+  app.get('/api/v1/source', requireAuth, requireRole('viewer'), (req: Request, res: Response) => {
+    const { file, startLine: startLineStr, endLine: endLineStr } = req.query as {
+      file?: string;
+      startLine?: string;
+      endLine?: string;
+    };
+
+    if (!file) {
+      res.status(400).json({
+        error: {
+          code: ErrorCodes.INVALID_REQUEST,
+          message: 'Missing required query parameter: file',
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+
+    // Security: reject path traversal
+    if (file.includes('../')) {
+      res.status(400).json({
+        error: {
+          code: ErrorCodes.INVALID_REQUEST,
+          message: 'Path traversal detected',
+          hint: 'File paths must not contain "../"',
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+
+    // Security: must be within workspaceRoot or a known repo
+    const normalizedFile = path.normalize(file);
+    if (workspaceRoot) {
+      const normalizedRoot = path.normalize(workspaceRoot);
+      if (!normalizedFile.startsWith(normalizedRoot)) {
+        // Also allow files from other indexed repos
+        const registry = loadRegistry();
+        const inKnownRepo = registry.some((r) => normalizedFile.startsWith(path.normalize(r.path)));
+        if (!inKnownRepo) {
+          res.status(403).json({
+            error: {
+              code: ErrorCodes.FORBIDDEN,
+              message: 'Access denied',
+              hint: 'File path must be within an indexed repository',
+              requestId: req.requestId,
+              timestamp: new Date().toISOString(),
+            },
+          });
+          return;
+        }
+      }
+    } else {
+      const registry = loadRegistry();
+      const inKnownRepo = registry.some((r) => normalizedFile.startsWith(path.normalize(r.path)));
+      if (!inKnownRepo) {
+        res.status(403).json({
+          error: {
+            code: ErrorCodes.FORBIDDEN,
+            message: 'Access denied',
+            hint: 'File path must be within an indexed repository',
+            requestId: req.requestId,
+            timestamp: new Date().toISOString(),
+          },
+        });
+        return;
+      }
+    }
+
+    // Read file
+    let fileContent: string;
+    try {
+      fileContent = fs.readFileSync(normalizedFile, 'utf-8');
+    } catch {
+      res.status(404).json({
+        error: {
+          code: ErrorCodes.NOT_FOUND,
+          message: 'File not found',
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+
+    const lines = fileContent.split('\n');
+    const startLine = startLineStr ? Math.max(1, parseInt(startLineStr, 10)) : 1;
+    const endLine = endLineStr ? Math.min(lines.length, parseInt(endLineStr, 10)) : startLine;
+
+    // ±20 lines of context
+    const contextStart = Math.max(1, startLine - 20);
+    const contextEnd = Math.min(lines.length, endLine + 20);
+
+    const content = lines.slice(contextStart - 1, contextEnd).join('\n');
+
+    // Detect language from extension
+    const ext = path.extname(normalizedFile).toLowerCase();
+    const languageMap: Record<string, string> = {
+      '.ts': 'typescript',
+      '.tsx': 'typescript',
+      '.js': 'javascript',
+      '.jsx': 'javascript',
+      '.mjs': 'javascript',
+      '.cjs': 'javascript',
+      '.py': 'python',
+      '.go': 'go',
+      '.rs': 'rust',
+      '.java': 'java',
+      '.cs': 'csharp',
+      '.cpp': 'cpp',
+      '.cc': 'cpp',
+      '.cxx': 'cpp',
+      '.c': 'c',
+      '.h': 'c',
+      '.hpp': 'cpp',
+      '.rb': 'ruby',
+      '.php': 'php',
+      '.swift': 'swift',
+      '.kt': 'kotlin',
+      '.kts': 'kotlin',
+      '.json': 'json',
+      '.yaml': 'yaml',
+      '.yml': 'yaml',
+      '.md': 'markdown',
+      '.sh': 'bash',
+      '.bash': 'bash',
+      '.zsh': 'bash',
+      '.sql': 'sql',
+      '.html': 'html',
+      '.htm': 'html',
+      '.css': 'css',
+      '.scss': 'scss',
+      '.less': 'less',
+      '.xml': 'xml',
+      '.toml': 'toml',
+    };
+    const language = languageMap[ext] ?? 'plaintext';
+
+    res.json({
+      content,
+      language,
+      startLine: contextStart,
+      endLine: contextEnd,
+    });
+  });
+
+  // ── GQL Query API ───────────────────────────────────────────────────────────
+  // POST /api/v1/query — requires viewer role minimum
+  app.post('/api/v1/query', requireRole('viewer'), async (req: Request, res: Response) => {
+    const { gql, format } = req.body as { gql?: string; format?: string };
+    if (!gql || typeof gql !== 'string') {
+      res.status(400).json({
+        error: { code: ErrorCodes.INVALID_REQUEST, message: 'Missing required field: gql', requestId: req.requestId, timestamp: new Date().toISOString() },
+      });
+      return;
+    }
+    try {
+      const { parseGQL, isGQLParseError } = await import('../query/gql-parser.js');
+      const { executeGQL } = await import('../query/gql-executor.js');
+      const ast = parseGQL(gql);
+      if (isGQLParseError(ast)) {
+        res.status(422).json({
+          error: {
+            code: ErrorCodes.INVALID_REQUEST,
+            message: `GQL parse error: ${ast.message}`,
+            hint: `Position: ${ast.pos}${ast.expected ? `, expected: ${ast.expected}` : ''}${ast.got ? `, got: ${ast.got}` : ''}`,
+            requestId: req.requestId,
+            timestamp: new Date().toISOString(),
+          },
+        });
+        return;
+      }
+      const result = executeGQL(ast, graph);
+      res.json({ ...result, format: format ?? 'json' });
+    } catch (err) {
+      res.status(500).json({ error: { code: ErrorCodes.INTERNAL_ERROR, message: err instanceof Error ? err.message : String(err), requestId: req.requestId, timestamp: new Date().toISOString() } });
+    }
+  });
+
+  // POST /api/v1/query/explain — returns a query plan
+  app.post('/api/v1/query/explain', requireRole('viewer'), async (req: Request, res: Response) => {
+    const { gql } = req.body as { gql?: string };
+    if (!gql || typeof gql !== 'string') {
+      res.status(400).json({
+        error: { code: ErrorCodes.INVALID_REQUEST, message: 'Missing required field: gql', requestId: req.requestId, timestamp: new Date().toISOString() },
+      });
+      return;
+    }
+    try {
+      const { parseGQL, isGQLParseError } = await import('../query/gql-parser.js');
+      const ast = parseGQL(gql);
+      if (isGQLParseError(ast)) {
+        res.status(422).json({
+          error: {
+            code: ErrorCodes.INVALID_REQUEST,
+            message: `GQL parse error: ${ast.message}`,
+            hint: `Position: ${ast.pos}`,
+            requestId: req.requestId,
+            timestamp: new Date().toISOString(),
+          },
+        });
+        return;
+      }
+      // Build a query plan description
+      const plan: Record<string, unknown> = { type: ast.type, gql };
+      if (ast.type === 'FIND') {
+        plan.steps = [
+          { step: 1, op: 'SCAN_NODES', filter: ast.target === '*' ? 'all' : `kind=${ast.target}` },
+          ...(ast.where ? [{ step: 2, op: 'WHERE', conditions: ast.where.exprs.length }] : []),
+          ...(ast.limit !== undefined ? [{ step: 3, op: 'LIMIT', value: ast.limit }] : []),
+        ];
+        plan.estimatedCost = graph.size.nodes;
+      } else if (ast.type === 'TRAVERSE') {
+        plan.steps = [
+          { step: 1, op: 'FIND_START_NODE', name: ast.from },
+          { step: 2, op: 'BFS', edgeKind: ast.edgeKind, maxDepth: ast.depth ?? 5 },
+        ];
+        plan.estimatedCost = Math.min(graph.size.nodes, Math.pow(4, ast.depth ?? 5));
+      } else if (ast.type === 'PATH') {
+        plan.steps = [
+          { step: 1, op: 'FIND_NODES', from: ast.from, to: ast.to },
+          { step: 2, op: 'BFS_SHORTEST_PATH' },
+        ];
+        plan.estimatedCost = graph.size.nodes + graph.size.edges;
+      } else if (ast.type === 'COUNT') {
+        plan.steps = [
+          { step: 1, op: 'SCAN_NODES', filter: ast.target === '*' ? 'all' : `kind=${ast.target}` },
+          ...(ast.where ? [{ step: 2, op: 'WHERE', conditions: ast.where.exprs.length }] : []),
+          ...(ast.groupBy ? [{ step: 3, op: 'GROUP_BY', property: ast.groupBy }] : [{ step: 3, op: 'COUNT' }]),
+        ];
+        plan.estimatedCost = graph.size.nodes;
+      }
+      res.json({ plan, graphSize: graph.size });
+    } catch (err) {
+      res.status(500).json({ error: { code: ErrorCodes.INTERNAL_ERROR, message: err instanceof Error ? err.message : String(err), requestId: req.requestId, timestamp: new Date().toISOString() } });
+    }
+  });
+
   // ── Web UI static files ─────────────────────────────────────────────────────
   if (fs.existsSync(WEB_DIST)) {
     app.use(express.static(WEB_DIST));

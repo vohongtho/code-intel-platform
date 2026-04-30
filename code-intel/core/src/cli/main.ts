@@ -2314,4 +2314,230 @@ program
     }
   });
 
+// ─── 12. query ────────────────────────────────────────────────────────────────
+program
+  .command('query')
+  .description('Execute a GQL (Graph Query Language) query against the knowledge graph')
+  .argument('[gql]', 'GQL query string (e.g. "FIND function WHERE name CONTAINS \'auth\'")')
+  .option('-f, --file <path>',   'Read GQL query from a file')
+  .option('--format <format>',   'Output format: table|json|csv (default: table)', 'table')
+  .option('-l, --limit <n>',     'Override LIMIT in the query')
+  .option('-p, --path <path>',   'Path to the repository (default: current directory)', '.')
+  // Saved query options
+  .option('--save <name>',       'Save the GQL query under a name')
+  .option('--run <name>',        'Run a saved query by name')
+  .option('--list',              'List all saved queries')
+  .option('--delete <name>',     'Delete a saved query by name')
+  .addHelpText('after', `
+  Execute GQL queries against the knowledge graph.
+
+  Syntax:
+    FIND function WHERE name CONTAINS "auth"
+    FIND * WHERE kind IN [function, method] LIMIT 50
+    TRAVERSE CALLS FROM "handleLogin" DEPTH 3
+    PATH FROM "createUser" TO "sendEmail"
+    COUNT function GROUP BY cluster
+
+  Examples:
+    $ code-intel query "FIND function WHERE name CONTAINS 'auth'"
+    $ code-intel query --file ./my.gql
+    $ code-intel query "FIND class" --format json
+    $ code-intel query "FIND class" --format csv
+    $ code-intel query "FIND class" --limit 20
+    $ code-intel query --save auth-search "FIND function WHERE name CONTAINS 'auth'"
+    $ code-intel query --run auth-search
+    $ code-intel query --list
+    $ code-intel query --delete auth-search
+`)
+  .action(async (gqlArg: string | undefined, opts: {
+    file?: string;
+    format: string;
+    limit?: string;
+    path: string;
+    save?: string;
+    run?: string;
+    list?: boolean;
+    delete?: string;
+  }) => {
+    const workspaceRoot = path.resolve(opts.path);
+
+    // ── Saved query management ─────────────────────────────────────────────
+    const { saveQuery, loadQuery, listQueries, deleteQuery } = await import('../query/saved-queries.js');
+
+    if (opts.list) {
+      const queries = listQueries(workspaceRoot);
+      if (queries.length === 0) {
+        console.log('\n  No saved queries found.');
+        console.log(`  Save one with: code-intel query --save <name> "<gql>"\n`);
+        return;
+      }
+      console.log(`\n  Saved queries (${queries.length}):\n`);
+      for (const q of queries) {
+        console.log(`  ◆  ${q.name.padEnd(25)} ${q.content.slice(0, 60)}${q.content.length > 60 ? '…' : ''}`);
+      }
+      console.log('');
+      return;
+    }
+
+    if (opts.delete) {
+      const { deleteQuery: dq } = await import('../query/saved-queries.js');
+      const deleted = dq(workspaceRoot, opts.delete);
+      if (!deleted) {
+        console.error(`\n  ✗  Saved query "${opts.delete}" not found.\n`);
+        process.exit(1);
+      }
+      console.log(`\n  ✅  Deleted saved query "${opts.delete}"\n`);
+      return;
+    }
+
+    if (opts.save) {
+      const gqlContent = gqlArg;
+      if (!gqlContent) {
+        console.error('\n  ✗  Provide a GQL query string to save.');
+        console.error('     Example: code-intel query --save my-query "FIND function"\n');
+        process.exit(1);
+      }
+      saveQuery(workspaceRoot, opts.save, gqlContent);
+      console.log(`\n  ✅  Saved query "${opts.save}"`);
+      console.log(`     Run with: code-intel query --run ${opts.save}\n`);
+      return;
+    }
+
+    // ── Determine GQL source ───────────────────────────────────────────────
+    let gqlInput: string | undefined;
+
+    if (opts.run) {
+      const content = loadQuery(workspaceRoot, opts.run);
+      if (!content) {
+        console.error(`\n  ✗  Saved query "${opts.run}" not found.`);
+        console.error(`     List saved queries with: code-intel query --list\n`);
+        process.exit(1);
+      }
+      gqlInput = content;
+    } else if (opts.file) {
+      const filePath = path.resolve(opts.file);
+      if (!fs.existsSync(filePath)) {
+        console.error(`\n  ✗  File not found: ${filePath}\n`);
+        process.exit(1);
+      }
+      gqlInput = fs.readFileSync(filePath, 'utf-8');
+    } else if (gqlArg) {
+      gqlInput = gqlArg;
+    } else {
+      console.error('\n  ✗  Provide a GQL query string, --file <path>, or --run <name>.\n');
+      program.help();
+      process.exit(1);
+    }
+
+    // ── Parse ──────────────────────────────────────────────────────────────
+    const { parseGQL, isGQLParseError } = await import('../query/gql-parser.js');
+    let ast = parseGQL(gqlInput);
+
+    // Apply --limit override
+    if (opts.limit && !isGQLParseError(ast)) {
+      const limitN = parseInt(opts.limit, 10);
+      if (!isNaN(limitN) && ast.type === 'FIND') {
+        (ast as import('../query/gql-parser.js').FindStatement).limit = limitN;
+      }
+    }
+
+    if (isGQLParseError(ast)) {
+      console.error(`\n  ✗  Parse error: ${ast.message}`);
+      if (ast.pos !== undefined) console.error(`     Position: ${ast.pos}`);
+      console.error('');
+      process.exit(1);
+    }
+
+    // ── Load graph ─────────────────────────────────────────────────────────
+    const { graph } = await loadOrAnalyzeWorkspace(opts.path);
+
+    // ── Execute ────────────────────────────────────────────────────────────
+    const { executeGQL } = await import('../query/gql-executor.js');
+    const result = executeGQL(ast, graph);
+
+    // ── Output ─────────────────────────────────────────────────────────────
+    const format = opts.format.toLowerCase();
+
+    if (result.totalCount === 0 && !result.groups?.length && result.path === null) {
+      console.log(`\n  No results found.\n`);
+      return;
+    }
+
+    if (result.path !== null && result.path !== undefined) {
+      // PATH result
+      if (result.path.length === 0) {
+        console.log('\n  No path found.\n');
+        return;
+      }
+      if (format === 'json') {
+        console.log(JSON.stringify({ path: result.path, executionTimeMs: result.executionTimeMs }, null, 2));
+      } else if (format === 'csv') {
+        console.log('kind,name,filePath');
+        for (const n of result.path) {
+          console.log(`${n.kind},${JSON.stringify(n.name)},${JSON.stringify(n.filePath)}`);
+        }
+      } else {
+        console.log(`\n  Path (${result.path.length} nodes):\n`);
+        for (let i = 0; i < result.path.length; i++) {
+          const n = result.path[i]!;
+          const arrow = i < result.path.length - 1 ? ' →' : '';
+          console.log(`  ${n.kind.padEnd(14)} ${n.name.padEnd(32)} ${n.filePath}${arrow}`);
+        }
+        console.log(`\n  Execution time: ${result.executionTimeMs}ms\n`);
+      }
+      return;
+    }
+
+    if (result.groups && !result.nodes?.length) {
+      // COUNT result
+      if (format === 'json') {
+        console.log(JSON.stringify({ groups: result.groups, totalCount: result.totalCount, executionTimeMs: result.executionTimeMs }, null, 2));
+      } else if (format === 'csv') {
+        console.log('key,count');
+        for (const g of result.groups) {
+          console.log(`${JSON.stringify(g.key)},${g.count}`);
+        }
+      } else {
+        console.log(`\n  Count results (total: ${result.totalCount}):\n`);
+        for (const g of result.groups) {
+          console.log(`  ${g.key.padEnd(30)} ${String(g.count).padStart(6)}`);
+        }
+        console.log(`\n  Execution time: ${result.executionTimeMs}ms${result.truncated ? '  ⚠  (truncated)' : ''}\n`);
+      }
+      return;
+    }
+
+    // FIND / TRAVERSE result
+    const nodes = result.nodes ?? [];
+    if (nodes.length === 0) {
+      console.log('\n  No results found.\n');
+      return;
+    }
+
+    if (format === 'json') {
+      console.log(JSON.stringify({
+        nodes,
+        edges: result.edges,
+        totalCount: result.totalCount,
+        executionTimeMs: result.executionTimeMs,
+        truncated: result.truncated,
+      }, null, 2));
+    } else if (format === 'csv') {
+      console.log('kind,name,filePath,exported');
+      for (const n of nodes) {
+        console.log(`${n.kind},${JSON.stringify(n.name)},${JSON.stringify(n.filePath)},${n.exported ?? ''}`);
+      }
+    } else {
+      // table format
+      const showing = nodes.length;
+      const total = result.totalCount;
+      const header = result.truncated ? `  (truncated)` : '';
+      console.log(`\n  ${showing} result(s)${total > showing ? ` (of ${total})` : ''}${header}:\n`);
+      for (const n of nodes) {
+        console.log(`  ${n.kind.padEnd(14)} ${n.name.padEnd(32)} ${n.filePath}`);
+      }
+      console.log(`\n  Execution time: ${result.executionTimeMs}ms\n`);
+    }
+  });
+
 program.parse();
