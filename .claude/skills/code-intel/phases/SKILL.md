@@ -40,7 +40,7 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `extractFromTree` | function | 1 | 17 | `phases/parse-phase.ts` |
+| `extractFromTree` | function | 1 | 18 | `phases/parse-phase.ts` |
 | `execute` | method | 0 | 16 | `phases/parse-phase.ts` |
 | `execute` | method | 0 | 16 | `phases/resolve-phase.ts` |
 | `execute` | method | 0 | 10 | `phases/cluster-phase.ts` |
@@ -50,8 +50,8 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | `execute` | method | 1 | 4 | `phases/scan-phase.ts` |
 | `extractFromTreeAsync` | function | 1 | 3 | `phases/parse-phase.ts` |
 | `extractDoc` | function | 1 | 2 | `phases/parse-phase.ts` |
+| `estimateEndLine` | function | 1 | 2 | `phases/parse-phase.ts` |
 | `extractCalls` | function | 1 | 2 | `phases/resolve-phase.ts` |
-| `extractParams` | function | 1 | 1 | `phases/parse-phase.ts` |
 
 ## Execution Flows
 

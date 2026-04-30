@@ -32,7 +32,7 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `run` | function | 14 | 0 | `eval/run-eval.mjs` |
+| `run` | function | 15 | 0 | `eval/run-eval.mjs` |
 | `start` | method | 3 | 6 | `eval/run-mcp-bench.mjs` |
 | `call` | method | 1 | 5 | `eval/run-mcp-bench.mjs` |
 | `bench` | function | 1 | 4 | `eval/run-mcp-bench.mjs` |
