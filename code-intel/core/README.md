@@ -17,31 +17,40 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 - **HTTP API** — REST endpoints for graph, search, inspect, blast radius, flows
 - **MCP Server** — Model Context Protocol integration for LLM tooling
 - **CLI** — analyze, serve, search, inspect, impact commands with animated progress bars and spinners
-- **Multi-language** — TypeScript, JavaScript, Python, Java, Go, C, C++, C#, Rust, PHP, Kotlin, Ruby, Swift, Dart
+- **Multi-language** — TypeScript, JavaScript, Python, Java, Go, C, C++, C#, Rust, PHP, Ruby, Swift, Kotlin, Dart (14 languages via tree-sitter AST)
+- **Incremental Analysis** — `--incremental` re-parses only changed files; 10k-file repo / 3 changes: 288ms
+- **Parallel Analysis** — `--parallel` runs parse + resolve phases on worker threads for large repos
 - **Structured Logging** — winston-based logger with daily-rotating log files, sensitive-data masking, and configurable log levels
 
 ---
 
 ## 🚀 Quick Start
 
-### Install
+### Install from npm _(recommended)_
 
 ```bash
-npm install
+npm install -g @vohongtho.infotech/code-intel
+```
+
+> **Note:** You may see `npm warn ERESOLVE overriding peer dependency` warnings about `tree-sitter`. These are **harmless** — they relate to the native Node.js bindings which are not used. The CLI uses `web-tree-sitter` (WASM) exclusively. If you prefer a warning-free install, use:
+> ```bash
+> npm install -g @vohongtho.infotech/code-intel --legacy-peer-deps
+> ```
+
+The `code-intel` binary is placed in your `$PATH` automatically (via the `bin` field in `package.json`).
+
+Verify:
+
+```bash
+code-intel --version
+```
+
+### Build from source
+
+```bash
+npm install --legacy-peer-deps
 npm run build
 ```
-
-### Analyze & Serve
-
-```bash
-# Analyze current directory and start the server
-node code-intel/core/dist/cli/main.js serve
-
-# Or specify a path and port
-node code-intel/core/dist/cli/main.js serve ./my-project --port 4747
-```
-
-Then open **http://localhost:4747** in your browser — the Web UI auto-connects and loads the graph.
 
 ---
 
@@ -144,8 +153,12 @@ Sensitive data (passwords, tokens, API keys, emails, etc.) is automatically mask
 
 ```bash
 code-intel analyze [path]          # Analyze and persist graph
+code-intel analyze --incremental   # Re-parse only changed files (git diff / mtime)
+code-intel analyze --parallel      # Use worker threads (faster on multi-core)
+code-intel analyze --skills        # Emit per-cluster SKILL.md files
 code-intel serve [path] -p 4747    # Analyze + start HTTP server
 code-intel mcp [path]              # Start MCP server (stdio)
+code-intel setup                   # Register MCP server in editor config (one-time)
 code-intel search <query> [path]   # Text search
 code-intel inspect <symbol>        # Inspect a symbol
 code-intel impact <symbol>         # Blast radius analysis
@@ -160,18 +173,19 @@ code-intel clean [path]            # Remove index data
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET`  | `/api/health` | Server status + graph size |
-| `GET`  | `/api/repos` | List indexed repos |
-| `GET`  | `/api/graph/:repo` | Full graph (nodes + edges) |
-| `POST` | `/api/search` | BM25 text search |
-| `POST` | `/api/vector-search` | Semantic vector search |
-| `GET`  | `/api/vector-status` | Vector index ready/building status |
-| `GET`  | `/api/nodes/:id` | Node detail (callers, callees, imports, etc.) |
-| `POST` | `/api/blast-radius` | Impact analysis |
-| `POST` | `/api/cypher` | Cypher query (routed to LadybugDB) |
-| `POST` | `/api/grep` | Regex search in file content |
-| `GET`  | `/api/flows` | List detected flows |
-| `GET`  | `/api/clusters` | List clusters |
+| `GET`  | `/api/v1/health` | Server status + graph size |
+| `GET`  | `/api/v1/repos` | List indexed repos |
+| `GET`  | `/api/v1/graph/:repo` | Full graph (nodes + edges) |
+| `POST` | `/api/v1/search` | BM25 text search |
+| `POST` | `/api/v1/vector-search` | Semantic vector search |
+| `GET`  | `/api/v1/vector-status` | Vector index ready/building status |
+| `GET`  | `/api/v1/nodes/:id` | Node detail (callers, callees, imports, etc.) |
+| `POST` | `/api/v1/blast-radius` | Impact analysis |
+| `POST` | `/api/v1/cypher` | Cypher query (routed to LadybugDB) |
+| `POST` | `/api/v1/grep` | Regex search in file content |
+| `GET`  | `/api/v1/flows` | List detected flows |
+| `GET`  | `/api/v1/clusters` | List clusters |
+| `GET`  | `/api/v1/openapi.json` | OpenAPI 3.1 spec |
 
 ---
 
@@ -179,12 +193,24 @@ code-intel clean [path]            # Remove index data
 
 | Tool | Description |
 |------|-------------|
-| `list_repos` | List indexed repositories |
-| `search_code` | Search for symbols by name |
-| `inspect_node` | Get detailed info about a symbol |
-| `blast_radius` | Impact analysis for a symbol |
-| `trace_routes` | Trace execution paths from entry points |
-| `raw_query` | Execute Cypher queries |
+| `repos` | List all indexed repositories |
+| `overview` | Repository summary: total nodes/edges + full breakdown by kind |
+| `search` | BM25 keyword search across all symbols |
+| `inspect` | 360° view of a symbol: definition, callers, callees, imports, heritage, members, cluster |
+| `blast_radius` | Impact analysis: traverse call/import graph to find all affected symbols |
+| `file_symbols` | List all symbols defined in a file, ordered by line number |
+| `find_path` | Shortest call/import path between two symbols via BFS |
+| `list_exports` | List all exported symbols — the public API surface of the codebase |
+| `routes` | List all HTTP route handler mappings detected in the codebase |
+| `clusters` | List detected code clusters with member counts and top symbols |
+| `flows` | List detected execution flows with entry points and steps |
+| `detect_changes` | Git-diff impact analysis: maps changed lines to graph symbols |
+| `raw_query` | Execute a simplified Cypher-like graph query |
+| `group_list` | List all configured repository groups |
+| `group_sync` | Extract contracts and detect cross-repo provider→consumer links |
+| `group_contracts` | Inspect extracted contracts and confidence-ranked cross-repo links |
+| `group_query` | BM25 search across all repos in a group merged via RRF |
+| `group_status` | Check index freshness and sync staleness for all group members |
 
 ---
 
@@ -213,7 +239,7 @@ code-intel clean [path]            # Remove index data
 npm run test
 ```
 
-46 tests across unit + integration suites covering:
+46+ tests across unit + integration suites covering:
 - Knowledge graph operations
 - Language detection
 - Call classifier
@@ -221,6 +247,8 @@ npm run test
 - Scope analysis
 - Text search
 - Pipeline integration (parse → resolve)
+- Parser corpus golden-file regression (10 languages, 100% recall)
+- Tree-sitter query correctness (Swift, Kotlin, Dart)
 
 ---
 

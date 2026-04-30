@@ -5,6 +5,10 @@ export interface IndexMetadata {
   indexedAt: string;
   indexVersion?: string;   // UUID, bumped on every successful analysis
   commitHash?: string;
+  /** Parser used during analysis: 'tree-sitter' | 'regex' */
+  parser?: 'tree-sitter' | 'regex';
+  /** mtime (ms since epoch) for each indexed file path (relative to workspace root) */
+  lastAnalyzedMtimes?: Record<string, number>;
   stats: {
     nodes: number;
     edges: number;

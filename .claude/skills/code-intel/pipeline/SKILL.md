@@ -1,17 +1,17 @@
 ---
 name: pipeline
-description: "Covers the **pipeline** subsystem of code-intel-platform. 12 symbols across 3 files. Key symbols: `runPipeline`, `validateDAG`, `dfs`. Internal call density: 0.2 calls/symbol."
+description: "Covers the **pipeline** subsystem of code-intel-platform. 16 symbols across 4 files. Key symbols: `runPhase`. Internal call density: 0.3 calls/symbol. Participates in 1 execution flow(s)."
 ---
 
 # pipeline
 
-> **12 symbols** | **3 files** | path: `code-intel/core/src/pipeline/` | call density: 0.2/sym
+> **16 symbols** | **4 files** | path: `code-intel/core/src/pipeline/` | call density: 0.3/sym
 
 ## When to Use
 
 Load this skill when:
 - The task involves code in `code-intel/core/src/pipeline/`
-- The user mentions `runPipeline`, `validateDAG`, `dfs` or asks how they work
+- The user mentions `runPhase` or asks how they work
 - Adding, modifying, or debugging pipeline-related functionality
 - Tracing call chains that pass through the pipeline layer
 
@@ -19,9 +19,16 @@ Load this skill when:
 
 | File | Symbols | Notes |
 |------|---------|-------|
-| `code-intel/core/src/pipeline/dag-validator.ts` | `ValidationError`, `validateDAG`, `dfs`, `topologicalSort` +(1) | 3 exported |
-| `code-intel/core/src/pipeline/orchestrator.ts` | `PipelineRunResult`, `runPipeline`, `runPhase`, `durationSec` | 2 exported |
+| `code-intel/core/src/pipeline/incremental.ts` | `getCurrentCommitHash`, `getChangedFilesSince`, `filterChangedByMtime`, `buildMtimeSnapshot` +(2) | 6 exported |
+| `code-intel/core/src/pipeline/dag-validator.ts` | `ValidationError`, `validateDAG`, `dfs`, `topologicalSort` | 4 exported |
+| `code-intel/core/src/pipeline/orchestrator.ts` | `PipelineRunResult`, `runPipeline`, `runPhase` | 3 exported |
 | `code-intel/core/src/pipeline/types.ts` | `PhaseResult`, `PipelineContext`, `Phase` | 3 exported |
+
+## Entry Points
+
+Start exploration here — exported symbols with no external callers:
+
+- **`runPhase`** `(function)` → `code-intel/core/src/pipeline/orchestrator.ts:30`
 
 ## Hot Symbols
 
@@ -29,18 +36,23 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `runPipeline` | function | 3 | 2 | `pipeline/orchestrator.ts` |
-| `validateDAG` | function | 2 | 1 | `pipeline/dag-validator.ts` |
-| `dfs` | function | 1 | 2 | `pipeline/dag-validator.ts` |
-| `topologicalSort` | function | 2 | 0 | `pipeline/dag-validator.ts` |
-| `runPhase` | function | 1 | 0 | `pipeline/orchestrator.ts` |
+| `decideIncremental` | function | 2 | 9 | `pipeline/incremental.ts` |
+| `runPipeline` | function | 4 | 7 | `pipeline/orchestrator.ts` |
+| `dfs` | function | 1 | 4 | `pipeline/dag-validator.ts` |
+| `validateDAG` | function | 2 | 2 | `pipeline/dag-validator.ts` |
+| `topologicalSort` | function | 2 | 2 | `pipeline/dag-validator.ts` |
+| `filterChangedByMtime` | function | 2 | 1 | `pipeline/incremental.ts` |
+| `buildMtimeSnapshot` | function | 2 | 1 | `pipeline/incremental.ts` |
+| `runPhase` | function | 0 | 3 | `pipeline/orchestrator.ts` |
+| `getCurrentCommitHash` | function | 2 | 0 | `pipeline/incremental.ts` |
+| `getChangedFilesSince` | function | 2 | 0 | `pipeline/incremental.ts` |
 | `ValidationError` | interface | 0 | 0 | `pipeline/dag-validator.ts` |
-| `newDegree` | function | 0 | 0 | `pipeline/dag-validator.ts` |
-| `PipelineRunResult` | interface | 0 | 0 | `pipeline/orchestrator.ts` |
-| `durationSec` | function | 0 | 0 | `pipeline/orchestrator.ts` |
-| `PhaseResult` | interface | 0 | 0 | `pipeline/types.ts` |
-| `PipelineContext` | interface | 0 | 0 | `pipeline/types.ts` |
-| `Phase` | interface | 0 | 0 | `pipeline/types.ts` |
+| `IncrementalDecision` | interface | 0 | 0 | `pipeline/incremental.ts` |
+
+## Execution Flows
+
+**1** execution path(s) pass through this area.
+Run `code-intel inspect <symbol>` on a hot symbol to trace the full call chain.
 
 ## Impact Guidance
 
@@ -53,9 +65,9 @@ Before modifying any symbol in this area:
 
 ```bash
 # Inspect most-connected symbol
-code-intel inspect runPipeline
+code-intel inspect decideIncremental
 # Blast radius for entry point
-code-intel impact runPipeline
+code-intel impact runPhase
 # Search this area
 code-intel search "pipeline"
 ```

@@ -1,38 +1,29 @@
 export const swiftQueries = `
-;; Class declaration
-(class_declaration
-  name: (type_identifier) @def.class.name) @def.class
+;; In tree-sitter-swift, structs/classes/enums/actors all use class_declaration.
+;; Distinguish them with a keyword anchor.
 
 ;; Struct declaration
-(struct_declaration
-  name: (type_identifier) @def.struct.name) @def.struct
+(class_declaration "struct"
+  (type_identifier) @def.struct.name) @def.struct
+
+;; Class declaration
+(class_declaration "class"
+  (type_identifier) @def.class.name) @def.class
+
+;; Enum declaration
+(class_declaration "enum"
+  (type_identifier) @def.enum.name) @def.enum
 
 ;; Protocol declaration
 (protocol_declaration
-  name: (type_identifier) @def.interface.name) @def.interface
+  (type_identifier) @def.interface.name) @def.interface
 
-;; Enum declaration
-(enum_declaration
-  name: (type_identifier) @def.enum.name) @def.enum
-
-;; Function declaration
+;; Function declaration (no name: field in this grammar; positional match)
 (function_declaration
-  name: (simple_identifier) @def.func.name) @def.func
+  (simple_identifier) @def.func.name) @def.func
 
 ;; Property declaration
 (property_declaration
   (pattern
     (simple_identifier) @def.property.name)) @def.property
-
-;; Import
-(import_declaration
-  (identifier) @imp.source) @imp
-
-;; Call
-(call_expression
-  (simple_identifier) @call.name) @call
-
-;; Inheritance
-(inheritance_specifier
-  (type_identifier) @inherit.extends)
 `;

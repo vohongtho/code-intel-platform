@@ -1,40 +1,18 @@
 export const kotlinQueries = `
-;; Class declaration
+;; Class declaration (includes enum class via modifiers)
 (class_declaration
-  (type_identifier) @def.class.name) @def.class
+  (identifier) @def.class.name) @def.class
 
-;; Object declaration
+;; Object declaration (companion objects, singletons)
 (object_declaration
-  (type_identifier) @def.class.name) @def.class.object
+  (identifier) @def.class.name) @def.class.object
 
-;; Interface declaration  
-(class_declaration
-  (type_identifier) @def.interface.name) @def.interface
-
-;; Function declaration
+;; Function declaration (top-level and methods)
 (function_declaration
-  (simple_identifier) @def.func.name) @def.func
+  (identifier) @def.func.name) @def.func
 
 ;; Property declaration
 (property_declaration
   (variable_declaration
-    (simple_identifier) @def.property.name)) @def.property
-
-;; Import
-(import_header
-  (identifier) @imp.source) @imp
-
-;; Call
-(call_expression
-  (simple_identifier) @call.name) @call
-
-;; Navigation call
-(call_expression
-  (navigation_expression
-    (simple_identifier) @call.method)) @call.member
-
-;; Delegation specifier (extends/implements)
-(delegation_specifier
-  (user_type
-    (type_identifier) @inherit.extends))
+    (identifier) @def.property.name)) @def.property
 `;

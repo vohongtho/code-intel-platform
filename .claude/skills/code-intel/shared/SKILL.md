@@ -1,11 +1,11 @@
 ---
 name: shared
-description: "Covers the **shared** subsystem of code-intel-platform. 25 symbols across 7 files. Key symbols: `detectLanguage`, `getSupportedExtensions`. Internal call density: 0.4 calls/symbol."
+description: "Covers the **shared** subsystem of code-intel-platform. 31 symbols across 7 files. Key symbols: `detectLanguage`, `getSupportedExtensions`. Internal call density: 0.5 calls/symbol. Participates in 6 execution flow(s)."
 ---
 
 # shared
 
-> **25 symbols** | **7 files** | path: `code-intel/core/src/shared/` | call density: 0.4/sym
+> **31 symbols** | **7 files** | path: `code-intel/core/src/shared/` | call density: 0.5/sym
 
 ## When to Use
 
@@ -19,8 +19,8 @@ Load this skill when:
 
 | File | Symbols | Notes |
 |------|---------|-------|
-| `code-intel/core/src/shared/config-validator.ts` | `ConfigValidationError`, `ConfigValidationResult`, `isSecretKey`, `looksLikeEnvRef` +(5) | 5 exported |
-| `code-intel/core/src/shared/logger.ts` | `getActiveTraceCtx`, `Logger`, `maskString`, `deepMask` +(1) | internal |
+| `code-intel/core/src/shared/logger.ts` | `getActiveTraceCtx`, `Logger`, `maskSensitiveData`, `maskSensitive` +(7) | internal |
+| `code-intel/core/src/shared/config-validator.ts` | `ConfigValidationError`, `ConfigValidationResult`, `isSecretKey`, `looksLikeEnvRef` +(5) | 6 exported |
 | `code-intel/core/src/shared/fs-secure.ts` | `secureMkdir`, `secureChmodFile`, `secureWriteFile`, `tightenDbFiles` | 4 exported |
 | `code-intel/core/src/shared/detection.ts` | `detectLanguage`, `getSupportedExtensions` | 2 exported |
 | `code-intel/core/src/shared/graph-types.ts` | `CodeNode`, `CodeEdge` | 2 exported |
@@ -40,18 +40,23 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `resolve` | function | 33 | 1 | `shared/config-validator.ts` |
+| `resolve` | function | 41 | 2 | `shared/config-validator.ts` |
+| `warn` | method | 18 | 1 | `shared/logger.ts` |
+| `getLogger` | method | 5 | 2 | `shared/logger.ts` |
+| `error` | method | 5 | 1 | `shared/logger.ts` |
 | `secureMkdir` | function | 5 | 0 | `shared/fs-secure.ts` |
+| `walk` | function | 1 | 3 | `shared/config-validator.ts` |
 | `assertNoPlaintextSecrets` | function | 3 | 1 | `shared/config-validator.ts` |
 | `secureChmodFile` | function | 4 | 0 | `shared/fs-secure.ts` |
 | `secureWriteFile` | function | 2 | 2 | `shared/fs-secure.ts` |
+| `deepMask` | function | 0 | 4 | `shared/logger.ts` |
 | `validateConfigForSecrets` | function | 2 | 1 | `shared/config-validator.ts` |
-| `walk` | function | 1 | 2 | `shared/config-validator.ts` |
-| `looksLikeEnvRef` | function | 2 | 0 | `shared/config-validator.ts` |
-| `resolveConfigEnvRefs` | function | 1 | 1 | `shared/config-validator.ts` |
-| `tightenDbFiles` | function | 2 | 0 | `shared/fs-secure.ts` |
-| `maskString` | function | 2 | 0 | `shared/logger.ts` |
-| `deepMask` | function | 1 | 1 | `shared/logger.ts` |
+| `maskSensitiveData` | method | 3 | 0 | `shared/logger.ts` |
+
+## Execution Flows
+
+**6** execution path(s) pass through this area.
+Run `code-intel inspect <symbol>` on a hot symbol to trace the full call chain.
 
 ## Impact Guidance
 

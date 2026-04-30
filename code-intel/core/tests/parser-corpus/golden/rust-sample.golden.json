@@ -1,0 +1,18 @@
+{
+  "language": "Rust",
+  "fixture": "rust-sample.rs",
+  "description": "Canonical Rust symbol extraction baseline.",
+  "expectedSymbols": [
+    { "kind": "struct",   "name": "Server",          "exported": true },
+    { "kind": "struct",   "name": "Config",          "exported": true },
+    { "kind": "enum",     "name": "ServerError",     "exported": true },
+    { "kind": "trait",    "name": "Handler",         "exported": true },
+    { "kind": "function", "name": "new",             "exported": true },
+    { "kind": "function", "name": "start",           "exported": true },
+    { "kind": "function", "name": "parse_config",    "exported": true },
+    { "kind": "function", "name": "internal_helper", "exported": false }
+  ],
+  "notes": [
+    "impl Server methods new and start are treated as functions within the impl block"
+  ]
+}

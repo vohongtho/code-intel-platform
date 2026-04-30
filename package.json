@@ -1,8 +1,9 @@
 {
   "name": "code-intel-platform",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "license": "MIT",
+  "files": [],
   "workspaces": [
     "code-intel/shared",
     "code-intel/core",
@@ -26,14 +27,14 @@
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
-    "esbuild": "^0.27.0",
+    "esbuild": "^0.28.0",
     "eslint": "^9.0.0",
     "prettier": "^3.3.0",
     "typescript": "^5.5.0",
     "vite": "^8.0.10"
   },
   "dependencies": {
-    "@vohongtho.infotech/code-intel": "^0.2.0"
+    "@ladybugdb/core": "^0.16.0"
   },
   "overrides": {
     "sharp": "^0.33.0"

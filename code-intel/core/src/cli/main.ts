@@ -23,6 +23,8 @@ import {
   resolvePhase,
   clusterPhase,
   flowPhase,
+  parsePhaseParallel,
+  resolvePhaseParallel,
 } from '../pipeline/phases/index.js';
 import { startHttpServer } from '../http/app.js';
 import { startMcpStdio } from '../mcp-server/server.js';
@@ -32,7 +34,12 @@ import { saveMetadata, loadMetadata, getDbPath } from '../storage/metadata.js';
 import { writeSkillFiles } from './skill-writer.js';
 import { writeContextFiles } from './context-writer.js';
 import { upsertRepo, loadRegistry, removeRepo } from '../storage/repo-registry.js';
-import { DbManager, loadGraphToDB } from '../storage/index.js';
+import { DbManager, loadGraphToDB, removeNodesForFile } from '../storage/index.js';
+import {
+  getCurrentCommitHash,
+  decideIncremental,
+  buildMtimeSnapshot,
+} from '../pipeline/incremental.js';
 import { loadGraphFromDB } from '../multi-repo/graph-from-db.js';
 import {
   loadGroup,
@@ -147,6 +154,8 @@ program
 async function analyzeWorkspace(targetPath: string, options?: {
   silent?: boolean;
   force?: boolean;
+  incremental?: boolean;
+  parallel?: boolean;
   skills?: boolean;
   skipEmbeddings?: boolean;
   skipAgentsMd?: boolean;
@@ -234,8 +243,105 @@ async function analyzeWorkspace(targetPath: string, options?: {
     },
   };
 
-  const phases = [scanPhase, structurePhase, parsePhase, resolvePhase, clusterPhase, flowPhase];
+  // ── Incremental mode: run scan first, then decide which files changed ────────
+  let isIncremental = false;
+  let incrementalChangedFiles: string[] | undefined;
+  if (options?.incremental && !options?.force) {
+    const prevMeta = loadMetadata(workspaceRoot);
+    // Run scan phase alone to populate context.filePaths
+    const scanResult = await runPipeline([scanPhase], context);
+    if (scanResult.success && context.filePaths.length > 0) {
+      const decision = decideIncremental(
+        workspaceRoot,
+        context.filePaths,
+        prevMeta?.commitHash,
+        prevMeta?.lastAnalyzedMtimes,
+      );
+      if (decision.incremental && decision.changedFiles !== undefined) {
+        isIncremental = true;
+        incrementalChangedFiles = decision.changedFiles;
+        if (!options?.silent) {
+          console.log(`  ◈ Incremental: ${incrementalChangedFiles.length} changed file(s) of ${context.filePaths.length} total`);
+        }
+        Logger.info(`[incremental] re-parsing ${incrementalChangedFiles.length} files`);
+        // Limit filePaths to only changed files for the remaining pipeline phases
+        context.filePaths = incrementalChangedFiles;
+      } else {
+        if (!options?.silent) {
+          console.log(`  ◈ Falling back to full analysis: ${decision.fallbackReason}`);
+        }
+        Logger.info(`[incremental] fallback: ${decision.fallbackReason}`);
+        // Reset filePaths so full pipeline re-scans below
+        context.filePaths = [];
+      }
+    }
+  }
+
+  const useParallel = options?.parallel ?? false;
+  const chosenParsePhase  = useParallel ? parsePhaseParallel  : parsePhase;
+  const chosenResolvePhase = useParallel ? resolvePhaseParallel : resolvePhase;
+
+  // In incremental mode, the scan phase already ran (to discover all files for the
+  // change-set decision).  We still need a phase named 'scan' in the pipeline so
+  // the DAG validator can resolve structurePhase's dependency.  This no-op fulfils
+  // that contract without touching context.filePaths (already set to changed files).
+  const noopScanPhase = {
+    name: 'scan',
+    dependencies: [] as string[],
+    async execute() { return { status: 'completed' as const, duration: 0 }; },
+  };
+
+  const phases = isIncremental
+    ? [noopScanPhase, structurePhase, chosenParsePhase, chosenResolvePhase, clusterPhase, flowPhase]
+    : [scanPhase, structurePhase, chosenParsePhase, chosenResolvePhase, clusterPhase, flowPhase];
   const result = await runPipeline(phases, context);
+
+  // ── After incremental pipeline: remove stale nodes from DB for changed files ─
+  if (isIncremental && incrementalChangedFiles && incrementalChangedFiles.length > 0) {
+    const dbPath = getDbPath(workspaceRoot);
+    if (fs.existsSync(dbPath)) {
+      try {
+        const db = new DbManager(dbPath);
+        await db.init();
+        for (const absPath of incrementalChangedFiles) {
+          const rel = path.relative(workspaceRoot, absPath);
+          await removeNodesForFile(rel, db);
+        }
+        // Re-insert updated nodes from the in-memory graph (changed files only)
+        const { upsertNodes: upsertNodesBatch } = await import('../storage/graph-loader.js');
+        const changedRelPaths = new Set(
+          incrementalChangedFiles.map((f) => path.relative(workspaceRoot, f)),
+        );
+        const nodesToUpsert = [...graph.allNodes()].filter(
+          (n) => changedRelPaths.has(n.filePath),
+        );
+        await upsertNodesBatch(nodesToUpsert, db);
+        db.close();
+        if (!options?.silent) {
+          console.log(`  ✓ Incremental DB patch: ${nodesToUpsert.length} nodes updated`);
+        }
+      } catch (err) {
+        Logger.warn(`Incremental DB patch failed: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+  }
+
+  // Build mtime snapshot for all analyzed files (used on next incremental run)
+  const allAnalyzedPaths = isIncremental
+    ? incrementalChangedFiles ?? []
+    : context.filePaths;
+  const newMtimes = buildMtimeSnapshot(allAnalyzedPaths, workspaceRoot);
+  // Merge with previous mtimes when incremental (so unchanged files keep their stored mtime)
+  let mergedMtimes: Record<string, number> | undefined;
+  if (isIncremental) {
+    const prevMeta2 = loadMetadata(workspaceRoot);
+    mergedMtimes = { ...(prevMeta2?.lastAnalyzedMtimes ?? {}), ...newMtimes };
+  } else {
+    mergedMtimes = newMtimes;
+  }
+
+  // Get current commit hash for git-based incremental on the next run
+  const currentCommitHash = getCurrentCommitHash(workspaceRoot) ?? undefined;
 
   // Save metadata (bump indexVersion on every successful analysis)
   const repoName = path.basename(workspaceRoot);
@@ -243,6 +349,9 @@ async function analyzeWorkspace(targetPath: string, options?: {
   saveMetadata(workspaceRoot, {
     indexedAt: new Date().toISOString(),
     indexVersion,
+    commitHash: currentCommitHash,
+    lastAnalyzedMtimes: mergedMtimes,
+    parser: context.parserUsed ?? 'regex',
     stats: {
       nodes: graph.size.nodes,
       edges: graph.size.edges,
@@ -290,13 +399,15 @@ async function analyzeWorkspace(targetPath: string, options?: {
     for (const f of staleFiles) {
       try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* ignore */ }
     }
-    // Rename .new and its WAL/SHM companions atomically
+    // Rename .new WAL/SHM companions (skip the main db path itself)
     for (const f of newStaleFiles) {
+      if (f === dbPathNew) continue; // handled below
       if (fs.existsSync(f)) {
         const dest = f.replace(dbPathNew, dbPath);
         try { fs.renameSync(f, dest); } catch { /* ignore */ }
       }
     }
+    // Rename main db (may be a file or a directory depending on LadybugDB version)
     fs.renameSync(dbPathNew, dbPath);
     stopSpinner();
     Logger.info(`DB persisted: ${nodeCount} nodes, ${edgeCount} edges`);
@@ -317,14 +428,12 @@ async function analyzeWorkspace(targetPath: string, options?: {
       const { getVectorDbPath } = await import('../storage/index.js');
       const { VectorIndex } = await import('../search/vector-index.js');
       const vdbPath = getVectorDbPath(workspaceRoot);
-      // Remove stale vector DB files before writing
-      const staleVdb = [vdbPath, `${vdbPath}-shm`, `${vdbPath}-wal`, `${vdbPath}.shm`, `${vdbPath}.wal`];
+      // Remove stale vector DB file before writing (better-sqlite3 uses a single file)
+      const staleVdb = [vdbPath, `${vdbPath}-shm`, `${vdbPath}-wal`];
       for (const f of staleVdb) {
         try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* ignore */ }
       }
-      const vdb = new DbManager(vdbPath);
-      await vdb.init();
-      const idx = new VectorIndex(vdb);
+      const idx = new VectorIndex(vdbPath);
       await idx.init();
       const nodes = await embedNodes(graph, {
         onProgress: (done, total) => {
@@ -339,7 +448,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
       Logger.info(`Embeddings built: ${nodes.length} vectors`);
       await idx.buildIndex(nodes);
       if (!options?.silent) console.log(`  ✓ Embeddings: ${nodes.length} vectors built`);
-      vdb.close();
+      idx.close();
     } catch (err) {
       stopSpinner();
       Logger.warn(`Embeddings failed: ${err instanceof Error ? err.message : err}`);
@@ -421,7 +530,7 @@ program
       mcpServers: {
         'code-intel': {
           command: 'npx',
-          args: ['@vohongtho.infotech/code-intel', 'mcp', '.'],
+          args: ['code-intel', 'mcp', '.'],
         },
       },
     };
@@ -452,7 +561,9 @@ program
       }
     }
 
-    console.log('\n  VS Code / Cursor — add the same mcpServers block to settings.json or .vscode/mcp.json');
+    console.log('\n  VS Code / Cursor — add to .vscode/mcp.json in your project:');
+    console.log('  ' + JSON.stringify({ servers: { 'code-intel': { type: 'stdio', command: 'npx', args: ['code-intel', 'mcp', '.'] } } }, null, 2).split('\n').join('\n  '));
+    console.log('\n  To verify in VS Code: open Command Palette → "MCP: List Servers" and confirm code-intel is Running.');
     console.log('\n  Next: run `code-intel analyze` inside your project to build the knowledge graph.\n');
   });
 
@@ -462,6 +573,8 @@ program
   .description('Index a repository and build the knowledge graph')
   .argument('[path]', 'Path to the repository (default: current directory)', '.')
   .option('--force',             'Force full re-index, ignoring cached data')
+  .option('--incremental',       'Only re-parse files changed since last analysis (git diff or mtime)')
+  .option('--parallel',          'Use worker threads for parse + resolve phases (faster on multi-core)')
   .option('--skills',            'Generate .claude/skills/ SKILL.md files from detected clusters')
   .option('--embeddings',        'Build vector embeddings for semantic search (slower, recommended)')
   .option('--skip-embeddings',   'Skip embedding generation (faster, text-search only)')
@@ -477,6 +590,8 @@ program
     $ code-intel analyze                        Index current directory
     $ code-intel analyze ./my-project           Index a specific path
     $ code-intel analyze --force                Force full re-index
+    $ code-intel analyze --incremental          Only re-parse changed files (fast)
+    $ code-intel analyze --parallel             Use worker threads for faster indexing
     $ code-intel analyze --embeddings           Enable semantic (vector) search
     $ code-intel analyze --skills               Generate .claude/skills/ files
     $ code-intel analyze --skip-embeddings      Skip vectors for a faster run
@@ -486,6 +601,8 @@ program
 `)
   .action(async (targetPath: string, opts: {
     force?: boolean;
+    incremental?: boolean;
+    parallel?: boolean;
     skills?: boolean;
     skipEmbeddings?: boolean;
     skipAgentsMd?: boolean;
@@ -495,6 +612,8 @@ program
   }) => {
     await analyzeWorkspace(targetPath, {
       force: opts.force,
+      incremental: opts.incremental,
+      parallel: opts.parallel,
       skills: opts.skills,
       skipEmbeddings: opts.skipEmbeddings,
       skipAgentsMd: opts.skipAgentsMd,
@@ -502,6 +621,9 @@ program
       embeddings: opts.embeddings,
       verbose: opts.verbose,
     });
+    // LadybugDB keeps background checkpoint threads alive after close(),
+    // preventing Node from exiting naturally.  Force-exit once the work is done.
+    process.exit(0);
   });
 
 // ─── 3. mcp ──────────────────────────────────────────────────────────────────
@@ -572,15 +694,23 @@ program
 
     if (existingIndex) {
       // Load graph from persisted DB — no re-analysis needed
-      console.log(`Loading index: ${workspaceRoot}`);
+      // 1.1: Warn + re-analyze if old regex index
       const meta = loadMetadata(workspaceRoot)!;
-      console.log(`  ◈  ${meta.stats.nodes} nodes · ${meta.stats.edges} edges · ${meta.stats.files} files  (indexed ${meta.indexedAt})`);
-      const graph = createKnowledgeGraph();
-      const db = new DbManager(dbPath);
-      await db.init();
-      await loadGraphFromDB(graph, db);
-      db.close();
-      startHttpServer(graph, repoName, parseInt(options.port, 10), workspaceRoot);
+      if (meta.parser === 'regex' || meta.parser === undefined) {
+        Logger.warn(`  [serve] Index was built with regex parser — running full re-analysis to upgrade to tree-sitter`);
+        console.log(`Re-analyzing with tree-sitter parser: ${workspaceRoot}`);
+        const { graph: newGraph, workspaceRoot: root, repoName: name } = await analyzeWorkspace(targetPath, { force: true });
+        startHttpServer(newGraph, name, parseInt(options.port, 10), root);
+      } else {
+        console.log(`Loading index: ${workspaceRoot}`);
+        console.log(`  ◈  ${meta.stats.nodes} nodes · ${meta.stats.edges} edges · ${meta.stats.files} files  (indexed ${meta.indexedAt})`);
+        const graph = createKnowledgeGraph();
+        const db = new DbManager(dbPath);
+        await db.init();
+        await loadGraphFromDB(graph, db);
+        db.close();
+        startHttpServer(graph, repoName, parseInt(options.port, 10), workspaceRoot);
+      }
     } else {
       // No index or --force: run full analysis then serve
       const { graph, workspaceRoot: root, repoName: name } = await analyzeWorkspace(targetPath, { force: options.force });

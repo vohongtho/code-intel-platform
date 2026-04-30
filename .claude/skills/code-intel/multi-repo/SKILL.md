@@ -1,6 +1,6 @@
 ---
 name: multi-repo
-description: "Covers the **multi-repo** subsystem of code-intel-platform. 30 symbols across 8 files. Key symbols: `mergeSearchResults`, `listGroups`, `deleteGroup`. Internal call density: 0.5 calls/symbol. Participates in 1 execution flow(s)."
+description: "Covers the **multi-repo** subsystem of code-intel-platform. 30 symbols across 8 files. Key symbols: `mergeSearchResults`, `listGroups`, `getGroup`. Internal call density: 0.5 calls/symbol."
 ---
 
 # multi-repo
@@ -11,7 +11,7 @@ description: "Covers the **multi-repo** subsystem of code-intel-platform. 30 sym
 
 Load this skill when:
 - The task involves code in `code-intel/core/src/multi-repo/`
-- The user mentions `mergeSearchResults`, `listGroups`, `deleteGroup` or asks how they work
+- The user mentions `mergeSearchResults`, `listGroups`, `getGroup` or asks how they work
 - Adding, modifying, or debugging multi-repo-related functionality
 - Tracing call chains that pass through the multi-repo layer
 
@@ -34,7 +34,10 @@ Start exploration here — exported symbols with no external callers:
 
 - **`mergeSearchResults`** `(function)` → `code-intel/core/src/multi-repo/cross-repo-search.ts:4`
 - **`listGroups`** `(function)` → `code-intel/core/src/multi-repo/group-manager.ts:8`
+- **`getGroup`** `(function)` → `code-intel/core/src/multi-repo/group-manager.ts:21`
 - **`deleteGroup`** `(function)` → `code-intel/core/src/multi-repo/group-manager.ts:35`
+- **`listGroups`** `(function)` → `code-intel/core/src/multi-repo/group-registry.ts:29`
+- **`syncGroup`** `(function)` → `code-intel/core/src/multi-repo/group-sync.ts:162`
 
 ## Hot Symbols
 
@@ -42,23 +45,18 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `syncGroup` | function | 5 | 6 | `multi-repo/group-sync.ts` |
-| `loadGraphFromDB` | function | 6 | 1 | `multi-repo/graph-from-db.ts` |
+| `queryGroup` | function | 3 | 8 | `multi-repo/group-query.ts` |
+| `loadGraphFromDB` | function | 6 | 4 | `multi-repo/graph-from-db.ts` |
+| `syncGroup` | function | 0 | 10 | `multi-repo/group-sync.ts` |
 | `loadGroup` | function | 6 | 1 | `multi-repo/group-registry.ts` |
 | `saveGroup` | function | 6 | 1 | `multi-repo/group-registry.ts` |
-| `listGroups` | function | 7 | 0 | `multi-repo/group-registry.ts` |
-| `getGroup` | function | 3 | 1 | `multi-repo/group-manager.ts` |
+| `matchContracts` | function | 1 | 4 | `multi-repo/group-sync.ts` |
 | `groupFile` | function | 4 | 0 | `multi-repo/group-registry.ts` |
 | `addMember` | function | 2 | 2 | `multi-repo/group-registry.ts` |
 | `removeMember` | function | 2 | 2 | `multi-repo/group-registry.ts` |
 | `saveSyncResult` | function | 4 | 0 | `multi-repo/group-registry.ts` |
 | `loadSyncResult` | function | 4 | 0 | `multi-repo/group-registry.ts` |
 | `loadGroupConfig` | function | 3 | 0 | `multi-repo/group-config.ts` |
-
-## Execution Flows
-
-**1** execution path(s) pass through this area.
-Run `code-intel inspect <symbol>` on a hot symbol to trace the full call chain.
 
 ## Impact Guidance
 
@@ -71,7 +69,7 @@ Before modifying any symbol in this area:
 
 ```bash
 # Inspect most-connected symbol
-code-intel inspect syncGroup
+code-intel inspect queryGroup
 # Blast radius for entry point
 code-intel impact mergeSearchResults
 # Search this area

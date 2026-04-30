@@ -20,6 +20,8 @@ export interface PipelineContext {
   /** Per-phase progress callback — called with (phase, done, total) for each processed item */
   onPhaseProgress?: (phase: string, done: number, total: number) => void;
   verbose?: boolean;
+  /** Set by parse-phase after execution: which parser was used */
+  parserUsed?: 'tree-sitter' | 'regex';
 }
 
 export interface Phase {

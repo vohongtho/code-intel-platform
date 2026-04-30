@@ -14,7 +14,7 @@ export const cppQueries = `
 
 ;; Namespace definition
 (namespace_definition
-  name: (identifier) @def.namespace.name) @def.namespace
+  name: (namespace_identifier) @def.namespace.name) @def.namespace
 
 ;; Template declaration
 (template_declaration

@@ -1,0 +1,17 @@
+{
+  "language": "Go",
+  "fixture": "go-sample.go",
+  "description": "Canonical Go symbol extraction baseline. Structs, interfaces, functions, methods.",
+  "expectedSymbols": [
+    { "kind": "struct",    "name": "Server",  "exported": true },
+    { "kind": "struct",    "name": "Config",  "exported": true },
+    { "kind": "interface", "name": "Handler", "exported": true },
+    { "kind": "function",  "name": "New",     "exported": true },
+    { "kind": "method",    "name": "Start",   "exported": true },
+    { "kind": "method",    "name": "Stop",    "exported": true },
+    { "kind": "function",  "name": "helper",  "exported": false }
+  ],
+  "notes": [
+    "helper is unexported (lowercase first letter)"
+  ]
+}

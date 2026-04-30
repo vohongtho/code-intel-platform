@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useAppState } from '../../state/app-context';
 import { ApiClient } from '../../api/client';
 import { NODE_COLORS } from '../../graph/colors';
-import type { NodeKind } from '@code-intel/shared';
+import type { NodeKind } from 'code-intel-shared';
 
 interface Props {
   onToggleAI: () => void;

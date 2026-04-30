@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import type { CodeNode, NodeKind } from '@code-intel/shared';
+import type { CodeNode, NodeKind } from 'code-intel-shared';
 import { NODE_COLORS } from '../../graph/colors';
 import { ApiClient, type NodeInspectInfo, type BlastRadiusResult } from '../../api/client';
 import { useAppState } from '../../state/app-context';

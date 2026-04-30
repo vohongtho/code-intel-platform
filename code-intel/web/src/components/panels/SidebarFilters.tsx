@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { useAppState } from '../../state/app-context';
 import { NODE_COLORS, EDGE_COLORS } from '../../graph/colors';
-import type { NodeKind, EdgeKind } from '@code-intel/shared';
+import type { NodeKind, EdgeKind } from 'code-intel-shared';
 import type { FocusDepth } from '../../state/types';
 
 const NODE_KIND_LABELS: Partial<Record<NodeKind, string>> = {

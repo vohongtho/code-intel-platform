@@ -9,10 +9,14 @@ dist/
 *.tsbuildinfo
 .amp/
 .amp/
-screenshots/
 .playwright-mcp/
 ref-use/
 .env
 
 
 **/coverage/**
+
+# Ignore auto-generated code-intel output inside src/ subdirectories
+code-intel/core/src/**/.claude/
+code-intel/core/src/**/AGENTS.md
+code-intel/core/src/**/CLAUDE.md

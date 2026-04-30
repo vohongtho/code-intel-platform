@@ -1,17 +1,17 @@
 ---
 name: phases
-description: "Covers the **phases** subsystem of code-intel-platform. 16 symbols across 3 files. Key symbols: `loadIgnorePatterns`, `extractSymbol`, `estimateEndLine`. Internal call density: 0 calls/symbol."
+description: "Covers the **phases** subsystem of code-intel-platform. 33 symbols across 5 files. Key symbols: `execute`, `execute`, `execute`. Internal call density: 0.7 calls/symbol. Participates in 2 execution flow(s)."
 ---
 
 # phases
 
-> **16 symbols** | **3 files** | path: `code-intel/core/src/pipeline/phases/` | call density: 0/sym
+> **33 symbols** | **5 files** | path: `code-intel/core/src/pipeline/phases/` | call density: 0.7/sym
 
 ## When to Use
 
 Load this skill when:
 - The task involves code in `code-intel/core/src/pipeline/phases/`
-- The user mentions `loadIgnorePatterns`, `extractSymbol`, `estimateEndLine` or asks how they work
+- The user mentions `execute`, `execute`, `execute` or asks how they work
 - Adding, modifying, or debugging phases-related functionality
 - Tracing call chains that pass through the phases layer
 
@@ -19,9 +19,20 @@ Load this skill when:
 
 | File | Symbols | Notes |
 |------|---------|-------|
-| `code-intel/core/src/pipeline/phases/resolve-phase.ts` | `ParsedImport`, `ParsedCall`, `ParsedHeritage`, `extractImports` +(4) | internal |
-| `code-intel/core/src/pipeline/phases/parse-phase.ts` | `ExtractedSymbol`, `extractSymbol`, `estimateEndLine`, `startIndent` +(2) | internal |
-| `code-intel/core/src/pipeline/phases/scan-phase.ts` | `loadIgnorePatterns`, `walk` | internal |
+| `code-intel/core/src/pipeline/phases/parse-phase.ts` | `isDefCapture`, `captureKind`, `isExported`, `Param` +(16) | 1 exported |
+| `code-intel/core/src/pipeline/phases/resolve-phase.ts` | `ParsedImport`, `ParsedCall`, `ParsedHeritage`, `execute` +(4) | 1 exported |
+| `code-intel/core/src/pipeline/phases/scan-phase.ts` | `loadIgnorePatterns`, `execute`, `walk` | 2 exported |
+| `code-intel/core/src/pipeline/phases/cluster-phase.ts` | `execute` | 1 exported |
+| `code-intel/core/src/pipeline/phases/flow-phase.ts` | `execute` | 1 exported |
+
+## Entry Points
+
+Start exploration here — exported symbols with no external callers:
+
+- **`execute`** `(method)` → `code-intel/core/src/pipeline/phases/cluster-phase.ts:7`
+- **`execute`** `(method)` → `code-intel/core/src/pipeline/phases/flow-phase.ts:7`
+- **`execute`** `(method)` → `code-intel/core/src/pipeline/phases/parse-phase.ts:460`
+- **`execute`** `(method)` → `code-intel/core/src/pipeline/phases/resolve-phase.ts:37`
 
 ## Hot Symbols
 
@@ -29,18 +40,23 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `loadIgnorePatterns` | function | 1 | 1 | `phases/scan-phase.ts` |
-| `extractSymbol` | function | 1 | 0 | `phases/parse-phase.ts` |
-| `estimateEndLine` | function | 1 | 0 | `phases/parse-phase.ts` |
-| `extractBlock` | function | 1 | 0 | `phases/parse-phase.ts` |
-| `extractImports` | function | 1 | 0 | `phases/resolve-phase.ts` |
-| `extractCalls` | function | 1 | 0 | `phases/resolve-phase.ts` |
-| `extractHeritage` | function | 1 | 0 | `phases/resolve-phase.ts` |
-| `findEnclosingFunctionFast` | function | 1 | 0 | `phases/resolve-phase.ts` |
-| `walk` | function | 1 | 0 | `phases/scan-phase.ts` |
-| `ExtractedSymbol` | interface | 0 | 0 | `phases/parse-phase.ts` |
-| `startIndent` | function | 0 | 0 | `phases/parse-phase.ts` |
-| `indent` | function | 0 | 0 | `phases/parse-phase.ts` |
+| `extractFromTree` | function | 1 | 18 | `phases/parse-phase.ts` |
+| `execute` | method | 0 | 16 | `phases/parse-phase.ts` |
+| `execute` | method | 0 | 16 | `phases/resolve-phase.ts` |
+| `execute` | method | 0 | 10 | `phases/cluster-phase.ts` |
+| `execute` | method | 0 | 10 | `phases/flow-phase.ts` |
+| `extractWithRegex` | function | 1 | 7 | `phases/parse-phase.ts` |
+| `isExported` | function | 5 | 0 | `phases/parse-phase.ts` |
+| `execute` | method | 1 | 4 | `phases/scan-phase.ts` |
+| `extractFromTreeAsync` | function | 1 | 3 | `phases/parse-phase.ts` |
+| `extractDoc` | function | 1 | 2 | `phases/parse-phase.ts` |
+| `estimateEndLine` | function | 1 | 2 | `phases/parse-phase.ts` |
+| `extractCalls` | function | 1 | 2 | `phases/resolve-phase.ts` |
+
+## Execution Flows
+
+**2** execution path(s) pass through this area.
+Run `code-intel inspect <symbol>` on a hot symbol to trace the full call chain.
 
 ## Impact Guidance
 
@@ -53,9 +69,9 @@ Before modifying any symbol in this area:
 
 ```bash
 # Inspect most-connected symbol
-code-intel inspect loadIgnorePatterns
+code-intel inspect extractFromTree
 # Blast radius for entry point
-code-intel impact loadIgnorePatterns
+code-intel impact execute
 # Search this area
 code-intel search "phases"
 ```

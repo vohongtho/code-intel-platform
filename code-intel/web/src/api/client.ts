@@ -1,4 +1,4 @@
-import type { CodeNode, CodeEdge } from '@code-intel/shared';
+import type { CodeNode, CodeEdge } from 'code-intel-shared';
 import type { SearchResult, CurrentUser } from '../state/types';
 
 export interface AuthStatus {
@@ -238,9 +238,9 @@ export class ApiClient {
     return res.json() as Promise<{ perRepo: { repoName: string; groupPath: string; results: SearchResult[] }[]; merged: SearchResult[] }>;
   }
 
-  async fetchGroupGraph(name: string): Promise<{ nodes: import('@code-intel/shared').CodeNode[]; edges: import('@code-intel/shared').CodeEdge[] }> {
+  async fetchGroupGraph(name: string): Promise<{ nodes: import('code-intel-shared').CodeNode[]; edges: import('code-intel-shared').CodeEdge[] }> {
     const res = await fetch(`${this.baseUrl}/api/v1/groups/${encodeURIComponent(name)}/graph`, { credentials: 'include' });
     if (!res.ok) throw new Error(`Failed to fetch group graph: ${res.statusText}`);
-    return res.json() as Promise<{ nodes: import('@code-intel/shared').CodeNode[]; edges: import('@code-intel/shared').CodeEdge[] }>;
+    return res.json() as Promise<{ nodes: import('code-intel-shared').CodeNode[]; edges: import('code-intel-shared').CodeEdge[] }>;
   }
 }

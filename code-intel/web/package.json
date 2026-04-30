@@ -11,7 +11,7 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
-    "@code-intel/shared": "*",
+    "code-intel-shared": "*",
     "@tailwindcss/vite": "^4.2.4",
     "graphology": "^0.26.0",
     "graphology-layout-forceatlas2": "^0.10.1",

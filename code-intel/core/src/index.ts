@@ -2,8 +2,8 @@ export { createKnowledgeGraph } from './graph/index.js';
 export type { KnowledgeGraph } from './graph/index.js';
 export { generateNodeId, generateEdgeId } from './graph/index.js';
 
-export { initParser, getParser, getLanguage, parseSource, runQuery, AstCache } from './parsing/index.js';
-export type { QueryCapture } from './parsing/index.js';
+export { initParser, getParser, getLanguage, parseSource, isTreeSitterAvailable, runQuery, runQueryMatches, AstCache } from './parsing/index.js';
+export type { QueryCapture, QueryMatch } from './parsing/index.js';
 
 export { getLanguageModule, getAllLanguageModules } from './languages/index.js';
 export type { LanguageModule, FileSet } from './languages/index.js';

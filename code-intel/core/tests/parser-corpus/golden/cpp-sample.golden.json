@@ -1,0 +1,15 @@
+{
+  "language": "C++",
+  "fixture": "cpp-sample.cpp",
+  "description": "Canonical C++ symbol extraction baseline.",
+  "expectedSymbols": [
+    { "kind": "class",    "name": "HttpServer", "exported": true },
+    { "kind": "class",    "name": "TcpServer",  "exported": true },
+    { "kind": "struct",   "name": "Config",     "exported": true },
+    { "kind": "function", "name": "calculate",  "exported": true }
+  ],
+  "notes": [
+    "namespace 'server' may be extracted as namespace node",
+    "enum class Status may be extracted as enum"
+  ]
+}

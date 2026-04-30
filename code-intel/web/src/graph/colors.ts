@@ -1,4 +1,4 @@
-import type { NodeKind, EdgeKind } from '@code-intel/shared';
+import type { NodeKind, EdgeKind } from 'code-intel-shared';
 
 // Full-spectrum palette — based on design spec
 export const NODE_COLORS: Record<NodeKind, string> = {

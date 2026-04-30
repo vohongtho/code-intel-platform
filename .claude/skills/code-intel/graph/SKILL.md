@@ -1,17 +1,17 @@
 ---
 name: graph
-description: "Covers the **graph** subsystem of code-intel-platform. 12 symbols across 1 files. Key symbols: `GraphView`. Internal call density: 0.3 calls/symbol."
+description: "Covers the **graph** subsystem of code-intel-platform. 19 symbols across 2 files. Key symbols: `size`. Internal call density: 0.2 calls/symbol. Participates in 3 execution flow(s)."
 ---
 
 # graph
 
-> **12 symbols** | **1 files** | path: `code-intel/web/src/components/graph/` | call density: 0.3/sym
+> **19 symbols** | **2 files** | path: `code-intel/core/src/graph/` | call density: 0.2/sym
 
 ## When to Use
 
 Load this skill when:
-- The task involves code in `code-intel/web/src/components/graph/`
-- The user mentions `GraphView` or asks how they work
+- The task involves code in `code-intel/core/src/graph/`
+- The user mentions `size` or asks how they work
 - Adding, modifying, or debugging graph-related functionality
 - Tracing call chains that pass through the graph layer
 
@@ -19,13 +19,14 @@ Load this skill when:
 
 | File | Symbols | Notes |
 |------|---------|-------|
-| `code-intel/web/src/components/graph/GraphView.tsx` | `drawDarkNodeHover`, `GraphMeta`, `GraphView`, `angle` +(8) | 1 exported |
+| `code-intel/core/src/graph/knowledge-graph.ts` | `KnowledgeGraph`, `createKnowledgeGraph`, `indexEdge`, `unindexEdge` +(13) | 17 exported |
+| `code-intel/core/src/graph/id-generator.ts` | `generateNodeId`, `generateEdgeId` | 2 exported |
 
 ## Entry Points
 
 Start exploration here — exported symbols with no external callers:
 
-- **`GraphView`** `(function)` → `code-intel/web/src/components/graph/GraphView.tsx:54`
+- **`size`** `(method)` → `code-intel/core/src/graph/knowledge-graph.ts:142`
 
 ## Hot Symbols
 
@@ -33,18 +34,23 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `applyNodeEdgeReducers` | function | 1 | 3 | `graph/GraphView.tsx` |
-| `GraphView` | function | 0 | 1 | `graph/GraphView.tsx` |
-| `angle` | function | 0 | 1 | `graph/GraphView.tsx` |
-| `bfsNeighborhood` | function | 1 | 0 | `graph/GraphView.tsx` |
-| `GraphControls` | function | 0 | 1 | `graph/GraphView.tsx` |
-| `zoom` | function | 1 | 0 | `graph/GraphView.tsx` |
-| `sizeForKind` | function | 1 | 0 | `graph/GraphView.tsx` |
-| `drawDarkNodeHover` | function | 0 | 0 | `graph/GraphView.tsx` |
-| `GraphMeta` | interface | 0 | 0 | `graph/GraphView.tsx` |
-| `onZoom` | function | 0 | 0 | `graph/GraphView.tsx` |
-| `factor` | function | 0 | 0 | `graph/GraphView.tsx` |
-| `GraphLegend` | function | 0 | 0 | `graph/GraphView.tsx` |
+| `allNodes` | method | 26 | 1 | `graph/knowledge-graph.ts` |
+| `createKnowledgeGraph` | function | 26 | 0 | `graph/knowledge-graph.ts` |
+| `addNode` | method | 18 | 1 | `graph/knowledge-graph.ts` |
+| `addEdge` | method | 15 | 2 | `graph/knowledge-graph.ts` |
+| `getNode` | method | 14 | 1 | `graph/knowledge-graph.ts` |
+| `generateEdgeId` | function | 14 | 0 | `graph/id-generator.ts` |
+| `generateNodeId` | function | 13 | 0 | `graph/id-generator.ts` |
+| `findEdgesByKind` | method | 8 | 1 | `graph/knowledge-graph.ts` |
+| `findEdgesFrom` | method | 8 | 1 | `graph/knowledge-graph.ts` |
+| `allEdges` | method | 7 | 1 | `graph/knowledge-graph.ts` |
+| `findEdgesTo` | method | 5 | 1 | `graph/knowledge-graph.ts` |
+| `removeNodeCascade` | method | 2 | 3 | `graph/knowledge-graph.ts` |
+
+## Execution Flows
+
+**3** execution path(s) pass through this area.
+Run `code-intel inspect <symbol>` on a hot symbol to trace the full call chain.
 
 ## Impact Guidance
 
@@ -57,9 +63,9 @@ Before modifying any symbol in this area:
 
 ```bash
 # Inspect most-connected symbol
-code-intel inspect applyNodeEdgeReducers
+code-intel inspect allNodes
 # Blast radius for entry point
-code-intel impact GraphView
+code-intel impact size
 # Search this area
 code-intel search "graph"
 ```

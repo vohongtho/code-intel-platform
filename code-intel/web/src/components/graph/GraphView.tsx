@@ -7,7 +7,7 @@ import forceAtlas2 from 'graphology-layout-forceatlas2';
 import { useAppState } from '../../state/app-context';
 import { NODE_COLORS, EDGE_COLORS, EDGE_ALPHA, withAlpha } from '../../graph/colors';
 import { directNeighbors } from '../../graph/layout';
-import type { NodeKind, EdgeKind } from '@code-intel/shared';
+import type { NodeKind, EdgeKind } from 'code-intel-shared';
 
 // ─── Dark node hover ──────────────────────────────────────────────────────────
 function drawDarkNodeHover(

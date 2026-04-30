@@ -17,7 +17,9 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 - **HTTP API** — REST endpoints for graph, search, inspect, blast radius, flows
 - **MCP Server** — Model Context Protocol integration for LLM tooling
 - **CLI** — analyze, serve, search, inspect, impact commands with animated `█░` progress bars and braille spinners
-- **Multi-language** — TypeScript, JavaScript, Python, Java, Go, C, C++, C#, Rust, PHP, Kotlin, Ruby, Swift, Dart
+- **Multi-language** — TypeScript, JavaScript, Python, Java, Go, C, C++, C#, Rust, PHP, Ruby, Swift, Kotlin, Dart (14 languages via tree-sitter AST)
+- **Incremental Analysis** — `--incremental` flag re-parses only git-changed/mtime-changed files; 10k-file repo with 3 changes: 288ms
+- **Parallel Analysis** — `--parallel` flag runs parse + resolve phases on worker threads for large repos
 - **AI Context Files** — auto-generates `AGENTS.md` + `CLAUDE.md` at project root after every analysis with live stats, CLI reference, and skill links
 - **Skill Files** — generates `.claude/skills/code-intel/` with per-cluster SKILL.md files (hot symbols, entry points, impact guidance) for AI assistants
 - **Repository Groups** — multi-repo / monorepo service tracking with contract extraction and cross-repo dependency detection
@@ -41,6 +43,8 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 ```bash
 npm install -g @vohongtho.infotech/code-intel
 ```
+
+> **Note:** You may see `npm warn ERESOLVE overriding peer dependency` warnings about `tree-sitter`. These are **harmless** — they relate to native Node.js bindings that are not used; the CLI uses `web-tree-sitter` (WASM) exclusively. For a warning-free install, add `--legacy-peer-deps`.
 
 Verify the installation:
 
@@ -651,7 +655,7 @@ Tools tested: `repos`, `search`, `inspect`, `blast_radius`, `routes`, `raw_query
 |----------|---------|-------|
 | **test.yml** | PRs | `npm ci --legacy-peer-deps` + `npm test` |
 | **quality.yml** | PRs | Typecheck shared + core + web |
-| **publish.yml** | `v*.*.*` tags | Typecheck → Test → Build core → Build web → `npm publish` → Discord notification |
+| **publish.yml** | `v*.*.*` tags | Typecheck → Test → npm audit → License gate → Build core → Build web → `npm publish --provenance` → Build + push multi-arch Docker (linux/amd64 + linux/arm64) → Trivy CRITICAL CVE gate → cosign keyless sign → GitHub Release with CycloneDX SBOM → Discord notification |
 
 ### Publishing a New Version
 

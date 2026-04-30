@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useReducer } from 'react';
 import type { AppState, SearchResult, ChatMessage, FocusDepth, CurrentUser } from './types';
-import type { CodeNode, CodeEdge, NodeKind, EdgeKind } from '@code-intel/shared';
+import type { CodeNode, CodeEdge, NodeKind, EdgeKind } from 'code-intel-shared';
 
 type Action =
   | { type: 'SET_VIEW'; view: AppState['view'] }

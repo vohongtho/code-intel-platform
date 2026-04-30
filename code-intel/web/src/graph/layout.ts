@@ -1,4 +1,4 @@
-import type { CodeEdge } from '@code-intel/shared';
+import type { CodeEdge } from 'code-intel-shared';
 
 /**
  * BFS over undirected adjacency to find nodes within `maxHops` of `startId`.
