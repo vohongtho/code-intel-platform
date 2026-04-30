@@ -12,6 +12,7 @@ import { textSearch } from '../search/text-search.js';
 import { DbManager, getDbPath, getVectorDbPath } from '../storage/index.js';
 import { loadMetadata } from '../storage/metadata.js';
 import { VectorIndex } from '../search/vector-index.js';
+// VectorIndex now uses better-sqlite3 directly (no DbManager needed)
 import fs from 'node:fs';
 import { listGroups, loadGroup, loadSyncResult, saveSyncResult } from '../multi-repo/group-registry.js';
 import { syncGroup } from '../multi-repo/group-sync.js';
@@ -240,10 +241,8 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     vectorIndexBuilding = true;
     try {
       const { embedNodes } = await import('../search/embedder.js');
-      const dbPath = getVectorDbPath(workspaceRoot);
-      const db = new DbManager(dbPath);
-      await db.init();
-      const idx = new VectorIndex(db);
+      const vdbPath = getVectorDbPath(workspaceRoot);
+      const idx = new VectorIndex(vdbPath);
       await idx.init();
       const alreadyBuilt = await idx.isBuilt();
       if (!alreadyBuilt) {

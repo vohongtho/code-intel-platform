@@ -428,14 +428,12 @@ async function analyzeWorkspace(targetPath: string, options?: {
       const { getVectorDbPath } = await import('../storage/index.js');
       const { VectorIndex } = await import('../search/vector-index.js');
       const vdbPath = getVectorDbPath(workspaceRoot);
-      // Remove stale vector DB files before writing
-      const staleVdb = [vdbPath, `${vdbPath}-shm`, `${vdbPath}-wal`, `${vdbPath}.shm`, `${vdbPath}.wal`];
+      // Remove stale vector DB file before writing (better-sqlite3 uses a single file)
+      const staleVdb = [vdbPath, `${vdbPath}-shm`, `${vdbPath}-wal`];
       for (const f of staleVdb) {
         try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* ignore */ }
       }
-      const vdb = new DbManager(vdbPath);
-      await vdb.init();
-      const idx = new VectorIndex(vdb);
+      const idx = new VectorIndex(vdbPath);
       await idx.init();
       const nodes = await embedNodes(graph, {
         onProgress: (done, total) => {
@@ -450,7 +448,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
       Logger.info(`Embeddings built: ${nodes.length} vectors`);
       await idx.buildIndex(nodes);
       if (!options?.silent) console.log(`  ✓ Embeddings: ${nodes.length} vectors built`);
-      vdb.close();
+      idx.close();
     } catch (err) {
       stopSpinner();
       Logger.warn(`Embeddings failed: ${err instanceof Error ? err.message : err}`);

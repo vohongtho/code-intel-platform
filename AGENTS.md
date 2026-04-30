@@ -13,7 +13,7 @@
 > ⚠ This section is auto-managed by `code-intel analyze`. Do **not** edit between the markers — your changes will be overwritten.
 > Add your own notes below the `<!-- code-intel:end -->` marker.
 
-Indexed: **3,750 nodes** | **6,649 edges** | **235 files** | analyzed in 3.5s
+Indexed: **3,742 nodes** | **6,629 edges** | **233 files** | analyzed in 3.9s
 
 > Index stale? Re-run: `code-intel analyze`
 
@@ -61,8 +61,8 @@ code-intel clean [path]            # Remove index data
 | Work in `api` (28 symbols) | `.claude/skills/code-intel/api/SKILL.md` |
 | Work in `cli` (23 symbols) | `.claude/skills/code-intel/cli/SKILL.md` |
 | Work in `multi-lang` (21 symbols) | `.claude/skills/code-intel/multi-lang/SKILL.md` |
+| Work in `parsing` (20 symbols) | `.claude/skills/code-intel/parsing/SKILL.md` |
 | Work in `graph` (19 symbols) | `.claude/skills/code-intel/graph/SKILL.md` |
-| Work in `parsing` (19 symbols) | `.claude/skills/code-intel/parsing/SKILL.md` |
 | Work in `auth` (19 symbols) | `.claude/skills/code-intel/auth-2/SKILL.md` |
 | Work in `jobs` (18 symbols) | `.claude/skills/code-intel/jobs/SKILL.md` |
 | Work in `http` (18 symbols) | `.claude/skills/code-intel/http/SKILL.md` |
