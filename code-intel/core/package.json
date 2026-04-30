@@ -1,7 +1,7 @@
 {
   "name": "@vohongtho.infotech/code-intel",
   "version": "0.3.1",
-  "description": "Static code analysis platform \u2014 builds a Knowledge Graph from source code with Web UI, HTTP API, CLI, and MCP server",
+  "description": "Static code analysis platform — builds a Knowledge Graph from source code with Web UI, HTTP API, CLI, and MCP server",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -55,7 +55,7 @@
     "@opentelemetry/sdk-node": "^0.215.0",
     "@opentelemetry/semantic-conventions": "^1.40.0",
     "bcrypt": "^6.0.0",
-    "better-sqlite3": "^11.10.0",
+    "better-sqlite3": "^12.9.0",
     "code-intel-shared": "^0.1.0",
     "commander": "^14.0.3",
     "cookie-parser": "^1.4.7",
@@ -83,10 +83,7 @@
     "web-tree-sitter": "^0.26.8",
     "winston": "^3.19.0",
     "winston-daily-rotate-file": "^5.0.0",
-    "ws": "^8.20.0",
-    "tree-sitter-swift": "^0.7.1",
-    "tree-sitter-kotlin": "^0.3.8",
-    "tree-sitter-dart": "^1.0.0"
+    "ws": "^8.20.0"
   },
   "devDependencies": {
     "@types/bcrypt": "^6.0.0",
@@ -104,8 +101,8 @@
   },
   "optionalDependencies": {
     "keytar": "^7.9.0",
-    "tree-sitter-swift": "^0.7.1",
+    "tree-sitter-dart": "^1.0.0",
     "tree-sitter-kotlin": "^0.3.8",
-    "tree-sitter-dart": "^1.0.0"
+    "tree-sitter-swift": "^0.7.1"
   }
 }
