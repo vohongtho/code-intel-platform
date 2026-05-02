@@ -1,10 +1,33 @@
+## Tool Usage Rules (MANDATORY)
+
+### code-intel — Always Investigate First (before reading any file)
+```bash
+code-intel search "<concept>"   # FIRST: find symbols by concept
+code-intel inspect <symbol>     # callers, callees, file location
+code-intel impact <symbol>      # blast radius BEFORE editing
+```
+- NEVER open a file cold — always `code-intel search` first.
+- NEVER grep for symbols — use `code-intel search` instead.
+- NEVER edit a symbol without running `code-intel impact` first.
+
+### rtk — Use for compact shell output
+```bash
+rtk read <file>            # token-efficient file read
+rtk grep <pattern> <file>  # compact grep
+rtk git log                # compact git log
+rtk test <cmd>             # show only failures
+rtk err <cmd>              # show only errors/warnings
+rtk diff                   # condensed diff
+rtk smart <cmd>            # 2-line heuristic summary
+```
+
 <!-- code-intel:start -->
 # Code Intelligence — code-intel-platform
 
 > ⚠ This section is auto-managed by `code-intel analyze`. Do **not** edit between the markers — your changes will be overwritten.
 > Add your own notes below the `<!-- code-intel:end -->` marker.
 
-Indexed: **4,634 nodes** | **8,312 edges** | **281 files** | analyzed in 2.0s
+Indexed: **4,402 nodes** | **7,919 edges** | **267 files** | analyzed in 3.2s
 
 > Index stale? Re-run: `code-intel analyze`
 
@@ -19,6 +42,8 @@ Indexed: **4,634 nodes** | **8,312 edges** | **281 files** | analyzed in 2.0s
 
 - NEVER rename symbols with find-and-replace — use `code-intel inspect` to find all usages first.
 - NEVER ignore impact warnings — always report blast radius to the user.
+- NEVER open a file cold — always `code-intel search` first.
+- NEVER grep for symbols — use `code-intel search` instead.
 
 ## CLI Quick Reference
 
@@ -41,7 +66,7 @@ code-intel clean [path]            # Remove index data
 | Debugging / "Why is X failing?" | Load `code-intel-debugging` skill |
 | Work in `auth` (84 symbols) | `.claude/skills/code-intel/auth/SKILL.md` |
 | Work in `fixtures` (75 symbols) | `.claude/skills/code-intel/fixtures/SKILL.md` |
-| Work in `query` (65 symbols) | `.claude/skills/code-intel/query/SKILL.md` |
+| Work in `query` (47 symbols) | `.claude/skills/code-intel/query/SKILL.md` |
 | Work in `modules` (40 symbols) | `.claude/skills/code-intel/modules/SKILL.md` |
 | Work in `phases` (38 symbols) | `.claude/skills/code-intel/phases/SKILL.md` |
 | Work in `backup` (37 symbols) | `.claude/skills/code-intel/backup/SKILL.md` |

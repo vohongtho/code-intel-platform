@@ -1,5 +1,7 @@
 # Code Intelligence Platform
 
+[![npm version](https://img.shields.io/badge/npm-v0.5.0-blue)](https://www.npmjs.com/package/@vohongtho.infotech/code-intel)
+
 A static code analysis platform that builds a **Knowledge Graph** from your source code and makes it explorable through a Web UI, HTTP API, CLI, and MCP server.
 
 ![Code Intelligence Platform](screenshots/explorer-overview.png)
@@ -10,13 +12,18 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 
 - **Knowledge Graph** — parses 14+ languages into nodes (functions, classes, files, etc.) and edges (calls, imports, extends, etc.)
 - **Force-directed Graph Explorer** — interactive Sigma.js visualization with color-coded node types, hover highlighting, and filters
-- **Semantic Vector Search** — embeddings via `all-MiniLM-L6-v2` stored in LadybugDB vector index for natural-language code search
-- **BM25 Text Search** — keyword-based search with reciprocal rank fusion
+- **Graph Query Language (GQL)** — query your codebase with `FIND`, `TRAVERSE`, `PATH`, `COUNT GROUP BY`; CLI, HTTP API, and MCP tool
+- **Source Code Preview** — click any node to open syntax-highlighted source at the exact line; "Open in editor" (`vscode://`) button
+- **Query Console** — web UI panel with GQL editor, sortable results table, query history, and example queries
+- **AI-Generated Symbol Summaries** — optional `--summarize` flag generates 1-2 sentence summaries per symbol via OpenAI, Anthropic, or Ollama; cached by code hash
+- **Hybrid Search (BM25 + Vector RRF)** — Reciprocal Rank Fusion of keyword + semantic search; `searchMode: 'bm25' | 'vector' | 'hybrid'` in response
+- **Semantic Vector Search** — embeddings via `all-MiniLM-L6-v2`; enriched with summaries when available
 - **Code AI Chat** — grounded assistant that cites source files in every answer
-- **LadybugDB Persistence** — graph and vector index stored as embedded graph database
-- **HTTP API** — REST endpoints for graph, search, inspect, blast radius, flows
+- **File Watcher & Auto-Reindex** — `code-intel watch` detects file saves and patches the live graph within ~1 second; WebSocket push notifies connected clients
+- **Code Health** — `code-intel health` reports dead code, circular dependencies (Tarjan SCC), god nodes, orphan files, and a 0–100 health score
+- **HTTP API** — REST endpoints for graph, search, inspect, blast radius, flows, query, source, health
 - **MCP Server** — Model Context Protocol integration for LLM tooling
-- **CLI** — analyze, serve, search, inspect, impact commands with animated progress bars and spinners
+- **CLI** — analyze, serve, watch, query, search, inspect, impact, health commands with animated progress bars and spinners
 - **Multi-language** — TypeScript, JavaScript, Python, Java, Go, C, C++, C#, Rust, PHP, Ruby, Swift, Kotlin, Dart (14 languages via tree-sitter AST)
 - **Incremental Analysis** — `--incremental` re-parses only changed files; 10k-file repo / 3 changes: 288ms
 - **Parallel Analysis** — `--parallel` runs parse + resolve phases on worker threads for large repos
@@ -62,6 +69,8 @@ npm run build
 | **Filters** | Toggle node/edge types, set focus depth |
 | **Files** | Recursive file tree with search filter and file icons |
 | **Graph Canvas** | Force-directed graph, click nodes to inspect, hover to highlight neighbors |
+| **Source Preview** | Syntax-highlighted source code at the exact symbol line; resizable panel; "Open in editor" button |
+| **Query Console** | GQL editor with keyword highlighting, run button (`Ctrl+Enter`), sortable results table, query history |
 | **Code AI** | Chat with grounded answers citing source file locations |
 
 ### Search Modes
@@ -111,6 +120,7 @@ code-intel-platform/
 | `resolve` | Resolve imports → edges, build call graph (O(log n) lookup), detect heritage (extends/implements) |
 | `cluster` | Directory-based community detection, add cluster nodes |
 | `flow` | Detect entry points, trace execution flows |
+| `summarize` | _(opt-in)_ Generate 1–2 sentence AI summaries via OpenAI, Anthropic, or Ollama; skips unchanged nodes |
 
 Each phase reports live progress to the CLI via animated `█░` progress bars.
 
@@ -155,11 +165,22 @@ Sensitive data (passwords, tokens, API keys, emails, etc.) is automatically mask
 code-intel analyze [path]          # Analyze and persist graph
 code-intel analyze --incremental   # Re-parse only changed files (git diff / mtime)
 code-intel analyze --parallel      # Use worker threads (faster on multi-core)
+code-intel analyze --summarize     # Generate AI summaries after analysis
 code-intel analyze --skills        # Emit per-cluster SKILL.md files
 code-intel serve [path] -p 4747    # Analyze + start HTTP server
+code-intel watch [path] -p 4747    # HTTP server + file watcher (auto-reindex on save)
 code-intel mcp [path]              # Start MCP server (stdio)
 code-intel setup                   # Register MCP server in editor config (one-time)
-code-intel search <query> [path]   # Text search
+code-intel query "<gql>"           # Run a GQL query (FIND / TRAVERSE / PATH / COUNT GROUP BY)
+code-intel query "<gql>" --format table|json|csv
+code-intel query --save <name> "<gql>"   # Save a named query
+code-intel query --run <name>            # Run a saved query
+code-intel query --list                  # List saved queries
+code-intel health [path]           # Code health: dead code, cycles, god nodes, orphans, score
+code-intel health --dead-code      # List dead-code symbols
+code-intel health --cycles         # List circular dependency cycles
+code-intel health --json           # Machine-readable output
+code-intel search <query>          # Text search
 code-intel inspect <symbol>        # Inspect a symbol
 code-intel impact <symbol>         # Blast radius analysis
 code-intel list                    # List indexed repos
@@ -173,15 +194,17 @@ code-intel clean [path]            # Remove index data
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET`  | `/api/v1/health` | Server status + graph size |
+| `GET`  | `/api/v1/health` | Server status, graph size, watcher state |
 | `GET`  | `/api/v1/repos` | List indexed repos |
 | `GET`  | `/api/v1/graph/:repo` | Full graph (nodes + edges) |
-| `POST` | `/api/v1/search` | BM25 text search |
+| `POST` | `/api/v1/search` | BM25 / hybrid text + vector search |
 | `POST` | `/api/v1/vector-search` | Semantic vector search |
 | `GET`  | `/api/v1/vector-status` | Vector index ready/building status |
 | `GET`  | `/api/v1/nodes/:id` | Node detail (callers, callees, imports, etc.) |
 | `POST` | `/api/v1/blast-radius` | Impact analysis |
-| `POST` | `/api/v1/cypher` | Cypher query (routed to LadybugDB) |
+| `POST` | `/api/v1/query` | Execute GQL query; 408 on timeout with partial results |
+| `POST` | `/api/v1/query/explain` | Return query plan without executing |
+| `GET`  | `/api/v1/source` | File content with ±20 lines context; path-traversal protected |
 | `POST` | `/api/v1/grep` | Regex search in file content |
 | `GET`  | `/api/v1/flows` | List detected flows |
 | `GET`  | `/api/v1/clusters` | List clusters |
@@ -195,7 +218,7 @@ code-intel clean [path]            # Remove index data
 |------|-------------|
 | `repos` | List all indexed repositories |
 | `overview` | Repository summary: total nodes/edges + full breakdown by kind |
-| `search` | BM25 keyword search across all symbols |
+| `search` | BM25 / hybrid keyword + semantic search across all symbols |
 | `inspect` | 360° view of a symbol: definition, callers, callees, imports, heritage, members, cluster |
 | `blast_radius` | Impact analysis: traverse call/import graph to find all affected symbols |
 | `file_symbols` | List all symbols defined in a file, ordered by line number |
@@ -204,8 +227,9 @@ code-intel clean [path]            # Remove index data
 | `routes` | List all HTTP route handler mappings detected in the codebase |
 | `clusters` | List detected code clusters with member counts and top symbols |
 | `flows` | List detected execution flows with entry points and steps |
+| `query` | Execute a GQL query (`FIND`, `TRAVERSE`, `PATH`, `COUNT GROUP BY`); returns nodes/edges/groups + executionTimeMs |
 | `detect_changes` | Git-diff impact analysis: maps changed lines to graph symbols |
-| `raw_query` | Execute a simplified Cypher-like graph query |
+| `raw_query` | _(deprecated — use `query`)_ Simplified Cypher-like graph query |
 | `group_list` | List all configured repository groups |
 | `group_sync` | Extract contracts and detect cross-repo provider→consumer links |
 | `group_contracts` | Inspect extracted contracts and confidence-ranked cross-repo links |
