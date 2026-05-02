@@ -27,7 +27,7 @@ rtk smart <cmd>            # 2-line heuristic summary
 > ⚠ This section is auto-managed by `code-intel analyze`. Do **not** edit between the markers — your changes will be overwritten.
 > Add your own notes below the `<!-- code-intel:end -->` marker.
 
-Indexed: **4,118 nodes** | **7,342 edges** | **258 files** | analyzed in 0.9s
+Indexed: **4,402 nodes** | **7,919 edges** | **267 files** | analyzed in 3.2s
 
 > Index stale? Re-run: `code-intel analyze`
 
@@ -42,6 +42,8 @@ Indexed: **4,118 nodes** | **7,342 edges** | **258 files** | analyzed in 0.9s
 
 - NEVER rename symbols with find-and-replace — use `code-intel inspect` to find all usages first.
 - NEVER ignore impact warnings — always report blast radius to the user.
+- NEVER open a file cold — always `code-intel search` first.
+- NEVER grep for symbols — use `code-intel search` instead.
 
 ## CLI Quick Reference
 
@@ -64,23 +66,23 @@ code-intel clean [path]            # Remove index data
 | Debugging / "Why is X failing?" | Load `code-intel-debugging` skill |
 | Work in `auth` (84 symbols) | `.claude/skills/code-intel/auth/SKILL.md` |
 | Work in `fixtures` (75 symbols) | `.claude/skills/code-intel/fixtures/SKILL.md` |
+| Work in `query` (47 symbols) | `.claude/skills/code-intel/query/SKILL.md` |
 | Work in `modules` (40 symbols) | `.claude/skills/code-intel/modules/SKILL.md` |
 | Work in `phases` (38 symbols) | `.claude/skills/code-intel/phases/SKILL.md` |
 | Work in `backup` (37 symbols) | `.claude/skills/code-intel/backup/SKILL.md` |
 | Work in `workers` (34 symbols) | `.claude/skills/code-intel/workers/SKILL.md` |
 | Work in `storage` (33 symbols) | `.claude/skills/code-intel/storage/SKILL.md` |
 | Work in `shared` (31 symbols) | `.claude/skills/code-intel/shared/SKILL.md` |
+| Work in `api` (31 symbols) | `.claude/skills/code-intel/api/SKILL.md` |
+| Work in `panels` (31 symbols) | `.claude/skills/code-intel/panels/SKILL.md` |
 | Work in `multi-repo` (30 symbols) | `.claude/skills/code-intel/multi-repo/SKILL.md` |
 | Work in `pipeline` (30 symbols) | `.claude/skills/code-intel/pipeline/SKILL.md` |
 | Work in `eval` (29 symbols) | `.claude/skills/code-intel/eval/SKILL.md` |
 | Work in `search` (28 symbols) | `.claude/skills/code-intel/search/SKILL.md` |
-| Work in `api` (28 symbols) | `.claude/skills/code-intel/api/SKILL.md` |
 | Work in `cli` (23 symbols) | `.claude/skills/code-intel/cli/SKILL.md` |
 | Work in `multi-lang` (21 symbols) | `.claude/skills/code-intel/multi-lang/SKILL.md` |
 | Work in `parsing` (20 symbols) | `.claude/skills/code-intel/parsing/SKILL.md` |
 | Work in `pipeline` (20 symbols) | `.claude/skills/code-intel/pipeline-2/SKILL.md` |
 | Work in `graph` (19 symbols) | `.claude/skills/code-intel/graph/SKILL.md` |
-| Work in `auth` (19 symbols) | `.claude/skills/code-intel/auth-2/SKILL.md` |
-| Work in `jobs` (18 symbols) | `.claude/skills/code-intel/jobs/SKILL.md` |
 
 <!-- code-intel:end -->

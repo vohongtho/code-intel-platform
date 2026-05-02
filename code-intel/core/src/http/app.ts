@@ -1249,7 +1249,8 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
         return;
       }
       const result = executeGQL(ast, graph);
-      res.json({ ...result, format: format ?? 'json' });
+      const statusCode = result.truncated ? 408 : 200;
+      res.status(statusCode).json({ ...result, format: format ?? 'json' });
     } catch (err) {
       res.status(500).json({ error: { code: ErrorCodes.INTERNAL_ERROR, message: err instanceof Error ? err.message : String(err), requestId: req.requestId, timestamp: new Date().toISOString() } });
     }
