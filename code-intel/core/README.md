@@ -10,13 +10,15 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 
 - **Knowledge Graph** — parses 14+ languages into nodes (functions, classes, files, etc.) and edges (calls, imports, extends, etc.)
 - **Force-directed Graph Explorer** — interactive Sigma.js visualization with color-coded node types, hover highlighting, and filters
-- **Semantic Vector Search** — embeddings via `all-MiniLM-L6-v2` stored in LadybugDB vector index for natural-language code search
-- **BM25 Text Search** — keyword-based search with reciprocal rank fusion
+- **AI-Generated Symbol Summaries** — optional `--summarize` flag generates 1-2 sentence summaries per symbol via OpenAI, Anthropic, or Ollama; cached by code hash
+- **Hybrid Search (BM25 + Vector RRF)** — Reciprocal Rank Fusion of keyword + semantic search; `searchMode: 'bm25' | 'vector' | 'hybrid'` in response
+- **Semantic Vector Search** — embeddings via `all-MiniLM-L6-v2`; enriched with summaries when available
 - **Code AI Chat** — grounded assistant that cites source files in every answer
-- **LadybugDB Persistence** — graph and vector index stored as embedded graph database
-- **HTTP API** — REST endpoints for graph, search, inspect, blast radius, flows
+- **File Watcher & Auto-Reindex** — `code-intel watch` detects file saves and patches the live graph within ~1 second; WebSocket push notifies connected clients
+- **Code Health** — `code-intel health` reports dead code, circular dependencies (Tarjan SCC), god nodes, orphan files, and a 0–100 health score
+- **HTTP API** — REST endpoints for graph, search, inspect, blast radius, flows, health
 - **MCP Server** — Model Context Protocol integration for LLM tooling
-- **CLI** — analyze, serve, search, inspect, impact commands with animated progress bars and spinners
+- **CLI** — analyze, serve, watch, search, inspect, impact, health commands with animated progress bars and spinners
 - **Multi-language** — TypeScript, JavaScript, Python, Java, Go, C, C++, C#, Rust, PHP, Ruby, Swift, Kotlin, Dart (14 languages via tree-sitter AST)
 - **Incremental Analysis** — `--incremental` re-parses only changed files; 10k-file repo / 3 changes: 288ms
 - **Parallel Analysis** — `--parallel` runs parse + resolve phases on worker threads for large repos
