@@ -8,6 +8,8 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
 import { textSearch } from '../search/text-search.js';
+import { hybridSearch } from '../search/hybrid-search.js';
+import { getVectorDbPath } from '../storage/index.js';
 import { loadRegistry } from '../storage/repo-registry.js';
 import { loadMetadata } from '../storage/metadata.js';
 import {
@@ -361,6 +363,19 @@ async function dispatchTool(
         for (const edge of graph.allEdges()) {
           edgeCounts[edge.kind] = (edgeCounts[edge.kind] ?? 0) + 1;
         }
+
+        // Compute health summary
+        const { computeHealthReport } = await import('../health/health-score.js');
+        const healthReport = computeHealthReport(graph);
+        const health = {
+          score: Math.round(healthReport.score),
+          grade: healthReport.grade,
+          deadCode: healthReport.deadCode.length,
+          cycles: healthReport.cycles.length,
+          godNodes: healthReport.godNodes.length,
+          orphanFiles: healthReport.orphanFiles.length,
+        };
+
         return {
           content: [{
             type: 'text',
@@ -369,6 +384,7 @@ async function dispatchTool(
               stats: graph.size,
               nodeCounts: kindCounts,
               edgeCounts,
+              health,
             }, null, 2),
           }],
         };
@@ -378,8 +394,9 @@ async function dispatchTool(
       case 'search': {
         const query = a.query as string;
         const limit = (a.limit as number) ?? 20;
-        const results = textSearch(graph, query, limit);
-        return { content: [{ type: 'text', text: JSON.stringify(results, null, 2) }] };
+        const vdbPath = workspaceRoot ? getVectorDbPath(workspaceRoot) : undefined;
+        const { results, searchMode } = await hybridSearch(graph, query, limit, { vectorDbPath: vdbPath });
+        return { content: [{ type: 'text', text: JSON.stringify({ results, searchMode }, null, 2) }] };
       }
 
       // ── inspect ────────────────────────────────────────────────────────────

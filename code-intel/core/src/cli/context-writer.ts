@@ -88,6 +88,8 @@ Indexed: **${stats.nodes.toLocaleString()} nodes** | **${stats.edges.toLocaleStr
 
 - NEVER rename symbols with find-and-replace — use \`code-intel inspect\` to find all usages first.
 - NEVER ignore impact warnings — always report blast radius to the user.
+- NEVER open a file cold — always \`code-intel search\` first.
+- NEVER grep for symbols — use \`code-intel search\` instead.
 
 ## CLI Quick Reference
 

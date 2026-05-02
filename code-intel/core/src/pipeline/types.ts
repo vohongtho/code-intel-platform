@@ -1,4 +1,5 @@
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
+import type { LLMConfig } from '../llm/provider.js';
 
 export type PipelinePhaseStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
 
@@ -22,6 +23,13 @@ export interface PipelineContext {
   verbose?: boolean;
   /** Set by parse-phase after execution: which parser was used */
   parserUsed?: 'tree-sitter' | 'regex';
+  /**
+   * v0.4.0 — opt-in summarize phase.
+   * Set to true via `--summarize` flag or `analysis.summarizeOnAnalyze: true` config.
+   */
+  summarize?: boolean;
+  /** LLM provider config used by the summarize phase. */
+  llmConfig?: LLMConfig;
 }
 
 export interface Phase {

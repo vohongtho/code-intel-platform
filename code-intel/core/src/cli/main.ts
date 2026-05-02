@@ -23,6 +23,7 @@ import {
   resolvePhase,
   clusterPhase,
   flowPhase,
+  summarizePhase,
   parsePhaseParallel,
   resolvePhaseParallel,
 } from '../pipeline/phases/index.js';
@@ -162,6 +163,12 @@ async function analyzeWorkspace(targetPath: string, options?: {
   skipGit?: boolean;
   embeddings?: boolean;
   verbose?: boolean;
+  /** v0.4.0: opt-in AI summarize phase */
+  summarize?: boolean;
+  llmProvider?: 'openai' | 'anthropic' | 'ollama';
+  llmModel?: string;
+  llmBatchSize?: number;
+  llmMaxNodes?: number;
 }) {
   const workspaceRoot = path.resolve(targetPath);
   if (!options?.silent) console.log(`Analyzing: ${workspaceRoot}`);
@@ -226,6 +233,13 @@ async function analyzeWorkspace(targetPath: string, options?: {
     graph,
     filePaths: [],
     verbose: options?.verbose,
+    summarize: options?.summarize,
+    llmConfig: options?.summarize ? {
+      provider: options.llmProvider ?? 'ollama',
+      model:    options.llmModel,
+      batchSize: options.llmBatchSize,
+      maxNodesPerRun: options.llmMaxNodes,
+    } : undefined,
     onProgress: options?.silent ? undefined : (phase, msg) => {
       if (!options?.silent) {
         if (currentPhase) clearBar();
@@ -234,6 +248,12 @@ async function analyzeWorkspace(targetPath: string, options?: {
       }
     },
     onPhaseProgress: options?.silent ? undefined : (phase, done, total) => {
+      // Summarize phase gets spinner-style progress instead of a bar
+      if (phase === 'summarize') {
+        process.stdout.write(`\r  ⠹ Summarizing (${done}/${total} nodes)…`);
+        if (done >= total) process.stdout.write('\r' + ' '.repeat(50) + '\r');
+        return;
+      }
       currentPhase = phase;
       renderBar(phase, done, total);
       if (done >= total) {
@@ -292,8 +312,8 @@ async function analyzeWorkspace(targetPath: string, options?: {
   };
 
   const phases = isIncremental
-    ? [noopScanPhase, structurePhase, chosenParsePhase, chosenResolvePhase, clusterPhase, flowPhase]
-    : [scanPhase, structurePhase, chosenParsePhase, chosenResolvePhase, clusterPhase, flowPhase];
+    ? [noopScanPhase, structurePhase, chosenParsePhase, chosenResolvePhase, clusterPhase, flowPhase, summarizePhase]
+    : [scanPhase, structurePhase, chosenParsePhase, chosenResolvePhase, clusterPhase, flowPhase, summarizePhase];
   const result = await runPipeline(phases, context);
 
   // ── After incremental pipeline: remove stale nodes from DB for changed files ─
@@ -572,15 +592,20 @@ program
   .command('analyze')
   .description('Index a repository and build the knowledge graph')
   .argument('[path]', 'Path to the repository (default: current directory)', '.')
-  .option('--force',             'Force full re-index, ignoring cached data')
-  .option('--incremental',       'Only re-parse files changed since last analysis (git diff or mtime)')
-  .option('--parallel',          'Use worker threads for parse + resolve phases (faster on multi-core)')
-  .option('--skills',            'Generate .claude/skills/ SKILL.md files from detected clusters')
-  .option('--embeddings',        'Build vector embeddings for semantic search (slower, recommended)')
-  .option('--skip-embeddings',   'Skip embedding generation (faster, text-search only)')
-  .option('--skip-agents-md',    'Preserve any custom edits inside AGENTS.md / CLAUDE.md')
-  .option('--skip-git',          'Allow indexing directories that are not Git repositories')
-  .option('--verbose',           'Log every file skipped due to missing parser support')
+  .option('--force',                   'Force full re-index, ignoring cached data')
+  .option('--incremental',             'Only re-parse files changed since last analysis (git diff or mtime)')
+  .option('--parallel',                'Use worker threads for parse + resolve phases (faster on multi-core)')
+  .option('--skills',                  'Generate .claude/skills/ SKILL.md files from detected clusters')
+  .option('--embeddings',              'Build vector embeddings for semantic search (slower, recommended)')
+  .option('--skip-embeddings',         'Skip embedding generation (faster, text-search only)')
+  .option('--skip-agents-md',          'Preserve any custom edits inside AGENTS.md / CLAUDE.md')
+  .option('--skip-git',                'Allow indexing directories that are not Git repositories')
+  .option('--verbose',                 'Log every file skipped due to missing parser support')
+  .option('--summarize',               'Generate AI summaries for function/class/method/interface nodes (opt-in)')
+  .option('--llm-provider <provider>', 'LLM provider for --summarize: openai | anthropic | ollama (default: ollama)')
+  .option('--llm-model <model>',       'LLM model name (e.g. gpt-4o-mini, claude-haiku-4-5, llama3)')
+  .option('--llm-batch-size <n>',      'Concurrent LLM calls per batch (default: 20)', '20')
+  .option('--llm-max-nodes <n>',       'Max nodes to summarize per run (cost guard)')
   .addHelpText('after', `
   Parses your source code with tree-sitter, builds a Knowledge Graph of
   symbols and their relationships, persists it to .code-intel/graph.db,
@@ -598,6 +623,9 @@ program
     $ code-intel analyze --skip-agents-md       Preserve your custom AGENTS.md edits
     $ code-intel analyze --skip-git             Index a non-Git folder
     $ code-intel analyze --verbose              Show files skipped by the parser
+    $ code-intel analyze --summarize            Generate AI summaries (uses Ollama by default)
+    $ code-intel analyze --summarize --llm-provider openai --llm-model gpt-4o-mini
+    $ code-intel analyze --summarize --llm-provider anthropic --llm-max-nodes 500
 `)
   .action(async (targetPath: string, opts: {
     force?: boolean;
@@ -609,6 +637,11 @@ program
     skipGit?: boolean;
     embeddings?: boolean;
     verbose?: boolean;
+    summarize?: boolean;
+    llmProvider?: string;
+    llmModel?: string;
+    llmBatchSize?: string;
+    llmMaxNodes?: string;
   }) => {
     await analyzeWorkspace(targetPath, {
       force: opts.force,
@@ -620,6 +653,11 @@ program
       skipGit: opts.skipGit,
       embeddings: opts.embeddings,
       verbose: opts.verbose,
+      summarize: opts.summarize,
+      llmProvider: opts.llmProvider as 'openai' | 'anthropic' | 'ollama' | undefined,
+      llmModel: opts.llmModel,
+      llmBatchSize: opts.llmBatchSize ? parseInt(opts.llmBatchSize, 10) : undefined,
+      llmMaxNodes:  opts.llmMaxNodes  ? parseInt(opts.llmMaxNodes,  10) : undefined,
     });
     // LadybugDB keeps background checkpoint threads alive after close(),
     // preventing Node from exiting naturally.  Force-exit once the work is done.
@@ -700,7 +738,7 @@ program
         Logger.warn(`  [serve] Index was built with regex parser — running full re-analysis to upgrade to tree-sitter`);
         console.log(`Re-analyzing with tree-sitter parser: ${workspaceRoot}`);
         const { graph: newGraph, workspaceRoot: root, repoName: name } = await analyzeWorkspace(targetPath, { force: true });
-        startHttpServer(newGraph, name, parseInt(options.port, 10), root);
+        await startHttpServer(newGraph, name, parseInt(options.port, 10), root);
       } else {
         console.log(`Loading index: ${workspaceRoot}`);
         console.log(`  ◈  ${meta.stats.nodes} nodes · ${meta.stats.edges} edges · ${meta.stats.files} files  (indexed ${meta.indexedAt})`);
@@ -709,16 +747,99 @@ program
         await db.init();
         await loadGraphFromDB(graph, db);
         db.close();
-        startHttpServer(graph, repoName, parseInt(options.port, 10), workspaceRoot);
+        await startHttpServer(graph, repoName, parseInt(options.port, 10), workspaceRoot);
       }
     } else {
       // No index or --force: run full analysis then serve
       const { graph, workspaceRoot: root, repoName: name } = await analyzeWorkspace(targetPath, { force: options.force });
-      startHttpServer(graph, name, parseInt(options.port, 10), root);
+      await startHttpServer(graph, name, parseInt(options.port, 10), root);
     }
   });
 
-// ─── 5. list ─────────────────────────────────────────────────────────────────
+// ─── 4b. watch ───────────────────────────────────────────────────────────────
+program
+  .command('watch')
+  .description('Start HTTP server + file watcher (auto-reindex on file changes)')
+  .argument('[path]', 'Path to watch (default: current directory)', '.')
+  .option('-p, --port <port>', 'Port to listen on', '4747')
+  .option('--force', 'Force re-analysis even if an index already exists')
+  .addHelpText('after', `
+  Starts the HTTP server and automatically re-indexes changed files.
+  File changes are detected and patched into the live graph within ~1 second.
+  Connected browser clients receive a WebSocket "graph:updated" push.
+
+  Examples:
+    $ code-intel watch
+    $ code-intel watch ./my-project --port 8080
+`)
+  .action(async (targetPath: string, options: { port: string; force?: boolean }) => {
+    const { FileWatcher } = await import('../pipeline/file-watcher.js');
+    const { IncrementalIndexer } = await import('../pipeline/incremental-indexer.js');
+
+    const workspaceRoot = path.resolve(targetPath);
+    const repoName = path.basename(workspaceRoot);
+    const dbPath = getDbPath(workspaceRoot);
+    const existingIndex = !options.force && fs.existsSync(dbPath) && loadMetadata(workspaceRoot) !== null;
+
+    let graph;
+    if (existingIndex) {
+      const meta = loadMetadata(workspaceRoot)!;
+      if (meta.parser === 'regex' || meta.parser === undefined) {
+        const result = await analyzeWorkspace(targetPath, { force: true });
+        graph = result.graph;
+      } else {
+        graph = createKnowledgeGraph();
+        const db = new DbManager(dbPath);
+        await db.init();
+        await loadGraphFromDB(graph, db);
+        db.close();
+        console.log(`Loading index: ${workspaceRoot}`);
+        console.log(`  ◈  ${meta.stats.nodes} nodes · ${meta.stats.edges} edges`);
+      }
+    } else {
+      const result = await analyzeWorkspace(targetPath, { force: options.force });
+      graph = result.graph;
+    }
+
+    const watcherState = { watching: true, lastEventAt: null as number | null };
+    const { wsServer } = await startHttpServer(graph, repoName, parseInt(options.port, 10), workspaceRoot, watcherState);
+
+    const indexer = new IncrementalIndexer(graph, workspaceRoot, dbPath);
+    const watcher = new FileWatcher(workspaceRoot);
+
+    watcher.start(async (changedFiles) => {
+      watcherState.lastEventAt = Date.now();
+      console.log(`\n  ⟳  Re-indexing ${changedFiles.length} changed file(s)…`);
+      const result = await indexer.patchGraph(changedFiles);
+
+      if (wsServer) {
+        const meta = loadMetadata(workspaceRoot);
+        wsServer.broadcast({
+          type: 'graph:updated',
+          indexVersion: meta?.indexVersion ?? 'unknown',
+          stats: { nodes: graph.size.nodes, edges: graph.size.edges },
+          changedFiles: changedFiles.map((f) => path.relative(workspaceRoot, f)),
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      console.log(
+        `  ✅  Patch done: -${result.nodesRemoved} +${result.nodesAdded} nodes · ${result.duration}ms`,
+      );
+    });
+
+    console.log(`\n  👁  Watching: ${workspaceRoot}`);
+    console.log(`     Web UI:   http://localhost:${options.port}`);
+    console.log(`     WebSocket: ws://localhost:${options.port}/ws\n`);
+
+    process.on('SIGINT', () => {
+      console.log('\n  Stopping watcher…');
+      watcher.stop();
+      process.exit(0);
+    });
+  });
+
+
 program
   .command('list')
   .description('List all indexed repositories in the registry')
@@ -2091,5 +2212,106 @@ program
     /* non-fatal */
   }
 })();
+
+// ─── health ───────────────────────────────────────────────────────────────────
+program
+  .command('health')
+  .description('Run code health checks: dead code, circular dependencies, god classes, orphan files')
+  .argument('[path]', 'Path to the repository (default: current directory)', '.')
+  .option('--dead-code',          'Show full list of dead code symbols')
+  .option('--cycles',             'Show full list of import cycles')
+  .option('--orphans',            'Show full list of orphan files')
+  .option('--json',               'Output machine-readable JSON')
+  .option('--threshold <n>',      'Exit code 1 when health score is below this value')
+  .addHelpText('after', `
+  Analyzes the indexed knowledge graph for code health issues.
+  Requires \`code-intel analyze\` to have been run first.
+
+  Examples:
+    $ code-intel health
+    $ code-intel health --dead-code
+    $ code-intel health --cycles --orphans
+    $ code-intel health --json
+    $ code-intel health --threshold 80
+`)
+  .action(async (targetPath: string, opts: {
+    deadCode?: boolean;
+    cycles?: boolean;
+    orphans?: boolean;
+    json?: boolean;
+    threshold?: string;
+  }) => {
+    const workspaceRoot = path.resolve(targetPath);
+    const dbPath = getDbPath(workspaceRoot);
+    const meta = loadMetadata(workspaceRoot);
+
+    if (!meta || !fs.existsSync(dbPath)) {
+      console.error(`\n  ✗  ${workspaceRoot} is not indexed.`);
+      console.error('     Run `code-intel analyze` first to build the index.\n');
+      process.exit(1);
+    }
+
+    // Load graph from DB
+    const { computeHealthReport } = await import('../health/health-score.js');
+    const graph = createKnowledgeGraph();
+    const db = new DbManager(dbPath);
+    await db.init();
+    await loadGraphFromDB(graph, db);
+    db.close();
+
+    const report = computeHealthReport(graph);
+
+    if (opts.json) {
+      console.log(JSON.stringify({
+        score: report.score,
+        grade: report.grade,
+        deadCode: report.deadCode,
+        cycles: report.cycles,
+        godNodes: report.godNodes,
+        orphanFiles: report.orphanFiles,
+      }, null, 2));
+    } else {
+      console.log(`\n  ◈  Code Health Report — ${workspaceRoot}\n`);
+      console.log(`  Dead code:     ${String(report.deadCode.length).padStart(4)} symbols`);
+      console.log(`  Cycles:        ${String(report.cycles.length).padStart(4)} import cycles`);
+      const godNames = report.godNodes.map((g) => `${g.name} — ${g.reason}`).join(', ');
+      console.log(`  God classes:   ${String(report.godNodes.length).padStart(4)}${report.godNodes.length > 0 ? `  (${godNames.slice(0, 60)}${godNames.length > 60 ? '…' : ''})` : ''}`);
+      console.log(`  Orphan files:  ${String(report.orphanFiles.length).padStart(4)}`);
+      console.log(`\n  Health score: ${report.score.toFixed(0)}/100  ${report.grade}\n`);
+
+      if (opts.deadCode && report.deadCode.length > 0) {
+        console.log('  Dead code symbols:');
+        for (const d of report.deadCode) {
+          console.log(`    ${d.kind.padEnd(12)} ${d.name.padEnd(35)} ${d.filePath}`);
+        }
+        console.log('');
+      }
+
+      if (opts.cycles && report.cycles.length > 0) {
+        console.log('  Import cycles:');
+        for (const c of report.cycles) {
+          const memberNames = c.members.map((id) => graph.getNode(id)?.name ?? id).join(' → ');
+          console.log(`    [${c.cycleId}]  ${memberNames}`);
+        }
+        console.log('');
+      }
+
+      if (opts.orphans && report.orphanFiles.length > 0) {
+        console.log('  Orphan files:');
+        for (const o of report.orphanFiles) {
+          console.log(`    ${o.filePath}`);
+        }
+        console.log('');
+      }
+    }
+
+    // Exit code check
+    if (opts.threshold !== undefined) {
+      const threshold = parseFloat(opts.threshold);
+      if (!isNaN(threshold) && report.score < threshold) {
+        process.exit(1);
+      }
+    }
+  });
 
 program.parse();

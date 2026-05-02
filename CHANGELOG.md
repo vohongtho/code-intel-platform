@@ -4,6 +4,52 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [0.4.0] — 2026-05-02 — Intelligence Layer
+
+> **Theme:** Understand not just structure, but meaning — AI summaries, hybrid search, live file watcher, and code health signals.
+
+### 🤖 AI-Generated Symbol Summaries
+
+- **`SummarizePhase`** (`src/pipeline/phases/summarize-phase.ts`): optional post-analysis phase triggered by `--summarize` flag or `analysis.summarizeOnAnalyze: true`; targets `function`, `class`, `method`, `interface` nodes only
+- **LLM Provider backends** (`src/llm/providers/`): OpenAI (`$OPENAI_API_KEY`), Anthropic (`$ANTHROPIC_API_KEY`), and Ollama (local `http://localhost:11434`) — configurable via `llm.provider`
+- **Circuit breaker + retry** (`src/llm/retry.ts`): exponential backoff on 429 responses; circuit opens after 5 consecutive failures (60s pause)
+- **Cost guard**: `llm.maxNodesPerRun` stops summarization after N nodes
+- **Summary persistence**: `metadata.summary`, `metadata.summaryModel`, `metadata.summaryAt`, `metadata.codeHash` — unchanged nodes are skipped on re-analysis
+- **AI governance log**: `~/.code-intel/logs/ai-calls.log` — records nodeId + promptLength only (no raw code content)
+
+### 🔍 Hybrid Search (BM25 + Vector RRF)
+
+- **Richer embeddings**: embedding input enriched to `"[{kind}] {name}\n{signature}\n{summary}"` with code-snippet fallback; `metadata.embeddingSource: 'summary' | 'code'` tracked per node
+- **`hybridSearch()`** (`src/search/hybrid-search.ts`): runs BM25 + vector search in parallel, fuses via Reciprocal Rank Fusion (`score = Σ 1 / (60 + rank_i)`)
+- **Graceful fallback**: BM25-only when no vector DB present; `searchMode: 'bm25' | 'vector' | 'hybrid'` included in response metadata
+- **`GET /api/v1/search`** and MCP `search` tool updated to use hybrid search
+
+### 👁️ File Watcher & Auto-Reindex
+
+- **`FileWatcher`** (`src/pipeline/file-watcher.ts`): chokidar-based watcher on workspace root; respects `.codeintelignore`; 300ms debounce for rapid saves
+- **`IncrementalIndexer.patchGraph()`** (`src/pipeline/incremental-indexer.ts`): removes stale nodes/edges, re-parses changed files, merges and upserts — non-blocking for HTTP API reads
+- **`code-intel watch`** CLI command: starts HTTP server + file watcher; auto-reindexes on any file save
+- **`WsServer`** (`src/http/websocket-server.ts`): WebSocket server at `ws://localhost:PORT/ws`; broadcasts `{ type: "graph:updated", indexVersion, stats, changedFiles }` after each patch; requires valid session token; client auto-reconnects with 3s + jitter backoff
+- **Web UI**: "Live" green dot indicator, "Graph updated" toast, and auto-reconnect on WebSocket disconnect
+- **`/api/v1/health`**: `watching: true` + `lastWatchEvent` fields added
+
+### 🏥 Code Health Signals
+
+- **Dead code detection** (`src/health/dead-code.ts`): exported symbol with zero callers and zero importers → `metadata.health.deadCode: boolean`; excludes entry points, test files, `@deprecated`
+- **Circular dependency detection** (`src/health/circular-deps.ts`): Tarjan's SCC on import graph (< 100ms for 10k nodes); `metadata.health.inCycle: boolean` + `metadata.health.cycleId: string`
+- **God node detection** (`src/health/god-nodes.ts`): > 20 methods or > 50 callers → `metadata.health.isGodNode: boolean` + `metadata.health.godReason: string` (thresholds configurable)
+- **Orphan file detection** (`src/health/orphan-files.ts`): no imports and no importers → `file.metadata.health.orphan: boolean`; excludes config files, test fixtures, `*.d.ts`
+- **`code-intel health`** CLI command: summary table with dead code, cycles, god nodes, orphan files, and a 0–100 health score; `--dead-code`, `--cycles`, `--orphans` for detail lists; `--json` for machine output; exit code 1 when score < configurable threshold
+- **Health score formula**: `100 - (deadCode×0.5 + cycles×5 + godNodes×2 + orphans×1)`
+- **MCP `overview` tool**: now includes `health` field with score and signal counts
+
+### 🔧 Bug Fixes
+
+- **Express 5 unmatched routes**: silent 404 JSON response replaces noisy `Unhandled error: Not Found` log
+- **tsup build**: `@anthropic-ai/sdk` and `openai` marked as external — resolved `Could not resolve` build errors
+
+---
+
 ## [0.3.0] — 2026-04-29 — Tree-Sitter AST Parser + Performance
 
 > **Theme:** Replace regex line-by-line parsing with accurate AST extraction; add incremental + parallel analysis; ship a self-contained npm package with bundled web UI.

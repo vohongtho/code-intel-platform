@@ -11,66 +11,102 @@ export function StatusFooter() {
   const [spin, setSpin] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const pollVectorStatus = useCallback(async () => {
+  // ── WebSocket live-update indicator + toast ───────────────────────────────
+  const [wsConnected, setWsConnected] = useState(false);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showToast = (msg: string) => {
+    setToastMsg(msg);
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToastMsg(null), 4000);
+  };
+
+  useEffect(() => {
     if (!state.connected) return;
 
+    const wsUrl = state.serverUrl.replace(/^http/, 'ws') + '/ws';
+    let ws: WebSocket | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let destroyed = false;
+
+    function connect() {
+      if (destroyed) return;
+      try {
+        ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => setWsConnected(true);
+        ws.onclose = () => {
+          setWsConnected(false);
+          if (!destroyed) {
+            const jitter = Math.random() * 500;
+            reconnectTimer = setTimeout(connect, 3000 + jitter);
+          }
+        };
+        ws.onerror = () => { /* onclose will fire next */ };
+        ws.onmessage = (ev) => {
+          try {
+            const msg = JSON.parse(ev.data as string) as {
+              type: string;
+              changedFiles?: string[];
+            };
+            if (msg.type === 'graph:updated') {
+              const n = msg.changedFiles?.length ?? 0;
+              showToast(`Graph updated — ${n} file${n !== 1 ? 's' : ''} changed`);
+            }
+          } catch { /* ignore malformed messages */ }
+        };
+      } catch { /* WebSocket not available in this env */ }
+    }
+
+    connect();
+
+    return () => {
+      destroyed = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      ws?.close();
+      setWsConnected(false);
+    };
+  }, [state.connected, state.serverUrl]);
+
+  // ── Vector index polling ──────────────────────────────────────────────────
+  const pollVectorStatus = useCallback(async () => {
+    if (!state.connected) return;
     const client = new ApiClient(state.serverUrl);
     try {
       const status = await client.vectorStatus();
       if (status.ready) {
         setVecState('ready');
         setSpin(false);
-        // Stop polling once ready
         if (timerRef.current) clearTimeout(timerRef.current);
         return;
       }
-      if (status.building) {
-        setVecState('building');
-        setSpin(true);
-      } else {
-        setVecState('unknown');
-        setSpin(false);
-      }
+      if (status.building) { setVecState('building'); setSpin(true); }
+      else { setVecState('unknown'); setSpin(false); }
     } catch {
       setVecState('unknown');
       setSpin(false);
     }
-
-    // Schedule next poll only while still building / unknown
     timerRef.current = setTimeout(() => void pollVectorStatus(), 5_000);
   }, [state.connected, state.serverUrl]);
 
-  // Kick off polling whenever connectivity/server changes
   useEffect(() => {
     if (timerRef.current) clearTimeout(timerRef.current);
     setVecState('unknown');
     setSpin(false);
-
-    if (state.connected) {
-      void pollVectorStatus();
-    }
-
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-    };
-  }, [state.connected, state.serverUrl]); // intentionally omit pollVectorStatus to avoid loop
+    if (state.connected) void pollVectorStatus();
+    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
+  }, [state.connected, state.serverUrl]); // intentionally omit pollVectorStatus
 
   /* ── connection dot ── */
-  const dotColor = !state.connected
-    ? 'bg-gray-500'
-    : 'bg-green-500';
+  const dotColor = !state.connected ? 'bg-gray-500' : 'bg-green-500';
 
   /* ── vector badge ── */
   let vecBadge: React.ReactNode;
   if (vecState === 'building') {
     vecBadge = (
       <span className="flex items-center gap-1 text-yellow-400">
-        <span
-          className="inline-block"
-          style={{ animation: spin ? 'spin 1s linear infinite' : 'none' }}
-        >
-          ⟳
-        </span>
+        <span className="inline-block" style={{ animation: spin ? 'spin 1s linear infinite' : 'none' }}>⟳</span>
         <span>vec building…</span>
       </span>
     );
@@ -80,13 +116,20 @@ export function StatusFooter() {
     vecBadge = <span className="text-gray-600">vec –</span>;
   }
 
-  /* ── selected node pill ── */
   const selectedNode: CodeNode | null = state.selectedNode;
 
   return (
     <>
-      {/* Keyframe for the spinning ⟳ — inlined so it works without a CSS file */}
+      {/* Keyframe for the spinning ⟳ */}
       <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+
+      {/* Graph-updated toast */}
+      {toastMsg && (
+        <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-50 bg-cyan-900/90 border border-cyan-500/50 text-cyan-200 text-xs px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 pointer-events-none">
+          <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+          {toastMsg}
+        </div>
+      )}
 
       <div className="h-7 bg-[#050810] border-t border-gray-800 flex items-center px-3 text-xs text-gray-500 shrink-0">
         {/* Left section */}
@@ -99,13 +142,27 @@ export function StatusFooter() {
             </span>
           </span>
 
+          {/* Live WebSocket indicator */}
+          {state.connected && (
+            <>
+              <span className="text-gray-700">·</span>
+              <span
+                className="flex items-center gap-1"
+                title={wsConnected ? 'Live updates active' : 'Live updates disconnected'}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${wsConnected ? 'bg-green-400' : 'bg-gray-600'}`} />
+                <span className={wsConnected ? 'text-green-400' : 'text-gray-600'}>live</span>
+              </span>
+            </>
+          )}
+
           {/* Separator */}
           <span className="text-gray-700">·</span>
 
           {/* Vector index state */}
           {vecBadge}
 
-          {/* Node / edge counts — only when graph is loaded */}
+          {/* Node / edge counts */}
           {state.nodes.length > 0 && (
             <>
               <span className="text-gray-700">·</span>
@@ -124,13 +181,7 @@ export function StatusFooter() {
         {/* Right section — selected node pill */}
         {selectedNode && (
           <span
-            className="
-              max-w-[30ch] truncate
-              px-2 py-0.5 rounded-full
-              bg-gray-800 text-gray-300
-              border border-gray-700
-              font-mono
-            "
+            className="max-w-[30ch] truncate px-2 py-0.5 rounded-full bg-gray-800 text-gray-300 border border-gray-700 font-mono"
             title={selectedNode.name}
           >
             {selectedNode.name}

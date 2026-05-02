@@ -9,4 +9,6 @@ export {
   resolvePhase,
   clusterPhase,
   flowPhase,
+  summarizePhase,
+  createSummarizePhase,
 } from './phases/index.js';
