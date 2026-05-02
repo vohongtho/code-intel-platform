@@ -17,7 +17,8 @@ export type NodeKind =
   | 'constant'
   | 'route'
   | 'cluster'
-  | 'flow';
+  | 'flow'
+  | 'vulnerability';
 
 export type EdgeKind =
   | 'contains'
@@ -30,7 +31,8 @@ export type EdgeKind =
   | 'overrides'
   | 'belongs_to'
   | 'step_of'
-  | 'handles';
+  | 'handles'
+  | 'has_vulnerability';
 
 export interface CodeNode {
   id: string;

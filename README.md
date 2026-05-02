@@ -1,6 +1,6 @@
 # Code Intelligence Platform
 
-[![npm version](https://img.shields.io/badge/npm-v0.5.0-blue)](https://www.npmjs.com/package/@vohongtho.infotech/code-intel)
+[![npm version](https://img.shields.io/badge/npm-v0.6.0-blue)](https://www.npmjs.com/package/@vohongtho.infotech/code-intel)
 
 A static code analysis platform that builds a **Knowledge Graph** from your source code and makes it explorable through a Web UI, HTTP API, CLI, and MCP server.
 
@@ -22,7 +22,8 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 - **File Watcher & Auto-Reindex** — `code-intel watch` detects file saves and patches the live graph within ~1 second; WebSocket push notifies connected clients
 - **Code Health** — `code-intel health` reports dead code, circular dependencies (Tarjan SCC), god nodes, orphan files, and a 0–100 health score
 - **HTTP API** — REST endpoints for graph, search, inspect, blast radius, flows, query, source, health
-- **MCP Server** — Model Context Protocol integration for LLM tooling
+- **MCP Server** — Model Context Protocol integration for LLM tooling with 6 new reasoning tools (`explain_relationship`, `pr_impact`, `similar_symbols`, `health_report`, `suggest_tests`, `cluster_summary`), pagination, and tool-chaining hints
+- **Security Module** — `SecretScanner` for hardcoded secrets detection; `VulnerabilityDetector` for SQL injection, XSS, SSRF, path traversal, and command injection (CWE-tagged)
 - **CLI** — analyze, serve, watch, query, search, inspect, impact, health commands with animated `█░` progress bars and braille spinners
 - **Multi-language** — TypeScript, JavaScript, Python, Java, Go, C, C++, C#, Rust, PHP, Ruby, Swift, Kotlin, Dart (14 languages via tree-sitter AST)
 - **Incremental Analysis** — `--incremental` flag re-parses only git-changed/mtime-changed files; 10k-file repo with 3 changes: 288ms

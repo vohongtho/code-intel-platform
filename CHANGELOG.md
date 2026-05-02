@@ -4,6 +4,38 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [0.6.0] — 2026-05-02 — Smarter AI Tooling
+
+> **Theme:** MCP tools that reason, not just retrieve.
+
+### 🧠 New MCP Reasoning Tools
+
+- **`explain_relationship`** (`src/query/explain-relationship.ts`): explains how two symbols connect — directed paths (max 5 hops, 10 paths), shared imports, heritage (extends/implements), and a natural language summary; unknown symbol returns error + name suggestions
+- **`pr_impact`** (`src/query/pr-impact.ts`): given `changedFiles` or a unified `diff`, computes blast radius with risk scoring (HIGH/MEDIUM/LOW), test coverage gaps, and top 5 files to review; supports cross-repo impact when repo is in a group
+- **`similar_symbols`** (`src/query/similar-symbols.ts`): finds symbols with similar name (Levenshtein/Jaro-Winkler) and structural similarity (same parameter count + return type); combined score with fallback when no embeddings
+- **`health_report`** (`src/query/health-report.ts`): code health signals (dead code, cycles, god nodes, orphan files, complexity hotspots) scoped to a directory prefix; `scope: "."` returns whole-repo health; health score matches `code-intel health` CLI
+- **`suggest_tests`** (`src/query/suggest-tests.ts`): suggests test cases for a symbol — call paths, parameter/return-type boundary cases, existing test files importing the symbol, and untested callers
+- **`cluster_summary`** (`src/query/cluster-summary.ts`): rich summary of a module — purpose, top 5 key symbols by caller count, dependencies, dependents, health signals, and symbol counts per kind
+
+### 📄 Pagination for All List Tools
+
+- `search`, `clusters`, `flows`, `list_exports`, `file_symbols` all now accept `offset` and `limit` parameters
+- Response shape: `{ nodes, total, offset, limit, hasMore }`
+- Default limit: 50; max: 500 (clamped)
+
+### 🔗 Tool-Chaining Hints
+
+- `suggested_next_tools: [{ tool, reason, input }]` added to `search`, `blast_radius`, `inspect`, and `pr_impact` responses
+- Input context pre-filled with the most relevant symbol from the current result
+- Controlled via `CODE_INTEL_SUGGEST_NEXT_TOOLS=false` env flag (default: enabled)
+
+### 🔒 Security Module
+
+- **`SecretScanner`** (`src/security/secret-scanner.ts`): scans graph nodes for hardcoded secrets — OpenAI keys, Stripe keys, AWS access keys, Slack tokens, DB URLs with credentials, RSA private keys, and sensitive-name variables with literal values; scope and test-file filters; tags node metadata with `security.secretRisk`
+- **`VulnerabilityDetector`** (`src/security/vulnerability-detector.ts`): detects SQL injection (CWE-89), XSS (CWE-79), SSRF (CWE-918), path traversal (CWE-22), and command injection (CWE-78) from graph structure; scope and type filters; tags nodes and creates `vulnerability` nodes with `has_vulnerability` edges
+
+---
+
 ## [0.5.0] — 2026-05-02 — Query & Exploration
 
 > **Theme:** Let users ask arbitrary questions about their code — a native graph query language, source code preview, and a visual query console.
