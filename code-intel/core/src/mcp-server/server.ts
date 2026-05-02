@@ -388,6 +388,70 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
           required: ['cluster'],
         },
       },
+      {
+        name: 'deprecated_usage',
+        description: 'Find usages of deprecated APIs in the codebase',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            scope: { type: 'string', description: 'Directory scope filter' },
+            ..._tokenProp,
+          },
+        },
+      },
+      {
+        name: 'complexity_hotspots',
+        description: 'Ranked list of functions/methods by cyclomatic complexity. Useful for identifying refactoring candidates.',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            scope: { type: 'string', description: 'Limit to a file path prefix (optional)' },
+            limit: { type: 'number', description: 'Maximum number of results (default: 20)' },
+            ..._tokenProp,
+          },
+        },
+      },
+      {
+        name: 'coverage_gaps',
+        description: 'Find exported symbols with no test coverage, ranked by blast radius. Useful for prioritizing test writing.',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            scope: { type: 'string', description: 'Limit to a file path prefix (optional)' },
+            limit: { type: 'number', description: 'Maximum number of untested results to return (default: 20)' },
+            ..._tokenProp,
+          },
+        },
+      },
+      {
+        name: 'secrets',
+        description: 'Scan the knowledge graph for hardcoded secrets: API keys, passwords, tokens, private keys, high-entropy strings',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            scope: { type: 'string', description: 'Limit scan to files under this path prefix' },
+            includeTestFiles: { type: 'boolean', description: 'Include test/spec/fixture files (default: false)' },
+            ..._tokenProp,
+          },
+        },
+      },
+      {
+        name: 'vulnerability_scan',
+        description: 'Scan the knowledge graph for OWASP vulnerabilities: SQL injection, XSS, SSRF, path traversal, command injection',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            scope: { type: 'string', description: 'Limit scan to files under this path prefix' },
+            types: {
+              type: 'array',
+              items: { type: 'string', enum: ['SQL_INJECTION', 'XSS', 'SSRF', 'PATH_TRAVERSAL', 'COMMAND_INJECTION'] },
+              description: 'Vulnerability types to detect (default: all)',
+            },
+            severity: { type: 'string', description: 'Minimum severity to report: HIGH|MEDIUM|LOW (default: LOW)' },
+            ..._tokenProp,
+          },
+        },
+      },
     ],
   }));
 
@@ -1210,6 +1274,69 @@ async function dispatchTool(
         const cluster = a.cluster as string;
         const result = summarizeCluster(graph, cluster);
         return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
+
+      case 'deprecated_usage': {
+        const scope = a.scope as string | undefined;
+        const { DeprecatedDetector } = await import('../analysis/deprecated-detector.js');
+        const detector = new DeprecatedDetector();
+        detector.tagDeprecated(graph);
+        const findings = detector.detect(graph, scope);
+        return { content: [{ type: 'text', text: JSON.stringify({ findings, total: findings.length }, null, 2) }] };
+      }
+
+      // ── complexity_hotspots ────────────────────────────────────────────────
+      case 'complexity_hotspots': {
+        const { computeComplexity } = await import('../analysis/complexity.js');
+        const scope = a.scope as string | undefined;
+        const limit = typeof a.limit === 'number' ? a.limit : 20;
+        const hotspots = computeComplexity(graph, scope).slice(0, limit);
+        return { content: [{ type: 'text', text: JSON.stringify({ hotspots, total: hotspots.length }, null, 2) }] };
+      }
+
+      // ── coverage_gaps ──────────────────────────────────────────────────────
+      case 'coverage_gaps': {
+        const { computeCoverage } = await import('../analysis/test-coverage.js');
+        const scope = a.scope as string | undefined;
+        const limit = typeof a.limit === 'number' ? a.limit : 20;
+        const summary = computeCoverage(graph, scope);
+        const untestedByRisk = summary.untestedByRisk.slice(0, limit);
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              untestedByRisk,
+              coveragePct: summary.coveragePct,
+              totalExported: summary.totalExported,
+              testedExported: summary.testedExported,
+            }, null, 2),
+          }],
+        };
+      }
+
+      // ── secrets ────────────────────────────────────────────────────────────
+      case 'secrets': {
+        const { SecretScanner } = await import('../security/secret-scanner.js');
+        const scanner = new SecretScanner();
+        const scope = a.scope as string | undefined;
+        const includeTestFiles = (a.includeTestFiles as boolean | undefined) ?? false;
+        const findings = scanner.scan(graph, { scope, includeTestFiles });
+        return { content: [{ type: 'text', text: JSON.stringify({ findings, total: findings.length }, null, 2) }] };
+      }
+
+      // ── vulnerability_scan ─────────────────────────────────────────────────
+      case 'vulnerability_scan': {
+        const { VulnerabilityDetector } = await import('../security/vulnerability-detector.js');
+        type VT = import('../security/vulnerability-detector.js').VulnerabilityType;
+        const detector = new VulnerabilityDetector();
+        const scope = a.scope as string | undefined;
+        const types = a.types as VT[] | undefined;
+        const minSev = ((a.severity as string | undefined) ?? 'LOW').toUpperCase();
+        const sevRank: Record<string, number> = { HIGH: 3, MEDIUM: 2, LOW: 1 };
+        const minRank = sevRank[minSev] ?? 1;
+        let findings = detector.detect(graph, { scope, types });
+        findings = findings.filter((f) => (sevRank[f.severity] ?? 1) >= minRank);
+        return { content: [{ type: 'text', text: JSON.stringify({ findings, total: findings.length }, null, 2) }] };
       }
 
       default:

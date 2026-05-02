@@ -1248,6 +1248,52 @@ program
     console.log('');
   });
 
+// ─── 10b. deprecated ─────────────────────────────────────────────────────────
+program
+  .command('deprecated')
+  .description('Find usages of deprecated APIs in the codebase')
+  .argument('[path]', 'Path to the repository (default: current directory)', '.')
+  .option('--format <fmt>', 'Output format: table or json', 'table')
+  .addHelpText('after', `
+  Scans the knowledge graph for deprecated symbols (via @deprecated JSDoc,
+  @Deprecated annotations, #[deprecated] attributes, or known Node.js APIs)
+  and reports every caller.
+
+  Examples:
+    $ code-intel deprecated
+    $ code-intel deprecated ./src --format json
+`)
+  .action(async (targetPath: string, options: { format: string }) => {
+    const { graph } = await loadOrAnalyzeWorkspace(targetPath);
+    const { DeprecatedDetector } = await import('../analysis/deprecated-detector.js');
+    const detector = new DeprecatedDetector();
+    detector.tagDeprecated(graph);
+    const findings = detector.detect(graph);
+
+    if (options.format === 'json') {
+      console.log(JSON.stringify({ findings, total: findings.length }, null, 2));
+      return;
+    }
+
+    console.log('\n  ◈  Deprecated API Usage Report\n');
+    if (findings.length === 0) {
+      console.log('  No deprecated API usages found.\n');
+      return;
+    }
+    console.log(`  ${'Symbol'.padEnd(30)} ${'File'.padEnd(40)} Message`);
+    console.log(`  ${'-'.repeat(100)}`);
+    for (const f of findings) {
+      console.log(`  ${f.symbol.padEnd(30)} ${f.filePath.padEnd(40)} ${f.deprecationMessage}`);
+      if (f.callers.length > 0) {
+        console.log(`\n  Callers:`);
+        for (const c of f.callers) {
+          console.log(`    ${c.name.padEnd(30)} ${c.filePath}`);
+        }
+        console.log('');
+      }
+    }
+  });
+
 // ─── 11. group ───────────────────────────────────────────────────────────────
 const groupCmd = program
   .command('group')
@@ -2803,6 +2849,342 @@ program
     if (failOn === 'HIGH' && result.riskSummary.HIGH > 0) {
       process.exit(1);
     } else if (failOn === 'MEDIUM' && (result.riskSummary.HIGH > 0 || result.riskSummary.MEDIUM > 0)) {
+      process.exit(1);
+    }
+  });
+
+// ─── complexity ───────────────────────────────────────────────────────────────
+program
+  .command('complexity')
+  .description('Show complexity hotspots ranked by cyclomatic complexity')
+  .argument('[path]', 'Path to the repository (default: current directory)', '.')
+  .option('--top <n>', 'Show top N results (default: 20)', '20')
+  .option('--threshold <n>', 'Only show results above this cyclomatic threshold')
+  .option('--format <fmt>', 'Output format: table or json (default: table)', 'table')
+  .option('--scope <scope>', 'Limit to a file path prefix')
+  .addHelpText('after', `
+  Loads the knowledge graph and ranks functions/methods by cyclomatic complexity.
+
+  Examples:
+    $ code-intel complexity
+    $ code-intel complexity --top 10
+    $ code-intel complexity --threshold 10
+    $ code-intel complexity --format json
+`)
+  .action(async (targetPath: string, opts: {
+    top: string;
+    threshold?: string;
+    format: string;
+    scope?: string;
+  }) => {
+    const { graph } = await loadOrAnalyzeWorkspace(targetPath);
+    const { computeComplexity } = await import('../analysis/complexity.js');
+
+    let results = computeComplexity(graph, opts.scope);
+
+    if (opts.threshold !== undefined) {
+      const thresh = parseInt(opts.threshold, 10);
+      if (!isNaN(thresh)) results = results.filter((r) => r.cyclomatic > thresh);
+    }
+
+    const top = parseInt(opts.top, 10);
+    if (!isNaN(top) && top > 0) results = results.slice(0, top);
+
+    if (opts.format === 'json') {
+      console.log(JSON.stringify(results, null, 2));
+      return;
+    }
+
+    if (results.length === 0) {
+      console.log('\n  No complexity results found.\n');
+      return;
+    }
+
+    console.log('\n  ◈  Complexity Hotspots\n');
+    const header = `  ${'Rank'.padEnd(5)} ${'Symbol'.padEnd(28)} ${'File'.padEnd(40)} ${'Cyclo'.padEnd(7)} ${'Cogn'.padEnd(7)} Severity`;
+    console.log(header);
+    console.log('  ' + '─'.repeat(header.length - 2));
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i];
+      const rank = String(i + 1).padEnd(5);
+      const name = r.name.slice(0, 27).padEnd(28);
+      const file = r.filePath.slice(0, 39).padEnd(40);
+      const cyc = String(r.cyclomatic).padEnd(7);
+      const cog = String(r.cognitive).padEnd(7);
+      console.log(`  ${rank} ${name} ${file} ${cyc} ${cog} ${r.severity}`);
+    }
+    console.log('');
+  });
+
+// ─── coverage ─────────────────────────────────────────────────────────────────
+program
+  .command('coverage')
+  .description('Show untested exported symbols ranked by blast radius')
+  .argument('[path]', 'Path to the repository (default: current directory)', '.')
+  .option('--threshold <pct>', 'Exit code 1 when coverage is below this percentage')
+  .option('--format <fmt>', 'Output format: table or json (default: table)', 'table')
+  .option('--scope <scope>', 'Limit to a file path prefix')
+  .addHelpText('after', `
+  Loads the knowledge graph and identifies exported symbols with no test coverage.
+
+  Examples:
+    $ code-intel coverage
+    $ code-intel coverage --threshold 80
+    $ code-intel coverage --format json
+`)
+  .action(async (targetPath: string, opts: {
+    threshold?: string;
+    format: string;
+    scope?: string;
+  }) => {
+    const { graph } = await loadOrAnalyzeWorkspace(targetPath);
+    const { computeCoverage } = await import('../analysis/test-coverage.js');
+
+    const summary = computeCoverage(graph, opts.scope);
+
+    if (opts.format === 'json') {
+      console.log(JSON.stringify(summary, null, 2));
+    } else {
+      console.log('\n  ◈  Test Coverage Gaps\n');
+      console.log(`  Coverage: ${summary.testedExported}/${summary.totalExported} exported symbols tested (${summary.coveragePct}%)\n`);
+
+      if (summary.untestedByRisk.length === 0) {
+        console.log('  All exported symbols have test coverage.\n');
+      } else {
+        console.log('  Untested exported symbols (by blast radius):\n');
+        const header = `  ${'Symbol'.padEnd(28)} ${'File'.padEnd(40)} ${'Blast'.padEnd(7)} Risk`;
+        console.log(header);
+        console.log('  ' + '─'.repeat(header.length - 2));
+        for (const r of summary.untestedByRisk) {
+          const name = r.name.slice(0, 27).padEnd(28);
+          const file = r.filePath.slice(0, 39).padEnd(40);
+          const blast = String(r.blastRadius).padEnd(7);
+          console.log(`  ${name} ${file} ${blast} ${r.risk}`);
+        }
+        console.log('');
+      }
+    }
+
+    if (opts.threshold !== undefined) {
+      const thresh = parseInt(opts.threshold, 10);
+      if (!isNaN(thresh) && summary.coveragePct < thresh) {
+        process.exit(1);
+      }
+    }
+  });
+
+// ─── secrets ──────────────────────────────────────────────────────────────────
+program
+  .command('secrets')
+  .description('Scan for hardcoded secrets in the knowledge graph')
+  .argument('[path]', 'Path to the repository (default: current directory)', '.')
+  .option('--format <fmt>',     'Output format: table|json (default: table)', 'table')
+  .option('--fail-on',          'Exit 1 if any findings are found')
+  .option('--fix-hint',         'Show hint to use process.env.VARIABLE_NAME instead')
+  .option('--include-tests',    'Include test/spec/fixture files in scan')
+  .addHelpText('after', `
+  Scans the indexed knowledge graph for hardcoded secrets (API keys, passwords,
+  tokens, private keys, high-entropy strings).
+
+  Examples:
+    $ code-intel secrets
+    $ code-intel secrets --format json
+    $ code-intel secrets --fail-on
+    $ code-intel secrets --fix-hint
+`)
+  .action(async (targetPath: string, opts: {
+    format?: string;
+    failOn?: boolean;
+    fixHint?: boolean;
+    includeTests?: boolean;
+  }) => {
+    const { graph } = await loadOrAnalyzeWorkspace(targetPath);
+    const { SecretScanner } = await import('../security/secret-scanner.js');
+    const scanner = new SecretScanner();
+    const findings = scanner.scan(graph, { includeTestFiles: opts.includeTests });
+
+    if ((opts.format ?? 'table') === 'json') {
+      console.log(JSON.stringify({ findings, total: findings.length }, null, 2));
+    } else {
+      if (findings.length === 0) {
+        console.log('\n  ✅  No hardcoded secrets found.\n');
+      } else {
+        console.log(`\n  ⚠️  Found ${findings.length} potential secret(s):\n`);
+        console.log(`  ${'FILE'.padEnd(50)} ${'LINE'.padEnd(6)} ${'SYMBOL'.padEnd(30)} PATTERN`);
+        console.log(`  ${'─'.repeat(100)}`);
+        for (const f of findings) {
+          const line = f.line !== undefined ? String(f.line) : '?';
+          console.log(`  ${f.file.padEnd(50)} ${line.padEnd(6)} ${f.symbol.padEnd(30)} ${f.pattern}`);
+          if (opts.fixHint) {
+            console.log(`    💡  Hint: Use process.env.${f.symbol.toUpperCase()} instead of a hardcoded value`);
+          }
+        }
+        console.log('');
+      }
+    }
+
+    if (opts.failOn && findings.length > 0) {
+      process.exit(1);
+    }
+  });
+
+// ─── scan ─────────────────────────────────────────────────────────────────────
+program
+  .command('scan')
+  .description('Run security scans: secrets + OWASP vulnerability detection')
+  .argument('[path]', 'Path to the repository (default: current directory)', '.')
+  .option('--type <types>',       'Comma-separated detector types: secrets,sql,xss,ssrf,path,cmd')
+  .option('--severity <level>',   'Minimum severity to report: high|medium|low (default: low)', 'low')
+  .option('--format <fmt>',       'Output format: table|json|sarif (default: table)', 'table')
+  .option('--fail-on <level>',    'Exit 1 if findings at or above this severity: high|medium')
+  .option('--exclude <pattern>',  'Exclude files matching this pattern')
+  .addHelpText('after', `
+  Runs both secret detection and OWASP vulnerability scanning against the
+  indexed knowledge graph.
+
+  Examples:
+    $ code-intel scan
+    $ code-intel scan --type secrets,sql
+    $ code-intel scan --severity high --format json
+    $ code-intel scan --fail-on high
+`)
+  .action(async (targetPath: string, opts: {
+    type?: string;
+    severity?: string;
+    format?: string;
+    failOn?: string;
+    exclude?: string;
+  }) => {
+    const { graph } = await loadOrAnalyzeWorkspace(targetPath);
+    const { SecretScanner } = await import('../security/secret-scanner.js');
+    const { VulnerabilityDetector } = await import('../security/vulnerability-detector.js');
+    type VulnerabilityType = import('../security/vulnerability-detector.js').VulnerabilityType;
+
+    const requestedTypes = opts.type ? opts.type.split(',').map((t) => t.trim().toLowerCase()) : null;
+    const minSeverity = (opts.severity ?? 'low').toLowerCase();
+
+    const severityRank: Record<string, number> = { high: 3, medium: 2, low: 1 };
+    const minRank = severityRank[minSeverity] ?? 1;
+
+    const allFindings: {
+      kind: 'secret' | 'vulnerability';
+      severity: string;
+      file: string;
+      line?: number;
+      symbol: string;
+      type: string;
+      description: string;
+      cweId?: string;
+    }[] = [];
+
+    // Secret scan
+    if (!requestedTypes || requestedTypes.includes('secrets')) {
+      const scanner = new SecretScanner();
+      const secrets = scanner.scan(graph);
+      for (const s of secrets) {
+        allFindings.push({
+          kind: 'secret',
+          severity: s.severity,
+          file: s.file,
+          line: s.line,
+          symbol: s.symbol,
+          type: `SECRET:${s.pattern}`,
+          description: `Hardcoded secret pattern: ${s.pattern}`,
+        });
+      }
+    }
+
+    // Vulnerability scan
+    const typeMap: Record<string, VulnerabilityType> = {
+      sql: 'SQL_INJECTION',
+      xss: 'XSS',
+      ssrf: 'SSRF',
+      path: 'PATH_TRAVERSAL',
+      cmd: 'COMMAND_INJECTION',
+    };
+    const vulnTypes: VulnerabilityType[] = requestedTypes
+      ? requestedTypes.filter((t) => t in typeMap).map((t) => typeMap[t])
+      : (['SQL_INJECTION', 'XSS', 'SSRF', 'PATH_TRAVERSAL', 'COMMAND_INJECTION'] as VulnerabilityType[]);
+
+    if (vulnTypes.length > 0 && (!requestedTypes || requestedTypes.some((t) => t in typeMap))) {
+      const detector = new VulnerabilityDetector();
+      const vulns = detector.detect(graph, { types: vulnTypes });
+      for (const v of vulns) {
+        allFindings.push({
+          kind: 'vulnerability',
+          severity: v.severity,
+          file: v.file,
+          line: v.line,
+          symbol: v.symbol,
+          type: v.type,
+          description: v.description,
+          cweId: v.cweId,
+        });
+      }
+    }
+
+    // Apply exclude pattern
+    const exclude = opts.exclude;
+    const filtered = allFindings.filter((f) => {
+      if (exclude && f.file.includes(exclude)) return false;
+      const rank = severityRank[f.severity.toLowerCase()] ?? 1;
+      return rank >= minRank;
+    });
+
+    const format = (opts.format ?? 'table').toLowerCase();
+
+    if (format === 'json') {
+      console.log(JSON.stringify({ findings: filtered, total: filtered.length }, null, 2));
+    } else if (format === 'sarif') {
+      const sarif = {
+        version: '2.1.0',
+        $schema: 'https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json',
+        runs: [{
+          tool: { driver: { name: 'code-intel', version: '0.8.0', rules: [] } },
+          results: filtered.map((f) => ({
+            ruleId: f.type,
+            message: { text: f.description },
+            locations: [{
+              physicalLocation: {
+                artifactLocation: { uri: f.file },
+                region: { startLine: f.line ?? 1 },
+              },
+            }],
+            level: f.severity === 'HIGH' ? 'error' : f.severity === 'MEDIUM' ? 'warning' : 'note',
+          })),
+        }],
+      };
+      console.log(JSON.stringify(sarif, null, 2));
+    } else {
+      if (filtered.length === 0) {
+        console.log('\n  ✅  No security findings.\n');
+      } else {
+        const highCount = filtered.filter((f) => f.severity === 'HIGH').length;
+        const medCount  = filtered.filter((f) => f.severity === 'MEDIUM').length;
+        const lowCount  = filtered.filter((f) => f.severity === 'LOW').length;
+        console.log(`\n  ◈  Security Scan — ${path.resolve(targetPath)}\n`);
+        console.log(`  HIGH: ${highCount}  MEDIUM: ${medCount}  LOW: ${lowCount}\n`);
+
+        for (const f of filtered) {
+          const icon = f.severity === 'HIGH' ? '🔴' : f.severity === 'MEDIUM' ? '🟡' : '🟢';
+          const cwe = f.cweId ? `  [${f.cweId}]` : '';
+          console.log(`  ${icon}  ${f.severity.padEnd(8)} ${f.type}${cwe}`);
+          const line = f.line !== undefined ? `:${f.line}` : '';
+          console.log(`       ${f.file}${line}  ${f.symbol}`);
+          console.log(`       ${f.description}`);
+          console.log('');
+        }
+      }
+    }
+
+    // --fail-on
+    const failOnLevel = (opts.failOn ?? '').toLowerCase();
+    if (failOnLevel === 'high' && filtered.some((f) => f.severity === 'HIGH')) {
+      process.exit(1);
+    } else if (
+      failOnLevel === 'medium' &&
+      filtered.some((f) => f.severity === 'HIGH' || f.severity === 'MEDIUM')
+    ) {
       process.exit(1);
     }
   });
