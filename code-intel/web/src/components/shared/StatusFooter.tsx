@@ -23,7 +23,7 @@ export function StatusFooter() {
   };
 
   useEffect(() => {
-    if (!state.connected) return;
+    if (!state.connected || !state.currentUser) return;
 
     const wsUrl = state.serverUrl.replace(/^http/, 'ws') + '/ws';
     let ws: WebSocket | null = null;
@@ -67,7 +67,7 @@ export function StatusFooter() {
       ws?.close();
       setWsConnected(false);
     };
-  }, [state.connected, state.serverUrl]);
+  }, [state.connected, state.currentUser, state.serverUrl]);
 
   // ── Vector index polling ──────────────────────────────────────────────────
   const pollVectorStatus = useCallback(async () => {

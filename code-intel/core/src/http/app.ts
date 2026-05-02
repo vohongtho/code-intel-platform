@@ -1,5 +1,6 @@
 import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
+import compression from 'compression';
 import cors from 'cors';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
@@ -113,6 +114,10 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
 
   // Trust proxy (for correct IP detection behind nginx/caddy)
   app.set('trust proxy', 1);
+
+  // ── Compression ─────────────────────────────────────────────────────────────
+  // gzip/deflate large responses (graph JSON, search results, etc.)
+  app.use(compression());
 
   // ── Security middleware ─────────────────────────────────────────────────────
   app.use(
