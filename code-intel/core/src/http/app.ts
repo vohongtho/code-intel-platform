@@ -1168,6 +1168,20 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
   // ── Global error handler ────────────────────────────────────────────────────
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
+    const e = err as Error & { status?: number; statusCode?: number; type?: string };
+    const statusCode = e.status ?? e.statusCode;
+    // Express 5 throws a 404 Not Found for unmatched routes — handle silently
+    if (statusCode === 404) {
+      res.status(404).json({
+        error: {
+          code: ErrorCodes.NOT_FOUND,
+          message: 'Not found',
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
     Logger.error('Unhandled error:', err.message);
     if (err instanceof AppError) {
       res.status(err.statusCode).json({
@@ -1184,8 +1198,7 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     // body-parser errors carry a `status`/`statusCode` and a `type`.
     // Honor them so payload-too-large (413), bad JSON (400), etc. surface
     // with the correct HTTP status.
-    const e = err as Error & { status?: number; statusCode?: number; type?: string };
-    const bodyParserStatus = e.status ?? e.statusCode;
+    const bodyParserStatus = statusCode;
     if (
       typeof bodyParserStatus === 'number' &&
       bodyParserStatus >= 400 &&
