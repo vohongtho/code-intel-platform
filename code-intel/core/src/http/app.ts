@@ -1,5 +1,6 @@
 import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
+import compression from 'compression';
 import cors from 'cors';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
@@ -113,6 +114,10 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
 
   // Trust proxy (for correct IP detection behind nginx/caddy)
   app.set('trust proxy', 1);
+
+  // ── Compression ─────────────────────────────────────────────────────────────
+  // gzip/deflate large responses (graph JSON, search results, etc.)
+  app.use(compression());
 
   // ── Security middleware ─────────────────────────────────────────────────────
   app.use(
@@ -1290,7 +1295,8 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
         return;
       }
       const result = executeGQL(ast, graph);
-      res.json({ ...result, format: format ?? 'json' });
+      const statusCode = result.truncated ? 408 : 200;
+      res.status(statusCode).json({ ...result, format: format ?? 'json' });
     } catch (err) {
       res.status(500).json({ error: { code: ErrorCodes.INTERNAL_ERROR, message: err instanceof Error ? err.message : String(err), requestId: req.requestId, timestamp: new Date().toISOString() } });
     }
@@ -1451,6 +1457,20 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
   // ── Global error handler ────────────────────────────────────────────────────
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
+    const e = err as Error & { status?: number; statusCode?: number; type?: string };
+    const statusCode = e.status ?? e.statusCode;
+    // Express 5 throws a 404 Not Found for unmatched routes — handle silently
+    if (statusCode === 404) {
+      res.status(404).json({
+        error: {
+          code: ErrorCodes.NOT_FOUND,
+          message: 'Not found',
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
     Logger.error('Unhandled error:', err.message);
     if (err instanceof AppError) {
       res.status(err.statusCode).json({
@@ -1467,8 +1487,7 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     // body-parser errors carry a `status`/`statusCode` and a `type`.
     // Honor them so payload-too-large (413), bad JSON (400), etc. surface
     // with the correct HTTP status.
-    const e = err as Error & { status?: number; statusCode?: number; type?: string };
-    const bodyParserStatus = e.status ?? e.statusCode;
+    const bodyParserStatus = statusCode;
     if (
       typeof bodyParserStatus === 'number' &&
       bodyParserStatus >= 400 &&

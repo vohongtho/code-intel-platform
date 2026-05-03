@@ -1,10 +1,33 @@
+## Tool Usage Rules (MANDATORY)
+
+### code-intel — Always Investigate First (before reading any file)
+```bash
+code-intel search "<concept>"   # FIRST: find symbols by concept
+code-intel inspect <symbol>     # callers, callees, file location
+code-intel impact <symbol>      # blast radius BEFORE editing
+```
+- NEVER open a file cold — always `code-intel search` first.
+- NEVER grep for symbols — use `code-intel search` instead.
+- NEVER edit a symbol without running `code-intel impact` first.
+
+### rtk — Use for compact shell output
+```bash
+rtk read <file>            # token-efficient file read
+rtk grep <pattern> <file>  # compact grep
+rtk git log                # compact git log
+rtk test <cmd>             # show only failures
+rtk err <cmd>              # show only errors/warnings
+rtk diff                   # condensed diff
+rtk smart <cmd>            # 2-line heuristic summary
+```
+
 <!-- code-intel:start -->
 # Code Intelligence — code-intel-platform
 
 > ⚠ This section is auto-managed by `code-intel analyze`. Do **not** edit between the markers — your changes will be overwritten.
 > Add your own notes below the `<!-- code-intel:end -->` marker.
 
-Indexed: **4,634 nodes** | **8,312 edges** | **281 files** | analyzed in 2.0s
+Indexed: **4,634 nodes** | **8,312 edges** | **281 files** | analyzed in 0.9s
 
 > Index stale? Re-run: `code-intel analyze`
 
@@ -19,6 +42,8 @@ Indexed: **4,634 nodes** | **8,312 edges** | **281 files** | analyzed in 2.0s
 
 - NEVER rename symbols with find-and-replace — use `code-intel inspect` to find all usages first.
 - NEVER ignore impact warnings — always report blast radius to the user.
+- NEVER open a file cold — always `code-intel search` first.
+- NEVER grep for symbols — use `code-intel search` instead.
 
 ## CLI Quick Reference
 
