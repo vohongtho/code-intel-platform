@@ -67,10 +67,47 @@ export function ConnectPage() {
       dispatch({ type: 'SET_MODE', mode: 'repo' });
       dispatch({ type: 'SET_REPO_NAME', name: repoName });
       dispatch({ type: 'SET_VIEW', view: 'loading' });
-      const { nodes, edges } = await client.fetchGraph(repoName);
-      dispatch({ type: 'SET_GRAPH', nodes, edges });
+
+      // Step 1: fetch edges + first viewport of nodes (progressive loading, Epic 1.2)
+      const PAGE = 200;
+      const [fullGraph, firstPage] = await Promise.all([
+        client.fetchGraph(repoName),               // edges + any eagerly-loaded nodes
+        client.fetchGraphNodes(repoName, 0, PAGE), // first page of nodes
+      ]);
+
+      // Seed the UI with the initial viewport immediately
+      const seenIds = new Set(firstPage.nodes.map((n) => n.id));
+      const initialNodes = [
+        ...firstPage.nodes,
+        ...fullGraph.nodes.filter((n) => !seenIds.has(n.id)).slice(0, PAGE),
+      ];
+      dispatch({ type: 'SET_GRAPH', nodes: initialNodes, edges: fullGraph.edges });
       dispatch({ type: 'SET_CONNECTED', connected: true });
       dispatch({ type: 'SET_VIEW', view: 'exploring' });
+
+      // Step 2: stream remaining pages in background
+      if (firstPage.hasMore) {
+        (async () => {
+          let offset = PAGE;
+          const allNodes = [...initialNodes];
+          const allIds = new Set(allNodes.map((n) => n.id));
+          while (true) {
+            try {
+              const page = await client.fetchGraphNodes(repoName, offset, PAGE);
+              const newNodes = page.nodes.filter((n) => !allIds.has(n.id));
+              if (newNodes.length > 0) {
+                newNodes.forEach((n) => allIds.add(n.id));
+                allNodes.push(...newNodes);
+                dispatch({ type: 'SET_GRAPH', nodes: [...allNodes], edges: fullGraph.edges });
+              }
+              if (!page.hasMore) break;
+              offset += PAGE;
+            } catch {
+              break; // network error — stop streaming, partial graph still usable
+            }
+          }
+        })().catch(() => {});
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Connection failed');
       dispatch({ type: 'SET_VIEW', view: 'connect' });

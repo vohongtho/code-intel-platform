@@ -1,6 +1,6 @@
 # Code Intelligence Platform
 
-[![npm version](https://img.shields.io/badge/npm-v0.9.0-blue)](https://www.npmjs.com/package/@vohongtho.infotech/code-intel)
+[![npm version](https://img.shields.io/badge/npm-v1.0.0-blue)](https://www.npmjs.com/package/@vohongtho.infotech/code-intel)
 
 A static code analysis platform that builds a **Knowledge Graph** from your source code and makes it explorable through a Web UI, HTTP API, CLI, and MCP server.
 
@@ -40,6 +40,12 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 - **Self-Update** _(v0.9)_ — `code-intel update`; background version check; `--no-update-check` to suppress
 - **`--dry-run` flag** _(v0.9)_ — `analyze`, `clean`, `group sync` preview without side effects
 - **`code-intel doctor`** _(v0.9)_ — full diagnostics: Node.js, git, config, registry, DB integrity, network
+- **Lazy Graph Loading** _(v1.0)_ — `serve` starts in <2s for 10k-file repos; LRU node cache; background warm of high-blast-radius nodes
+- **Pre-Built BM25 Index** _(v1.0)_ — inverted index built at analysis time; loaded on startup; 2,000+ q/s throughput; incremental updates
+- **Memory-Efficient Graph** _(v1.0)_ — `Int32Array` adjacency, symbol interning (≥30% memory reduction), `--max-memory <MB>` flag
+- **Pipeline Profiling** _(v1.0)_ — `analyze --profile` writes `.code-intel/profile.json`; per-phase heap memory; bottleneck warnings; verbose timing table
+- **Load & Soak Tests** _(v1.0)_ — nightly CI (1k/10k fixture repos), weekly soak (memory stability, watcher throughput), regression gate >20% fails CI
+- **Graceful Degradation** _(v1.0)_ — stale graph headers (`X-Stale`, `X-Stale-Since`) on DB outage; LLM-unavailable skip; MCP tool timeout returns `{ truncated: true }`; watcher crash recovery
 
 ---
 

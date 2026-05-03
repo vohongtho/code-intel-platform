@@ -1,6 +1,6 @@
 ---
 name: storage
-description: "Covers the **storage** subsystem of code-intel-platform. 33 symbols across 6 files. Key symbols: `constructor`, `execute`, `isOpen`. Internal call density: 0.7 calls/symbol."
+description: "Covers the **storage** subsystem of code-intel-platform. 33 symbols across 6 files. Key symbols: `constructor`, `init`, `execute`. Internal call density: 0.7 calls/symbol."
 ---
 
 # storage
@@ -11,7 +11,7 @@ description: "Covers the **storage** subsystem of code-intel-platform. 33 symbol
 
 Load this skill when:
 - The task involves code in `code-intel/core/src/storage/`
-- The user mentions `constructor`, `execute`, `isOpen` or asks how they work
+- The user mentions `constructor`, `init`, `execute` or asks how they work
 - Adding, modifying, or debugging storage-related functionality
 - Tracing call chains that pass through the storage layer
 
@@ -31,6 +31,7 @@ Load this skill when:
 Start exploration here — exported symbols with no external callers:
 
 - **`constructor`** `(method)` → `code-intel/core/src/storage/db-manager.ts:10`
+- **`init`** `(method)` → `code-intel/core/src/storage/db-manager.ts:14`
 - **`execute`** `(method)` → `code-intel/core/src/storage/db-manager.ts:31`
 - **`isOpen`** `(method)` → `code-intel/core/src/storage/db-manager.ts:52`
 
@@ -40,9 +41,7 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `close` | method | 25 | 0 | `storage/db-manager.ts` |
 | `loadGraphToDB` | function | 1 | 12 | `storage/graph-loader.ts` |
-| `init` | method | 12 | 0 | `storage/db-manager.ts` |
 | `loadRegistry` | function | 9 | 1 | `storage/repo-registry.ts` |
 | `writeEdgeCSV` | function | 2 | 7 | `storage/csv-writer.ts` |
 | `writeNodeCSVs` | function | 2 | 6 | `storage/csv-writer.ts` |
@@ -52,6 +51,8 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | `loadEdgeGroupFallback` | function | 1 | 4 | `storage/graph-loader.ts` |
 | `upsertNode` | function | 2 | 3 | `storage/graph-loader.ts` |
 | `removeNodesForFile` | function | 3 | 2 | `storage/graph-loader.ts` |
+| `escCypher` | function | 5 | 0 | `storage/graph-loader.ts` |
+| `getDbPath` | function | 5 | 0 | `storage/metadata.ts` |
 
 ## Impact Guidance
 
@@ -64,7 +65,7 @@ Before modifying any symbol in this area:
 
 ```bash
 # Inspect most-connected symbol
-code-intel inspect close
+code-intel inspect loadGraphToDB
 # Blast radius for entry point
 code-intel impact constructor
 # Search this area

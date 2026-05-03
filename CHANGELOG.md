@@ -4,9 +4,69 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.0.0] — 2026-05-03 — Scalability & Production Stability
+
+> **Theme:** Production-ready for 100k-file repos at enterprise scale
+
+### 🚀 Epic 1 — Lazy Graph Loading for Serve
+
+- **`LazyKnowledgeGraph`** — nodes not loaded into memory on startup; fetched from DB on demand with LRU cache
+- **LRU cache** — keeps last N nodes in memory (default: 5,000; `GRAPH_CACHE_SIZE` env var)
+- **Background warm** — pre-loads top-N highest-blast-radius nodes on startup
+- **Paginated graph API** — `GET /api/v1/graph/:repo/nodes?limit=100&offset=0`; single-node fetch without full graph load
+- **Web UI progressive loading** — loads visible nodes first; fetches neighbors on pan/zoom
+- **Serve startup** — only loads `meta.json` + node/edge counts on startup; no full graph load
+
+### 🔎 Epic 2 — Pre-Built BM25 Index
+
+- **Inverted index** — built at analysis time and stored in `bm25.db` (SQLite); replaces O(n) linear scan
+- **On-startup load** — BM25 index loaded into memory on `serve` startup
+- **Incremental updates** — only terms for changed nodes are rewritten on re-index
+- **LIMIT pushdown** — applies limit before full score sort
+- **Throughput** — 2,000+ queries/s on 1k-node graphs (target: 1,000 q/s ✅)
+
+### 🧠 Epic 3 — Memory-Efficient Graph Representation
+
+- **`CompactKnowledgeGraph`** — `Int32Array`-packed adjacency, `Float32Array` for edge weights
+- **Symbol interning** — deduplicates repeated filePaths and kinds; ≥30% memory reduction verified
+- **Numeric IDs internally** — mapped to string IDs for API; no breaking change
+- **`--max-memory <MB>` flag** — limits graph memory; spills node content to DB when exceeded
+
+### 📊 Epic 4 — Pipeline Profiling & Telemetry
+
+- **`code-intel analyze --profile`** — writes `.code-intel/profile.json` with per-phase timing and memory data
+- **Memory per phase** — `process.memoryUsage().heapUsed` captured before/after each phase
+- **Bottleneck detection** — warns if any phase > 50% of total time
+- **Verbose phase timing table** — printed in `--verbose` mode: phase name, duration, memory delta
+
+### 🏋️ Epic 5 — Load & Soak Tests
+
+- **1k-file load test** — analyze < 500ms; serve startup < 2ms; heap < 100 MB ✅
+- **BM25 throughput** — 2,000+ q/s verified against 1k-node graph ✅
+- **100 concurrent HTTP requests** — p95 < 100ms; error rate 0% ✅
+- **Memory-stability soak** — 10 analysis cycles; total heap growth < 10 MB ✅
+- **Watcher throughput soak** — 30 saves; p95 re-index < 15ms ✅
+- **`tests/perf/baseline.json`** — performance targets committed to repo
+- **`tests/perf/load-test.mjs`** — nightly CI load test with regression gate (>20% → fail)
+- **`tests/perf/soak-test.mjs`** — weekly CI soak tests (memory-stability, watcher-throughput)
+- **`.github/workflows/nightly.yml`** — 1k + 10k fixture load tests on every nightly build
+- **`.github/workflows/weekly.yml`** — soak tests every Saturday
+
+### 🛡️ Epic 6 — Graceful Degradation
+
+- **DB unavailable → stale graph** — `X-Stale: true` + `X-Stale-Since: <ISO>` headers on all responses when meta.json is unreadable
+- **DB reconnect** — stale headers cleared automatically when meta.json becomes readable again
+- **LLM API unavailable** — summarize phase skips gracefully; logs warning; analysis still completes
+- **MCP tool timeout** — tools exceeding 30s return `{ truncated: true, partialResults: [] }` instead of crashing the MCP session (configurable via `CODE_INTEL_MCP_TIMEOUT_MS`)
+- **File watcher crash** — patchGraph errors caught and logged; watcher continues; server unaffected
+- **Worker thread crash** — WorkerPool restarts worker and re-queues work; analysis continues
+
+---
+
 ## [0.9.0] — 2026-05-03 — Developer Experience
 
 > **Theme:** Zero-friction setup, great errors, IDE integration
+
 
 ### 🧙 Epic 1 — Interactive `code-intel init` Wizard
 

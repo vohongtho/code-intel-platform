@@ -7,6 +7,10 @@ export interface PhaseResult {
   status: PipelinePhaseStatus;
   duration: number;
   message?: string;
+  /** v1.0.0 profiling — heap MB before phase (set by orchestrator) */
+  memoryBeforeMB?: number;
+  /** v1.0.0 profiling — heap MB after phase (set by orchestrator) */
+  memoryAfterMB?: number;
 }
 
 export interface PipelineContext {
@@ -30,6 +34,8 @@ export interface PipelineContext {
   summarize?: boolean;
   /** LLM provider config used by the summarize phase. */
   llmConfig?: LLMConfig;
+  /** v1.0.0: when true, orchestrator captures per-phase memory and writes profile.json */
+  profile?: boolean;
 }
 
 export interface Phase {

@@ -1,17 +1,17 @@
 ---
 name: graph
-description: "Covers the **graph** subsystem of code-intel-platform. 19 symbols across 2 files. Key symbols: `size`. Internal call density: 0.2 calls/symbol."
+description: "Covers the **graph** subsystem of code-intel-platform. 80 symbols across 5 files. Key symbols: `constructor`, `addNode`, `addEdge`. Internal call density: 0.6 calls/symbol. Participates in 4 execution flow(s)."
 ---
 
 # graph
 
-> **19 symbols** | **2 files** | path: `code-intel/core/src/graph/` | call density: 0.2/sym
+> **80 symbols** | **5 files** | path: `code-intel/core/src/graph/` | call density: 0.6/sym
 
 ## When to Use
 
 Load this skill when:
 - The task involves code in `code-intel/core/src/graph/`
-- The user mentions `size` or asks how they work
+- The user mentions `constructor`, `addNode`, `addEdge` or asks how they work
 - Adding, modifying, or debugging graph-related functionality
 - Tracing call chains that pass through the graph layer
 
@@ -19,14 +19,22 @@ Load this skill when:
 
 | File | Symbols | Notes |
 |------|---------|-------|
+| `code-intel/core/src/graph/lazy-knowledge-graph.ts` | `LRUCache`, `constructor`, `get`, `set` +(29) | 22 exported |
+| `code-intel/core/src/graph/compact-knowledge-graph.ts` | `CompactKnowledgeGraph`, `constructor`, `addNode`, `addEdge` +(18) | 22 exported |
 | `code-intel/core/src/graph/knowledge-graph.ts` | `KnowledgeGraph`, `createKnowledgeGraph`, `indexEdge`, `unindexEdge` +(13) | 17 exported |
+| `code-intel/core/src/graph/intern-table.ts` | `InternTable`, `get`, `size`, `clear` +(2) | 6 exported |
 | `code-intel/core/src/graph/id-generator.ts` | `generateNodeId`, `generateEdgeId` | 2 exported |
 
 ## Entry Points
 
 Start exploration here — exported symbols with no external callers:
 
-- **`size`** `(method)` → `code-intel/core/src/graph/knowledge-graph.ts:142`
+- **`constructor`** `(method)` → `code-intel/core/src/graph/compact-knowledge-graph.ts:51`
+- **`addNode`** `(method)` → `code-intel/core/src/graph/compact-knowledge-graph.ts:57`
+- **`addEdge`** `(method)` → `code-intel/core/src/graph/compact-knowledge-graph.ts:64`
+- **`getNode`** `(method)` → `code-intel/core/src/graph/compact-knowledge-graph.ts:89`
+- **`getEdge`** `(method)` → `code-intel/core/src/graph/compact-knowledge-graph.ts:93`
+- **`findEdgesByKind`** `(method)` → `code-intel/core/src/graph/compact-knowledge-graph.ts:97`
 
 ## Hot Symbols
 
@@ -34,18 +42,23 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `createKnowledgeGraph` | function | 48 | 0 | `graph/knowledge-graph.ts` |
-| `addNode` | method | 41 | 1 | `graph/knowledge-graph.ts` |
-| `getNode` | method | 38 | 1 | `graph/knowledge-graph.ts` |
-| `addEdge` | method | 30 | 2 | `graph/knowledge-graph.ts` |
-| `findEdgesTo` | method | 20 | 1 | `graph/knowledge-graph.ts` |
-| `findEdgesFrom` | method | 19 | 1 | `graph/knowledge-graph.ts` |
+| `createKnowledgeGraph` | function | 55 | 0 | `graph/knowledge-graph.ts` |
+| `addNode` | method | 46 | 1 | `graph/lazy-knowledge-graph.ts` |
+| `getNode` | method | 39 | 1 | `graph/lazy-knowledge-graph.ts` |
+| `addEdge` | method | 31 | 2 | `graph/lazy-knowledge-graph.ts` |
+| `findEdgesTo` | method | 21 | 1 | `graph/lazy-knowledge-graph.ts` |
+| `findEdgesFrom` | method | 20 | 1 | `graph/lazy-knowledge-graph.ts` |
 | `generateEdgeId` | function | 14 | 0 | `graph/id-generator.ts` |
+| `findEdgesByKind` | method | 13 | 1 | `graph/lazy-knowledge-graph.ts` |
 | `generateNodeId` | function | 13 | 0 | `graph/id-generator.ts` |
-| `findEdgesByKind` | method | 12 | 1 | `graph/knowledge-graph.ts` |
-| `allEdges` | method | 7 | 1 | `graph/knowledge-graph.ts` |
-| `getEdge` | method | 6 | 1 | `graph/knowledge-graph.ts` |
-| `removeNodeCascade` | method | 3 | 3 | `graph/knowledge-graph.ts` |
+| `get` | method | 10 | 2 | `graph/lazy-knowledge-graph.ts` |
+| `set` | method | 7 | 4 | `graph/lazy-knowledge-graph.ts` |
+| `getNodeAsync` | method | 4 | 5 | `graph/lazy-knowledge-graph.ts` |
+
+## Execution Flows
+
+**4** execution path(s) pass through this area.
+Run `code-intel inspect <symbol>` on a hot symbol to trace the full call chain.
 
 ## Impact Guidance
 
@@ -60,7 +73,7 @@ Before modifying any symbol in this area:
 # Inspect most-connected symbol
 code-intel inspect createKnowledgeGraph
 # Blast radius for entry point
-code-intel impact size
+code-intel impact constructor
 # Search this area
 code-intel search "graph"
 ```

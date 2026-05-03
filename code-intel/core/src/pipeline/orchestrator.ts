@@ -26,6 +26,9 @@ export async function runPipeline(
   for (const phase of sorted) {
     context.onProgress?.(phase.name, 'running');
     const phaseStart = Date.now();
+    const memBefore = context.profile
+      ? Math.round(process.memoryUsage().heapUsed / 1024 / 1024)
+      : undefined;
 
     const runPhase = async (): Promise<{ result: PhaseResult }> => {
       const depResults = new Map<string, PhaseResult>();
@@ -53,6 +56,11 @@ export async function runPipeline(
       const durationSec = (Date.now() - phaseStart) / 1000;
       pipelinePhaseDurationSeconds.observe({ phase: phase.name, status: result.status }, durationSec);
 
+      if (memBefore !== undefined) {
+        result.memoryBeforeMB = memBefore;
+        result.memoryAfterMB = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+      }
+
       results.set(phase.name, result);
       context.onProgress?.(phase.name, result.status);
 
@@ -65,6 +73,10 @@ export async function runPipeline(
         status: 'failed',
         duration: Date.now() - phaseStart,
         message: err instanceof Error ? err.message : String(err),
+        memoryBeforeMB: memBefore,
+        memoryAfterMB: memBefore !== undefined
+          ? Math.round(process.memoryUsage().heapUsed / 1024 / 1024)
+          : undefined,
       };
       pipelinePhaseDurationSeconds.observe({ phase: phase.name, status: 'failed' }, (Date.now() - phaseStart) / 1000);
       results.set(phase.name, result);

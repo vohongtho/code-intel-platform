@@ -122,6 +122,21 @@ export class ApiClient {
     return res.json() as Promise<{ nodes: CodeNode[]; edges: CodeEdge[] }>;
   }
 
+  /**
+   * Fetch a paginated page of nodes from the server.
+   * Used for progressive graph loading (Epic 1.2).
+   */
+  async fetchGraphNodes(
+    repo: string,
+    offset: number,
+    limit: number,
+  ): Promise<{ nodes: CodeNode[]; offset: number; limit: number; total: number; hasMore: boolean }> {
+    const url = `${this.baseUrl}/api/v1/graph/${encodeURIComponent(repo)}/nodes?limit=${limit}&offset=${offset}`;
+    const res = await fetch(url, { credentials: 'include' });
+    if (!res.ok) throw new Error(`Failed to fetch graph nodes: ${res.statusText}`);
+    return res.json() as Promise<{ nodes: CodeNode[]; offset: number; limit: number; total: number; hasMore: boolean }>;
+  }
+
   async search(query: string, limit = 20): Promise<{ results: SearchResult[] }> {
     const csrfToken = await this.getCsrfToken();
     const res = await fetch(`${this.baseUrl}/api/v1/search`, {

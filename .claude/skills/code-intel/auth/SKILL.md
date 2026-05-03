@@ -40,9 +40,9 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `authMiddleware` | function | 0 | 12 | `auth/middleware.ts` |
-| `UsersDB` | class | 9 | 0 | `auth/users-db.ts` |
-| `resetUsersDBForTesting` | function | 8 | 1 | `auth/users-db.ts` |
+| `authMiddleware` | function | 0 | 13 | `auth/middleware.ts` |
+| `UsersDB` | class | 10 | 0 | `auth/users-db.ts` |
+| `resetUsersDBForTesting` | function | 9 | 1 | `auth/users-db.ts` |
 | `getSession` | function | 4 | 4 | `auth/middleware.ts` |
 | `getDiscoveredConfig` | function | 5 | 3 | `auth/oidc.ts` |
 | `saveSecrets` | function | 3 | 5 | `auth/secret-store.ts` |

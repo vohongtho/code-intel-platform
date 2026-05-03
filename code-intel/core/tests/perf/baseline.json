@@ -1,0 +1,17 @@
+{
+  "version": "v1.0.0",
+  "description": "Performance baseline targets — fail CI if any metric regresses > 20% vs this file",
+  "updatedAt": "2026-05-03",
+  "regressionThreshold": 0.20,
+  "targets": {
+    "analyze_1k_ms":          2000,
+    "analyze_10k_ms":         10000,
+    "serve_startup_1k_ms":     500,
+    "serve_startup_10k_ms":   2000,
+    "memory_heap_1k_mb":       200,
+    "memory_heap_10k_mb":      500,
+    "http_p95_ms":             500,
+    "http_error_rate_pct":     0.1,
+    "bm25_qps":               1000
+  }
+}

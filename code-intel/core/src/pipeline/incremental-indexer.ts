@@ -18,6 +18,7 @@ import { parsePhase } from './phases/parse-phase.js';
 import { resolvePhase } from './phases/resolve-phase.js';
 import type { PipelineContext } from './types.js';
 import Logger from '../shared/logger.js';
+import { Bm25Index, getBm25DbPath } from '../search/bm25-index.js';
 
 export interface PatchResult {
   filesProcessed: number;
@@ -125,6 +126,18 @@ export class IncrementalIndexer {
         );
         await upsertNodes(nodesToUpsert, db);
         db.close();
+
+        // ── 5. Incremental BM25 index update (only changed nodes) ─────────────
+        try {
+          const bm25DbPath = getBm25DbPath(workspaceRoot);
+          if (fs.existsSync(bm25DbPath)) {
+            const bm25 = new Bm25Index(bm25DbPath);
+            bm25.updateNodes(nodesToUpsert);
+            Logger.info(`[incremental] BM25 index updated: ${nodesToUpsert.length} nodes`);
+          }
+        } catch (bm25Err) {
+          Logger.warn(`[incremental] BM25 update failed: ${bm25Err instanceof Error ? bm25Err.message : bm25Err}`);
+        }
       } catch (err) {
         Logger.warn(`[incremental] DB upsert failed: ${err instanceof Error ? err.message : err}`);
       }

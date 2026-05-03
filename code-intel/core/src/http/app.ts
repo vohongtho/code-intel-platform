@@ -9,8 +9,10 @@ import { rateLimit } from 'express-rate-limit';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
+import { isLazyGraph } from '../graph/lazy-knowledge-graph.js';
 import { textSearch } from '../search/text-search.js';
 import { hybridSearch } from '../search/hybrid-search.js';
+import { Bm25Index, getBm25DbPath } from '../search/bm25-index.js';
 import { DbManager, getDbPath, getVectorDbPath } from '../storage/index.js';
 import { loadMetadata } from '../storage/metadata.js';
 import { VectorIndex } from '../search/vector-index.js';
@@ -171,13 +173,39 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
   app.use(requestIdMiddleware);
   app.use(authMiddleware);
 
-  // ── X-Index-Version header on every response ─────────────────────────────
+  // ── X-Index-Version + X-Stale headers on every response (Epic 6) ────────────
+  // If the DB/meta becomes unavailable, we still serve the in-memory graph (stale)
+  // and advertise it with X-Stale: true + X-Stale-Since: <ISO timestamp>.
+  let dbUnavailableSince: string | null = null;
+
   app.use((_req: Request, res: Response, next: NextFunction): void => {
     if (workspaceRoot) {
+      // Use a raw read so corrupted or unreadable files throw (loadMetadata swallows errors)
+      const metaFilePath = path.join(workspaceRoot, '.code-intel', 'meta.json');
+      let metaOk = false;
       try {
-        const meta = loadMetadata(workspaceRoot);
-        if (meta?.indexVersion) res.setHeader('X-Index-Version', meta.indexVersion);
-      } catch { /* non-fatal */ }
+        if (fs.existsSync(metaFilePath)) {
+          const raw = fs.readFileSync(metaFilePath, 'utf-8');
+          const meta = JSON.parse(raw) as { indexVersion?: string } | null;
+          if (meta?.indexVersion) res.setHeader('X-Index-Version', meta.indexVersion);
+        }
+        metaOk = true;
+        // If we previously flagged DB unavailability, clear it now
+        if (dbUnavailableSince !== null) {
+          dbUnavailableSince = null;
+          Logger.info('[serve] DB back online — cleared stale flag');
+        }
+      } catch (err) {
+        // DB/meta temporarily unavailable — flag it and serve stale graph
+        if (dbUnavailableSince === null) {
+          dbUnavailableSince = new Date().toISOString();
+          Logger.warn(`[serve] DB unavailable since ${dbUnavailableSince}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+      if (!metaOk) {
+        res.setHeader('X-Stale', 'true');
+        res.setHeader('X-Stale-Since', dbUnavailableSince!);
+      }
     }
     next();
   });
@@ -240,6 +268,26 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
   let vectorIndex: VectorIndex | null = null;
   let vectorIndexBuilding = false;
   let vectorIndexReady = false;
+
+  // ── BM25 pre-built inverted index (Epic 2) ──────────────────────────────────
+  let bm25Index: Bm25Index | null = null;
+
+  function ensureBm25Index(): Bm25Index | null {
+    if (bm25Index) return bm25Index;
+    if (!workspaceRoot) return null;
+    const idx = new Bm25Index(getBm25DbPath(workspaceRoot));
+    idx.load();
+    if (idx.isLoaded) {
+      bm25Index = idx;
+      return idx;
+    }
+    return null;
+  }
+
+  // Load BM25 index on startup (non-blocking)
+  if (workspaceRoot && process.env['NODE_ENV'] !== 'test') {
+    setImmediate(() => ensureBm25Index());
+  }
 
   async function ensureVectorIndex(): Promise<VectorIndex | null> {
     if (vectorIndexReady && vectorIndex) return vectorIndex;
@@ -758,12 +806,71 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     res.json({ nodes: [...g.allNodes()], edges: [...g.allEdges()] });
   });
 
+  // ── Paginated node list (Epic 1.2) ──────────────────────────────────────────
+  // GET /api/v1/graph/:repo/nodes?limit=100&offset=0
+  // Returns a page of nodes. In lazy mode, fetches from DB on demand.
+  app.get('/api/v1/graph/:repo/nodes', requireRepoAccess((req) => {
+    const p = req.params['repo'];
+    const repo = Array.isArray(p) ? p[0] : p;
+    return repo ? decodeURIComponent(repo) : undefined;
+  }), async (req, res) => {
+    const rawRepo = req.params['repo'];
+    const requestedRepo = decodeURIComponent(Array.isArray(rawRepo) ? (rawRepo[0] ?? '') : (rawRepo ?? ''));
+    const limit = Math.min(parseInt((req.query['limit'] as string | undefined) ?? '100', 10), 500);
+    const offset = Math.max(parseInt((req.query['offset'] as string | undefined) ?? '0', 10), 0);
+
+    const g = requestedRepo === repoName ? graph : await loadRepoGraph(requestedRepo);
+    if (!g) {
+      res.status(404).json({
+        error: {
+          code: ErrorCodes.NOT_FOUND,
+          message: `Repo "${requestedRepo}" not found or not indexed`,
+          hint: `Run: code-intel analyze <path>`,
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+
+    let nodes: import('../shared/index.js').CodeNode[];
+    if (isLazyGraph(g)) {
+      nodes = await g.getNodePage(offset, limit);
+    } else {
+      // Eager graph: iterate and slice
+      const all: import('../shared/index.js').CodeNode[] = [];
+      let i = 0;
+      for (const node of g.allNodes()) {
+        if (i >= offset && all.length < limit) all.push(node);
+        i++;
+        if (all.length >= limit) break;
+      }
+      nodes = all;
+    }
+
+    res.json({
+      nodes,
+      offset,
+      limit,
+      total: g.size.nodes,
+      hasMore: offset + nodes.length < g.size.nodes,
+    });
+  });
+
   // ── Search ──────────────────────────────────────────────────────────────────
   app.post('/api/v1/search', requireToolScope('search'), async (req, res) => {
     const { query, limit, repo } = req.body as { query?: string; limit?: number; repo?: string };
     const g = await getGraphForRepo(repo);
     const vdbPath = workspaceRoot ? getVectorDbPath(workspaceRoot) : undefined;
-    const { results, searchMode } = await hybridSearch(g, query ?? '', limit ?? 20, { vectorDbPath: vdbPath });
+
+    // Use pre-built BM25 index when available and querying the current repo
+    const bm25 = (!repo || repo === repoName) ? ensureBm25Index() : null;
+    const bm25Results = bm25 ? bm25.search(query ?? '', (limit ?? 20) * 3) : null;
+
+    const { results, searchMode } = await hybridSearch(g, query ?? '', limit ?? 20, {
+      vectorDbPath: vdbPath,
+      bm25Results: bm25Results ?? undefined,
+    });
     res.json({ results, searchMode });
   });
 
@@ -890,23 +997,40 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
   app.get('/api/v1/nodes/:id', async (req, res) => {
     const nodeId = decodeURIComponent(req.params.id);
     const g = await getGraphForRepo(req.query['repo'] as string | undefined);
-    const node = g.getNode(nodeId);
+    // In lazy mode, fall through to DB if node is not in LRU cache
+    const node = isLazyGraph(g)
+      ? await g.getNodeAsync(nodeId)
+      : g.getNode(nodeId);
     if (!node) {
       res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: 'Node not found', requestId: req.requestId } });
       return;
     }
     const incoming = [...g.findEdgesTo(nodeId)];
     const outgoing = [...g.findEdgesFrom(nodeId)];
+    // In lazy mode, resolve neighbor names from cache/DB
+    const resolveName = isLazyGraph(g)
+      ? async (id: string) => {
+          const n = g.getNode(id) ?? await g.getNodeAsync(id);
+          return n?.name;
+        }
+      : (id: string) => Promise.resolve(g.getNode(id)?.name);
+    const resolveKind = isLazyGraph(g)
+      ? async (id: string) => {
+          const n = g.getNode(id) ?? await g.getNodeAsync(id);
+          return n?.kind;
+        }
+      : (id: string) => Promise.resolve(g.getNode(id)?.kind);
+
     res.json({
       node,
-      callers: incoming.filter((e) => e.kind === 'calls').map((e) => ({ id: e.source, name: g.getNode(e.source)?.name, weight: e.weight })),
-      callees: outgoing.filter((e) => e.kind === 'calls').map((e) => ({ id: e.target, name: g.getNode(e.target)?.name, weight: e.weight })),
-      imports: outgoing.filter((e) => e.kind === 'imports').map((e) => ({ id: e.target, name: g.getNode(e.target)?.name })),
-      importedBy: incoming.filter((e) => e.kind === 'imports').map((e) => ({ id: e.source, name: g.getNode(e.source)?.name })),
-      extends: outgoing.filter((e) => e.kind === 'extends').map((e) => ({ id: e.target, name: g.getNode(e.target)?.name })),
-      implementsEdges: outgoing.filter((e) => e.kind === 'implements').map((e) => ({ id: e.target, name: g.getNode(e.target)?.name })),
-      members: outgoing.filter((e) => e.kind === 'has_member').map((e) => ({ id: e.target, name: g.getNode(e.target)?.name, kind: g.getNode(e.target)?.kind })),
-      cluster: incoming.filter((e) => e.kind === 'belongs_to').map((e) => g.getNode(e.target)?.name)[0],
+      callers: await Promise.all(incoming.filter((e) => e.kind === 'calls').map(async (e) => ({ id: e.source, name: await resolveName(e.source), weight: e.weight }))),
+      callees: await Promise.all(outgoing.filter((e) => e.kind === 'calls').map(async (e) => ({ id: e.target, name: await resolveName(e.target), weight: e.weight }))),
+      imports: await Promise.all(outgoing.filter((e) => e.kind === 'imports').map(async (e) => ({ id: e.target, name: await resolveName(e.target) }))),
+      importedBy: await Promise.all(incoming.filter((e) => e.kind === 'imports').map(async (e) => ({ id: e.source, name: await resolveName(e.source) }))),
+      extends: await Promise.all(outgoing.filter((e) => e.kind === 'extends').map(async (e) => ({ id: e.target, name: await resolveName(e.target) }))),
+      implementsEdges: await Promise.all(outgoing.filter((e) => e.kind === 'implements').map(async (e) => ({ id: e.target, name: await resolveName(e.target) }))),
+      members: await Promise.all(outgoing.filter((e) => e.kind === 'has_member').map(async (e) => ({ id: e.target, name: await resolveName(e.target), kind: await resolveKind(e.target) }))),
+      cluster: (await Promise.all(incoming.filter((e) => e.kind === 'belongs_to').map(async (e) => resolveName(e.target))))[0],
     });
   });
 
@@ -915,8 +1039,18 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     const { target, direction = 'both', max_hops = 5, repo } = req.body as { target?: string; direction?: string; max_hops?: number; repo?: string };
     const g = await getGraphForRepo(repo);
     let targetNode = null;
-    for (const node of g.allNodes()) {
-      if (node.name === target || node.id === target) { targetNode = node; break; }
+    if (isLazyGraph(g) && target) {
+      // Lazy mode: search by ID first (fast), then stream all nodes if needed
+      targetNode = g.getNode(target) ?? await g.getNodeAsync(target) ?? null;
+      if (!targetNode) {
+        for await (const node of g.allNodesAsync()) {
+          if (node.name === target || node.id === target) { targetNode = node; break; }
+        }
+      }
+    } else {
+      for (const node of g.allNodes()) {
+        if (node.name === target || node.id === target) { targetNode = node; break; }
+      }
     }
     if (!targetNode) {
       res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: `Symbol "${target}" not found`, requestId: req.requestId } });

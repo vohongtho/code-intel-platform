@@ -1,11 +1,11 @@
 ---
 name: api
-description: "Covers the **api** subsystem of code-intel-platform. 33 symbols across 1 files. Key symbols: `constructor`, `login`, `logout`. Internal call density: 0.3 calls/symbol. Participates in 1 execution flow(s)."
+description: "Covers the **api** subsystem of code-intel-platform. 34 symbols across 1 files. Key symbols: `constructor`, `login`, `logout`. Internal call density: 0.3 calls/symbol. Participates in 1 execution flow(s)."
 ---
 
 # api
 
-> **33 symbols** | **1 files** | path: `code-intel/web/src/api/` | call density: 0.3/sym
+> **34 symbols** | **1 files** | path: `code-intel/web/src/api/` | call density: 0.3/sym
 
 ## When to Use
 
@@ -19,7 +19,7 @@ Load this skill when:
 
 | File | Symbols | Notes |
 |------|---------|-------|
-| `code-intel/web/src/api/client.ts` | `CountGroup`, `GQLResult`, `AuthStatus`, `NodeInspectInfo` +(29) | 33 exported |
+| `code-intel/web/src/api/client.ts` | `CountGroup`, `GQLResult`, `AuthStatus`, `NodeInspectInfo` +(30) | 34 exported |
 
 ## Entry Points
 
@@ -28,9 +28,9 @@ Start exploration here — exported symbols with no external callers:
 - **`constructor`** `(method)` → `code-intel/web/src/api/client.ts:49`
 - **`login`** `(method)` → `code-intel/web/src/api/client.ts:84`
 - **`logout`** `(method)` → `code-intel/web/src/api/client.ts:99`
-- **`readFile`** `(method)` → `code-intel/web/src/api/client.ts:161`
-- **`grep`** `(method)` → `code-intel/web/src/api/client.ts:195`
-- **`listFlows`** `(method)` → `code-intel/web/src/api/client.ts:207`
+- **`readFile`** `(method)` → `code-intel/web/src/api/client.ts:176`
+- **`grep`** `(method)` → `code-intel/web/src/api/client.ts:210`
+- **`listFlows`** `(method)` → `code-intel/web/src/api/client.ts:222`
 
 ## Hot Symbols
 
@@ -40,7 +40,7 @@ Sorted by call graph degree (changing these has the highest blast radius):
 |--------|------|-----:|------:|------|
 | `ApiClient` | class | 20 | 0 | `api/client.ts` |
 | `getCsrfToken` | method | 11 | 1 | `api/client.ts` |
-| `search` | method | 7 | 2 | `api/client.ts` |
+| `search` | method | 9 | 2 | `api/client.ts` |
 | `listGroups` | method | 7 | 1 | `api/client.ts` |
 | `syncGroup` | method | 4 | 2 | `api/client.ts` |
 | `vectorSearch` | method | 2 | 2 | `api/client.ts` |
