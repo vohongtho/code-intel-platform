@@ -5,30 +5,20 @@ interface KeyboardShortcutsModalProps {
   onClose: () => void;
 }
 
-interface ShortcutEntry {
-  keys: string[];
-  description: string;
-}
-
-interface ShortcutGroup {
-  title: string;
-  shortcuts: ShortcutEntry[];
-}
-
-const SHORTCUT_GROUPS: ShortcutGroup[] = [
+const SHORTCUT_GROUPS = [
   {
     title: 'Navigation',
     shortcuts: [
-      { keys: ['Esc'], description: 'Close panel / Deselect node' },
-      { keys: ['Tab'], description: 'Cycle through NodeDetail tabs' },
-      { keys: ['←', '→'], description: 'Navigate search results' },
+      { keys: ['Esc'],      description: 'Close panel / Deselect node' },
+      { keys: ['Tab'],      description: 'Cycle through NodeDetail tabs' },
+      { keys: ['←', '→'],  description: 'Navigate search results' },
     ],
   },
   {
     title: 'Search',
     shortcuts: [
       { keys: ['⌘K', 'Ctrl+K'], description: 'Focus search' },
-      { keys: ['?'], description: 'Toggle shortcuts panel' },
+      { keys: ['?'],             description: 'Toggle shortcuts panel' },
     ],
   },
   {
@@ -43,43 +33,30 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
 export function KeyboardShortcutsModal({ open, onClose }: KeyboardShortcutsModalProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
 
-  // Close on Escape
   useEffect(() => {
     if (!open) return;
-
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape') {
-        onClose();
-      }
-    }
-
+    const handleKeyDown = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [open, onClose]);
 
   if (!open) return null;
 
-  function handleOverlayClick(e: React.MouseEvent<HTMLDivElement>) {
-    if (e.target === overlayRef.current) {
-      onClose();
-    }
-  }
-
   return (
     <div
       ref={overlayRef}
-      onClick={handleOverlayClick}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      onClick={(e) => { if (e.target === overlayRef.current) onClose(); }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-void/70 backdrop-blur-sm"
     >
-      <div className="w-full max-w-sm bg-[#0c0f1e] border border-gray-800 rounded-xl shadow-2xl overflow-hidden">
+      <div className="w-full max-w-sm bg-deep border border-border-subtle rounded-xl shadow-2xl overflow-hidden animate-fade-in">
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
-          <h2 className="text-sm font-semibold text-gray-100 tracking-wide">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
+          <h2 className="text-sm font-semibold text-text-primary tracking-wide">
             Keyboard Shortcuts
           </h2>
           <button
             onClick={onClose}
-            className="text-gray-500 hover:text-gray-200 transition text-base leading-none"
+            className="text-text-muted hover:text-text-primary transition text-base leading-none"
             aria-label="Close shortcuts panel"
           >
             ×
@@ -90,7 +67,7 @@ export function KeyboardShortcutsModal({ open, onClose }: KeyboardShortcutsModal
         <div className="p-4 space-y-5">
           {SHORTCUT_GROUPS.map((group) => (
             <div key={group.title}>
-              <p className="text-[10px] font-bold tracking-widest text-cyan-500/70 uppercase mb-2">
+              <p className="text-[10px] font-bold tracking-widest text-accent/70 uppercase mb-2">
                 {group.title}
               </p>
               <div className="space-y-2">
@@ -99,19 +76,17 @@ export function KeyboardShortcutsModal({ open, onClose }: KeyboardShortcutsModal
                     key={shortcut.description}
                     className="flex items-center justify-between gap-4"
                   >
-                    {/* Key pills */}
                     <div className="flex items-center gap-1 flex-shrink-0">
                       {shortcut.keys.map((key) => (
                         <span
                           key={key}
-                          className="bg-gray-800 border border-gray-700 text-gray-300 font-mono text-xs rounded px-1.5 py-0.5"
+                          className="bg-elevated border border-border-default text-text-secondary font-mono text-xs rounded px-1.5 py-0.5"
                         >
                           {key}
                         </span>
                       ))}
                     </div>
-                    {/* Description */}
-                    <span className="text-gray-400 text-xs text-right">
+                    <span className="text-text-muted text-xs text-right">
                       {shortcut.description}
                     </span>
                   </div>

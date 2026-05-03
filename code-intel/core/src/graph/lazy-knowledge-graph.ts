@@ -138,6 +138,35 @@ export class LazyKnowledgeGraph implements KnowledgeGraph, LazyGraphExtensions {
   private _edgeCount = 0;
   private dbManager: DbManager | null = null;
 
+  /**
+   * Per-table row counts, populated lazily on first getNodePage call.
+   * Allows native SKIP/LIMIT at the DB layer instead of streaming-and-discarding.
+   */
+  private _tableNodeCounts: Map<string, number> | null = null;
+
+  private async getTableNodeCounts(): Promise<Map<string, number>> {
+    if (this._tableNodeCounts) return this._tableNodeCounts;
+    if (!this.dbManager) return new Map();
+
+    const counts = new Map<string, number>();
+    // Run COUNT queries in parallel for all tables
+    await Promise.all(
+      ALL_NODE_TABLES.map(async (table) => {
+        try {
+          const rows = await this.dbManager!.query(
+            `MATCH (n:${table}) RETURN count(n) AS cnt`,
+          );
+          counts.set(table, Number(rows[0]?.['cnt'] ?? 0));
+        } catch {
+          counts.set(table, 0);
+        }
+      }),
+    );
+
+    this._tableNodeCounts = counts;
+    return counts;
+  }
+
   constructor() {
     const maxSize = parseInt(process.env['GRAPH_CACHE_SIZE'] ?? '5000', 10);
     this.nodeCache = new LRUCache<CodeNode>(maxSize);
@@ -213,20 +242,68 @@ export class LazyKnowledgeGraph implements KnowledgeGraph, LazyGraphExtensions {
   }
 
   /**
-   * Return a page of nodes by streaming from DB.
-   * Nodes are added to the LRU cache as they are fetched.
+   * Return a page of nodes using native SKIP/LIMIT at the DB layer.
+   * This avoids streaming and discarding rows for high offsets, making
+   * large-offset pages (e.g. offset=2200) as fast as offset=0.
    */
   async getNodePage(offset: number, limit: number): Promise<CodeNode[]> {
-    const result: CodeNode[] = [];
-    let skipped = 0;
+    if (!this.dbManager) return [];
 
-    for await (const node of this.allNodesAsync()) {
-      if (skipped < offset) {
-        skipped++;
+    const tableCounts = await this.getTableNodeCounts();
+    const result: CodeNode[] = [];
+    let tableStart = 0; // global index of first row in current table
+
+    for (const table of ALL_NODE_TABLES) {
+      if (result.length >= limit) break;
+
+      const tableCount = tableCounts.get(table) ?? 0;
+      if (tableCount === 0) { tableStart += tableCount; continue; }
+
+      const tableEnd = tableStart + tableCount;
+
+      // Does this page overlap with this table?
+      if (offset >= tableEnd) {
+        // Requested page starts after this table — skip entirely
+        tableStart = tableEnd;
         continue;
       }
-      result.push(node);
-      if (result.length >= limit) break;
+
+      const kind = TABLE_TO_KIND[table];
+      if (!kind) { tableStart = tableEnd; continue; }
+
+      // How many rows to skip within this table
+      const skipInTable = Math.max(0, offset - tableStart);
+      // How many rows we still need
+      const remaining = limit - result.length;
+
+      try {
+        const rows = await this.dbManager.query(
+          `MATCH (n:${table}) RETURN n.id, n.name, n.file_path, n.start_line, n.end_line, n.exported, n.content, n.metadata SKIP ${skipInTable} LIMIT ${remaining}`,
+        );
+        for (const row of rows) {
+          const node = parseNodeRow(
+            {
+              id: row['n.id'],
+              name: row['n.name'],
+              file_path: row['n.file_path'],
+              start_line: row['n.start_line'],
+              end_line: row['n.end_line'],
+              exported: row['n.exported'],
+              content: row['n.content'],
+              metadata: row['n.metadata'],
+            },
+            kind,
+          );
+          if (node.id && node.name) {
+            this.nodeCache.set(node.id, node);
+            result.push(node);
+          }
+        }
+      } catch {
+        // Table may not exist in older DBs — skip
+      }
+
+      tableStart = tableEnd;
     }
 
     return result;

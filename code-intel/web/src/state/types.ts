@@ -47,10 +47,17 @@ export interface FilterState {
   focusDepth: FocusDepth;
 }
 
+export interface GraphLoadProgress {
+  loaded: number;   // nodes fetched so far
+  total: number;    // total nodes reported by server
+  phase: 'edges' | 'nodes'; // what we're currently fetching
+}
+
 export interface AppState {
   view: AppView;
   serverUrl: string;
   connected: boolean;
+  graphLoad: GraphLoadProgress | null;
   currentUser: CurrentUser | null;
   repoName: string;
   nodes: CodeNode[];

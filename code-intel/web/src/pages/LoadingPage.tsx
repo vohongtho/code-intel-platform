@@ -1,38 +1,85 @@
 import React from 'react';
+import { useAppState } from '../state/app-context';
 
 export function LoadingPage() {
+  const { state } = useAppState();
+  const progress = state.graphLoad;
+
+  const pct = progress && progress.total > 0
+    ? Math.min(100, Math.round((progress.loaded / progress.total) * 100))
+    : null;
+
   return (
-    <div className="flex items-center justify-center min-h-screen bg-[#040812]">
-      <div className="flex flex-col items-center gap-6">
+    <div className="flex items-center justify-center min-h-screen bg-void">
+      <div className="flex flex-col items-center gap-8 w-full max-w-sm px-8">
 
         {/* Pulsing logo */}
         <div className="relative flex items-center justify-center">
-          {/* Outer pulse ring */}
-          <span className="absolute inline-flex h-16 w-16 rounded-xl bg-cyan-500/20 animate-ping" />
-          <div className="relative w-14 h-14 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center text-white text-3xl font-bold shadow-xl shadow-cyan-900/40 select-none">
+          <span className="absolute inline-flex h-20 w-20 rounded-2xl bg-accent/20 animate-ping" />
+          <div className="relative w-16 h-16 rounded-2xl bg-gradient-to-br from-accent to-accent-dim flex items-center justify-center text-white text-3xl font-bold shadow-glow select-none">
             ◈
           </div>
         </div>
 
-        {/* Primary label */}
-        <div className="flex flex-col items-center gap-2">
-          <p className="text-gray-300 text-lg font-medium tracking-wide">
-            Building knowledge graph…
+        {/* Text */}
+        <div className="flex flex-col items-center gap-2 text-center">
+          <p className="text-text-primary text-lg font-semibold tracking-tight">
+            {progress?.phase === 'edges'
+              ? 'Fetching graph structure…'
+              : progress
+              ? 'Loading nodes…'
+              : 'Building knowledge graph…'}
           </p>
-
-          {/* Animated dots */}
-          <div className="flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-cyan-500 animate-bounce [animation-delay:-0.3s]" />
-            <span className="w-1.5 h-1.5 rounded-full bg-cyan-500 animate-bounce [animation-delay:-0.15s]" />
-            <span className="w-1.5 h-1.5 rounded-full bg-cyan-500 animate-bounce" />
-          </div>
+          {progress?.phase === 'nodes' && progress.total > 0 ? (
+            <p className="text-text-muted text-sm font-mono tabular-nums">
+              {progress.loaded.toLocaleString()} / {progress.total.toLocaleString()} nodes
+            </p>
+          ) : (
+            <p className="text-text-muted text-sm">
+              {state.repoName || 'Preparing…'}
+            </p>
+          )}
         </div>
 
-        {/* Subtle tagline */}
-        <p className="text-gray-600 text-sm tracking-widest uppercase">
-          Indexing nodes and edges…
-        </p>
+        {/* Progress bar */}
+        <div className="w-full">
+          <div className="h-1.5 w-full bg-elevated rounded-full overflow-hidden border border-border-subtle">
+            {pct !== null ? (
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-accent to-accent-dim transition-all duration-300"
+                style={{ width: `${pct}%` }}
+              />
+            ) : (
+              // Indeterminate shimmer when we don't have a total yet
+              <div className="h-full rounded-full bg-gradient-to-r from-accent to-accent-dim animate-[shimmer_1.5s_ease-in-out_infinite]"
+                style={{ width: '40%', animation: 'shimmer 1.5s ease-in-out infinite' }}
+              />
+            )}
+          </div>
+          {pct !== null && (
+            <div className="flex justify-between mt-1.5 text-[10px] text-text-muted font-mono">
+              <span>{pct}%</span>
+              <span>{progress!.total.toLocaleString()} total</span>
+            </div>
+          )}
+        </div>
+
+        {/* Dots */}
+        <div className="flex items-center gap-1.5">
+          <span className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce [animation-delay:-0.3s]" />
+          <span className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce [animation-delay:-0.15s]" />
+          <span className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce" />
+        </div>
+
       </div>
+
+      {/* Shimmer keyframe */}
+      <style>{`
+        @keyframes shimmer {
+          0%   { transform: translateX(-100%); }
+          100% { transform: translateX(300%); }
+        }
+      `}</style>
     </div>
   );
 }

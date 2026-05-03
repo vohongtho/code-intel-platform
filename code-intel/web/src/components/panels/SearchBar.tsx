@@ -28,15 +28,15 @@ export function SearchBar() {
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-        className="flex-1 bg-gray-700 rounded-lg px-3 py-1.5 text-sm border border-gray-600 focus:border-blue-500 focus:outline-none text-white"
-        placeholder="Search symbols..."
+        className="flex-1 bg-elevated border border-border-subtle rounded-lg px-3 py-1.5 text-sm text-text-primary placeholder-text-muted focus:border-accent focus:ring-1 focus:ring-accent/20 focus:outline-none transition"
+        placeholder="Search symbols…"
       />
       <button
         onClick={handleSearch}
         disabled={loading}
-        className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg px-3 py-1.5 text-sm text-white"
+        className="bg-accent hover:opacity-90 disabled:opacity-50 rounded-lg px-3 py-1.5 text-sm text-white font-medium transition"
       >
-        {loading ? '...' : 'Search'}
+        {loading ? '…' : 'Search'}
       </button>
     </div>
   );

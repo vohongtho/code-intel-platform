@@ -92,13 +92,23 @@ function getAllowedOrigins(): string[] {
 function createDefaultLimiter() {
   const max = parseInt(process.env['CODE_INTEL_RATE_LIMIT_MAX'] ?? '100', 10);
   const windowMs =
-    parseInt(process.env['CODE_INTEL_RATE_LIMIT_WINDOW_MS'] ?? `${15 * 60 * 1000}`, 10);
+    parseInt(process.env['CODE_INTEL_RATE_LIMIT_WINDOW_MS'] ?? `${60 * 1000}`, 10);
   return rateLimit({
     windowMs,
     max,
     standardHeaders: true,
     legacyHeaders: false,
-    skip: (req) => req.path.startsWith('/health') || req.path === '/metrics',
+    // Skip health checks, metrics, and read-only listing/pagination endpoints.
+    // The node pagination and group/repo listing endpoints are hit many times
+    // when loading a large graph — rate-limiting them only hurts the user's own
+    // session without providing meaningful abuse protection.
+    skip: (req) =>
+      req.path.startsWith('/health') ||
+      req.path === '/metrics' ||
+      req.path === '/api/v1/repos' ||
+      req.path === '/api/v1/groups' ||
+      req.method === 'GET' && req.path.startsWith('/api/v1/groups/') ||
+      /^\/api\/v1\/graph\/[^/]+\/nodes$/.test(req.path),
     message: {
       error: {
         code: ErrorCodes.RATE_LIMIT_EXCEEDED,
@@ -807,8 +817,8 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
   });
 
   // ── Paginated node list (Epic 1.2) ──────────────────────────────────────────
-  // GET /api/v1/graph/:repo/nodes?limit=100&offset=0
-  // Returns a page of nodes. In lazy mode, fetches from DB on demand.
+  // GET /api/v1/graph/:repo/nodes?limit=200&offset=0
+  // Returns a page of nodes. In lazy mode uses native SKIP/LIMIT; eager mode slices an array.
   app.get('/api/v1/graph/:repo/nodes', requireRepoAccess((req) => {
     const p = req.params['repo'];
     const repo = Array.isArray(p) ? p[0] : p;
@@ -816,7 +826,7 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
   }), async (req, res) => {
     const rawRepo = req.params['repo'];
     const requestedRepo = decodeURIComponent(Array.isArray(rawRepo) ? (rawRepo[0] ?? '') : (rawRepo ?? ''));
-    const limit = Math.min(parseInt((req.query['limit'] as string | undefined) ?? '100', 10), 500);
+    const limit = Math.min(parseInt((req.query['limit'] as string | undefined) ?? '200', 10), 1000);
     const offset = Math.max(parseInt((req.query['offset'] as string | undefined) ?? '0', 10), 0);
 
     const g = requestedRepo === repoName ? graph : await loadRepoGraph(requestedRepo);
@@ -835,17 +845,15 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
 
     let nodes: import('../shared/index.js').CodeNode[];
     if (isLazyGraph(g)) {
+      // Lazy mode: native SKIP/LIMIT — O(1) regardless of offset
       nodes = await g.getNodePage(offset, limit);
     } else {
-      // Eager graph: iterate and slice
-      const all: import('../shared/index.js').CodeNode[] = [];
-      let i = 0;
-      for (const node of g.allNodes()) {
-        if (i >= offset && all.length < limit) all.push(node);
-        i++;
-        if (all.length >= limit) break;
+      // Eager mode: build array once, cache on graph object, then slice — O(1) per page
+      const eager = g as typeof g & { _nodeArray?: import('../shared/index.js').CodeNode[] };
+      if (!eager._nodeArray) {
+        eager._nodeArray = [...g.allNodes()];
       }
-      nodes = all;
+      nodes = eager._nodeArray.slice(offset, offset + limit);
     }
 
     res.json({
