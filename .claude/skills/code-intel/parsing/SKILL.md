@@ -40,12 +40,12 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `get` | method | 70 | 1 | `parsing/ast-cache.ts` |
-| `has` | method | 55 | 0 | `parsing/ast-cache.ts` |
-| `getLanguage` | function | 5 | 5 | `parsing/parser-manager.ts` |
+| `get` | method | 77 | 1 | `parsing/ast-cache.ts` |
+| `has` | method | 66 | 0 | `parsing/ast-cache.ts` |
+| `getLanguage` | function | 6 | 5 | `parsing/parser-manager.ts` |
+| `getParser` | function | 1 | 4 | `parsing/parser-manager.ts` |
+| `parseSource` | function | 3 | 2 | `parsing/parser-manager.ts` |
 | `runQueryMatches` | function | 3 | 2 | `parsing/query-runner.ts` |
-| `getParser` | function | 1 | 3 | `parsing/parser-manager.ts` |
-| `parseSource` | function | 3 | 1 | `parsing/parser-manager.ts` |
 | `getOrCompileQuery` | function | 2 | 2 | `parsing/query-runner.ts` |
 | `set` | method | 0 | 2 | `parsing/ast-cache.ts` |
 | `evictLRU` | method | 1 | 1 | `parsing/ast-cache.ts` |

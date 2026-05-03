@@ -40,18 +40,18 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `close` | method | 21 | 0 | `storage/db-manager.ts` |
+| `close` | method | 25 | 0 | `storage/db-manager.ts` |
 | `loadGraphToDB` | function | 1 | 12 | `storage/graph-loader.ts` |
-| `init` | method | 10 | 0 | `storage/db-manager.ts` |
+| `init` | method | 12 | 0 | `storage/db-manager.ts` |
+| `loadRegistry` | function | 9 | 1 | `storage/repo-registry.ts` |
 | `writeEdgeCSV` | function | 2 | 7 | `storage/csv-writer.ts` |
-| `loadRegistry` | function | 9 | 0 | `storage/repo-registry.ts` |
 | `writeNodeCSVs` | function | 2 | 6 | `storage/csv-writer.ts` |
-| `DbManager` | class | 6 | 0 | `storage/db-manager.ts` |
-| `query` | method | 4 | 1 | `storage/db-manager.ts` |
+| `DbManager` | class | 7 | 0 | `storage/db-manager.ts` |
+| `loadMetadata` | function | 5 | 1 | `storage/metadata.ts` |
+| `getVectorDbPath` | function | 6 | 0 | `storage/metadata.ts` |
 | `loadEdgeGroupFallback` | function | 1 | 4 | `storage/graph-loader.ts` |
 | `upsertNode` | function | 2 | 3 | `storage/graph-loader.ts` |
-| `escCypher` | function | 5 | 0 | `storage/graph-loader.ts` |
-| `loadMetadata` | function | 5 | 0 | `storage/metadata.ts` |
+| `removeNodesForFile` | function | 3 | 2 | `storage/graph-loader.ts` |
 
 ## Impact Guidance
 

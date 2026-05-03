@@ -1,11 +1,11 @@
 ---
 name: api
-description: "Covers the **api** subsystem of code-intel-platform. 28 symbols across 1 files. Key symbols: `constructor`, `login`, `logout`. Internal call density: 0.4 calls/symbol. Participates in 1 execution flow(s)."
+description: "Covers the **api** subsystem of code-intel-platform. 31 symbols across 1 files. Key symbols: `constructor`, `login`, `logout`. Internal call density: 0.4 calls/symbol. Participates in 1 execution flow(s)."
 ---
 
 # api
 
-> **28 symbols** | **1 files** | path: `code-intel/web/src/api/` | call density: 0.4/sym
+> **31 symbols** | **1 files** | path: `code-intel/web/src/api/` | call density: 0.4/sym
 
 ## When to Use
 
@@ -19,18 +19,18 @@ Load this skill when:
 
 | File | Symbols | Notes |
 |------|---------|-------|
-| `code-intel/web/src/api/client.ts` | `AuthStatus`, `NodeInspectInfo`, `BlastRadiusResult`, `GrepHit` +(24) | 28 exported |
+| `code-intel/web/src/api/client.ts` | `GQLResult`, `AuthStatus`, `NodeInspectInfo`, `BlastRadiusResult` +(27) | 31 exported |
 
 ## Entry Points
 
 Start exploration here — exported symbols with no external callers:
 
-- **`constructor`** `(method)` → `code-intel/web/src/api/client.ts:35`
-- **`login`** `(method)` → `code-intel/web/src/api/client.ts:70`
-- **`logout`** `(method)` → `code-intel/web/src/api/client.ts:85`
-- **`readFile`** `(method)` → `code-intel/web/src/api/client.ts:147`
-- **`grep`** `(method)` → `code-intel/web/src/api/client.ts:181`
-- **`listFlows`** `(method)` → `code-intel/web/src/api/client.ts:193`
+- **`constructor`** `(method)` → `code-intel/web/src/api/client.ts:44`
+- **`login`** `(method)` → `code-intel/web/src/api/client.ts:79`
+- **`logout`** `(method)` → `code-intel/web/src/api/client.ts:94`
+- **`readFile`** `(method)` → `code-intel/web/src/api/client.ts:156`
+- **`grep`** `(method)` → `code-intel/web/src/api/client.ts:190`
+- **`listFlows`** `(method)` → `code-intel/web/src/api/client.ts:202`
 
 ## Hot Symbols
 
@@ -38,9 +38,9 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `ApiClient` | class | 16 | 0 | `api/client.ts` |
-| `getCsrfToken` | method | 10 | 1 | `api/client.ts` |
-| `search` | method | 6 | 2 | `api/client.ts` |
+| `ApiClient` | class | 18 | 0 | `api/client.ts` |
+| `getCsrfToken` | method | 11 | 1 | `api/client.ts` |
+| `search` | method | 7 | 2 | `api/client.ts` |
 | `listGroups` | method | 6 | 1 | `api/client.ts` |
 | `syncGroup` | method | 4 | 2 | `api/client.ts` |
 | `vectorSearch` | method | 2 | 2 | `api/client.ts` |
@@ -49,7 +49,7 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | `bootstrap` | method | 1 | 2 | `api/client.ts` |
 | `inspectNode` | method | 2 | 1 | `api/client.ts` |
 | `getGroup` | method | 2 | 1 | `api/client.ts` |
-| `bootstrapStatus` | method | 1 | 1 | `api/client.ts` |
+| `sourcePreview` | method | 1 | 2 | `api/client.ts` |
 
 ## Execution Flows
 

@@ -27,7 +27,7 @@ rtk smart <cmd>            # 2-line heuristic summary
 > ⚠ This section is auto-managed by `code-intel analyze`. Do **not** edit between the markers — your changes will be overwritten.
 > Add your own notes below the `<!-- code-intel:end -->` marker.
 
-Indexed: **4,402 nodes** | **7,919 edges** | **267 files** | analyzed in 3.2s
+Indexed: **4,634 nodes** | **8,312 edges** | **281 files** | analyzed in 0.9s
 
 > Index stale? Re-run: `code-intel analyze`
 
@@ -66,7 +66,7 @@ code-intel clean [path]            # Remove index data
 | Debugging / "Why is X failing?" | Load `code-intel-debugging` skill |
 | Work in `auth` (84 symbols) | `.claude/skills/code-intel/auth/SKILL.md` |
 | Work in `fixtures` (75 symbols) | `.claude/skills/code-intel/fixtures/SKILL.md` |
-| Work in `query` (47 symbols) | `.claude/skills/code-intel/query/SKILL.md` |
+| Work in `query` (65 symbols) | `.claude/skills/code-intel/query/SKILL.md` |
 | Work in `modules` (40 symbols) | `.claude/skills/code-intel/modules/SKILL.md` |
 | Work in `phases` (38 symbols) | `.claude/skills/code-intel/phases/SKILL.md` |
 | Work in `backup` (37 symbols) | `.claude/skills/code-intel/backup/SKILL.md` |

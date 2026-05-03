@@ -26,6 +26,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { withSpan, isTracingEnabled, sanitizeAttrs } from '../observability/tracing.js';
 import { mcpToolCallsTotal, mcpToolDurationSeconds } from '../observability/metrics.js';
+import { explainRelationship } from '../query/explain-relationship.js';
+import { computePRImpact, parseDiffFiles } from '../query/pr-impact.js';
+import { findSimilarSymbols } from '../query/similar-symbols.js';
+import { computeHealthReport } from '../query/health-report.js';
+import { suggestTests } from '../query/suggest-tests.js';
+import { summarizeCluster } from '../query/cluster-summary.js';
 
 export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspaceRoot?: string): Server {
   const server = new Server(
@@ -62,7 +68,8 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
           type: 'object' as const,
           properties: {
             query: { type: 'string', description: 'Search query (symbol name, keyword, or partial match)' },
-            limit: { type: 'number', description: 'Max results to return (default: 20)' },
+            offset: { type: 'number', description: 'Number of results to skip for pagination (default: 0)' },
+            limit: { type: 'number', description: 'Max results per page (default: 50, max: 500)' },
             ..._tokenProp,
           },
           required: ['query'],
@@ -105,6 +112,8 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
           type: 'object' as const,
           properties: {
             file_path: { type: 'string', description: 'File path (partial match is supported, e.g. "auth/login.ts")' },
+            offset: { type: 'number', description: 'Number of results to skip for pagination (default: 0)' },
+            limit: { type: 'number', description: 'Max results per page (default: 50, max: 500)' },
             ..._tokenProp,
           },
           required: ['file_path'],
@@ -134,7 +143,8 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
               type: 'string',
               description: 'Filter by node kind: function | class | interface | method | type_alias | constant | enum (optional)',
             },
-            limit: { type: 'number', description: 'Max results (default: 100)' },
+            offset: { type: 'number', description: 'Number of results to skip for pagination (default: 0)' },
+            limit: { type: 'number', description: 'Max results per page (default: 50, max: 500)' },
             ..._tokenProp,
           },
         },
@@ -152,7 +162,8 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
         inputSchema: {
           type: 'object' as const,
           properties: {
-            limit: { type: 'number', description: 'Max clusters to return (default: 50)' },
+            offset: { type: 'number', description: 'Number of results to skip for pagination (default: 0)' },
+            limit: { type: 'number', description: 'Max clusters per page (default: 50, max: 500)' },
             ..._tokenProp,
           },
         },
@@ -163,7 +174,8 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
         inputSchema: {
           type: 'object' as const,
           properties: {
-            limit: { type: 'number', description: 'Max flows to return (default: 50)' },
+            offset: { type: 'number', description: 'Number of results to skip for pagination (default: 0)' },
+            limit: { type: 'number', description: 'Max flows per page (default: 50, max: 500)' },
             ..._tokenProp,
           },
         },
@@ -290,6 +302,92 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
           required: ['name'],
         },
       },
+
+      // ── Reasoning / analysis tools ────────────────────────────────────────
+      {
+        name: 'explain_relationship',
+        description: 'Explain how two symbols are connected: directed paths, shared imports, and heritage (extends/implements). Returns up to 10 paths with at most 5 hops each.',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            from: { type: 'string', description: 'Source symbol name' },
+            to: { type: 'string', description: 'Target symbol name' },
+            ..._tokenProp,
+          },
+          required: ['from', 'to'],
+        },
+      },
+      {
+        name: 'pr_impact',
+        description: 'Given changed files or a unified diff, compute full blast radius with risk scores (HIGH/MEDIUM/LOW), test coverage gaps, and top files to review.',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            changedFiles: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'List of changed file paths (relative or absolute)',
+            },
+            diff: {
+              type: 'string',
+              description: 'Raw unified diff text. Changed files are extracted automatically.',
+            },
+            maxHops: {
+              type: 'number',
+              description: 'Maximum BFS depth for blast radius (default: 5)',
+            },
+            ..._tokenProp,
+          },
+        },
+      },
+      {
+        name: 'similar_symbols',
+        description: 'Find symbols with similar names or structure using Levenshtein distance and kind matching. Useful for finding related functions, classes, or interfaces.',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            symbol: { type: 'string', description: 'Symbol name to find similar symbols for' },
+            limit: { type: 'number', description: 'Maximum number of results (default: 10, max: 50)' },
+            ..._tokenProp,
+          },
+          required: ['symbol'],
+        },
+      },
+      {
+        name: 'health_report',
+        description: 'Code health signals for a scope: dead code, cycles, god nodes, orphan files, complexity hotspots',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            scope: { type: 'string', description: "Directory scope, e.g. 'src/api/' or '.' for whole repo" },
+            ..._tokenProp,
+          },
+        },
+      },
+      {
+        name: 'suggest_tests',
+        description: 'Suggest test cases for a symbol: call paths, suggested cases, existing tests, untested callers',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            symbol: { type: 'string', description: 'Symbol name to generate test suggestions for' },
+            ..._tokenProp,
+          },
+          required: ['symbol'],
+        },
+      },
+      {
+        name: 'cluster_summary',
+        description: 'Rich summary of a module/cluster: purpose, key symbols, dependencies, health',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            cluster: { type: 'string', description: "Cluster path e.g. 'src/auth'" },
+            ..._tokenProp,
+          },
+          required: ['cluster'],
+        },
+      },
     ],
   }));
 
@@ -411,10 +509,40 @@ async function dispatchTool(
       // ── search ─────────────────────────────────────────────────────────────
       case 'search': {
         const query = a.query as string;
-        const limit = (a.limit as number) ?? 20;
+        const offset = (a.offset as number) ?? 0;
+        const effectiveLimit = Math.min((a.limit as number) ?? 50, 500);
         const vdbPath = workspaceRoot ? getVectorDbPath(workspaceRoot) : undefined;
-        const { results, searchMode } = await hybridSearch(graph, query, limit, { vectorDbPath: vdbPath });
-        return { content: [{ type: 'text', text: JSON.stringify({ results, searchMode, suggested_next_tools: ['inspect', 'query', 'blast_radius'] }, null, 2) }] };
+        // Fetch enough results to cover pagination (offset + limit, up to 500)
+        const fetchLimit = Math.min(offset + effectiveLimit, 500);
+        const { results: allResults, searchMode } = await hybridSearch(graph, query, fetchLimit, { vectorDbPath: vdbPath });
+        const total = allResults.length;
+        const results = allResults.slice(offset, offset + effectiveLimit);
+        const hasMore = offset + effectiveLimit < total;
+
+        const suggestNextTools: unknown[] = [];
+        const suggestEnabled = process.env['CODE_INTEL_SUGGEST_NEXT_TOOLS'] !== 'false';
+        if (suggestEnabled && results.length > 0) {
+          const topName = results[0].name;
+          suggestNextTools.push(
+            { tool: 'inspect', reason: 'Inspect the top result in detail', input: { symbol: topName } },
+            { tool: 'similar_symbols', reason: 'Find symbols similar to the top result', input: { symbol: topName } },
+          );
+        }
+
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              results,
+              searchMode,
+              total,
+              offset,
+              limit: effectiveLimit,
+              hasMore,
+              ...(suggestEnabled ? { suggested_next_tools: suggestNextTools } : {}),
+            }, null, 2),
+          }],
+        };
       }
 
       // ── inspect ────────────────────────────────────────────────────────────
@@ -425,6 +553,28 @@ async function dispatchTool(
 
         const incoming = [...graph.findEdgesTo(node.id)];
         const outgoing = [...graph.findEdgesFrom(node.id)];
+
+        const callers = incoming.filter((e) => e.kind === 'calls').map((e) => ({
+          id: e.source, name: graph.getNode(e.source)?.name, file: graph.getNode(e.source)?.filePath,
+        }));
+        const callees = outgoing.filter((e) => e.kind === 'calls').map((e) => ({
+          id: e.target, name: graph.getNode(e.target)?.name, file: graph.getNode(e.target)?.filePath,
+        }));
+        const cluster = incoming.filter((e) => e.kind === 'belongs_to').map((e) => graph.getNode(e.target)?.name)[0];
+
+        const suggestEnabled = process.env['CODE_INTEL_SUGGEST_NEXT_TOOLS'] !== 'false';
+        const suggestNextTools: unknown[] = [];
+        if (suggestEnabled) {
+          const topCallerName = callers[0]?.name;
+          suggestNextTools.push(
+            ...(topCallerName
+              ? [{ tool: 'explain_relationship', reason: 'Explain connection to a related symbol', input: { from: node.name, to: topCallerName } }]
+              : []),
+            ...(cluster
+              ? [{ tool: 'cluster_summary', reason: 'Summarize the module this symbol belongs to', input: { cluster } }]
+              : [{ tool: 'cluster_summary', reason: 'Summarize the module this symbol belongs to', input: { cluster: node.filePath } }]),
+          );
+        }
 
         return {
           content: [{
@@ -439,12 +589,8 @@ async function dispatchTool(
                 endLine: node.endLine,
                 exported: node.exported,
               },
-              callers: incoming.filter((e) => e.kind === 'calls').map((e) => ({
-                id: e.source, name: graph.getNode(e.source)?.name, file: graph.getNode(e.source)?.filePath,
-              })),
-              callees: outgoing.filter((e) => e.kind === 'calls').map((e) => ({
-                id: e.target, name: graph.getNode(e.target)?.name, file: graph.getNode(e.target)?.filePath,
-              })),
+              callers,
+              callees,
               imports: incoming.filter((e) => e.kind === 'imports').map((e) => graph.getNode(e.source)?.name),
               importedBy: outgoing.filter((e) => e.kind === 'imports').map((e) => graph.getNode(e.target)?.name),
               extends: outgoing.filter((e) => e.kind === 'extends').map((e) => graph.getNode(e.target)?.name),
@@ -452,8 +598,9 @@ async function dispatchTool(
               members: outgoing.filter((e) => e.kind === 'has_member').map((e) => ({
                 name: graph.getNode(e.target)?.name, kind: graph.getNode(e.target)?.kind,
               })),
-              cluster: incoming.filter((e) => e.kind === 'belongs_to').map((e) => graph.getNode(e.target)?.name)[0],
+              cluster,
               content: node.content?.slice(0, 500),
+              ...(suggestEnabled ? { suggested_next_tools: suggestNextTools } : {}),
             }, null, 2),
           }],
         };
@@ -496,6 +643,17 @@ async function dispatchTool(
 
         const risk = affected.size > 10 ? 'HIGH' : affected.size > 5 ? 'MEDIUM' : 'LOW';
 
+        const suggestEnabled = process.env['CODE_INTEL_SUGGEST_NEXT_TOOLS'] !== 'false';
+        const suggestNextTools: unknown[] = [];
+        if (suggestEnabled) {
+          const highestRiskSymbol = node.name;
+          const firstFilePath = affectedDetails[0]?.filePath ?? '';
+          suggestNextTools.push(
+            { tool: 'suggest_tests', reason: 'Generate tests for the highest-risk symbol', input: { symbol: highestRiskSymbol } },
+            { tool: 'pr_impact', reason: 'Compute full PR impact for changed files', input: { changedFiles: [firstFilePath] } },
+          );
+        }
+
         return {
           content: [{
             type: 'text',
@@ -504,6 +662,7 @@ async function dispatchTool(
               affectedCount: affected.size,
               riskLevel: risk,
               affected: affectedDetails,
+              ...(suggestEnabled ? { suggested_next_tools: suggestNextTools } : {}),
             }, null, 2),
           }],
         };
@@ -512,17 +671,27 @@ async function dispatchTool(
       // ── file_symbols ───────────────────────────────────────────────────────
       case 'file_symbols': {
         const filePath = a.file_path as string;
-        const matches: { kind: string; name: string; startLine: number | undefined; exported: boolean | undefined }[] = [];
+        const offset = (a.offset as number) ?? 0;
+        const effectiveLimit = Math.min((a.limit as number) ?? 50, 500);
+        const allMatches: { kind: string; name: string; startLine: number | undefined; exported: boolean | undefined }[] = [];
         for (const node of graph.allNodes()) {
           if (node.filePath && node.filePath.includes(filePath)) {
-            matches.push({ kind: node.kind, name: node.name, startLine: node.startLine, exported: node.exported });
+            allMatches.push({ kind: node.kind, name: node.name, startLine: node.startLine, exported: node.exported });
           }
         }
-        if (matches.length === 0) {
+        if (allMatches.length === 0) {
           return { content: [{ type: 'text', text: `No symbols found for file path matching "${filePath}".` }] };
         }
-        matches.sort((a, b) => (a.startLine ?? 0) - (b.startLine ?? 0));
-        return { content: [{ type: 'text', text: JSON.stringify(matches, null, 2) }] };
+        allMatches.sort((a, b) => (a.startLine ?? 0) - (b.startLine ?? 0));
+        const total = allMatches.length;
+        const matches = allMatches.slice(offset, offset + effectiveLimit);
+        const hasMore = offset + effectiveLimit < total;
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({ symbols: matches, total, offset, limit: effectiveLimit, hasMore }, null, 2),
+          }],
+        };
       }
 
       // ── find_path ──────────────────────────────────────────────────────────
@@ -578,17 +747,26 @@ async function dispatchTool(
       // ── list_exports ───────────────────────────────────────────────────────
       case 'list_exports': {
         const kindFilter = a.kind as string | undefined;
-        const limit = (a.limit as number) ?? 100;
-        const exports: { kind: string; name: string; filePath: string; startLine: number | undefined }[] = [];
+        const offset = (a.offset as number) ?? 0;
+        const effectiveLimit = Math.min((a.limit as number) ?? 50, 500);
+        const allExports: { kind: string; name: string; filePath: string; startLine: number | undefined }[] = [];
 
         for (const node of graph.allNodes()) {
           if (!node.exported) continue;
           if (kindFilter && node.kind !== kindFilter) continue;
-          exports.push({ kind: node.kind, name: node.name, filePath: node.filePath, startLine: node.startLine });
-          if (exports.length >= limit) break;
+          allExports.push({ kind: node.kind, name: node.name, filePath: node.filePath, startLine: node.startLine });
         }
 
-        return { content: [{ type: 'text', text: JSON.stringify({ total: exports.length, exports }, null, 2) }] };
+        const total = allExports.length;
+        const exports = allExports.slice(offset, offset + effectiveLimit);
+        const hasMore = offset + effectiveLimit < total;
+
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({ exports, total, offset, limit: effectiveLimit, hasMore }, null, 2),
+          }],
+        };
       }
 
       // ── routes ─────────────────────────────────────────────────────────────
@@ -604,8 +782,9 @@ async function dispatchTool(
 
       // ── clusters ───────────────────────────────────────────────────────────
       case 'clusters': {
-        const limit = (a.limit as number) ?? 50;
-        const clusters: {
+        const offset = (a.offset as number) ?? 0;
+        const effectiveLimit = Math.min((a.limit as number) ?? 50, 500);
+        const allClusters: {
           id: string;
           name: string;
           memberCount: number;
@@ -623,22 +802,30 @@ async function dispatchTool(
                 }
               }
             }
-            clusters.push({
+            allClusters.push({
               id: node.id,
               name: node.name,
               memberCount: (node.metadata?.memberCount as number | undefined) ?? members.length,
               topSymbols: members.slice(0, 10),
             });
-            if (clusters.length >= limit) break;
           }
         }
-        return { content: [{ type: 'text', text: JSON.stringify(clusters, null, 2) }] };
+        const total = allClusters.length;
+        const clusters = allClusters.slice(offset, offset + effectiveLimit);
+        const hasMore = offset + effectiveLimit < total;
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({ clusters, total, offset, limit: effectiveLimit, hasMore }, null, 2),
+          }],
+        };
       }
 
       // ── flows ──────────────────────────────────────────────────────────────
       case 'flows': {
-        const limit = (a.limit as number) ?? 50;
-        const flows: {
+        const offset = (a.offset as number) ?? 0;
+        const effectiveLimit = Math.min((a.limit as number) ?? 50, 500);
+        const allFlows: {
           id: string;
           name: string;
           entryPoint: string | undefined;
@@ -649,17 +836,24 @@ async function dispatchTool(
         for (const node of graph.allNodes()) {
           if (node.kind === 'flow') {
             const steps = node.metadata?.steps as unknown[] | undefined;
-            flows.push({
+            allFlows.push({
               id: node.id,
               name: node.name,
               entryPoint: node.metadata?.entryPoint as string | undefined,
               steps: steps ?? [],
               stepCount: Array.isArray(steps) ? steps.length : 0,
             });
-            if (flows.length >= limit) break;
           }
         }
-        return { content: [{ type: 'text', text: JSON.stringify(flows, null, 2) }] };
+        const total = allFlows.length;
+        const flows = allFlows.slice(offset, offset + effectiveLimit);
+        const hasMore = offset + effectiveLimit < total;
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({ flows, total, offset, limit: effectiveLimit, hasMore }, null, 2),
+          }],
+        };
       }
 
       // ── detect_changes ─────────────────────────────────────────────────────
@@ -955,6 +1149,67 @@ async function dispatchTool(
             }, null, 2),
           }],
         };
+      }
+
+      // ── explain_relationship ───────────────────────────────────────────────
+      case 'explain_relationship': {
+        const fromName = a.from as string;
+        const toName = a.to as string;
+        const result = explainRelationship(graph, fromName, toName);
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
+
+      // ── pr_impact ──────────────────────────────────────────────────────────
+      case 'pr_impact': {
+        const maxHops = (a.maxHops as number) ?? 5;
+        let changedFiles: string[] = (a.changedFiles as string[]) ?? [];
+
+        // If a diff string is provided, extract files from it
+        if (a.diff && typeof a.diff === 'string') {
+          const diffFiles = parseDiffFiles(a.diff);
+          changedFiles = [...new Set([...changedFiles, ...diffFiles])];
+        }
+
+        if (changedFiles.length === 0) {
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({ error: 'No changed files provided. Supply "changedFiles" or "diff".' }),
+            }],
+          };
+        }
+
+        const result = computePRImpact(graph, changedFiles, maxHops);
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
+
+      // ── similar_symbols ────────────────────────────────────────────────────
+      case 'similar_symbols': {
+        const symbolName = a.symbol as string;
+        const limit = (a.limit as number) ?? 10;
+        const result = findSimilarSymbols(graph, symbolName, limit);
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
+
+      // ── health_report ──────────────────────────────────────────────────────
+      case 'health_report': {
+        const scope = (a.scope as string | undefined) ?? '.';
+        const result = computeHealthReport(graph, scope);
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
+
+      // ── suggest_tests ──────────────────────────────────────────────────────
+      case 'suggest_tests': {
+        const sym = a.symbol as string;
+        const result = suggestTests(graph, sym);
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
+
+      // ── cluster_summary ────────────────────────────────────────────────────
+      case 'cluster_summary': {
+        const cluster = a.cluster as string;
+        const result = summarizeCluster(graph, cluster);
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
       }
 
       default:
