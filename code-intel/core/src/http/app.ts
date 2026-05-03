@@ -1077,6 +1077,47 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     res.json({ nodes: [...mergedGraph.allNodes()], edges: [...mergedGraph.allEdges()] });
   });
 
+  app.get('/api/v1/groups/:name/topology', requireAuth, requireRole('viewer'), async (req: Request, res: Response) => {
+    const groupName = req.params['name'] as string;
+    const group = loadGroup(groupName);
+    if (!group) { res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: 'Group not found' } }); return; }
+    const syncResult = loadSyncResult(groupName);
+    const registry = loadRegistry();
+
+    const repos = await Promise.all(group.members.map(async (member) => {
+      const regEntry = registry.find((r) => r.name === member.registryName);
+      let nodeCount = 0;
+      let edgeCount = 0;
+      if (regEntry) {
+        const dbPath = path.join(regEntry.path, '.code-intel', 'graph.db');
+        if (fs.existsSync(dbPath)) {
+          try {
+            const db = new DbManager(dbPath);
+            await db.init();
+            const g = createKnowledgeGraph();
+            await loadGraphFromDB(g, db);
+            db.close();
+            nodeCount = g.size.nodes;
+            edgeCount = g.size.edges;
+          } catch { /* ignore */ }
+        }
+      }
+      return { name: member.registryName, groupPath: member.groupPath, nodeCount, edgeCount };
+    }));
+
+    const edges = syncResult
+      ? syncResult.links.map((link) => ({
+          source: link.providerRepo,
+          target: link.consumerRepo,
+          contractName: link.providerContract,
+          confidence: link.confidence,
+          kind: 'contract' as const,
+        }))
+      : [];
+
+    res.json({ repos, edges });
+  });
+
   // ── Source preview ──────────────────────────────────────────────────────────
   // GET /api/v1/source?file=<path>&startLine=<n>&endLine=<n>
   app.get('/api/v1/source', requireAuth, requireRole('viewer'), (req: Request, res: Response) => {

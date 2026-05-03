@@ -1,0 +1,108 @@
+name: 'Code Intel PR Impact'
+description: 'Analyze PR blast radius and post impact comment'
+author: 'code-intel'
+
+inputs:
+  token:
+    description: 'GitHub token for posting PR comments'
+    required: true
+  fail-on:
+    description: 'Risk level to fail on: HIGH, MEDIUM, or empty for none'
+    required: false
+    default: 'HIGH'
+  comment-on-pr:
+    description: 'Post impact comment on PR'
+    required: false
+    default: 'true'
+  repo-path:
+    description: 'Path to the repository to analyze'
+    required: false
+    default: '.'
+  base-ref:
+    description: 'Base ref for diff (default: main)'
+    required: false
+    default: 'main'
+
+outputs:
+  risk-level:
+    description: 'Highest risk level found: HIGH, MEDIUM, LOW, or NONE'
+  impact-json:
+    description: 'Full impact analysis as JSON'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install code-intel
+      shell: bash
+      run: npm install -g @vohongtho.infotech/code-intel
+
+    - name: Analyze repository
+      shell: bash
+      working-directory: ${{ inputs.repo-path }}
+      run: code-intel analyze --skip-embeddings
+
+    - name: Run PR impact analysis
+      id: impact
+      shell: bash
+      working-directory: ${{ inputs.repo-path }}
+      run: |
+        RESULT=$(code-intel pr-impact --base ${{ inputs.base-ref }} --head HEAD --format json 2>/dev/null || echo '{}')
+
+        # Write JSON to a temp file to avoid multiline/quoting issues in GITHUB_OUTPUT
+        echo "$RESULT" > /tmp/ci-impact.json
+
+        # Determine highest risk level
+        HIGH_COUNT=$(node -e "try { const r=JSON.parse(require('fs').readFileSync('/tmp/ci-impact.json','utf8')); console.log((r.riskSummary||{}).HIGH||0); } catch(e) { console.log(0); }")
+        MEDIUM_COUNT=$(node -e "try { const r=JSON.parse(require('fs').readFileSync('/tmp/ci-impact.json','utf8')); console.log((r.riskSummary||{}).MEDIUM||0); } catch(e) { console.log(0); }")
+
+        if [ "$HIGH_COUNT" -gt 0 ]; then
+          echo "risk-level=HIGH" >> $GITHUB_OUTPUT
+        elif [ "$MEDIUM_COUNT" -gt 0 ]; then
+          echo "risk-level=MEDIUM" >> $GITHUB_OUTPUT
+        else
+          echo "risk-level=LOW" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Post PR comment
+      if: inputs.comment-on-pr == 'true' && github.event_name == 'pull_request'
+      shell: bash
+      run: |
+        RISK='${{ steps.impact.outputs.risk-level }}'
+
+        BODY=$(node -e "
+          var fs = require('fs');
+          try {
+            var r = JSON.parse(fs.readFileSync('/tmp/ci-impact.json', 'utf8'));
+            var high = (r.changedSymbols || [])
+              .filter(function(s) { return s.risk === 'HIGH'; })
+              .map(function(s) { return 'HIGH: ' + s.name + ' (' + s.callerCount + ' callers)'; })
+              .join('\n');
+            var files = (r.filesToReview || []).join('\n');
+            var body = '## \uD83D\uDD0D Code Intel PR Impact\n\n**Risk Level: $RISK**\n\n\`\`\`\nHIGH risk:\n' + high + '\n\nFiles to review:\n' + files + '\n\`\`\`';
+            console.log(JSON.stringify(body));
+          } catch(e) {
+            console.log(JSON.stringify('## \uD83D\uDD0D Code Intel PR Impact\n\n**Risk Level: $RISK**\n\nNo impact data available.'));
+          }
+        ")
+
+        curl -s -X POST \
+          -H "Authorization: token ${{ inputs.token }}" \
+          -H "Content-Type: application/json" \
+          -d "{\"body\": $BODY}" \
+          "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments"
+
+    - name: Fail on risk level
+      if: inputs.fail-on != ''
+      shell: bash
+      run: |
+        RISK='${{ steps.impact.outputs.risk-level }}'
+        FAIL_ON='${{ inputs.fail-on }}'
+
+        if [ "$FAIL_ON" = "HIGH" ] && [ "$RISK" = "HIGH" ]; then
+          echo "❌ HIGH risk symbols found. Failing as configured."
+          exit 1
+        elif [ "$FAIL_ON" = "MEDIUM" ] && ([ "$RISK" = "HIGH" ] || [ "$RISK" = "MEDIUM" ]); then
+          echo "❌ MEDIUM+ risk symbols found. Failing as configured."
+          exit 1
+        fi
+        echo "✅ Risk level $RISK is acceptable."

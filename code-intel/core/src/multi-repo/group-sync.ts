@@ -12,6 +12,10 @@ import { DbManager } from '../storage/db-manager.js';
 import { createKnowledgeGraph, type KnowledgeGraph } from '../graph/knowledge-graph.js';
 import { loadGraphFromDB } from './graph-from-db.js';
 import Logger from '../shared/logger.js';
+import { parseOpenAPIContracts } from './schema-parsers/openapi-parser.js';
+import { parseGraphQLContracts } from './schema-parsers/graphql-parser.js';
+import { parseProtoContracts } from './schema-parsers/proto-parser.js';
+import { computeContractSimilarity } from './type-similarity.js';
 
 // ─── Extract contracts from a single repo's graph ────────────────────────────
 
@@ -37,6 +41,9 @@ function extractContracts(
         nodeKind: node.kind,
         filePath: node.filePath,
         signature: node.content?.split('\n')[0]?.trim(),
+        parameters: (node.metadata?.parameters ?? node.metadata?.params) as Array<{ name: string; type?: string }> | undefined,
+        returnType: node.metadata?.returnType as string | undefined,
+        exported: node.exported,
       });
     }
 
@@ -112,15 +119,17 @@ function matchContracts(allContracts: Contract[]): ContractLink[] {
       for (const provider of providerContracts) {
         const consumer = consumerByName.get(provider.name);
         if (consumer) {
-          // same-kind matches are more confident
+          // same-kind matches are more confident; use type-aware similarity for exact name match
           const sameKind = provider.kind === consumer.kind;
+          const typedScore = computeContractSimilarity(provider, consumer, 1.0);
+          const confidence = sameKind ? Math.max(typedScore, 0.9) : Math.max(typedScore, 0.6);
           links.push({
             providerRepo: provider.repoName,
             providerContract: provider.name,
             consumerRepo: consumer.repoName,
             consumerContract: consumer.name,
             matchKind: provider.kind === 'route' ? 'route-match' : 'name-match',
-            confidence: sameKind ? 0.9 : 0.6,
+            confidence: Math.min(1.0, confidence),
           });
         } else {
           // partial-name match (camelCase contained)
@@ -190,6 +199,48 @@ export async function syncGroup(group: RepoGroup): Promise<GroupSyncResult> {
     }
 
     const contracts = extractContracts(graph, member.registryName, regEntry.path);
+
+    // Schema-file contracts (OpenAPI, GraphQL, Protobuf)
+    const [openapiContracts, graphqlContracts, protoContracts] = await Promise.all([
+      parseOpenAPIContracts(regEntry.path).catch(() => []),
+      parseGraphQLContracts(regEntry.path).catch(() => []),
+      parseProtoContracts(regEntry.path).catch(() => []),
+    ]);
+
+    for (const c of openapiContracts) {
+      contracts.push({
+        repoName: member.registryName,
+        repoPath: regEntry.path,
+        kind: 'route',
+        name: c.name,
+        nodeId: `openapi:${c.method}:${c.path}`,
+        nodeKind: 'route',
+        filePath: c.filePath,
+      });
+    }
+    for (const c of graphqlContracts) {
+      contracts.push({
+        repoName: member.registryName,
+        repoPath: regEntry.path,
+        kind: 'graphql',
+        name: c.name,
+        nodeId: `graphql:${c.name}`,
+        nodeKind: 'graphql',
+        filePath: c.filePath,
+      });
+    }
+    for (const c of protoContracts) {
+      contracts.push({
+        repoName: member.registryName,
+        repoPath: regEntry.path,
+        kind: 'grpc',
+        name: c.name,
+        nodeId: `grpc:${c.serviceName}:${c.rpcName}`,
+        nodeKind: 'grpc',
+        filePath: c.filePath,
+      });
+    }
+
     Logger.info(`  ✓ ${member.registryName} (${member.groupPath}): ${contracts.length} contracts`);
     allContracts.push(...contracts);
   }

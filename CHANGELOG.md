@@ -4,6 +4,54 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [0.7.0] — 2026-05-03 — Multi-Repo & Monorepo
+
+> **Theme:** First-class support for large-scale repo structures.
+
+### 🗂️ Workspace Auto-Discovery
+
+- **`detectWorkspace()`** (`src/multi-repo/workspace-detector.ts`): detects npm/yarn/Bun (`workspaces` field), pnpm (`pnpm-workspace.yaml`), Nx (`nx.json`), and Turborepo (`turbo.json`) monorepo types; expands glob patterns into `Array<{ name, path }>`
+- **`code-intel group init-workspace`** CLI command: discovers all packages, creates a group, analyzes each package (with `--parallel <n>`, default 2), and runs `group sync`; `--no-analyze`, `--yes`, progress indicators, and final summary table
+
+### 🔬 Type-Aware Contract Matching
+
+- Contracts now include `parameters: [{name, type}]` + `returnType` from node metadata
+- New scoring formula: `0.4 * nameSim + 0.3 * paramTypeSim + 0.2 * returnTypeSim + 0.1 * paramCountSim`
+- Confidence boost (`×1.2`, capped at 1.0) when both name and types match
+- `group contracts` output shows type information
+
+### 📄 API Schema Contract Extraction
+
+- **OpenAPI/Swagger parser** (`src/multi-repo/schema-parsers/openapi-parser.ts`): scans for `openapi.yaml/json`, `swagger.yaml/json`; extracts all path + method entries with request/response schemas
+- **GraphQL schema parser** (`src/multi-repo/schema-parsers/graphql-parser.ts`): scans `*.graphql`, `*.gql`; extracts Query/Mutation fields and custom types
+- **Protobuf parser** (`src/multi-repo/schema-parsers/proto-parser.ts`): scans `*.proto`; extracts services, RPC methods, and message types
+
+### 🔄 Auto-Sync on Analyze
+
+- After `analyzeWorkspace` completes, auto-triggers `group sync` for all groups containing the repo
+- `--no-group-sync` flag to opt out; sync failure → warning only, analysis continues
+
+### 🖥️ Cross-Repo Web UI
+
+- `GET /api/v1/groups` and `GET /api/v1/groups/:name/topology` endpoints
+- **`GroupPanel`** sidebar section: group topology graph with repos as nodes and contract edges
+- Edge confidence color coding: green (≥0.8), yellow (0.5–0.8), red (<0.5)
+- Click edge → contract detail panel; click repo node → switch main graph
+
+### 🔧 CI/CD Integration
+
+- **`code-intel pr-impact`** CLI command: `--base <ref>`, `--head <ref>`, `--fail-on HIGH|MEDIUM`, `--format sarif|json`
+- **GitHub Action** (`.github/actions/code-intel/action.yml`): analyze → pr-impact → post PR comment → upload SARIF → exit code
+- SARIF 2.1.0 output via `src/cli/sarif-builder.ts`
+
+### 🐛 Bug Fixes
+
+- **Role hierarchy**: `requireRole('viewer')` now correctly permits `analyst` and `admin` users (uses rank-based comparison instead of exact match)
+- **Source file path resolution**: `GET /api/v1/source` now resolves relative file paths against `workspaceRoot` before checking repo access — fixes "File path must be within an indexed repository" when the web UI passes relative paths
+- **Deprecated packages**: added `overrides` in root `package.json` to upgrade `onnxruntime-node` → `^1.25.1` (drops `global-agent@3`/`boolean@3.2.0`), `node-domexception` → `^2.0.2`, and `global-agent` → `^4.1.3`
+
+---
+
 ## [0.6.0] — 2026-05-02 — Smarter AI Tooling
 
 > **Theme:** MCP tools that reason, not just retrieve.

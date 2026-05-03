@@ -115,6 +115,7 @@ export function LoginPage() {
             </div>
             <h1 className="text-2xl font-bold text-white tracking-tight">Code Intel</h1>
             <p className="text-gray-400 text-sm mt-1">First-time Setup</p>
+            <span className="mt-1.5 text-[10px] font-mono text-gray-600 select-none">v{__APP_VERSION__}</span>
           </div>
 
           <div className="mb-4 rounded-lg bg-cyan-950/40 border border-cyan-800/50 px-4 py-3">
@@ -230,6 +231,7 @@ export function LoginPage() {
           </div>
           <h1 className="text-2xl font-bold text-white tracking-tight">Code Intel</h1>
           <p className="text-gray-400 text-sm mt-1">Sign in to your account</p>
+          <span className="mt-1.5 text-[10px] font-mono text-gray-600 select-none">v{__APP_VERSION__}</span>
         </div>
 
         <form onSubmit={handleLogin} className="space-y-4">

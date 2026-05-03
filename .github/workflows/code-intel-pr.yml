@@ -1,0 +1,23 @@
+name: Code Intel PR Impact
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  impact-analysis:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: ./.github/actions/code-intel
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fail-on: HIGH
+          comment-on-pr: 'true'

@@ -198,6 +198,7 @@ describe('OpenAPI spec — every /api/v1/ route appears in paths', () => {
     { method: 'post',   path: '/groups/{name}/sync' },
     { method: 'post',   path: '/groups/{name}/search' },
     { method: 'get',    path: '/groups/{name}/graph' },
+    { method: 'get',    path: '/groups/{name}/topology' },
     { method: 'post',   path: '/query' },
     { method: 'post',   path: '/query/explain' },
     { method: 'get',    path: '/source' },
