@@ -51,18 +51,25 @@ export class IncrementalIndexer {
 
     // ── 1. Remove stale nodes from in-memory graph ────────────────────────────
     let nodesRemoved = 0;
+
+    // Build a filePath → nodeIds index once to avoid O(F×N) scanning.
+    const nodesByFilePath = new Map<string, string[]>();
+    for (const node of graph.allNodes()) {
+      if (!node.filePath) continue;
+      const ids = nodesByFilePath.get(node.filePath);
+      if (ids) ids.push(node.id);
+      else nodesByFilePath.set(node.filePath, [node.id]);
+    }
+
+    const nodeIdsToRemove = new Set<string>();
     for (const absPath of changedFiles) {
       const relPath = path.relative(workspaceRoot, absPath);
-      const toRemove: string[] = [];
-      for (const node of graph.allNodes()) {
-        if (node.filePath === relPath || node.filePath === absPath) {
-          toRemove.push(node.id);
-        }
-      }
-      for (const id of toRemove) {
-        graph.removeNodeCascade(id);
-        nodesRemoved++;
-      }
+      for (const id of nodesByFilePath.get(relPath) ?? []) nodeIdsToRemove.add(id);
+      for (const id of nodesByFilePath.get(absPath) ?? []) nodeIdsToRemove.add(id);
+    }
+    for (const id of nodeIdsToRemove) {
+      graph.removeNodeCascade(id);
+      nodesRemoved++;
     }
 
     // ── 2. Remove stale nodes from DB ─────────────────────────────────────────
