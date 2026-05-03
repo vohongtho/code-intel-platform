@@ -1154,13 +1154,19 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     }
 
     // Security: must be within workspaceRoot or a known repo
-    const normalizedFile = path.normalize(file);
+    // Resolve relative paths against workspaceRoot first
+    let resolvedFile = path.normalize(file);
+    if (!path.isAbsolute(resolvedFile) && workspaceRoot) {
+      resolvedFile = path.resolve(workspaceRoot, resolvedFile);
+    } else if (!path.isAbsolute(resolvedFile)) {
+      resolvedFile = path.resolve(process.cwd(), resolvedFile);
+    }
     if (workspaceRoot) {
       const normalizedRoot = path.normalize(workspaceRoot);
-      if (!normalizedFile.startsWith(normalizedRoot)) {
+      if (!resolvedFile.startsWith(normalizedRoot)) {
         // Also allow files from other indexed repos
         const registry = loadRegistry();
-        const inKnownRepo = registry.some((r) => normalizedFile.startsWith(path.normalize(r.path)));
+        const inKnownRepo = registry.some((r) => resolvedFile.startsWith(path.normalize(r.path)));
         if (!inKnownRepo) {
           res.status(403).json({
             error: {
@@ -1176,7 +1182,7 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
       }
     } else {
       const registry = loadRegistry();
-      const inKnownRepo = registry.some((r) => normalizedFile.startsWith(path.normalize(r.path)));
+      const inKnownRepo = registry.some((r) => resolvedFile.startsWith(path.normalize(r.path)));
       if (!inKnownRepo) {
         res.status(403).json({
           error: {
@@ -1194,7 +1200,7 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     // Read file
     let fileContent: string;
     try {
-      fileContent = fs.readFileSync(normalizedFile, 'utf-8');
+      fileContent = fs.readFileSync(resolvedFile, 'utf-8');
     } catch {
       res.status(404).json({
         error: {
@@ -1218,7 +1224,7 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     const content = lines.slice(contextStart - 1, contextEnd).join('\n');
 
     // Detect language from extension
-    const ext = path.extname(normalizedFile).toLowerCase();
+    const ext = path.extname(resolvedFile).toLowerCase();
     const languageMap: Record<string, string> = {
       '.ts': 'typescript',
       '.tsx': 'typescript',

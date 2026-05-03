@@ -168,6 +168,19 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
 
 // ── Middleware factory: require role ──────────────────────────────────────────
 
+// ── Role hierarchy ─────────────────────────────────────────────────────────────
+
+const ROLE_RANK: Record<Role, number> = {
+  viewer: 1,
+  'repo-owner': 2,
+  analyst: 3,
+  admin: 4,
+};
+
+function meetsRole(userRole: Role, required: Role): boolean {
+  return (ROLE_RANK[userRole] ?? 0) >= (ROLE_RANK[required] ?? 0);
+}
+
 export function requireRole(
   ...roles: Role[]
 ): (req: Request, res: Response, next: NextFunction) => void {
@@ -184,7 +197,9 @@ export function requireRole(
       });
       return;
     }
-    if (!roles.includes(req.user.role)) {
+    // Allow if user's role meets ANY of the required roles (by rank)
+    const allowed = roles.some((r) => meetsRole(req.user!.role, r));
+    if (!allowed) {
       res.status(403).json({
         error: {
           code: ErrorCodes.FORBIDDEN,

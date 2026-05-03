@@ -1,6 +1,6 @@
 # Code Intelligence Platform
 
-[![npm version](https://img.shields.io/badge/npm-v0.6.0-blue)](https://www.npmjs.com/package/@vohongtho.infotech/code-intel)
+[![npm version](https://img.shields.io/badge/npm-v0.7.0-blue)](https://www.npmjs.com/package/@vohongtho.infotech/code-intel)
 
 A static code analysis platform that builds a **Knowledge Graph** from your source code and makes it explorable through a Web UI, HTTP API, CLI, and MCP server.
 
@@ -30,7 +30,7 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 - **Parallel Analysis** — `--parallel` flag runs parse + resolve phases on worker threads for large repos
 - **AI Context Files** — auto-generates `AGENTS.md` + `CLAUDE.md` at project root after every analysis with live stats, CLI reference, and skill links
 - **Skill Files** — generates `.claude/skills/code-intel/` with per-cluster SKILL.md files (hot symbols, entry points, impact guidance) for AI assistants
-- **Repository Groups** — multi-repo / monorepo service tracking with contract extraction and cross-repo dependency detection
+- **Repository Groups** — multi-repo / monorepo service tracking with workspace auto-discovery (npm, pnpm, Nx, Turborepo), contract extraction (OpenAPI, GraphQL, Protobuf), type-aware similarity scoring, and cross-repo dependency detection
 - **`.codeintelignore`** — exclude directories from analysis (like `.gitignore` but for code-intel)
 - **Structured Logging** — winston-based logger with daily-rotating log files at `~/.code-intel/logs/`, sensitive-data masking, and configurable log levels
 - **Performance** — parallel batch file I/O, shared file cache (zero double-reads), O(log n) binary-search enclosing-function lookup
