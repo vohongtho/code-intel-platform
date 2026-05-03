@@ -1,0 +1,108 @@
+name: Publish VS Code Extension
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run — package only, do not publish'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # upload .vsix to GitHub release
+
+jobs:
+  publish-vscode:
+    name: Build & Publish VS Code Extension
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── Checkout ─────────────────────────────────────────────────────────────
+      - uses: actions/checkout@v4
+
+      # ── Node.js ──────────────────────────────────────────────────────────────
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      # ── Install root + extension deps ─────────────────────────────────────────
+      - name: Install root dependencies
+        run: npm ci --legacy-peer-deps --ignore-scripts
+
+      - name: Install extension dependencies
+        run: npm ci
+        working-directory: extensions/vscode
+
+      # ── Build extension ───────────────────────────────────────────────────────
+      - name: Build VS Code extension
+        run: npm run build
+        working-directory: extensions/vscode
+
+      # ── Sync version from tag ─────────────────────────────────────────────────
+      - name: Sync extension version from git tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "Setting extension version to $VERSION"
+          npm pkg set version="$VERSION"
+        working-directory: extensions/vscode
+
+      # ── Package .vsix ─────────────────────────────────────────────────────────
+      - name: Install vsce
+        run: npm install -g @vscode/vsce
+
+      - name: Package extension (.vsix)
+        run: vsce package --no-dependencies --out vscode-code-intel.vsix
+        working-directory: extensions/vscode
+
+      # ── Upload .vsix as artifact (always) ─────────────────────────────────────
+      - name: Upload .vsix artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vscode-code-intel-${{ github.ref_name }}
+          path: extensions/vscode/vscode-code-intel.vsix
+
+      # ── Attach .vsix to GitHub Release ───────────────────────────────────────
+      - name: Attach .vsix to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: extensions/vscode/vscode-code-intel.vsix
+
+      # ── Publish to VS Code Marketplace ───────────────────────────────────────
+      - name: Publish to VS Code Marketplace
+        if: startsWith(github.ref, 'refs/tags/') && !inputs.dry_run
+        run: vsce publish --no-dependencies --packagePath vscode-code-intel.vsix
+        working-directory: extensions/vscode
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
+      # ── Publish to Open VSX Registry (optional, community mirror) ────────────
+      - name: Publish to Open VSX Registry
+        if: startsWith(github.ref, 'refs/tags/') && !inputs.dry_run && secrets.OVSX_TOKEN != ''
+        run: npx --yes ovsx publish vscode-code-intel.vsix --pat "$OVSX_TOKEN"
+        working-directory: extensions/vscode
+        env:
+          OVSX_TOKEN: ${{ secrets.OVSX_TOKEN }}
+        continue-on-error: true   # Open VSX failure should not block the release
+
+      # ── Summary ───────────────────────────────────────────────────────────────
+      - name: Job summary
+        if: always()
+        run: |
+          echo "## VS Code Extension Publish" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Tag | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Package | \`vscode-code-intel.vsix\` |" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "| Mode | 🔍 Dry run (not published) |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Mode | 🚀 Published to Marketplace |" >> $GITHUB_STEP_SUMMARY
+            echo "| Marketplace | [vohongtho.vscode-code-intel](https://marketplace.visualstudio.com/items?itemName=vohongtho.vscode-code-intel) |" >> $GITHUB_STEP_SUMMARY
+          fi

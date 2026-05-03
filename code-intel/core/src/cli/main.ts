@@ -74,9 +74,63 @@ import { keychainBackend } from '../auth/keychain.js';
 import { assertNoPlaintextSecrets } from '../shared/config-validator.js';
 import { secureMkdir, tightenDbFiles } from '../shared/fs-secure.js';
 import { initTracing } from '../observability/tracing.js';
+import {
+  runInitWizard,
+  configExists,
+  loadConfig,
+  saveConfig,
+  wipeConfig,
+  DEFAULT_CONFIG,
+  detectEditors,
+} from './init-wizard.js';
+import {
+  configGet,
+  configSet,
+  configList,
+  configValidate,
+  configReset,
+} from './config-manager.js';
+import {
+  formatCliError,
+  runPrerequisiteChecks,
+} from '../errors/codes.js';
+import { generateCompletion, autoInstallCompletion } from './completion.js';
+import { backgroundVersionCheck, runUpdate } from './update-checker.js';
 
 // Bootstrap OTel tracing if enabled (must be called before any auto-instrumented code).
 initTracing();
+
+// ── Global --debug flag ───────────────────────────────────────────────────────
+const debugMode = process.argv.includes('--debug');
+
+// ── Startup prerequisite checks ───────────────────────────────────────────────
+{
+  const checks = runPrerequisiteChecks();
+  for (const c of checks) {
+    const icon = c.level === 'error' ? '✗' : '⚠';
+    process.stderr.write(`  ${icon}  ${c.message}\n`);
+  }
+}
+
+// ── First-run hint: if no config exists, suggest running init ─────────────────
+if (!configExists()) {
+  process.stderr.write(
+    '  ℹ  No config found. Run `code-intel init` to set up your environment.\n',
+  );
+}
+
+// ── Global uncaught error handler ─────────────────────────────────────────────
+process.on('uncaughtException', (err) => {
+  process.stderr.write(formatCliError(err, debugMode));
+  process.exit(1);
+});
+process.on('unhandledRejection', (err) => {
+  process.stderr.write(formatCliError(err, debugMode));
+  process.exit(1);
+});
+
+// ── Background version check (non-blocking) ───────────────────────────────────
+backgroundVersionCheck(_pkg.version);
 
 const program = new Command();
 
@@ -92,10 +146,12 @@ program
   .name('code-intel')
   .description('Code Intelligence Platform — Static Analysis + Knowledge Graph')
   .version(_pkg.version)
+  .option('--debug', 'Show full stack traces on errors')
   .addHelpText('beforeAll', BANNER)
   .addHelpText('after', `
   ┌─ Quick Start ────────────────────────────────────────────────────────────┐
   │                                                                          │
+  │  code-intel init                   Interactive setup wizard              │
   │  code-intel setup                  Configure MCP for your editors        │
   │  code-intel analyze                Index current directory               │
   │  code-intel serve                  Start web UI at http://localhost:4747  │
@@ -106,6 +162,16 @@ program
   └──────────────────────────────────────────────────────────────────────────┘
 
   ┌─ All Commands ─────────────────────────────────────────────────────────────────────────────────────────────────────┐
+  │                                                                                                                    │
+  │  init / config                                                                                                     │
+  │    code-intel init                          Interactive setup wizard — creates ~/.code-intel/config.json          │
+  │    code-intel init --reset                  Wipe and re-run the wizard                                            │
+  │    code-intel init --yes                    Non-interactive: accept all defaults                                  │
+  │    code-intel config get <key>              Print a single config value (dot-path)                                │
+  │    code-intel config set <key> <value>      Update a config value (validates before saving)                      │
+  │    code-intel config list                   Print full config as JSON (secrets masked)                            │
+  │    code-intel config validate               Validate config against JSON schema                                   │
+  │    code-intel config reset                  Reset config to defaults                                              │
   │                                                                                                                    │
   │  setup                                                                                                             │
   │    code-intel setup                         Register the MCP server in your editor config (one-time)              │
@@ -558,10 +624,138 @@ async function analyzeWorkspace(targetPath: string, options?: {
   return { graph, result, repoName, workspaceRoot };
 }
 
+// ─── 0. init ─────────────────────────────────────────────────────────────────
+program
+  .command('init')
+  .description('Interactive setup wizard — creates ~/.code-intel/config.json')
+  .option('--reset', 'Wipe existing config and re-run the wizard')
+  .option('--yes',   'Non-interactive: accept all defaults (skips prompts)')
+  .addHelpText('after', `
+  Walks you through 5 setup steps:
+    1. Editor detection (VS Code, Cursor, Windsurf, Zed) + MCP registration
+    2. LLM provider (OpenAI / Anthropic / Ollama / skip)
+    3. Vector embeddings (enable semantic search?)
+    4. Auth mode (local only / OIDC)
+    5. Default port + auto-open browser
+
+  The wizard writes a validated ~/.code-intel/config.json when complete.
+
+  Examples:
+    $ code-intel init            Interactive wizard
+    $ code-intel init --reset    Wipe and re-run wizard
+    $ code-intel init --yes      Accept all defaults (CI / scripted installs)
+`)
+  .action(async (opts: { reset?: boolean; yes?: boolean }) => {
+    await runInitWizard({ reset: opts.reset, yes: opts.yes });
+  });
+
+// ─── 0b. config ──────────────────────────────────────────────────────────────
+const configCmd = program
+  .command('config')
+  .description('Get, set, list, validate or reset ~/.code-intel/config.json')
+  .addHelpText('after', `
+  Manage all settings in ~/.code-intel/config.json using dot-path notation.
+  Sensitive values (apiKey, clientSecret, etc.) are masked in list output.
+  Use $ENV_VAR syntax for secrets, e.g. $OPENAI_API_KEY.
+
+  Subcommands:
+    get <key>        Print a single config value
+    set <key> <val>  Update a config value (validates before saving)
+    list             Print full config as JSON (secrets masked)
+    validate         Validate config against JSON schema
+    reset            Reset config to defaults (with confirmation)
+
+  Examples:
+    $ code-intel config get llm.provider
+    $ code-intel config set llm.provider openai
+    $ code-intel config set llm.apiKey '$OPENAI_API_KEY'
+    $ code-intel config set serve.defaultPort 8080
+    $ code-intel config list
+    $ code-intel config validate
+    $ code-intel config reset
+`);
+
+configCmd
+  .command('get <key>')
+  .description('Print a single config value (dot-path, e.g. llm.provider)')
+  .action((key: string) => {
+    configGet(key);
+  });
+
+configCmd
+  .command('set <key> <value>')
+  .description('Update a config value and save (validates before writing)')
+  .action((key: string, value: string) => {
+    configSet(key, value);
+  });
+
+configCmd
+  .command('list')
+  .description('Print full config as formatted JSON (sensitive values masked)')
+  .action(() => {
+    configList();
+  });
+
+configCmd
+  .command('validate')
+  .description('Validate config against JSON schema; print errors if invalid')
+  .action(() => {
+    const ok = configValidate();
+    if (!ok) process.exit(1);
+  });
+
+configCmd
+  .command('reset')
+  .description('Reset config to defaults')
+  .option('-y, --yes', 'Skip confirmation prompt')
+  .action(async (opts: { yes?: boolean }) => {
+    if (!opts.yes) {
+      const { createInterface } = await import('node:readline/promises');
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      const ans = (await rl.question('  Reset config to defaults? [y/N]: ')).trim().toLowerCase();
+      rl.close();
+      if (ans !== 'y' && ans !== 'yes') {
+        console.log('  Cancelled.\n');
+        return;
+      }
+    }
+    configReset();
+  });
+
+// ─── 0c. completion ───────────────────────────────────────────────────────────
+program
+  .command('completion')
+  .description('Generate shell completion scripts (bash, zsh, fish)')
+  .argument('<shell>', 'Shell type: bash | zsh | fish')
+  .addHelpText('after', `
+  Output a completion script for the specified shell and source it.
+
+  Examples:
+    Bash:
+      $ code-intel completion bash >> ~/.bashrc && source ~/.bashrc
+
+    Zsh:
+      $ code-intel completion zsh >> ~/.zshrc && source ~/.zshrc
+
+    Fish:
+      $ code-intel completion fish > ~/.config/fish/completions/code-intel.fish
+
+    Auto-install (detected shell):
+      $ code-intel setup --completion
+`)
+  .action((shell: string) => {
+    if (!['bash', 'zsh', 'fish'].includes(shell)) {
+      console.error(`\n  ✗  Unknown shell "${shell}". Supported: bash, zsh, fish\n`);
+      process.exit(1);
+    }
+    process.stdout.write(generateCompletion(shell as 'bash' | 'zsh' | 'fish'));
+  });
+
 // ─── 1. setup ────────────────────────────────────────────────────────────────
 program
   .command('setup')
   .description('Configure MCP server for your editors (one-time setup)')
+  .option('--completion', 'Auto-install shell completion for the detected shell')
   .addHelpText('after', `
   Configure the code-intel MCP server for Claude Desktop, VS Code, or any
   editor that supports the Model Context Protocol.
@@ -570,8 +764,14 @@ program
 
   Examples:
     $ code-intel setup
+    $ code-intel setup --completion    Auto-install shell completion
 `)
-  .action(() => {
+  .action((opts: { completion?: boolean }) => {
+    if (opts.completion) {
+      autoInstallCompletion();
+      return;
+    }
+
     const configDir = process.env.HOME ? `${process.env.HOME}/.config/claude` : null;
 
     console.log('\n  ◈  Code Intelligence — MCP Setup\n');
@@ -638,6 +838,7 @@ program
   .option('--llm-batch-size <n>',      'Concurrent LLM calls per batch (default: 20)', '20')
   .option('--llm-max-nodes <n>',       'Max nodes to summarize per run (cost guard)')
   .option('--no-group-sync',           'Skip automatic group sync after analysis')
+  .option('--dry-run',                 'Preview files that would be scanned + estimated time; no DB write')
   .addHelpText('after', `
   Parses your source code with tree-sitter, builds a Knowledge Graph of
   symbols and their relationships, persists it to .code-intel/graph.db,
@@ -658,6 +859,7 @@ program
     $ code-intel analyze --summarize            Generate AI summaries (uses Ollama by default)
     $ code-intel analyze --summarize --llm-provider openai --llm-model gpt-4o-mini
     $ code-intel analyze --summarize --llm-provider anthropic --llm-max-nodes 500
+    $ code-intel analyze --dry-run             Preview files that would be scanned
 `)
   .action(async (targetPath: string, opts: {
     force?: boolean;
@@ -675,7 +877,31 @@ program
     llmBatchSize?: string;
     llmMaxNodes?: string;
     groupSync?: boolean;
+    dryRun?: boolean;
   }) => {
+    // ── --dry-run: scan files only, no DB write ──────────────────────────────
+    if (opts.dryRun) {
+      const workspaceRoot = path.resolve(targetPath);
+      const { scanPhase: sp } = await import('../pipeline/phases/index.js');
+      const graph = createKnowledgeGraph();
+      const context = {
+        workspaceRoot,
+        graph,
+        filePaths: [] as string[],
+        verbose: opts.verbose,
+      };
+      await import('../pipeline/orchestrator.js').then(({ runPipeline }) =>
+        runPipeline([sp], context as Parameters<typeof runPipeline>[1]),
+      );
+      const fileCount = context.filePaths.length;
+      // Rough estimate: ~2.5ms per file for parse+resolve
+      const estimatedMs = Math.round(fileCount * 2.5);
+      const estimatedStr = estimatedMs >= 1000 ? `~${(estimatedMs / 1000).toFixed(1)}s` : `~${estimatedMs}ms`;
+      console.log(`\n  ◈  Dry run — ${workspaceRoot}\n`);
+      console.log(`  Would analyze ${fileCount.toLocaleString()} files (${estimatedStr} estimated).`);
+      console.log('  Pass without --dry-run to execute.\n');
+      process.exit(0);
+    }
     await analyzeWorkspace(targetPath, {
       force: opts.force,
       incremental: opts.incremental,
@@ -989,6 +1215,7 @@ program
   .option('--all',        'Remove indexes for ALL indexed repositories')
   .option('--force',      'Required with --all to confirm the destructive operation')
   .option('--purge',      'Immediately hard-delete instead of moving to trash')
+  .option('--dry-run',    'Show what would be deleted + sizes, without deleting')
   .option('--list-trash', 'List all trash directories and their ages')
   .addHelpText('after', `
   By default, .code-intel/ is moved to .code-intel-trash-{date}/ for 30 days
@@ -1004,7 +1231,45 @@ program
     $ code-intel clean --all --force --purge Hard-delete ALL indexes immediately
     $ code-intel clean --list-trash          List all trash directories
 `)
-  .action((targetPath: string, opts: { all?: boolean; force?: boolean; purge?: boolean; listTrash?: boolean }) => {
+  .action((targetPath: string, opts: { all?: boolean; force?: boolean; purge?: boolean; listTrash?: boolean; dryRun?: boolean }) => {
+    // ── --dry-run ──────────────────────────────────────────────────────────
+    if (opts.dryRun) {
+      const showDryRun = (repoPath: string) => {
+        const codeIntelDir = path.join(path.resolve(repoPath), '.code-intel');
+        if (!fs.existsSync(codeIntelDir)) {
+          console.log(`  (no .code-intel/ found at ${repoPath})`);
+          return;
+        }
+        // Calculate size
+        let totalBytes = 0;
+        const countDir = (dir: string) => {
+          try {
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+              const full = path.join(dir, entry.name);
+              if (entry.isDirectory()) countDir(full);
+              else try { totalBytes += fs.statSync(full).size; } catch { /* skip */ }
+            }
+          } catch { /* skip */ }
+        };
+        countDir(codeIntelDir);
+        const sizeStr = totalBytes > 1_048_576
+          ? `${(totalBytes / 1_048_576).toFixed(1)} MB`
+          : `${(totalBytes / 1024).toFixed(0)} KB`;
+        console.log(`  Would delete: ${codeIntelDir}  (${sizeStr})`);
+      };
+
+      if (opts.all) {
+        const repos = loadRegistry();
+        console.log(`\n  ◈  Dry run — clean --all\n`);
+        if (repos.length === 0) { console.log('  No indexed repos found.\n'); return; }
+        for (const r of repos) showDryRun(r.path);
+      } else {
+        console.log(`\n  ◈  Dry run — clean ${path.resolve(targetPath)}\n`);
+        showDryRun(targetPath);
+      }
+      console.log('\n  Pass without --dry-run to execute.\n');
+      return;
+    }
     // ── list-trash ─────────────────────────────────────────────────────────
     if (opts.listTrash) {
       const repos = loadRegistry();
@@ -1437,6 +1702,7 @@ groupCmd
 groupCmd
   .command('sync <name>')
   .description('Extract contracts and detect cross-repo dependencies in a group')
+  .option('--dry-run', 'Show which contracts would be updated without executing the sync')
   .addHelpText('after', `
   Scans every member repo's knowledge graph for exported symbols, routes,
   schemas, and events, then cross-matches names across repos to find
@@ -1444,8 +1710,9 @@ groupCmd
 
   Examples:
     $ code-intel group sync my-platform
+    $ code-intel group sync my-platform --dry-run
 `)
-  .action(async (name: string) => {
+  .action(async (name: string, opts: { dryRun?: boolean }) => {
     const group = loadGroup(name);
     if (!group) {
       console.error(`\n  ✗  Group "${name}" not found.\n`);
@@ -1455,6 +1722,17 @@ groupCmd
       console.error(`\n  ✗  Group "${name}" has no members.`);
       console.error(`     Add repos with \`code-intel group add\`.\n`);
       process.exit(1);
+    }
+
+    if (opts.dryRun) {
+      console.log(`\n  ◈  Dry run — group sync "${name}"\n`);
+      console.log(`  Members that would be synced (${group.members.length}):`);
+      for (const m of group.members) {
+        console.log(`    • ${m.registryName}  (${m.groupPath})`);
+      }
+      console.log(`\n  Would extract contracts and resolve cross-repo links.`);
+      console.log('  Pass without --dry-run to execute.\n');
+      return;
     }
 
     console.log(`\n  ⟳  Syncing group "${name}" (${group.members.length} member(s))…\n`);
@@ -3185,6 +3463,163 @@ program
       filtered.some((f) => f.severity === 'HIGH' || f.severity === 'MEDIUM')
     ) {
       process.exit(1);
+    }
+  });
+
+// ─── update ───────────────────────────────────────────────────────────────────
+program
+  .command('update')
+  .description('Check for a newer version of code-intel and update if available')
+  .option('-y, --yes', 'Skip confirmation prompt and update immediately')
+  .option('--no-update-check', 'Suppress the background update check on startup')
+  .addHelpText('after', `
+  Checks the npm registry for a newer version of code-intel.
+  If found, prompts to install it globally via npm.
+
+  The background check runs at startup (once per UPDATE_CHECK_INTERVAL hours, default 24h).
+  Suppress it permanently with: --no-update-check flag or UPDATE_CHECK_DISABLED=1 env var.
+
+  Examples:
+    $ code-intel update            Interactive (prompts before installing)
+    $ code-intel update --yes      Auto-update without prompt
+    $ code-intel update --no-update-check   Disable background check for this run
+`)
+  .action(async (opts: { yes?: boolean }) => {
+    await runUpdate({ yes: opts.yes });
+  });
+
+// ─── doctor ───────────────────────────────────────────────────────────────────
+program
+  .command('doctor')
+  .description('Run diagnostics — check Node.js, git, config, registry, DB integrity, and network')
+  .addHelpText('after', `
+  Runs all startup checks and repo health checks, then prints a summary.
+  Exit code 0 if all checks pass; 1 if any check fails.
+
+  Examples:
+    $ code-intel doctor
+`)
+  .action(async () => {
+    const { execSync: exec2 } = await import('node:child_process');
+    const { getDbPath, getVectorDbPath } = await import('../storage/index.js');
+    const { loadMetadata: loadMeta2 } = await import('../storage/metadata.js');
+    const { loadRegistry: loadReg } = await import('../storage/repo-registry.js');
+    const { validateConfig } = await import('./config-manager.js');
+    const { loadConfig } = await import('./init-wizard.js');
+
+    let hasError = false;
+    const line = (icon: string, label: string, detail: string) =>
+      console.log(`  ${icon}  ${label.padEnd(38)} ${detail}`);
+
+    console.log('\n  ◈  code-intel doctor\n');
+
+    // ── Node.js version ───────────────────────────────────────────────────
+    const [major] = process.versions.node.split('.').map(Number);
+    if ((major ?? 0) >= 22) {
+      line('✅', `Node.js v${process.versions.node}`, 'required ≥ 22');
+    } else {
+      line('⚠️ ', `Node.js v${process.versions.node}`, 'v22 or higher recommended');
+    }
+
+    // ── git ───────────────────────────────────────────────────────────────
+    try {
+      const gitVer = exec2('git --version', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim().split('\n')[0];
+      line('✅', 'git', gitVer ?? 'found');
+    } catch {
+      line('⚠️ ', 'git', 'not found in PATH — incremental analysis disabled');
+    }
+
+    // ── config.json ───────────────────────────────────────────────────────
+    const cfg = loadConfig();
+    if (!cfg) {
+      line('⚠️ ', '~/.code-intel/config.json', 'not found — run `code-intel init`');
+    } else {
+      const errs = validateConfig(cfg);
+      if (errs.length === 0) {
+        line('✅', '~/.code-intel/config.json', 'valid');
+      } else {
+        hasError = true;
+        line('❌', '~/.code-intel/config.json', `${errs.length} error(s) — run \`code-intel config validate\``);
+        for (const e of errs.slice(0, 3)) {
+          console.log(`       • ${e.path}: ${e.reason}`);
+        }
+      }
+    }
+
+    // ── registry ──────────────────────────────────────────────────────────
+    const registry = loadReg();
+    line('✅', 'Registry', `${registry.length} repo(s) indexed`);
+
+    // ── per-repo health ───────────────────────────────────────────────────
+    const STALE_DAYS = 7;
+    for (const repo of registry) {
+      const meta = loadMeta2(repo.path);
+      if (!meta) {
+        line('⚠️ ', repo.name, 'index metadata missing');
+        continue;
+      }
+      const ageDays = (Date.now() - new Date(meta.indexedAt).getTime()) / 86_400_000;
+
+      // DB integrity check
+      const dbPath = getDbPath(repo.path);
+      let dbOk = false;
+      try {
+        const Database = (await import('better-sqlite3')).default;
+        const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+        db.prepare('SELECT COUNT(*) FROM nodes').get();
+        db.close();
+        dbOk = true;
+      } catch {
+        /* corrupted */
+      }
+
+      if (!dbOk) {
+        hasError = true;
+        line('❌', repo.name, 'graph.db corrupted — run `clean && analyze`');
+        continue;
+      }
+
+      // Vector DB (optional)
+      const vdbPath = getVectorDbPath(repo.path);
+      if (fs.existsSync(vdbPath)) {
+        try {
+          const Database2 = (await import('better-sqlite3')).default;
+          const vdb = new Database2(vdbPath, { readonly: true, fileMustExist: true });
+          vdb.prepare('SELECT COUNT(*) FROM vectors').get();
+          vdb.close();
+        } catch {
+          hasError = true;
+          line('❌', `${repo.name} / vector.db`, 'corrupted — run `clean && analyze --embeddings`');
+        }
+      }
+
+      if (ageDays > STALE_DAYS) {
+        line('⚠️ ', repo.name, `index is ${Math.floor(ageDays)} days old (run \`analyze\`)`);
+      } else {
+        line('✅', repo.name, `${meta.stats.nodes} nodes · ${meta.stats.edges} edges · ${Math.floor(ageDays)}d old`);
+      }
+    }
+
+    // ── network ───────────────────────────────────────────────────────────
+    try {
+      const resp = await fetch('https://registry.npmjs.org/code-intel/latest', {
+        signal: AbortSignal.timeout(5000),
+      });
+      if (resp.ok) {
+        line('✅', 'npm registry', 'reachable');
+      } else {
+        line('⚠️ ', 'npm registry', `unreachable (HTTP ${resp.status})`);
+      }
+    } catch {
+      line('⚠️ ', 'npm registry', 'unreachable — check internet connection');
+    }
+
+    console.log('');
+    if (hasError) {
+      console.log('  ✗  One or more checks failed. Review the ❌ items above.\n');
+      process.exit(1);
+    } else {
+      console.log('  ✅  All checks passed.\n');
     }
   });
 

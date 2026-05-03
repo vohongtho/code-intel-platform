@@ -1,6 +1,6 @@
 # Code Intelligence Platform
 
-[![npm version](https://img.shields.io/badge/npm-v0.8.0-blue)](https://www.npmjs.com/package/@vohongtho.infotech/code-intel)
+[![npm version](https://img.shields.io/badge/npm-v0.9.0-blue)](https://www.npmjs.com/package/@vohongtho.infotech/code-intel)
 
 A static code analysis platform that builds a **Knowledge Graph** from your source code and makes it explorable through a Web UI, HTTP API, CLI, and MCP server.
 
@@ -32,6 +32,14 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 - **Incremental Analysis** — `--incremental` re-parses only changed files; 10k-file repo / 3 changes: 288ms
 - **Parallel Analysis** — `--parallel` runs parse + resolve phases on worker threads for large repos
 - **Structured Logging** — winston-based logger with daily-rotating log files, sensitive-data masking, and configurable log levels
+- **`code-intel init` Wizard** _(v0.9)_ — interactive 5-step setup wizard; creates `~/.code-intel/config.json`
+- **Config Management CLI** _(v0.9)_ — `config get/set/list/validate/reset` with JSON Schema, `$ENV_VAR` expansion, masked secrets
+- **Better Error Messages** _(v0.9)_ — `CI-XXXX` codes, actionable hints, `--debug` stack traces, startup prerequisite checks
+- **Shell Completion** _(v0.9)_ — `code-intel completion bash|zsh|fish`; `setup --completion` auto-installs
+- **VS Code Extension** _(v0.9)_ — symbol hover, Symbol Explorer panel, status bar, command palette, go-to-definition from graph
+- **Self-Update** _(v0.9)_ — `code-intel update`; background version check; `--no-update-check` to suppress
+- **`--dry-run` flag** _(v0.9)_ — `analyze`, `clean`, `group sync` preview without side effects
+- **`code-intel doctor`** _(v0.9)_ — full diagnostics: Node.js, git, config, registry, DB integrity, network
 
 ---
 

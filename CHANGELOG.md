@@ -4,6 +4,92 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [0.9.0] — 2026-05-03 — Developer Experience
+
+> **Theme:** Zero-friction setup, great errors, IDE integration
+
+### 🧙 Epic 1 — Interactive `code-intel init` Wizard
+
+- **`code-intel init`** — interactive 5-step wizard that creates `~/.code-intel/config.json`
+  - Step 1: Editor detection (VS Code, Cursor, Windsurf, Zed) → offer MCP registration
+  - Step 2: LLM provider (OpenAI / Anthropic / Ollama / skip)
+  - Step 3: Embeddings (enable vector search?)
+  - Step 4: Auth mode (local only / OIDC)
+  - Step 5: Default port + open browser on serve
+- **`code-intel init --reset`** — wipe and re-run wizard
+- **`code-intel init --yes`** — non-interactive: accept all defaults (CI / scripted installs)
+- **First-run hint** — if no config exists, startup prints `ℹ  No config found. Run \`code-intel init\`…`
+
+### ⚙️ Epic 2 — Config Management CLI
+
+- **`code-intel config get <key>`** — print single config value (dot-path notation)
+- **`code-intel config set <key> <value>`** — update value, validate, and save
+- **`code-intel config list`** — print full config as formatted JSON (sensitive values masked with `***`)
+- **`code-intel config validate`** — validate against JSON Schema; prints errors with hints
+- **`code-intel config reset`** — reset to defaults (with confirmation prompt or `-y` flag)
+- **JSON Schema** — all fields, types, allowed values, and defaults for `~/.code-intel/config.json`
+- **`$ENV_VAR` syntax** — expand environment variables in string config values
+- **Startup validation** — invalid config → clear error with field path and fix hint
+
+### 🚨 Epic 3 — Better Error Messages
+
+- **Custom error classes** — `AuthError`, `AnalysisError`, `ConfigError`, `DBError`, `NetworkError`
+- **CI-XXXX error codes** — every error carries a structured code, hint, and docs URL
+  - `CI-1000` Not authenticated · `CI-1004` Repo not indexed · `CI-1042` DB corrupted
+  - `CI-2000` Config invalid · `CI-3000` Analysis failed · `CI-5000` Network error
+- **Stack traces suppressed by default** — clean one-liner errors in normal use
+- **`--debug` flag** — reveals full stack trace for any command
+- **Startup prerequisite checks** — Node.js ≥ 22, git in PATH, disk space > 500 MB
+- **Global uncaught error handler** — formats and exits cleanly on unexpected errors
+
+### 🐚 Epic 4 — Shell Completion
+
+- **`code-intel completion bash`** — generates a valid bash completion script
+- **`code-intel completion zsh`** — generates a valid zsh completion script
+- **`code-intel completion fish`** — generates a fish completion script
+- **`code-intel setup --completion`** — auto-installs completion for the detected shell
+- **Dynamic completion** — repo paths from `~/.code-intel/registry.json`, group names from `~/.code-intel/groups/`, all subcommand flags
+
+### 🧩 Epic 5 — VS Code Extension
+
+- **New package** `vscode-code-intel` in `extensions/vscode/`
+- **Symbol hover provider** — hover over any function/class → fetch summary + callers/callees from graph API
+- **Symbol Explorer panel** — tree view of symbols in the active file (kind icons)
+- **Status bar indicator** — `$(graph) Code Intel: indexed Xh ago` → click → re-analyze
+- **"Open in Graph" command** — right-click symbol → open Web UI centered on that node
+- **Command palette** — `Code Intel: Search`, `Code Intel: Analyze`, `Code Intel: Health`
+- **Go-to-definition from graph** — URI handler (`vscode://…/jump?file=…&line=…`) jumps editor to source
+- **Settings** — `codeIntel.serverUrl`, `codeIntel.token`, `codeIntel.enableHover`, `codeIntel.autoAnalyze`
+- **GitHub Actions workflow** — `.github/workflows/publish-vscode.yml` publishes `.vsix` to VS Code Marketplace + Open VSX on every version tag
+
+### 🔄 Epic 6 — `code-intel update` Self-Update
+
+- **`code-intel update`** — checks npm registry; prompts `New version X.Y.Z available. Update now? [y/N]`
+- **`code-intel update --yes`** — non-interactive update
+- **Background version check** — non-blocking startup check (fire-and-forget); prints notice if outdated
+- **`--no-update-check`** flag + `UPDATE_CHECK_DISABLED=1` env var to suppress
+- **`UPDATE_CHECK_INTERVAL`** env var (default: 24h)
+- **Caches** last-check timestamp + latest version in `~/.code-intel/update-meta.json`
+
+### 🔍 Epic 7 — `--dry-run` Flag
+
+- **`code-intel analyze --dry-run`** — shows file count + estimated time; no DB write
+- **`code-intel clean --dry-run`** — shows what would be deleted + sizes; no deletion
+- **`code-intel group sync --dry-run`** — shows which members would be synced; no execution
+
+### 🩺 Epic 8 — `code-intel doctor` Diagnostics
+
+- **`code-intel doctor`** — full diagnostic report:
+  - ✅/⚠️  Node.js version (≥ 22 required)
+  - ✅/⚠️  git availability
+  - ✅/❌  `~/.code-intel/config.json` validation
+  - ✅  Registry: N repos indexed
+  - ✅/⚠️/❌  Per-repo: DB integrity (better-sqlite3 read test), stale index (> 7 days)
+  - ✅/⚠️  npm registry reachability
+- **Exit code** 0 if all ✅, 1 if any ❌
+
+---
+
 ## [0.8.0] — 2026-05-03 — Security & Quality Scanning
 
 > **Theme:** Enterprise-grade security awareness and code quality signals.

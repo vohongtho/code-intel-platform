@@ -1,6 +1,6 @@
 # Code Intelligence Platform
 
-[![npm version](https://img.shields.io/badge/npm-v0.8.0-blue)](https://www.npmjs.com/package/@vohongtho.infotech/code-intel)
+[![npm version](https://img.shields.io/badge/npm-v0.9.0-blue)](https://www.npmjs.com/package/@vohongtho.infotech/code-intel)
 
 A static code analysis platform that builds a **Knowledge Graph** from your source code and makes it explorable through a Web UI, HTTP API, CLI, and MCP server.
 
@@ -37,6 +37,14 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 - **`.codeintelignore`** — exclude directories from analysis (like `.gitignore` but for code-intel)
 - **Structured Logging** — winston-based logger with daily-rotating log files at `~/.code-intel/logs/`, sensitive-data masking, and configurable log levels
 - **Performance** — parallel batch file I/O, shared file cache (zero double-reads), O(log n) binary-search enclosing-function lookup
+- **`code-intel init` Wizard** _(v0.9)_ — interactive 5-step setup wizard; creates `~/.code-intel/config.json` with editor MCP registration, LLM provider, embeddings, auth mode, and port settings
+- **Config Management CLI** _(v0.9)_ — `config get/set/list/validate/reset` with JSON Schema, `$ENV_VAR` expansion, and masked secret output
+- **Better Error Messages** _(v0.9)_ — `CI-XXXX` error codes, actionable hints, `--debug` stack traces, startup prerequisite checks
+- **Shell Completion** _(v0.9)_ — `code-intel completion bash|zsh|fish`; dynamic repo + group name completion; `setup --completion` auto-installs
+- **VS Code Extension** _(v0.9)_ — symbol hover tooltips, Symbol Explorer panel, status bar freshness indicator, "Open in Graph" command, command palette integration
+- **Self-Update** _(v0.9)_ — `code-intel update` checks npm registry; background version check on startup; `--no-update-check` to suppress
+- **`--dry-run` flag** _(v0.9)_ — `analyze`, `clean`, `group sync` preview what would happen without side effects
+- **`code-intel doctor`** _(v0.9)_ — full diagnostics: Node.js, git, config, registry, DB integrity, network; exit 1 on any failure
 
 ---
 
