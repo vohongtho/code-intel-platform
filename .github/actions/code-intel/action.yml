@@ -34,7 +34,11 @@ runs:
   steps:
     - name: Install code-intel
       shell: bash
-      run: npm install -g @vohongtho.infotech/code-intel --ignore-scripts
+      run: |
+        npm install -g @vohongtho.infotech/code-intel --ignore-scripts
+        # Rebuild native modules in the global install location
+        GLOBAL_PREFIX=$(npm root -g)/..
+        cd "$GLOBAL_PREFIX" && npm rebuild @ladybugdb/core better-sqlite3 2>/dev/null || true
 
     - name: Analyze repository
       shell: bash
