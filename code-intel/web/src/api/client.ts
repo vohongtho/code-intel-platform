@@ -1,6 +1,20 @@
 import type { CodeNode, CodeEdge } from 'code-intel-shared';
 import type { SearchResult, CurrentUser } from '../state/types';
 
+export interface CountGroup {
+  key: string;
+  count: number;
+}
+
+export interface GQLResult {
+  nodes: CodeNode[];
+  edges?: CodeEdge[];
+  groups?: CountGroup[];
+  executionTimeMs: number;
+  truncated: boolean;
+  totalCount: number;
+}
+
 export interface AuthStatus {
   authenticated: boolean;
   user?: CurrentUser;
@@ -242,5 +256,32 @@ export class ApiClient {
     const res = await fetch(`${this.baseUrl}/api/v1/groups/${encodeURIComponent(name)}/graph`, { credentials: 'include' });
     if (!res.ok) throw new Error(`Failed to fetch group graph: ${res.statusText}`);
     return res.json() as Promise<{ nodes: import('code-intel-shared').CodeNode[]; edges: import('code-intel-shared').CodeEdge[] }>;
+  }
+
+  async sourcePreview(file: string, startLine?: number, endLine?: number): Promise<{ content: string; language: string; startLine: number; endLine: number }> {
+    const params = new URLSearchParams({ file });
+    if (startLine !== undefined) params.set('startLine', String(startLine));
+    if (endLine !== undefined) params.set('endLine', String(endLine));
+    const res = await fetch(`${this.baseUrl}/api/v1/source?${params.toString()}`, { credentials: 'include' });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { error?: { message?: string } };
+      throw new Error(body?.error?.message ?? `Source preview failed: ${res.statusText}`);
+    }
+    return res.json() as Promise<{ content: string; language: string; startLine: number; endLine: number }>;
+  }
+
+  async queryGQL(gql: string): Promise<GQLResult> {
+    const csrfToken = await this.getCsrfToken();
+    const res = await fetch(`${this.baseUrl}/api/v1/query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      credentials: 'include',
+      body: JSON.stringify({ gql }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { error?: { message?: string } };
+      throw new Error(body?.error?.message ?? `Query failed: ${res.statusText}`);
+    }
+    return res.json() as Promise<GQLResult>;
   }
 }

@@ -22,8 +22,13 @@ export function StatusFooter() {
     toastTimerRef.current = setTimeout(() => setToastMsg(null), 4000);
   };
 
+  // Clear toast timer on unmount to avoid state updates on unmounted component
   useEffect(() => {
-    if (!state.connected) return;
+    return () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); };
+  }, []);
+
+  useEffect(() => {
+    if (!state.connected || !state.currentUser) return;
 
     const wsUrl = state.serverUrl.replace(/^http/, 'ws') + '/ws';
     let ws: WebSocket | null = null;
@@ -67,7 +72,7 @@ export function StatusFooter() {
       ws?.close();
       setWsConnected(false);
     };
-  }, [state.connected, state.serverUrl]);
+  }, [state.connected, state.currentUser, state.serverUrl]);
 
   // ── Vector index polling ──────────────────────────────────────────────────
   const pollVectorStatus = useCallback(async () => {

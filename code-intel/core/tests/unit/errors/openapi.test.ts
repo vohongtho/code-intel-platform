@@ -149,7 +149,7 @@ describe('OpenAPI spec — validates against OpenAPI 3.1 structure', () => {
   it('all HTTP status codes in responses are string representations of valid codes', () => {
     const validMethods = new Set(['get', 'post', 'put', 'patch', 'delete', 'head', 'options', 'trace']);
     const paths = spec['paths'] as Record<string, Record<string, Record<string, unknown>>>;
-    const validCodes = new Set(['200', '201', '204', '301', '302', '400', '401', '403', '404', '409', '413', '429', '500', '503', 'default']);
+    const validCodes = new Set(['200', '201', '204', '301', '302', '400', '401', '403', '404', '409', '413', '422', '429', '500', '503', 'default']);
     for (const [pathKey, pathItem] of Object.entries(paths)) {
       for (const [method, operation] of Object.entries(pathItem)) {
         if (!validMethods.has(method)) continue;
@@ -198,6 +198,9 @@ describe('OpenAPI spec — every /api/v1/ route appears in paths', () => {
     { method: 'post',   path: '/groups/{name}/sync' },
     { method: 'post',   path: '/groups/{name}/search' },
     { method: 'get',    path: '/groups/{name}/graph' },
+    { method: 'post',   path: '/query' },
+    { method: 'post',   path: '/query/explain' },
+    { method: 'get',    path: '/source' },
   ];
 
   const paths = openApiSpec.paths as Record<string, Record<string, unknown>>;

@@ -241,6 +241,60 @@ export const openApiSpec = {
         },
       },
     },
+    '/source': {
+      get: {
+        tags: ['Files'],
+        summary: 'Get source code preview with context around specified lines',
+        description: 'Returns the file content around the specified line range (±20 lines context), with language detection. Requires viewer role.',
+        security: [{ BearerAuth: [] }, { SessionCookie: [] }],
+        parameters: [
+          {
+            name: 'file',
+            in: 'query',
+            required: true,
+            description: 'Absolute path to the file',
+            schema: { type: 'string' },
+          },
+          {
+            name: 'startLine',
+            in: 'query',
+            required: false,
+            description: 'Start line number (1-indexed)',
+            schema: { type: 'integer', minimum: 1 },
+          },
+          {
+            name: 'endLine',
+            in: 'query',
+            required: false,
+            description: 'End line number (1-indexed)',
+            schema: { type: 'integer', minimum: 1 },
+          },
+        ],
+        responses: {
+          '200': {
+            description: 'Source code preview',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    content: { type: 'string', description: 'File content (with context lines)' },
+                    language: { type: 'string', description: 'Detected programming language', example: 'typescript' },
+                    startLine: { type: 'integer', description: 'Actual start line returned (with context)' },
+                    endLine: { type: 'integer', description: 'Actual end line returned (with context)' },
+                  },
+                  required: ['content', 'language', 'startLine', 'endLine'],
+                },
+              },
+            },
+          },
+          '400': { description: 'Bad request (missing file param or path traversal detected)', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '401': { description: 'Unauthorized', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '403': { description: 'Forbidden (file outside indexed repos)', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '404': { description: 'File not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
     '/grep': {
       post: {
         tags: ['Files'],
@@ -352,6 +406,112 @@ export const openApiSpec = {
         responses: {
           '200': { description: 'Merged graph nodes and edges', content: { 'application/json': { schema: { type: 'object', properties: { nodes: { type: 'array' }, edges: { type: 'array' } } } } } },
           '404': { description: 'Group not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
+    '/query': {
+      post: {
+        tags: ['GQL'],
+        summary: 'Execute a GQL (Graph Query Language) query against the knowledge graph',
+        description: 'Supports FIND, TRAVERSE, PATH, and COUNT statements. Requires viewer role minimum.',
+        security: [{ BearerAuth: [] }, { SessionCookie: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  gql: {
+                    type: 'string',
+                    description: 'GQL query string',
+                    example: 'FIND function WHERE name CONTAINS "auth"',
+                  },
+                  format: {
+                    type: 'string',
+                    enum: ['json', 'table', 'csv'],
+                    default: 'json',
+                    description: 'Output format',
+                  },
+                },
+                required: ['gql'],
+              },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'GQL execution result',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    nodes: { type: 'array', items: { '$ref': '#/components/schemas/CodeNode' } },
+                    edges: { type: 'array', items: { type: 'object' } },
+                    groups: { type: 'array', items: { type: 'object', properties: { key: { type: 'string' }, count: { type: 'integer' } } } },
+                    path: { type: 'array', items: { '$ref': '#/components/schemas/CodeNode' }, nullable: true },
+                    executionTimeMs: { type: 'number' },
+                    truncated: { type: 'boolean' },
+                    totalCount: { type: 'integer' },
+                  },
+                },
+              },
+            },
+          },
+          '400': { description: 'Missing gql field', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '401': { description: 'Unauthorized', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '403': { description: 'Forbidden (insufficient role)', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '422': { description: 'GQL parse error', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
+    '/query/explain': {
+      post: {
+        tags: ['GQL'],
+        summary: 'Explain a GQL query — returns the execution plan without running it',
+        description: 'Returns a query plan object describing the steps that would be executed. Requires viewer role minimum.',
+        security: [{ BearerAuth: [] }, { SessionCookie: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  gql: { type: 'string', description: 'GQL query string', example: 'FIND function WHERE name CONTAINS "auth"' },
+                },
+                required: ['gql'],
+              },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'Query plan',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    plan: {
+                      type: 'object',
+                      properties: {
+                        type: { type: 'string', enum: ['FIND', 'TRAVERSE', 'PATH', 'COUNT'] },
+                        gql: { type: 'string' },
+                        steps: { type: 'array', items: { type: 'object' } },
+                        estimatedCost: { type: 'number' },
+                      },
+                    },
+                    graphSize: { type: 'object', properties: { nodes: { type: 'integer' }, edges: { type: 'integer' } } },
+                  },
+                },
+              },
+            },
+          },
+          '400': { description: 'Missing gql field', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '401': { description: 'Unauthorized', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '422': { description: 'GQL parse error', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
         },
       },
     },

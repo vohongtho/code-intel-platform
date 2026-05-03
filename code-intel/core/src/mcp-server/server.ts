@@ -189,6 +189,24 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
         },
       },
 
+      // ── query (GQL) ────────────────────────────────────────────────────────
+      {
+        name: 'query',
+        description: 'Execute a GQL (Graph Query Language) query. Supports FIND, TRAVERSE, PATH, and COUNT. More expressive than raw_query.',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            gql: {
+              type: 'string',
+              description: 'GQL query string. Examples: "FIND function WHERE name CONTAINS \\"auth\\"", "TRAVERSE CALLS FROM \\"handleLogin\\" DEPTH 3", "PATH FROM \\"createUser\\" TO \\"sendEmail\\"", "COUNT function GROUP BY cluster"',
+            },
+            limit: { type: 'number', description: 'Override LIMIT in the query (optional)' },
+            ..._tokenProp,
+          },
+          required: ['gql'],
+        },
+      },
+
       // ── Raw query ─────────────────────────────────────────────────────────
       {
         name: 'raw_query',
@@ -396,7 +414,7 @@ async function dispatchTool(
         const limit = (a.limit as number) ?? 20;
         const vdbPath = workspaceRoot ? getVectorDbPath(workspaceRoot) : undefined;
         const { results, searchMode } = await hybridSearch(graph, query, limit, { vectorDbPath: vdbPath });
-        return { content: [{ type: 'text', text: JSON.stringify({ results, searchMode }, null, 2) }] };
+        return { content: [{ type: 'text', text: JSON.stringify({ results, searchMode, suggested_next_tools: ['inspect', 'query', 'blast_radius'] }, null, 2) }] };
       }
 
       // ── inspect ────────────────────────────────────────────────────────────
@@ -738,16 +756,58 @@ async function dispatchTool(
         };
       }
 
+      // ── query (GQL) ───────────────────────────────────────────────────────────
+      case 'query': {
+        const gqlInput = a.gql as string;
+        if (!gqlInput) {
+          return { content: [{ type: 'text', text: JSON.stringify({ error: 'Missing required parameter: gql' }) }], isError: true };
+        }
+
+        // Dynamic import to avoid circular deps
+        const { parseGQL, isGQLParseError } = await import('../query/gql-parser.js');
+        const { executeGQL } = await import('../query/gql-executor.js');
+
+        const ast = parseGQL(gqlInput);
+        if (isGQLParseError(ast)) {
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ error: `GQL parse error: ${ast.message}`, pos: ast.pos, expected: ast.expected, got: ast.got }) }],
+            isError: true,
+          };
+        }
+
+        // Apply optional limit override
+        if (a.limit !== undefined && ast.type === 'FIND') {
+          (ast as import('../query/gql-parser.js').FindStatement).limit = a.limit as number;
+        }
+
+        const result = executeGQL(ast, graph);
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              nodes: result.nodes,
+              edges: result.edges,
+              groups: result.groups,
+              path: result.path,
+              executionTimeMs: result.executionTimeMs,
+              truncated: result.truncated,
+              totalCount: result.totalCount,
+            }, null, 2),
+          }],
+        };
+      }
+
       // ── raw_query ──────────────────────────────────────────────────────────
       case 'raw_query': {
         const q = a.cypher as string;
+        const deprecationWarning = 'raw_query is deprecated, use query instead';
         const nameMatch = q?.match(/name\s*=\s*['"]([^'"]+)['"]/i);
         if (nameMatch) {
           const results = [];
           for (const node of graph.allNodes()) {
             if (node.name === nameMatch[1]) results.push(node);
           }
-          return { content: [{ type: 'text', text: JSON.stringify(results, null, 2) }] };
+          return { content: [{ type: 'text', text: JSON.stringify({ deprecation: deprecationWarning, results }, null, 2) }] };
         }
         const kindMatch = q?.match(/:\s*(\w+)/);
         if (kindMatch) {
@@ -756,9 +816,9 @@ async function dispatchTool(
             if (node.kind === kindMatch[1]) results.push(node);
             if (results.length >= 50) break;
           }
-          return { content: [{ type: 'text', text: JSON.stringify(results, null, 2) }] };
+          return { content: [{ type: 'text', text: JSON.stringify({ deprecation: deprecationWarning, results }, null, 2) }] };
         }
-        return { content: [{ type: 'text', text: 'Query not recognized. Use name=\'X\' or :kind syntax.' }] };
+        return { content: [{ type: 'text', text: JSON.stringify({ deprecation: deprecationWarning, error: 'Query not recognized. Use name=\'X\' or :kind syntax. Or use the query tool with GQL instead.' }) }] };
       }
 
       // ── group_list ─────────────────────────────────────────────────────────

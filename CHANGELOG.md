@@ -4,6 +4,36 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [0.5.0] — 2026-05-02 — Query & Exploration
+
+> **Theme:** Let users ask arbitrary questions about their code — a native graph query language, source code preview, and a visual query console.
+
+### 🔎 Graph Query Language (GQL)
+
+- **GQL Parser** (`src/query/gql-parser.ts`): recursive-descent lexer/parser supporting four statement types: `FIND`, `TRAVERSE`, `PATH`, `COUNT ... GROUP BY`; WHERE clause with `=`, `!=`, `CONTAINS`, `STARTS_WITH`, `IN` operators; descriptive parse errors with position info
+- **GQL Executor** (`src/query/gql-executor.ts`): executes all four statement types against the live graph; 10s execution timeout returns partial results with `{ truncated: true }`; LIMIT/OFFSET pagination
+- **`POST /api/v1/query`**: executes a GQL string; returns `{ nodes, edges, groups, executionTimeMs, truncated, totalCount }`; 422 on parse error, 408 on timeout with partial results; requires `viewer` role minimum
+- **`POST /api/v1/query/explain`**: returns a human-readable query plan without executing
+- **MCP `query` tool**: `{ gql, limit? }` → full GQLResult; replaces `raw_query` (kept with deprecation warning)
+- **Saved queries** (`src/query/saved-queries.ts`): `--save`, `--run`, `--list`, `--delete` flags; persisted to `.code-intel/queries/`
+- **`code-intel query` CLI command**: `--format table|json|csv`, `--file <path>`, `--limit <n>`, `--save/--run/--list/--delete`; exit code 1 on parse/execution error
+
+### 👁️ Web UI: Source Code Preview
+
+- **`GET /api/v1/source`**: serves file content with ±20 lines of context; path-traversal protection; requires `viewer` role + repo access
+- **`SourcePanel`** React component: syntax highlighting via `highlight.js` (lazy-loaded per language); highlights symbol's `startLine..endLine`; click node in graph → panel opens at that symbol; "Open in editor" (`vscode://file/…`) + "Copy path" buttons; resizable with localStorage persistence
+
+### 🖥️ Web UI: Query Console
+
+- **`QueryPanel`** React component: multi-line monospace GQL editor with keyword highlighting; "Run" button + `Ctrl+Enter` shortcut; sortable results table; click result row → selects node in graph; last 20 queries in localStorage; 5 built-in example queries dropdown
+
+### 🔧 Bug Fixes & CI
+
+- **`POST /api/v1/query`**: timeout response now correctly returns HTTP 408 with partial results
+- **SBOM generation**: added `continue-on-error: true` + `NPM_CONFIG_LEGACY_PEER_DEPS=true` to CycloneDX workflow step to handle optional platform-specific packages (`@ladybugdb/core-darwin-x64`, `tree-sitter-kotlin`, `tree-sitter-swift`) on Linux CI runners
+
+---
+
 ## [0.4.0] — 2026-05-02 — Intelligence Layer
 
 > **Theme:** Understand not just structure, but meaning — AI summaries, hybrid search, live file watcher, and code health signals.
