@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
 
 // Patterns that indicate a value is an environment variable (safe)
@@ -48,6 +50,8 @@ export interface SecretFinding {
 export interface ScanOptions {
   includeTestFiles?: boolean;
   scope?: string;
+  workspaceRoot?: string;
+  ignorePatterns?: string[];
 }
 
 export class SecretScanner {
@@ -55,6 +59,20 @@ export class SecretScanner {
     const findings: SecretFinding[] = [];
     const includeTests = options?.includeTestFiles ?? false;
     const scope = options?.scope;
+
+    // Load .codeintelignore patterns
+    const ignorePatterns: string[] = [...(options?.ignorePatterns ?? [])];
+    if (options?.workspaceRoot) {
+      try {
+        const raw = fs.readFileSync(path.join(options.workspaceRoot, '.codeintelignore'), 'utf-8');
+        for (const line of raw.split('\n')) {
+          const trimmed = line.trim();
+          if (trimmed && !trimmed.startsWith('#')) ignorePatterns.push(trimmed);
+        }
+      } catch {
+        // no .codeintelignore — that's fine
+      }
+    }
 
     for (const node of graph.allNodes()) {
       const filePath = node.filePath;
@@ -64,6 +82,9 @@ export class SecretScanner {
 
       // Test file filter
       if (!includeTests && isTestFile(filePath)) continue;
+
+      // .codeintelignore pattern filter
+      if (ignorePatterns.length > 0 && ignorePatterns.some(p => filePath.includes(p))) continue;
 
       const meta = node.metadata as Record<string, unknown> | undefined;
       const rawValue = (meta?.value ?? meta?.literalValue) as string | undefined;

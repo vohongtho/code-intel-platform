@@ -32,7 +32,9 @@ export type EdgeKind =
   | 'belongs_to'
   | 'step_of'
   | 'handles'
-  | 'has_vulnerability';
+  | 'has_vulnerability'
+ | 'deprecated_use'
+ | 'tested_by';
 
 export interface CodeNode {
   id: string;
