@@ -168,9 +168,26 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
 
 // ── Middleware factory: require role ──────────────────────────────────────────
 
+// Role hierarchy: admin > analyst > viewer ≥ repo-owner
+const ROLE_HIERARCHY: Record<Role, number> = {
+  'admin':      40,
+  'analyst':    30,
+  'viewer':     20,
+  'repo-owner': 20,
+};
+
+function roleLevel(role: Role): number {
+  return ROLE_HIERARCHY[role] ?? 0;
+}
+
+/**
+ * Requires the user to have AT LEAST the minimum level of any listed role.
+ * Example: requireRole('viewer') allows admin, analyst, and viewer.
+ */
 export function requireRole(
   ...roles: Role[]
 ): (req: Request, res: Response, next: NextFunction) => void {
+  const minLevel = Math.min(...roles.map(roleLevel));
   return (req: Request, res: Response, next: NextFunction): void => {
     if (!req.user) {
       res.status(401).json({
@@ -184,7 +201,7 @@ export function requireRole(
       });
       return;
     }
-    if (!roles.includes(req.user.role)) {
+    if (roleLevel(req.user.role) < minLevel) {
       res.status(403).json({
         error: {
           code: ErrorCodes.FORBIDDEN,

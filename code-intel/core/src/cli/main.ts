@@ -2278,9 +2278,9 @@ authCmd
     console.log('  Usage: Authorization: Bearer <new-token>\n');
   });
 
-// ─── 17. secrets ─────────────────────────────────────────────────────────────
+// ─── 17. keystore ─────────────────────────────────────────────────────────────
 const secretsCmd = program
-  .command('secrets')
+  .command('keystore')
   .description('Manage the encrypted .code-intel/.secrets store (AES-256-GCM)');
 
 secretsCmd

@@ -1148,8 +1148,15 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
       return;
     }
 
+    // Resolve relative paths against workspaceRoot so the Web UI can pass
+    // repo-relative paths like "code-intel/core/src/auth/middleware.ts"
+    let resolvedFile = path.normalize(file);
+    if (!path.isAbsolute(resolvedFile) && workspaceRoot) {
+      resolvedFile = path.normalize(path.join(workspaceRoot, file));
+    }
+
     // Security: must be within workspaceRoot or a known repo
-    const normalizedFile = path.normalize(file);
+    const normalizedFile = resolvedFile;
     if (workspaceRoot) {
       const normalizedRoot = path.normalize(workspaceRoot);
       if (!normalizedFile.startsWith(normalizedRoot)) {

@@ -1,11 +1,11 @@
 ---
 name: api
-description: "Covers the **api** subsystem of code-intel-platform. 31 symbols across 1 files. Key symbols: `constructor`, `login`, `logout`. Internal call density: 0.4 calls/symbol. Participates in 1 execution flow(s)."
+description: "Covers the **api** subsystem of code-intel-platform. 32 symbols across 1 files. Key symbols: `constructor`, `login`, `logout`. Internal call density: 0.3 calls/symbol. Participates in 1 execution flow(s)."
 ---
 
 # api
 
-> **31 symbols** | **1 files** | path: `code-intel/web/src/api/` | call density: 0.4/sym
+> **32 symbols** | **1 files** | path: `code-intel/web/src/api/` | call density: 0.3/sym
 
 ## When to Use
 
@@ -19,7 +19,7 @@ Load this skill when:
 
 | File | Symbols | Notes |
 |------|---------|-------|
-| `code-intel/web/src/api/client.ts` | `GQLResult`, `AuthStatus`, `NodeInspectInfo`, `BlastRadiusResult` +(27) | 31 exported |
+| `code-intel/web/src/api/client.ts` | `GQLResult`, `AuthStatus`, `NodeInspectInfo`, `BlastRadiusResult` +(28) | 32 exported |
 
 ## Entry Points
 
@@ -38,10 +38,10 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `ApiClient` | class | 18 | 0 | `api/client.ts` |
+| `ApiClient` | class | 20 | 0 | `api/client.ts` |
 | `getCsrfToken` | method | 11 | 1 | `api/client.ts` |
 | `search` | method | 7 | 2 | `api/client.ts` |
-| `listGroups` | method | 6 | 1 | `api/client.ts` |
+| `listGroups` | method | 7 | 1 | `api/client.ts` |
 | `syncGroup` | method | 4 | 2 | `api/client.ts` |
 | `vectorSearch` | method | 2 | 2 | `api/client.ts` |
 | `vectorStatus` | method | 3 | 1 | `api/client.ts` |
