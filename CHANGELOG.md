@@ -4,7 +4,147 @@ All notable changes to this project are documented in this file.
 
 ---
 
-## [0.7.0] — 2026-05-03 — Multi-Repo & Monorepo
+## [0.9.0] — 2026-05-03 — Developer Experience
+
+> **Theme:** Zero-friction setup, great errors, IDE integration
+
+### 🧙 Epic 1 — Interactive `code-intel init` Wizard
+
+- **`code-intel init`** — interactive 5-step wizard that creates `~/.code-intel/config.json`
+  - Step 1: Editor detection (VS Code, Cursor, Windsurf, Zed) → offer MCP registration
+  - Step 2: LLM provider (OpenAI / Anthropic / Ollama / skip)
+  - Step 3: Embeddings (enable vector search?)
+  - Step 4: Auth mode (local only / OIDC)
+  - Step 5: Default port + open browser on serve
+- **`code-intel init --reset`** — wipe and re-run wizard
+- **`code-intel init --yes`** — non-interactive: accept all defaults (CI / scripted installs)
+- **First-run hint** — if no config exists, startup prints `ℹ  No config found. Run \`code-intel init\`…`
+
+### ⚙️ Epic 2 — Config Management CLI
+
+- **`code-intel config get <key>`** — print single config value (dot-path notation)
+- **`code-intel config set <key> <value>`** — update value, validate, and save
+- **`code-intel config list`** — print full config as formatted JSON (sensitive values masked with `***`)
+- **`code-intel config validate`** — validate against JSON Schema; prints errors with hints
+- **`code-intel config reset`** — reset to defaults (with confirmation prompt or `-y` flag)
+- **JSON Schema** — all fields, types, allowed values, and defaults for `~/.code-intel/config.json`
+- **`$ENV_VAR` syntax** — expand environment variables in string config values
+- **Startup validation** — invalid config → clear error with field path and fix hint
+
+### 🚨 Epic 3 — Better Error Messages
+
+- **Custom error classes** — `AuthError`, `AnalysisError`, `ConfigError`, `DBError`, `NetworkError`
+- **CI-XXXX error codes** — every error carries a structured code, hint, and docs URL
+  - `CI-1000` Not authenticated · `CI-1004` Repo not indexed · `CI-1042` DB corrupted
+  - `CI-2000` Config invalid · `CI-3000` Analysis failed · `CI-5000` Network error
+- **Stack traces suppressed by default** — clean one-liner errors in normal use
+- **`--debug` flag** — reveals full stack trace for any command
+- **Startup prerequisite checks** — Node.js ≥ 22, git in PATH, disk space > 500 MB
+- **Global uncaught error handler** — formats and exits cleanly on unexpected errors
+
+### 🐚 Epic 4 — Shell Completion
+
+- **`code-intel completion bash`** — generates a valid bash completion script
+- **`code-intel completion zsh`** — generates a valid zsh completion script
+- **`code-intel completion fish`** — generates a fish completion script
+- **`code-intel setup --completion`** — auto-installs completion for the detected shell
+- **Dynamic completion** — repo paths from `~/.code-intel/registry.json`, group names from `~/.code-intel/groups/`, all subcommand flags
+
+### 🧩 Epic 5 — VS Code Extension
+
+- **New package** `vscode-code-intel` in `extensions/vscode/`
+- **Symbol hover provider** — hover over any function/class → fetch summary + callers/callees from graph API
+- **Symbol Explorer panel** — tree view of symbols in the active file (kind icons)
+- **Status bar indicator** — `$(graph) Code Intel: indexed Xh ago` → click → re-analyze
+- **"Open in Graph" command** — right-click symbol → open Web UI centered on that node
+- **Command palette** — `Code Intel: Search`, `Code Intel: Analyze`, `Code Intel: Health`
+- **Go-to-definition from graph** — URI handler (`vscode://…/jump?file=…&line=…`) jumps editor to source
+- **Settings** — `codeIntel.serverUrl`, `codeIntel.token`, `codeIntel.enableHover`, `codeIntel.autoAnalyze`
+- **GitHub Actions workflow** — `.github/workflows/publish-vscode.yml` publishes `.vsix` to VS Code Marketplace + Open VSX on every version tag
+
+### 🔄 Epic 6 — `code-intel update` Self-Update
+
+- **`code-intel update`** — checks npm registry; prompts `New version X.Y.Z available. Update now? [y/N]`
+- **`code-intel update --yes`** — non-interactive update
+- **Background version check** — non-blocking startup check (fire-and-forget); prints notice if outdated
+- **`--no-update-check`** flag + `UPDATE_CHECK_DISABLED=1` env var to suppress
+- **`UPDATE_CHECK_INTERVAL`** env var (default: 24h)
+- **Caches** last-check timestamp + latest version in `~/.code-intel/update-meta.json`
+
+### 🔍 Epic 7 — `--dry-run` Flag
+
+- **`code-intel analyze --dry-run`** — shows file count + estimated time; no DB write
+- **`code-intel clean --dry-run`** — shows what would be deleted + sizes; no deletion
+- **`code-intel group sync --dry-run`** — shows which members would be synced; no execution
+
+### 🩺 Epic 8 — `code-intel doctor` Diagnostics
+
+- **`code-intel doctor`** — full diagnostic report:
+  - ✅/⚠️  Node.js version (≥ 22 required)
+  - ✅/⚠️  git availability
+  - ✅/❌  `~/.code-intel/config.json` validation
+  - ✅  Registry: N repos indexed
+  - ✅/⚠️/❌  Per-repo: DB integrity (better-sqlite3 read test), stale index (> 7 days)
+  - ✅/⚠️  npm registry reachability
+- **Exit code** 0 if all ✅, 1 if any ❌
+
+---
+
+## [0.8.0] — 2026-05-03 — Security & Quality Scanning
+
+> **Theme:** Enterprise-grade security awareness and code quality signals.
+
+### 🔐 Epic 1 — Hardcoded Secret Detection
+
+- **`SecretScanner`** (`src/security/secret-scanner.ts`): scans string literals from tree-sitter AST for API keys (`sk-...`, `pk_live_...`, `AKIA...`, `xoxb-...`), DB URLs with credentials, RSA private keys, and high-entropy strings in sensitive variable names
+- `.codeintelignore` patterns respected during secret scanning (`ignorePatterns` option)
+- **`code-intel secrets [path]`** CLI: prints findings table (file, line, variable, pattern); `--format table|json`, `--fail-on`, `--fix-hint`, `--include-tests`
+- **`secrets` MCP tool**: `{ scope?, includeTestFiles? }` → `{ findings: [...], total }`
+
+### 🛡️ Epic 2 — OWASP Vulnerability Detection
+
+- **`VulnerabilityDetector`** (`src/security/vulnerability-detector.ts`): detects SQL Injection (CWE-89), XSS (CWE-79), SSRF (CWE-918), Path Traversal (CWE-22), Command Injection (CWE-78)
+- `VulnerabilityType` exported type for use in CLI and MCP server
+- `vulnerability` NodeKind and `has_vulnerability` EdgeKind added to graph model
+- **`code-intel scan [path]`** CLI: `--type`, `--severity`, `--format table|json|sarif`, `--fail-on`, `--exclude`
+- **`vulnerability_scan` MCP tool**: findings with CWE IDs
+
+### 📊 Epic 3 — Complexity Metrics
+
+- Cyclomatic + cognitive complexity computed for all functions/methods; stored in `metadata.complexity`
+- **`code-intel complexity [path] --top N`** CLI and `complexity_hotspots` MCP tool
+
+### 🧪 Epic 4 — Test Coverage Integration
+
+- Test file detection for all major languages; `tested_by` EdgeKind added
+- **`code-intel coverage [path]`** CLI and `coverage_gaps` MCP tool: untested exported symbols ranked by blast radius
+- `--threshold <pct>` → exit 1 if coverage below target
+
+### 🚫 Epic 5 — Deprecated API Detection
+
+- Detects `@deprecated` JSDoc (TS/JS), `@Deprecated` (Java), `#[deprecated]` (Rust), built-in Node.js deprecated APIs
+- `deprecated_use` EdgeKind added; `code-intel deprecated [path]` CLI and `deprecated_usage` MCP tool
+
+### 🤖 AI Agent Context — Multi-Agent Support
+
+- **`writeContextFiles()`** now writes to 5 locations on every `code-intel analyze`:
+  - `AGENTS.md` (Amp, Codex, OpenCode, Aider, Factory, Trae, Hermes, Pi, Antigravity, OpenClaw)
+  - `CLAUDE.md` (Claude Code)
+  - `.github/copilot-instructions.md` (GitHub Copilot / VS Code Copilot Chat)
+  - `.cursor/rules/code-intel.mdc` (Cursor IDE)
+  - `.kiro/steering/code-intel.md` (Kiro IDE/CLI)
+- Context block includes: **Mandatory Rules**, **Development Workflow** (implement, fix, study, review, refactor), **When to Load a Skill** (per-subsystem), and full **CLI Quick Reference** with all working commands
+
+### 🔧 Bug Fixes & Infrastructure
+
+- Added `anymatch`, `braces`, `glob-parent`, `is-binary-path`, `is-glob`, `normalize-path`, `readdirp` as explicit dependencies to fix `Cannot find module` errors in CI (Node 20 environments)
+- Fixed GitHub Action (`action.yml`): shell syntax error near `$(...)` — use temp file for JSON output instead of piping through `$GITHUB_OUTPUT`
+- Fixed `EdgeKind` type: added `deprecated_use` and `tested_by` (were missing, causing TS2367 errors)
+- Merged `main` → `release/0.8.0`
+
+---
+
+
 
 > **Theme:** First-class support for large-scale repo structures.
 

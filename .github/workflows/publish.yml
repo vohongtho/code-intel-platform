@@ -22,11 +22,14 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci --legacy-peer-deps
+        run: npm ci --legacy-peer-deps --ignore-scripts
+
+      - name: Rebuild native modules for tests
+        run: npm rebuild @ladybugdb/core better-sqlite3 --legacy-peer-deps
 
       - name: Typecheck (shared + core + web)
         run: npx tsc -b code-intel/shared code-intel/core code-intel/web
@@ -55,12 +58,12 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'npm'
           registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies
-        run: npm ci --legacy-peer-deps
+        run: npm ci --legacy-peer-deps --ignore-scripts
 
       - name: Build core
         run: npm run build --workspace=code-intel/core
@@ -193,11 +196,11 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci --legacy-peer-deps
+        run: npm ci --legacy-peer-deps --ignore-scripts
 
       - name: Generate CycloneDX SBOM
         # npm ls may exit 1 on optional platform-specific packages (e.g. @ladybugdb/core-darwin-x64

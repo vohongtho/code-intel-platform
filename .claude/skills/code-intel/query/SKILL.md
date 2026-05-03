@@ -1,6 +1,6 @@
 ---
 name: query
-description: "Covers the **query** subsystem of code-intel-platform. 65 symbols across 9 files. Key symbols: `parse`, `summarizeCluster`, `executePATH`. Internal call density: 1.1 calls/symbol."
+description: "Covers the **query** subsystem of code-intel-platform. 65 symbols across 9 files. Key symbols: `parse`, `summarizeCluster`, `computePRImpact`. Internal call density: 1.1 calls/symbol."
 ---
 
 # query
@@ -11,7 +11,7 @@ description: "Covers the **query** subsystem of code-intel-platform. 65 symbols 
 
 Load this skill when:
 - The task involves code in `code-intel/core/src/query/`
-- The user mentions `parse`, `summarizeCluster`, `executePATH` or asks how they work
+- The user mentions `parse`, `summarizeCluster`, `computePRImpact` or asks how they work
 - Adding, modifying, or debugging query-related functionality
 - Tracing call chains that pass through the query layer
 
@@ -35,13 +35,13 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `parse` | method | 32 | 6 | `query/gql-parser.ts` |
+| `parse` | method | 38 | 6 | `query/gql-parser.ts` |
 | `summarizeCluster` | function | 2 | 10 | `query/cluster-summary.ts` |
+| `computePRImpact` | function | 4 | 8 | `query/pr-impact.ts` |
 | `executePATH` | function | 1 | 10 | `query/gql-executor.ts` |
 | `isGQLParseError` | function | 11 | 0 | `query/gql-parser.ts` |
 | `peek` | method | 10 | 0 | `query/gql-parser.ts` |
 | `consume` | method | 10 | 0 | `query/gql-parser.ts` |
-| `computePRImpact` | function | 2 | 8 | `query/pr-impact.ts` |
 | `findSimilarSymbols` | function | 2 | 8 | `query/similar-symbols.ts` |
 | `explainRelationship` | function | 2 | 7 | `query/explain-relationship.ts` |
 | `executeTRAVERSE` | function | 1 | 7 | `query/gql-executor.ts` |

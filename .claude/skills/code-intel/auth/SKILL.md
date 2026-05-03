@@ -1,11 +1,11 @@
 ---
 name: auth
-description: "Covers the **auth** subsystem of code-intel-platform. 84 symbols across 5 files. Key symbols: `authMiddleware`, `constructor`, `createUser`. Internal call density: 0.6 calls/symbol."
+description: "Covers the **auth** subsystem of code-intel-platform. 85 symbols across 5 files. Key symbols: `authMiddleware`, `constructor`, `createUser`. Internal call density: 0.6 calls/symbol."
 ---
 
 # auth
 
-> **84 symbols** | **5 files** | path: `code-intel/core/src/auth/` | call density: 0.6/sym
+> **85 symbols** | **5 files** | path: `code-intel/core/src/auth/` | call density: 0.6/sym
 
 ## When to Use
 
@@ -20,7 +20,7 @@ Load this skill when:
 | File | Symbols | Notes |
 |------|---------|-------|
 | `code-intel/core/src/auth/users-db.ts` | `User`, `Token`, `OIDCIdentity`, `UsersDB` +(26) | 30 exported |
-| `code-intel/core/src/auth/middleware.ts` | `Request`, `SessionEntry`, `getSessionTtlMs`, `createSession` +(13) | 14 exported |
+| `code-intel/core/src/auth/middleware.ts` | `Request`, `SessionEntry`, `getSessionTtlMs`, `createSession` +(14) | 14 exported |
 | `code-intel/core/src/auth/oidc.ts` | `OIDCPendingFlow`, `cleanExpiredFlows`, `OIDCConfig`, `getOIDCConfig` +(13) | 16 exported |
 | `code-intel/core/src/auth/secret-store.ts` | `getScryptN`, `SecretsBlob`, `getSecretsPath`, `getMasterPassword` +(9) | 10 exported |
 | `code-intel/core/src/auth/keychain.ts` | `getKeytar`, `KeychainBackendInfo`, `keychainBackend`, `setKeychainSecret` +(3) | 6 exported |
@@ -47,10 +47,10 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | `getDiscoveredConfig` | function | 5 | 3 | `auth/oidc.ts` |
 | `saveSecrets` | function | 3 | 5 | `auth/secret-store.ts` |
 | `getOrCreateUsersDB` | function | 6 | 2 | `auth/users-db.ts` |
+| `requireRole` | function | 3 | 4 | `auth/middleware.ts` |
 | `getOIDCConfig` | function | 7 | 0 | `auth/oidc.ts` |
 | `handleOIDCCallback` | function | 2 | 5 | `auth/oidc.ts` |
 | `createSession` | function | 3 | 3 | `auth/middleware.ts` |
-| `requireRole` | function | 3 | 3 | `auth/middleware.ts` |
 | `buildOIDCLoginUrl` | function | 2 | 4 | `auth/oidc.ts` |
 
 ## Impact Guidance

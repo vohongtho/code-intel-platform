@@ -7,9 +7,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'npm'
-      - run: npm ci --legacy-peer-deps
+      - run: npm ci --legacy-peer-deps --ignore-scripts
+      - name: Rebuild native modules needed for tests
+        run: npm rebuild @ladybugdb/core better-sqlite3 --legacy-peer-deps
       - run: npm test --workspace=code-intel/core
       - name: npm audit gate (0 high/critical CVEs)
         run: npm audit --audit-level=high --omit=dev

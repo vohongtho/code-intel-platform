@@ -189,4 +189,32 @@ describe('SecretScanner', () => {
     const security = (node?.metadata?.security as { secretRisk?: boolean } | undefined);
     assert.ok(security?.secretRisk === true, 'node metadata should have secretRisk: true');
   });
+
+  it('does NOT flag when path matches ignorePatterns', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({
+      id: 'n1',
+      kind: 'variable',
+      name: 'API_KEY',
+      filePath: 'src/generated/config.ts',
+      metadata: { value: 'sk-abc123longvalue' },
+    });
+    const scanner = new SecretScanner();
+    const findings = scanner.scan(graph, { ignorePatterns: ['generated/'] });
+    assert.equal(findings.length, 0, 'files matching ignorePatterns should be excluded');
+  });
+
+  it('flags node with [REDACTED:api-key] literal by sensitive name pattern', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({
+      id: 'redacted1',
+      kind: 'variable',
+      name: 'API_KEY',
+      filePath: 'src/config.ts',
+      metadata: { value: '[REDACTED:api-key]' },
+    });
+    const scanner = new SecretScanner();
+    const findings = scanner.scan(graph);
+    assert.ok(findings.length >= 1, '[REDACTED:api-key] with sensitive name should be flagged');
+  });
 });

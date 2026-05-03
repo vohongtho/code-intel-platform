@@ -1,11 +1,11 @@
 ---
 name: cli
-description: "Covers the **cli** subsystem of code-intel-platform. 23 symbols across 3 files. Key symbols: `loadOrAnalyzeWorkspace`, `analyzeWorkspace`, `buildAreaMap`. Internal call density: 0.4 calls/symbol."
+description: "Covers the **cli** subsystem of code-intel-platform. 36 symbols across 4 files. Key symbols: `loadOrAnalyzeWorkspace`, `analyzeWorkspace`, `buildAreaMap`. Internal call density: 0.3 calls/symbol."
 ---
 
 # cli
 
-> **23 symbols** | **3 files** | path: `code-intel/core/src/cli/` | call density: 0.4/sym
+> **36 symbols** | **4 files** | path: `code-intel/core/src/cli/` | call density: 0.3/sym
 
 ## When to Use
 
@@ -19,6 +19,7 @@ Load this skill when:
 
 | File | Symbols | Notes |
 |------|---------|-------|
+| `code-intel/core/src/cli/sarif-builder.ts` | `SARIFRegion`, `SARIFArtifactLocation`, `SARIFPhysicalLocation`, `SARIFLocation` +(9) | 13 exported |
 | `code-intel/core/src/cli/main.ts` | `analyzeWorkspace`, `renderBar`, `clearBar`, `startSpinner` +(6) | internal |
 | `code-intel/core/src/cli/skill-writer.ts` | `SkillSummary`, `AreaInfo`, `writeSkillFiles`, `buildAreaMap` +(4) | 2 exported |
 | `code-intel/core/src/cli/context-writer.ts` | `ContextStats`, `writeContextFiles`, `buildBlock`, `upsertFile` +(1) | 2 exported |
@@ -36,11 +37,11 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | `writeSkillFiles` | function | 1 | 4 | `cli/skill-writer.ts` |
 | `writeContextFiles` | function | 2 | 2 | `cli/context-writer.ts` |
 | `purgeStaleTrashes` | function | 1 | 3 | `cli/main.ts` |
+| `buildBlock` | function | 1 | 2 | `cli/context-writer.ts` |
 | `softDeleteCodeIntel` | function | 1 | 2 | `cli/main.ts` |
-| `buildBlock` | function | 1 | 1 | `cli/context-writer.ts` |
+| `buildSARIF` | function | 2 | 1 | `cli/sarif-builder.ts` |
 | `upsertFile` | function | 1 | 1 | `cli/context-writer.ts` |
 | `uniqueKebab` | function | 1 | 1 | `cli/skill-writer.ts` |
-| `findLineMarker` | function | 1 | 0 | `cli/context-writer.ts` |
 
 ## Impact Guidance
 

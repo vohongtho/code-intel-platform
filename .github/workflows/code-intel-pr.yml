@@ -16,6 +16,10 @@ jobs:
         with:
           fetch-depth: 0
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
       - uses: ./.github/actions/code-intel
         with:
           token: ${{ secrets.GITHUB_TOKEN }}

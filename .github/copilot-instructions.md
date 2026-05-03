@@ -1,25 +1,32 @@
-## Tool Usage Rules (MANDATORY)
+# RTK — Token-Optimized CLI
 
-### code-intel — Always Investigate First (before reading any file)
-```bash
-code-intel search "<concept>"   # FIRST: find symbols by concept
-code-intel inspect <symbol>     # callers, callees, file location
-code-intel impact <symbol>      # blast radius BEFORE editing
-```
-- NEVER open a file cold — always `code-intel search` first.
-- NEVER grep for symbols — use `code-intel search` instead.
-- NEVER edit a symbol without running `code-intel impact` first.
+**rtk** is a CLI proxy that filters and compresses command outputs, saving 60-90% tokens.
 
-### rtk — Use for compact shell output
+## Rule
+
+Always prefix shell commands with `rtk`:
+
 ```bash
-rtk read <file>            # token-efficient file read
-rtk grep <pattern> <file>  # compact grep
-rtk git log                # compact git log
-rtk test <cmd>             # show only failures
-rtk err <cmd>              # show only errors/warnings
-rtk diff                   # condensed diff
-rtk smart <cmd>            # 2-line heuristic summary
+# Instead of:              Use:
+git status                 rtk git status
+git log -10                rtk git log -10
+cargo test                 rtk cargo test
+docker ps                  rtk docker ps
+kubectl get pods           rtk kubectl pods
 ```
+
+## Meta commands (use directly)
+
+```bash
+rtk gain              # Token savings dashboard
+rtk gain --history    # Per-command savings history
+rtk discover          # Find missed rtk opportunities
+rtk proxy <cmd>       # Run raw (no filtering) but track usage
+```
+
+---
+
+<!-- The following section is auto-managed by code-intel. Do not edit between the markers. -->
 
 <!-- code-intel:start -->
 # Code Intelligence — code-intel-platform

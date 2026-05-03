@@ -1,0 +1,110 @@
+{
+  "name": "vscode-code-intel",
+  "displayName": "Code Intelligence Platform",
+  "description": "In-editor symbol navigation, hover summaries, and graph exploration powered by code-intel.",
+  "version": "0.8.0",
+  "publisher": "vohongtho",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vohongtho/code-intel-platform"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Visualization",
+    "Other"
+  ],
+  "icon": "images/icon.png",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "codeIntel.search",
+        "title": "Code Intel: Search Symbols"
+      },
+      {
+        "command": "codeIntel.analyze",
+        "title": "Code Intel: Analyze Workspace"
+      },
+      {
+        "command": "codeIntel.health",
+        "title": "Code Intel: Show Health"
+      },
+      {
+        "command": "codeIntel.openInGraph",
+        "title": "Code Intel: Open in Graph"
+      },
+      {
+        "command": "codeIntel.refreshExplorer",
+        "title": "Code Intel: Refresh Symbol Explorer",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "codeIntel.openInGraph",
+          "group": "navigation",
+          "when": "editorHasSelection"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "codeIntel.refreshExplorer",
+          "when": "view == codeIntelExplorer",
+          "group": "navigation"
+        }
+      ]
+    },
+    "views": {
+      "explorer": [
+        {
+          "id": "codeIntelExplorer",
+          "name": "Code Intel — Symbols",
+          "when": "codeIntel.active"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Code Intelligence Platform",
+      "properties": {
+        "codeIntel.serverUrl": {
+          "type": "string",
+          "default": "http://localhost:4747",
+          "description": "URL of the code-intel HTTP server."
+        },
+        "codeIntel.token": {
+          "type": "string",
+          "default": "",
+          "description": "API token for authenticating with the code-intel server (leave empty for local-only mode)."
+        },
+        "codeIntel.enableHover": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show symbol summaries on hover."
+        },
+        "codeIntel.autoAnalyze": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically re-analyze when files change."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsup src/extension.ts --format cjs --out-dir dist --no-splitting --external vscode",
+    "watch": "tsup src/extension.ts --format cjs --out-dir dist --no-splitting --external vscode --watch"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.85.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3"
+  }
+}

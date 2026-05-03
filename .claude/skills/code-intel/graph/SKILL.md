@@ -34,18 +34,18 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `createKnowledgeGraph` | function | 42 | 0 | `graph/knowledge-graph.ts` |
-| `addNode` | method | 34 | 1 | `graph/knowledge-graph.ts` |
-| `getNode` | method | 31 | 1 | `graph/knowledge-graph.ts` |
-| `addEdge` | method | 24 | 2 | `graph/knowledge-graph.ts` |
-| `findEdgesFrom` | method | 16 | 1 | `graph/knowledge-graph.ts` |
-| `findEdgesTo` | method | 15 | 1 | `graph/knowledge-graph.ts` |
+| `createKnowledgeGraph` | function | 48 | 0 | `graph/knowledge-graph.ts` |
+| `addNode` | method | 41 | 1 | `graph/knowledge-graph.ts` |
+| `getNode` | method | 38 | 1 | `graph/knowledge-graph.ts` |
+| `addEdge` | method | 30 | 2 | `graph/knowledge-graph.ts` |
+| `findEdgesTo` | method | 20 | 1 | `graph/knowledge-graph.ts` |
+| `findEdgesFrom` | method | 19 | 1 | `graph/knowledge-graph.ts` |
 | `generateEdgeId` | function | 14 | 0 | `graph/id-generator.ts` |
 | `generateNodeId` | function | 13 | 0 | `graph/id-generator.ts` |
-| `findEdgesByKind` | method | 11 | 1 | `graph/knowledge-graph.ts` |
+| `findEdgesByKind` | method | 12 | 1 | `graph/knowledge-graph.ts` |
 | `allEdges` | method | 7 | 1 | `graph/knowledge-graph.ts` |
+| `getEdge` | method | 6 | 1 | `graph/knowledge-graph.ts` |
 | `removeNodeCascade` | method | 3 | 3 | `graph/knowledge-graph.ts` |
-| `getEdge` | method | 4 | 1 | `graph/knowledge-graph.ts` |
 
 ## Impact Guidance
 

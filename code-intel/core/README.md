@@ -1,6 +1,6 @@
 # Code Intelligence Platform
 
-[![npm version](https://img.shields.io/badge/npm-v0.7.0-blue)](https://www.npmjs.com/package/@vohongtho.infotech/code-intel)
+[![npm version](https://img.shields.io/badge/npm-v0.9.0-blue)](https://www.npmjs.com/package/@vohongtho.infotech/code-intel)
 
 A static code analysis platform that builds a **Knowledge Graph** from your source code and makes it explorable through a Web UI, HTTP API, CLI, and MCP server.
 
@@ -23,12 +23,23 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 - **Code Health** — `code-intel health` reports dead code, circular dependencies (Tarjan SCC), god nodes, orphan files, and a 0–100 health score
 - **HTTP API** — REST endpoints for graph, search, inspect, blast radius, flows, query, source, health
 - **MCP Server** — Model Context Protocol integration for LLM tooling with 6 new reasoning tools (`explain_relationship`, `pr_impact`, `similar_symbols`, `health_report`, `suggest_tests`, `cluster_summary`), pagination, and tool-chaining hints
-- **Security Module** — `SecretScanner` for hardcoded secrets detection; `VulnerabilityDetector` for SQL injection, XSS, SSRF, path traversal, and command injection (CWE-tagged)
-- **CLI** — analyze, serve, watch, query, search, inspect, impact, health commands with animated progress bars and spinners
+- **Security & Quality Scanning** — `code-intel secrets` (hardcoded API keys, DB URLs, RSA keys), `code-intel scan` (SQL Injection CWE-89, XSS CWE-79, SSRF CWE-918, Path Traversal CWE-22, Command Injection CWE-78), `--format sarif` for CI integration
+- **Complexity Metrics** — `code-intel complexity --top N` ranks functions by cyclomatic + cognitive complexity; `complexity_hotspots` MCP tool
+- **Test Coverage Gaps** — `code-intel coverage` lists untested exported symbols sorted by blast radius; `--threshold <pct>` fails CI if below target
+- **Deprecated API Detection** — `code-intel deprecated` finds usages of `@deprecated` JSDoc, `@Deprecated` (Java), `#[deprecated]` (Rust), and built-in Node.js deprecated APIs
+- **AI Context Files** — auto-generates `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `.cursor/rules/code-intel.mdc`, and `.kiro/steering/code-intel.md` after every analysis — supporting Amp, Claude Code, Codex, Copilot, Cursor, Aider, Gemini, Kiro, Trae, Hermes, Factory, OpenCode, Pi, Antigravity, OpenClaw, and more
 - **Multi-language** — TypeScript, JavaScript, Python, Java, Go, C, C++, C#, Rust, PHP, Ruby, Swift, Kotlin, Dart (14 languages via tree-sitter AST)
 - **Incremental Analysis** — `--incremental` re-parses only changed files; 10k-file repo / 3 changes: 288ms
 - **Parallel Analysis** — `--parallel` runs parse + resolve phases on worker threads for large repos
 - **Structured Logging** — winston-based logger with daily-rotating log files, sensitive-data masking, and configurable log levels
+- **`code-intel init` Wizard** _(v0.9)_ — interactive 5-step setup wizard; creates `~/.code-intel/config.json`
+- **Config Management CLI** _(v0.9)_ — `config get/set/list/validate/reset` with JSON Schema, `$ENV_VAR` expansion, masked secrets
+- **Better Error Messages** _(v0.9)_ — `CI-XXXX` codes, actionable hints, `--debug` stack traces, startup prerequisite checks
+- **Shell Completion** _(v0.9)_ — `code-intel completion bash|zsh|fish`; `setup --completion` auto-installs
+- **VS Code Extension** _(v0.9)_ — symbol hover, Symbol Explorer panel, status bar, command palette, go-to-definition from graph
+- **Self-Update** _(v0.9)_ — `code-intel update`; background version check; `--no-update-check` to suppress
+- **`--dry-run` flag** _(v0.9)_ — `analyze`, `clean`, `group sync` preview without side effects
+- **`code-intel doctor`** _(v0.9)_ — full diagnostics: Node.js, git, config, registry, DB integrity, network
 
 ---
 
