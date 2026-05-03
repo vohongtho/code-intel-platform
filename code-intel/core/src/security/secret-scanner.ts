@@ -1,13 +1,5 @@
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
 
-export interface SecretFinding {
-  file: string;
-  line?: number;
-  symbol: string;
-  pattern: string;
-  severity: 'HIGH' | 'MEDIUM' | 'LOW';
-}
-
 // Patterns that indicate a value is an environment variable (safe)
 const ENV_VAR_RE = /^process\.env\./;
 
@@ -15,10 +7,10 @@ const ENV_VAR_RE = /^process\.env\./;
 const SENSITIVE_NAME_RE = /_SECRET$|_PASSWORD$|_TOKEN$|_KEY$|_API_KEY$/i;
 
 // Value patterns → [pattern label, severity]
-const VALUE_PATTERNS: [RegExp, string, SecretFinding['severity']][] = [
+const VALUE_PATTERNS: [RegExp, string, string][] = [
   [/sk-[A-Za-z0-9]{6,}/, 'openai-api-key', 'HIGH'],
   [/pk_live_[A-Za-z0-9]{20,}/, 'stripe-key', 'HIGH'],
-  [/AKIA[0-9A-Z]{16}|\baws.{0,5}access.{0,5}key\b/i, 'aws-access-key', 'HIGH'],
+  [/AKIA[0-9A-Z]{16}|aws.access.key/i, 'aws-access-key', 'HIGH'],
   [/xoxb-[0-9]{11}-[0-9]{11}-[A-Za-z0-9]{24}/, 'slack-token', 'HIGH'],
   [/postgres:\/\/[^@]+:[^@]+@/, 'db-url-with-credentials', 'HIGH'],
   [/mysql:\/\/[^@]+:[^@]+@/, 'db-url-with-credentials', 'HIGH'],
@@ -45,11 +37,21 @@ function isTestFile(filePath: string): boolean {
   );
 }
 
+export interface SecretFinding {
+  file: string;
+  line: number | undefined;
+  symbol: string;
+  pattern: string;
+  severity: 'HIGH' | 'MEDIUM' | 'LOW';
+}
+
+export interface ScanOptions {
+  includeTestFiles?: boolean;
+  scope?: string;
+}
+
 export class SecretScanner {
-  scan(
-    graph: KnowledgeGraph,
-    options?: { scope?: string; includeTestFiles?: boolean },
-  ): SecretFinding[] {
+  scan(graph: KnowledgeGraph, options?: ScanOptions): SecretFinding[] {
     const findings: SecretFinding[] = [];
     const includeTests = options?.includeTestFiles ?? false;
     const scope = options?.scope;
@@ -70,7 +72,7 @@ export class SecretScanner {
       const value = rawValue.trim();
       if (ENV_VAR_RE.test(value)) continue;
 
-      // ── Value-based checks first (most specific) ─────────────────────────
+      // ── Value-based checks first (most specific) ────────────────────────────
       let matched = false;
       for (const [re, label, severity] of VALUE_PATTERNS) {
         if (re.test(value)) {
@@ -83,7 +85,7 @@ export class SecretScanner {
             line: node.startLine,
             symbol: node.name,
             pattern: label,
-            severity,
+            severity: severity as 'HIGH' | 'MEDIUM',
           });
           matched = true;
           break;
@@ -91,9 +93,8 @@ export class SecretScanner {
       }
       if (matched) continue;
 
-      // ── Name-based check ─────────────────────────────────────────────────
+      // ── Name-based check ────────────────────────────────────────────────────
       if (SENSITIVE_NAME_RE.test(node.name)) {
-        // Tag node
         node.metadata = {
           ...(node.metadata ?? {}),
           security: { secretRisk: true, secretPattern: 'sensitive-name-with-value' },
@@ -108,9 +109,8 @@ export class SecretScanner {
         continue;
       }
 
-      // ── High-entropy check ───────────────────────────────────────────────
+      // ── High-entropy check ──────────────────────────────────────────────────
       if (
-        !matched &&
         SENSITIVE_NAME_RE.test(node.name) &&
         value.length > 20 &&
         shannonEntropy(value) > 4.5

@@ -168,26 +168,22 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
 
 // ── Middleware factory: require role ──────────────────────────────────────────
 
-// Role hierarchy: admin > analyst > viewer ≥ repo-owner
-const ROLE_HIERARCHY: Record<Role, number> = {
-  'admin':      40,
-  'analyst':    30,
-  'viewer':     20,
-  'repo-owner': 20,
+// ── Role hierarchy ─────────────────────────────────────────────────────────────
+
+const ROLE_RANK: Record<Role, number> = {
+  viewer: 1,
+  'repo-owner': 2,
+  analyst: 3,
+  admin: 4,
 };
 
-function roleLevel(role: Role): number {
-  return ROLE_HIERARCHY[role] ?? 0;
+function meetsRole(userRole: Role, required: Role): boolean {
+  return (ROLE_RANK[userRole] ?? 0) >= (ROLE_RANK[required] ?? 0);
 }
 
-/**
- * Requires the user to have AT LEAST the minimum level of any listed role.
- * Example: requireRole('viewer') allows admin, analyst, and viewer.
- */
 export function requireRole(
   ...roles: Role[]
 ): (req: Request, res: Response, next: NextFunction) => void {
-  const minLevel = Math.min(...roles.map(roleLevel));
   return (req: Request, res: Response, next: NextFunction): void => {
     if (!req.user) {
       res.status(401).json({
@@ -201,7 +197,9 @@ export function requireRole(
       });
       return;
     }
-    if (roleLevel(req.user.role) < minLevel) {
+    // Allow if user's role meets ANY of the required roles (by rank)
+    const allowed = roles.some((r) => meetsRole(req.user!.role, r));
+    if (!allowed) {
       res.status(403).json({
         error: {
           code: ErrorCodes.FORBIDDEN,

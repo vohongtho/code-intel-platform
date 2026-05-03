@@ -22,8 +22,13 @@ export function StatusFooter() {
     toastTimerRef.current = setTimeout(() => setToastMsg(null), 4000);
   };
 
+  // Clear toast timer on unmount to avoid state updates on unmounted component
   useEffect(() => {
-    if (!state.connected) return;
+    return () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); };
+  }, []);
+
+  useEffect(() => {
+    if (!state.connected || !state.currentUser) return;
 
     const wsUrl = state.serverUrl.replace(/^http/, 'ws') + '/ws';
     let ws: WebSocket | null = null;
@@ -67,7 +72,7 @@ export function StatusFooter() {
       ws?.close();
       setWsConnected(false);
     };
-  }, [state.connected, state.serverUrl]);
+  }, [state.connected, state.currentUser, state.serverUrl]);
 
   // ── Vector index polling ──────────────────────────────────────────────────
   const pollVectorStatus = useCallback(async () => {
@@ -178,15 +183,16 @@ export function StatusFooter() {
         {/* Spacer */}
         <div className="flex-1" />
 
-        {/* Right section — selected node pill */}
+        {/* Right section — selected node pill + version */}
         {selectedNode && (
           <span
-            className="max-w-[30ch] truncate px-2 py-0.5 rounded-full bg-gray-800 text-gray-300 border border-gray-700 font-mono"
+            className="max-w-[30ch] truncate px-2 py-0.5 rounded-full bg-gray-800 text-gray-300 border border-gray-700 font-mono mr-3"
             title={selectedNode.name}
           >
             {selectedNode.name}
           </span>
         )}
+        <span className="font-mono text-gray-700 text-[10px] select-none">v{__APP_VERSION__}</span>
       </div>
     </>
   );

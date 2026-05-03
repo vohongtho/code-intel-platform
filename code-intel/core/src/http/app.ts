@@ -1,5 +1,6 @@
 import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
+import compression from 'compression';
 import cors from 'cors';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
@@ -113,6 +114,10 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
 
   // Trust proxy (for correct IP detection behind nginx/caddy)
   app.set('trust proxy', 1);
+
+  // ── Compression ─────────────────────────────────────────────────────────────
+  // gzip/deflate large responses (graph JSON, search results, etc.)
+  app.use(compression());
 
   // ── Security middleware ─────────────────────────────────────────────────────
   app.use(
@@ -1148,21 +1153,23 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
       return;
     }
 
-    // Resolve relative paths against workspaceRoot so the Web UI can pass
-    // repo-relative paths like "code-intel/core/src/auth/middleware.ts"
-    let resolvedFile = path.normalize(file);
-    if (!path.isAbsolute(resolvedFile) && workspaceRoot) {
-      resolvedFile = path.normalize(path.join(workspaceRoot, file));
+    // Security: must be within workspaceRoot or a known repo
+    // Resolve relative paths against workspaceRoot first, then use path.relative
+    // to safely detect escaping (handles prefix-collision like /repo vs /repo2).
+    let rawResolved = path.normalize(file);
+    if (!path.isAbsolute(rawResolved) && workspaceRoot) {
+      rawResolved = path.join(workspaceRoot, rawResolved);
+    }
+    const resolvedFile = path.resolve(rawResolved);
+    function isInsideDir(fileAbs: string, dir: string): boolean {
+      const rel = path.relative(path.resolve(dir), fileAbs);
+      return !rel.startsWith('..') && !path.isAbsolute(rel);
     }
 
-    // Security: must be within workspaceRoot or a known repo
-    const normalizedFile = resolvedFile;
     if (workspaceRoot) {
-      const normalizedRoot = path.normalize(workspaceRoot);
-      if (!normalizedFile.startsWith(normalizedRoot)) {
-        // Also allow files from other indexed repos
+      if (!isInsideDir(resolvedFile, workspaceRoot)) {
         const registry = loadRegistry();
-        const inKnownRepo = registry.some((r) => normalizedFile.startsWith(path.normalize(r.path)));
+        const inKnownRepo = registry.some((r) => isInsideDir(resolvedFile, r.path));
         if (!inKnownRepo) {
           res.status(403).json({
             error: {
@@ -1178,7 +1185,7 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
       }
     } else {
       const registry = loadRegistry();
-      const inKnownRepo = registry.some((r) => normalizedFile.startsWith(path.normalize(r.path)));
+      const inKnownRepo = registry.some((r) => isInsideDir(resolvedFile, r.path));
       if (!inKnownRepo) {
         res.status(403).json({
           error: {
@@ -1196,7 +1203,7 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     // Read file
     let fileContent: string;
     try {
-      fileContent = fs.readFileSync(normalizedFile, 'utf-8');
+      fileContent = fs.readFileSync(resolvedFile, 'utf-8');
     } catch {
       res.status(404).json({
         error: {
@@ -1210,8 +1217,22 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     }
 
     const lines = fileContent.split('\n');
-    const startLine = startLineStr ? Math.max(1, parseInt(startLineStr, 10)) : 1;
-    const endLine = endLineStr ? Math.min(lines.length, parseInt(endLineStr, 10)) : startLine;
+
+    const parsedStart = startLineStr ? Number.parseInt(startLineStr, 10) : 1;
+    const parsedEnd   = endLineStr   ? Number.parseInt(endLineStr,   10) : parsedStart;
+    if (!Number.isFinite(parsedStart) || parsedStart < 1 || !Number.isFinite(parsedEnd) || parsedEnd < 1) {
+      res.status(400).json({
+        error: {
+          code: ErrorCodes.INVALID_REQUEST,
+          message: 'Invalid startLine or endLine: must be positive integers',
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+    const startLine = Math.max(1, parsedStart);
+    const endLine   = Math.min(lines.length, parsedEnd);
 
     // ±20 lines of context
     const contextStart = Math.max(1, startLine - 20);
@@ -1220,7 +1241,7 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     const content = lines.slice(contextStart - 1, contextEnd).join('\n');
 
     // Detect language from extension
-    const ext = path.extname(normalizedFile).toLowerCase();
+    const ext = path.extname(resolvedFile).toLowerCase();
     const languageMap: Record<string, string> = {
       '.ts': 'typescript',
       '.tsx': 'typescript',
@@ -1297,7 +1318,8 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
         return;
       }
       const result = executeGQL(ast, graph);
-      res.json({ ...result, format: format ?? 'json' });
+      const statusCode = result.truncated ? 408 : 200;
+      res.status(statusCode).json({ ...result, format: format ?? 'json' });
     } catch (err) {
       res.status(500).json({ error: { code: ErrorCodes.INTERNAL_ERROR, message: err instanceof Error ? err.message : String(err), requestId: req.requestId, timestamp: new Date().toISOString() } });
     }
@@ -1458,6 +1480,20 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
   // ── Global error handler ────────────────────────────────────────────────────
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
+    const e = err as Error & { status?: number; statusCode?: number; type?: string };
+    const statusCode = e.status ?? e.statusCode;
+    // Express 5 throws a 404 Not Found for unmatched routes — handle silently
+    if (statusCode === 404) {
+      res.status(404).json({
+        error: {
+          code: ErrorCodes.NOT_FOUND,
+          message: 'Not found',
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
     Logger.error('Unhandled error:', err.message);
     if (err instanceof AppError) {
       res.status(err.statusCode).json({
@@ -1474,8 +1510,7 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     // body-parser errors carry a `status`/`statusCode` and a `type`.
     // Honor them so payload-too-large (413), bad JSON (400), etc. surface
     // with the correct HTTP status.
-    const e = err as Error & { status?: number; statusCode?: number; type?: string };
-    const bodyParserStatus = e.status ?? e.statusCode;
+    const bodyParserStatus = statusCode;
     if (
       typeof bodyParserStatus === 'number' &&
       bodyParserStatus >= 400 &&

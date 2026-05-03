@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import type { CodeNode, CodeEdge } from 'code-intel-shared';
 import { useAppState } from '../../state/app-context';
 import { ApiClient } from '../../api/client';
-import type { GQLResult } from '../../api/client';
+import type { GQLResult, CountGroup } from '../../api/client';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -141,8 +141,8 @@ function NodeTable({
   );
 }
 
-function GroupTable({ groups }: { groups: Record<string, number> }) {
-  const entries = Object.entries(groups).sort((a, b) => b[1] - a[1]);
+function GroupTable({ groups }: { groups: CountGroup[] }) {
+  const sorted = [...groups].sort((a, b) => b.count - a.count);
   return (
     <div className="overflow-auto max-h-48 rounded-md border border-gray-700/50">
       <table className="w-full text-[11px] font-mono border-collapse">
@@ -157,10 +157,10 @@ function GroupTable({ groups }: { groups: Record<string, number> }) {
           </tr>
         </thead>
         <tbody>
-          {entries.map(([key, val]) => (
+          {sorted.map(({ key, count }) => (
             <tr key={key} className="hover:bg-gray-800/40 transition-colors">
               <td className="px-2 py-1 text-cyan-300">{key}</td>
-              <td className="px-2 py-1 text-white font-bold">{val}</td>
+              <td className="px-2 py-1 text-white font-bold">{count}</td>
             </tr>
           ))}
         </tbody>
@@ -183,7 +183,8 @@ export function QueryPanel() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
 
-  // Keep overlay HTML in sync with textarea content
+  // Keep overlay HTML in sync with textarea content.
+  // highlightGQL() calls escapeHtml() first — safe to use innerHTML with its output.
   useEffect(() => {
     if (overlayRef.current) {
       overlayRef.current.innerHTML = highlightGQL(gql) + '\n'; // trailing newline prevents overlap
@@ -254,7 +255,7 @@ export function QueryPanel() {
   };
 
   const hasNodes = result && result.nodes.length > 0;
-  const hasGroups = result && result.groups && Object.keys(result.groups).length > 0;
+  const hasGroups = result && result.groups && result.groups.length > 0;
 
   return (
     <div className="flex flex-col h-full overflow-hidden text-sm">

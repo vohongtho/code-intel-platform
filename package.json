@@ -1,6 +1,6 @@
 {
   "name": "code-intel-platform",
-  "version": "0.8.0",
+  "version": "0.5.0",
   "private": true,
   "license": "MIT",
   "files": [],
@@ -34,9 +34,13 @@
     "vite": "^8.0.10"
   },
   "dependencies": {
-    "@ladybugdb/core": "^0.16.0"
+    "@ladybugdb/core": "^0.16.0",
+    "@vohongtho.infotech/code-intel": "^0.7.0"
   },
   "overrides": {
-    "sharp": "^0.33.0"
+    "sharp": "^0.33.0",
+    "onnxruntime-node": "^1.25.1",
+    "node-domexception": "^2.0.2",
+    "global-agent": "^4.1.3"
   }
 }

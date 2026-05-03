@@ -689,9 +689,8 @@ program
       summarize: opts.summarize,
       llmProvider: opts.llmProvider as 'openai' | 'anthropic' | 'ollama' | undefined,
       llmModel: opts.llmModel,
-      llmBatchSize: opts.llmBatchSize ? parseInt(opts.llmBatchSize, 10) : undefined,
-      llmMaxNodes:  opts.llmMaxNodes  ? parseInt(opts.llmMaxNodes,  10) : undefined,
-      noGroupSync: opts.groupSync === false,
+      llmBatchSize: (() => { const v = parseInt(opts.llmBatchSize ?? '', 10); return Number.isFinite(v) && v >= 1 ? v : undefined; })(),
+      llmMaxNodes:  (() => { const v = parseInt(opts.llmMaxNodes  ?? '', 10); return Number.isFinite(v) && v >= 1 ? v : undefined; })(),
     });
     // LadybugDB keeps background checkpoint threads alive after close(),
     // preventing Node from exiting naturally.  Force-exit once the work is done.

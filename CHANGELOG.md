@@ -4,168 +4,159 @@ All notable changes to this project are documented in this file.
 
 ---
 
-## [0.8.0] — 2026-06-03 — Security & Quality Scanning
+## [0.7.0] — 2026-05-03 — Multi-Repo & Monorepo
 
-> **Theme:** Enterprise-grade security awareness and code quality signals
-
-### 🔐 Hardcoded Secret Detection
-
-- **`SecretScanner`** (`src/security/secret-scanner.ts`): scans string literals from tree-sitter AST for API keys (`sk-…`, `pk_live_…`, `AKIA…`, `xoxb-…`), variables named `*_SECRET / *_PASSWORD / *_TOKEN / *_KEY / *_API_KEY` with non-empty literals, DB URLs, private key headers, and high-entropy strings (Shannon > 4.5 bits/char in sensitive variable names)
-- **`metadata.security.secretRisk: boolean`** + `metadata.security.secretPattern: string` tagged on affected nodes
-- **`code-intel secrets [path]`** CLI: table of findings (file, line, variable, pattern); `--format table|json`; `--fail-on` exits 1 on any finding; `--fix-hint` suggests env-var migration
-- **`secrets` MCP tool**: `{ scope?, includeTestFiles? }` → `{ findings, total }`; test files excluded by default
-
-### 🛡️ OWASP Vulnerability Detection
-
-- **Five detectors** covering SQL Injection (string concat in `db.query` / `knex.raw` / `sequelize.query`), XSS (`innerHTML`, `outerHTML`, `document.write`), SSRF (`fetch`, `axios`, `http.request`), Path Traversal (`fs.readFile`, `path.join`), Command Injection (`exec`, `execSync`, `eval`)
-- **`vulnerability` node kind** + **`has_vulnerability` edge kind** added to graph schema; one vulnerability node per finding linked to the affected symbol
-- **`code-intel scan [path]`** CLI: runs all detectors; `--type secrets|sql|xss|ssrf|path|cmd`; `--severity high|medium|low`; `--format table|json|sarif`; `--fail-on high|medium`
-- **`vulnerability_scan` MCP tool**: `{ scope?, types?, severity? }` → `{ findings: [{ type, severity, file, line, symbol, description, cweId }], total }`; CWE IDs included (SQL=CWE-89, XSS=CWE-79, SSRF=CWE-918, PathTraversal=CWE-22, CmdInjection=CWE-78)
-
-### 📊 Complexity Metrics
-
-- **Cyclomatic complexity**: `1 + (if + else if + for + while + do + case + && + || + ?: + catch)`; stored as `metadata.complexity.cyclomatic`; severity LOW (1–5) / MEDIUM (6–10) / HIGH (11–20) / CRITICAL (>20)
-- **Cognitive complexity** (Sonar method): increments for nesting structures with nesting-level penalty; stored as `metadata.complexity.cognitive`
-- **`code-intel complexity [path]`** CLI: ranked table with `--top <n>` (default: 20), `--threshold <n>`, `--format table|json`
-- **`complexity_hotspots` MCP tool**: `{ scope?, limit? }` → top complex functions
-
-### 🧪 Test Coverage Integration
-
-- **Test file tagging**: `*.test.ts/js`, `*.spec.ts/js`, `*_test.go`, `*_test.py`, `Test*.java` tagged `file.metadata.isTestFile: true`; test functions tagged `metadata.isTestFunction: true`
-- **`tested_by` edge kind**: heuristic mapping `users.test.ts` → `users.ts`, test function `test_getUser` → `getUser`, import-based linking; creates `subject → test function` edges
-- **`code-intel coverage [path]`** CLI: untested exported symbols sorted by blast radius; coverage % (`tested_exported / total_exported`); `--threshold <pct>` exits 1 below threshold
-- **`coverage_gaps` MCP tool**: `{ scope?, limit? }` → untested symbols by risk level
-
-### 🚫 Deprecated API Detection
-
-- **Detection**: `@deprecated` JSDoc (TS/JS), `@Deprecated` Java annotation, `#[deprecated]` Rust attribute, built-in deprecated Node.js APIs (`url.parse`, `fs.exists`, `crypto.createCipher`)
-- **`deprecated_use` edge kind** added to graph schema; `metadata.deprecated: true` + `metadata.deprecationMessage: string`
-- **`code-intel deprecated [path]`** CLI: report all deprecated usages with caller context
-- **`deprecated_usage` MCP tool**: usages with caller context
-
----
-
-## [0.7.0] — 2026-05-27 — Multi-Repo & Monorepo
-
-> **Theme:** First-class support for large-scale repo structures
+> **Theme:** First-class support for large-scale repo structures.
 
 ### 🗂️ Workspace Auto-Discovery
 
-- **`detectWorkspaceType(root)`**: detects npm/yarn (`workspaces` in `package.json`), pnpm (`pnpm-workspace.yaml`), Nx (`nx.json`), Turborepo (`turbo.json`)
-- **`code-intel group init-workspace [path]`**: auto-discovers all packages, prints confirmation list, creates group, analyzes each package, registers all in group; `--name`, `--no-analyze`, `--yes`, `--parallel <n>` (default: 2) flags; progress `[3/8] Analyzing packages/api…` + final summary table
+- **`detectWorkspace()`** (`src/multi-repo/workspace-detector.ts`): detects npm/yarn/Bun (`workspaces` field), pnpm (`pnpm-workspace.yaml`), Nx (`nx.json`), and Turborepo (`turbo.json`) monorepo types; expands glob patterns into `Array<{ name, path }>`
+- **`code-intel group init-workspace`** CLI command: discovers all packages, creates a group, analyzes each package (with `--parallel <n>`, default 2), and runs `group sync`; `--no-analyze`, `--yes`, progress indicators, and final summary table
 
-### 🔗 Type-Aware Contract Matching
+### 🔬 Type-Aware Contract Matching
 
-- **Enriched contracts**: `{ name, kind, parameters: [{name, type}], returnType, exported, filePath }` stored in `~/.code-intel/groups/<name>.sync.json`
-- **New scoring formula**: `0.4 × nameSim + 0.3 × paramTypeSim + 0.2 × returnTypeSim + 0.1 × paramCountSim`; Jaccard similarity on normalized type names; `min(1.0, score × 1.2)` confidence boost when name + types match
-- `group contracts` output now includes type information
+- Contracts now include `parameters: [{name, type}]` + `returnType` from node metadata
+- New scoring formula: `0.4 * nameSim + 0.3 * paramTypeSim + 0.2 * returnTypeSim + 0.1 * paramCountSim`
+- Confidence boost (`×1.2`, capped at 1.0) when both name and types match
+- `group contracts` output shows type information
 
 ### 📄 API Schema Contract Extraction
 
-- **OpenAPI / Swagger**: scans for `openapi.yaml/json`, `swagger.yaml/json`; extracts all `paths` entries as `ContractKind.schema` with method, path, requestSchema, responseSchema
-- **GraphQL**: scans `*.graphql`, `*.gql`, `schema.graphql` via `graphql-js`; extracts `Query` + `Mutation` fields and custom types
-- **Protobuf**: scans `*.proto` via `protobufjs`; extracts services, RPC methods, message types as `kind: "grpc"` contracts
+- **OpenAPI/Swagger parser** (`src/multi-repo/schema-parsers/openapi-parser.ts`): scans for `openapi.yaml/json`, `swagger.yaml/json`; extracts all path + method entries with request/response schemas
+- **GraphQL schema parser** (`src/multi-repo/schema-parsers/graphql-parser.ts`): scans `*.graphql`, `*.gql`; extracts Query/Mutation fields and custom types
+- **Protobuf parser** (`src/multi-repo/schema-parsers/proto-parser.ts`): scans `*.proto`; extracts services, RPC methods, and message types
 
 ### 🔄 Auto-Sync on Analyze
 
-- After `analyzeWorkspace` completes: auto-triggers `group sync` for every group containing the repo; shown as `⠹ Syncing group 'backend-services'…` in analyze output
-- `--no-group-sync` flag opts out; group sync failure warns + continues without failing analysis
+- After `analyzeWorkspace` completes, auto-triggers `group sync` for all groups containing the repo
+- `--no-group-sync` flag to opt out; sync failure → warning only, analysis continues
 
-### 🌐 Cross-Repo Web UI
+### 🖥️ Cross-Repo Web UI
 
 - `GET /api/v1/groups` and `GET /api/v1/groups/:name/topology` endpoints
-- **`GroupPanel`** sidebar section (visible when groups configured): topology graph with repos as nodes and contract edges; edge color by confidence — green (≥0.8), yellow (0.5–0.8), red (<0.5)
-- Click edge → contract detail panel; click repo node → switch main graph to that repo
+- **`GroupPanel`** sidebar section: group topology graph with repos as nodes and contract edges
+- Edge confidence color coding: green (≥0.8), yellow (0.5–0.8), red (<0.5)
+- Click edge → contract detail panel; click repo node → switch main graph
 
-### 🤖 CI/CD Integration
+### 🔧 CI/CD Integration
 
-- **`code-intel pr-impact`** CLI: `--base main --head HEAD`; gets changed files via `git diff --name-only`; `--fail-on HIGH|MEDIUM` exits 1 on matching severity; `--format sarif` outputs SARIF 2.1.0 for GitHub Security tab
-- **GitHub Action** (`.github/actions/code-intel/action.yml`): analyze → pr-impact → post PR comment with HIGH-risk symbol table → upload SARIF → exit code
+- **`code-intel pr-impact`** CLI command: `--base <ref>`, `--head <ref>`, `--fail-on HIGH|MEDIUM`, `--format sarif|json`
+- **GitHub Action** (`.github/actions/code-intel/action.yml`): analyze → pr-impact → post PR comment → upload SARIF → exit code
+- SARIF 2.1.0 output via `src/cli/sarif-builder.ts`
+
+### 🐛 Bug Fixes
+
+- **Role hierarchy**: `requireRole('viewer')` now correctly permits `analyst` and `admin` users (uses rank-based comparison instead of exact match)
+- **Source file path resolution**: `GET /api/v1/source` now resolves relative file paths against `workspaceRoot` before checking repo access — fixes "File path must be within an indexed repository" when the web UI passes relative paths
+- **Deprecated packages**: added `overrides` in root `package.json` to upgrade `onnxruntime-node` → `^1.25.1` (drops `global-agent@3`/`boolean@3.2.0`), `node-domexception` → `^2.0.2`, and `global-agent` → `^4.1.3`
 
 ---
 
-## [0.6.0] — 2026-05-20 — Smarter AI Tooling
+## [0.6.0] — 2026-05-02 — Smarter AI Tooling
 
-> **Theme:** MCP tools that reason, not just retrieve
+> **Theme:** MCP tools that reason, not just retrieve.
 
 ### 🧠 New MCP Reasoning Tools
 
-- **`explain_relationship`**: finds all directed paths (max 5 hops, max 10 paths) from `from` → `to`, shared imports, heritage (extends/implements), and generates a natural-language summary; unknown symbol returns name suggestions
-- **`pr_impact`**: accepts `{ changedFiles }` or `{ diff }` (parses unified diff); risk scoring per symbol — HIGH (blast radius > 50 or imported by > 10 files), MEDIUM (10–50), LOW (< 10); test coverage check; top 5 files to review; cross-repo impact when in a group
-- **`similar_symbols`**: combined score `0.5 × vector + 0.3 × structural + 0.2 × name`; Jaro-Winkler name distance; Jaccard parameter-type similarity; fallback to structural + name when no embeddings
-- **`health_report`**: all health signals (dead code, cycles, god nodes, orphan files, complexity hotspots) filtered by `scope` prefix; `scope = "."` for whole-repo; same health score formula as `code-intel health`
-- **`suggest_tests`**: finds all call paths through symbol, identifies parameter/return types for boundary suggestions, finds existing test files, identifies untested callers
-- **`cluster_summary`**: key symbols (top 5 by caller count), cluster dependencies + dependents, health signals scoped to cluster, symbol counts per kind, AI-derived purpose
+- **`explain_relationship`** (`src/query/explain-relationship.ts`): explains how two symbols connect — directed paths (max 5 hops, 10 paths), shared imports, heritage (extends/implements), and a natural language summary; unknown symbol returns error + name suggestions
+- **`pr_impact`** (`src/query/pr-impact.ts`): given `changedFiles` or a unified `diff`, computes blast radius with risk scoring (HIGH/MEDIUM/LOW), test coverage gaps, and top 5 files to review; supports cross-repo impact when repo is in a group
+- **`similar_symbols`** (`src/query/similar-symbols.ts`): finds symbols with similar name (Levenshtein/Jaro-Winkler) and structural similarity (same parameter count + return type); combined score with fallback when no embeddings
+- **`health_report`** (`src/query/health-report.ts`): code health signals (dead code, cycles, god nodes, orphan files, complexity hotspots) scoped to a directory prefix; `scope: "."` returns whole-repo health; health score matches `code-intel health` CLI
+- **`suggest_tests`** (`src/query/suggest-tests.ts`): suggests test cases for a symbol — call paths, parameter/return-type boundary cases, existing test files importing the symbol, and untested callers
+- **`cluster_summary`** (`src/query/cluster-summary.ts`): rich summary of a module — purpose, top 5 key symbols by caller count, dependencies, dependents, health signals, and symbol counts per kind
 
 ### 📄 Pagination for All List Tools
 
-- Added `offset?: number` + `limit?: number` (default: 50; max: 500) to `search`, `clusters`, `flows`, `list_exports`, `file_symbols`
-- Response shape: `{ nodes, total, offset, limit, hasMore }`; limit > 500 clamped
+- `search`, `clusters`, `flows`, `list_exports`, `file_symbols` all now accept `offset` and `limit` parameters
+- Response shape: `{ nodes, total, offset, limit, hasMore }`
+- Default limit: 50; max: 500 (clamped)
 
 ### 🔗 Tool-Chaining Hints
 
-- `suggested_next_tools: [{ tool, reason, input }]` in responses for `search`, `blast_radius`, `inspect`, `pr_impact`; input pre-filled with relevant context (e.g. top result name)
-- Controlled by `mcp.suggestNextTools: true` (default: true)
+- `suggested_next_tools: [{ tool, reason, input }]` added to `search`, `blast_radius`, `inspect`, and `pr_impact` responses
+- Input context pre-filled with the most relevant symbol from the current result
+- Controlled via `CODE_INTEL_SUGGEST_NEXT_TOOLS=false` env flag (default: enabled)
+
+### 🔒 Security Module
+
+- **`SecretScanner`** (`src/security/secret-scanner.ts`): scans graph nodes for hardcoded secrets — OpenAI keys, Stripe keys, AWS access keys, Slack tokens, DB URLs with credentials, RSA private keys, and sensitive-name variables with literal values; scope and test-file filters; tags node metadata with `security.secretRisk`
+- **`VulnerabilityDetector`** (`src/security/vulnerability-detector.ts`): detects SQL injection (CWE-89), XSS (CWE-79), SSRF (CWE-918), path traversal (CWE-22), and command injection (CWE-78) from graph structure; scope and type filters; tags nodes and creates `vulnerability` nodes with `has_vulnerability` edges
 
 ---
 
-## [0.5.0] — 2026-05-13 — Query & Exploration
+## [0.5.0] — 2026-05-02 — Query & Exploration
 
-> **Theme:** Let users ask arbitrary questions about their code
+> **Theme:** Let users ask arbitrary questions about their code — a native graph query language, source code preview, and a visual query console.
 
-### 🔍 Graph Query Language (GQL)
+### 🔎 Graph Query Language (GQL)
 
-- **GQL parser**: lexer + recursive-descent parser → `QueryAST`; four statement types: `FIND`, `TRAVERSE`, `PATH`, `COUNT … GROUP BY`; WHERE clause with `=`, `!=`, `CONTAINS`, `STARTS_WITH`, `IN`; descriptive parse errors with position info
-- **GQL executor**: FIND (filter nodes + LIMIT/OFFSET), TRAVERSE (BFS/DFS with DEPTH), PATH (BFS shortest path), COUNT GROUP BY; 10s timeout returns partial results with `{ truncated: true }`; FIND on 10k-node graph < 100ms
-- **`code-intel query "<gql>"`** CLI: `--file <path>`, `--format table|json|csv`, `--limit <n>`, exit code 1 on parse/execution error
-- **Saved queries**: `--save <name>`, `--run <name>`, `--list`, `--delete` persisted to `.code-intel/queries/<name>.gql`
-- **`POST /api/v1/query`** endpoint: `{ gql, format? }` → GQLResult with `executionTimeMs`, `truncated`, `totalCount`; `POST /api/v1/query/explain` → query plan; requires `viewer` role
-- **`query` MCP tool**: `{ gql, limit? }` → `{ nodes, edges?, groups?, executionTimeMs, truncated }`; `raw_query` deprecated with warning
+- **GQL Parser** (`src/query/gql-parser.ts`): recursive-descent lexer/parser supporting four statement types: `FIND`, `TRAVERSE`, `PATH`, `COUNT ... GROUP BY`; WHERE clause with `=`, `!=`, `CONTAINS`, `STARTS_WITH`, `IN` operators; descriptive parse errors with position info
+- **GQL Executor** (`src/query/gql-executor.ts`): executes all four statement types against the live graph; 10s execution timeout returns partial results with `{ truncated: true }`; LIMIT/OFFSET pagination
+- **`POST /api/v1/query`**: executes a GQL string; returns `{ nodes, edges, groups, executionTimeMs, truncated, totalCount }`; 422 on parse error, 408 on timeout with partial results; requires `viewer` role minimum
+- **`POST /api/v1/query/explain`**: returns a human-readable query plan without executing
+- **MCP `query` tool**: `{ gql, limit? }` → full GQLResult; replaces `raw_query` (kept with deprecation warning)
+- **Saved queries** (`src/query/saved-queries.ts`): `--save`, `--run`, `--list`, `--delete` flags; persisted to `.code-intel/queries/`
+- **`code-intel query` CLI command**: `--format table|json|csv`, `--file <path>`, `--limit <n>`, `--save/--run/--list/--delete`; exit code 1 on parse/execution error
 
 ### 👁️ Web UI: Source Code Preview
 
-- **`GET /api/v1/source`** endpoint: `?file=<path>&startLine=<n>&endLine=<n>`; ±20 lines context; path-traversal guard; `viewer` role + repo access required
-- **`SourcePanel`** React component: syntax highlighting via `highlight.js` (lazy-loaded per language); symbol's `startLine..endLine` highlighted; "Open in editor" button (`vscode://file/<path>:<line>`); "Copy path" button; resizable, size persisted in localStorage; loading skeleton
+- **`GET /api/v1/source`**: serves file content with ±20 lines of context; path-traversal protection; requires `viewer` role + repo access
+- **`SourcePanel`** React component: syntax highlighting via `highlight.js` (lazy-loaded per language); highlights symbol's `startLine..endLine`; click node in graph → panel opens at that symbol; "Open in editor" (`vscode://file/…`) + "Copy path" buttons; resizable with localStorage persistence
 
 ### 🖥️ Web UI: Query Console
 
-- **`QueryPanel`** React component: multi-line monospace GQL editor with keyword highlighting; `Ctrl+Enter` shortcut; sortable results table; click result row → select node in graph; query history (last 20 in localStorage); 5 pre-built example queries dropdown
+- **`QueryPanel`** React component: multi-line monospace GQL editor with keyword highlighting; "Run" button + `Ctrl+Enter` shortcut; sortable results table; click result row → selects node in graph; last 20 queries in localStorage; 5 built-in example queries dropdown
+
+### 🔧 Bug Fixes & CI
+
+- **`POST /api/v1/query`**: timeout response now correctly returns HTTP 408 with partial results
+- **SBOM generation**: added `continue-on-error: true` + `NPM_CONFIG_LEGACY_PEER_DEPS=true` to CycloneDX workflow step to handle optional platform-specific packages (`@ladybugdb/core-darwin-x64`, `tree-sitter-kotlin`, `tree-sitter-swift`) on Linux CI runners
 
 ---
 
-## [0.4.0] — 2026-05-06 — Intelligence Layer
+## [0.4.0] — 2026-05-02 — Intelligence Layer
 
-> **Theme:** Understand not just structure, but meaning
+> **Theme:** Understand not just structure, but meaning — AI summaries, hybrid search, live file watcher, and code health signals.
 
 ### 🤖 AI-Generated Symbol Summaries
 
-- **`summarize` phase** (opt-in): runs after `flow` phase with `--summarize` flag or `analysis.summarizeOnAnalyze: true`; targets `function`, `class`, `method`, `interface` nodes only; skips nodes with unchanged code hash (cache)
-- **LLM provider backends**: abstract `LLMProvider` interface; **OpenAI** (`openai` package, `$OPENAI_API_KEY`), **Anthropic** (`@anthropic-ai/sdk`, `$ANTHROPIC_API_KEY`), **Ollama** (local HTTP at `localhost:11434`); configured via `llm.provider` in config
-- **Rate limiting**: `llm.batchSize` concurrent calls (default: 20); exponential backoff on 429; circuit breaker — 5 consecutive failures → pause 60s; `llm.maxNodesPerRun` cost guard
-- **Persisted fields**: `metadata.summary`, `metadata.summaryModel`, `metadata.summaryAt`, `metadata.codeHash`
-- **AI governance log**: `~/.code-intel/logs/ai-calls.log` — nodeId + promptLength only, no raw source code
+- **`SummarizePhase`** (`src/pipeline/phases/summarize-phase.ts`): optional post-analysis phase triggered by `--summarize` flag or `analysis.summarizeOnAnalyze: true`; targets `function`, `class`, `method`, `interface` nodes only
+- **LLM Provider backends** (`src/llm/providers/`): OpenAI (`$OPENAI_API_KEY`), Anthropic (`$ANTHROPIC_API_KEY`), and Ollama (local `http://localhost:11434`) — configurable via `llm.provider`
+- **Circuit breaker + retry** (`src/llm/retry.ts`): exponential backoff on 429 responses; circuit opens after 5 consecutive failures (60s pause)
+- **Cost guard**: `llm.maxNodesPerRun` stops summarization after N nodes
+- **Summary persistence**: `metadata.summary`, `metadata.summaryModel`, `metadata.summaryAt`, `metadata.codeHash` — unchanged nodes are skipped on re-analysis
+- **AI governance log**: `~/.code-intel/logs/ai-calls.log` — records nodeId + promptLength only (no raw code content)
 
-### 🔎 Hybrid Search (BM25 + Vector RRF)
+### 🔍 Hybrid Search (BM25 + Vector RRF)
 
-- **Richer embeddings**: input changed to `"[{kind}] {name}\n{signature}\n{summary}"` (fallback to code snippet); `metadata.embeddingSource: 'summary' | 'code'`; re-embeds when summary changes
-- **`hybridSearch(query, limit)`** in `SearchService`: runs BM25 + vector search in parallel; Reciprocal Rank Fusion (`score = Σ 1 / (60 + rank_i)`); fallback to BM25-only when `vector.db` absent; `searchMode: 'bm25' | 'vector' | 'hybrid'` in response metadata
-- `GET /api/v1/search` and MCP `search` tool updated to use hybrid search
+- **Richer embeddings**: embedding input enriched to `"[{kind}] {name}\n{signature}\n{summary}"` with code-snippet fallback; `metadata.embeddingSource: 'summary' | 'code'` tracked per node
+- **`hybridSearch()`** (`src/search/hybrid-search.ts`): runs BM25 + vector search in parallel, fuses via Reciprocal Rank Fusion (`score = Σ 1 / (60 + rank_i)`)
+- **Graceful fallback**: BM25-only when no vector DB present; `searchMode: 'bm25' | 'vector' | 'hybrid'` included in response metadata
+- **`GET /api/v1/search`** and MCP `search` tool updated to use hybrid search
 
-### 👀 File Watcher & Auto-Reindex
+### 👁️ File Watcher & Auto-Reindex
 
-- **`FileWatcher`** class (`chokidar`): watches workspace root; respects `.codeintelignore`; debounce 300ms; `watching: true` + `lastWatchEvent` in `/api/v1/health`
-- **`IncrementalIndexer.patchGraph(changedFiles[])`**: removes stale nodes/edges, re-runs parse + resolve for changed files, merges new nodes/edges, upserts to DB; does not block HTTP API reads
-- **`code-intel watch [path]`** CLI command: alias for serve + forced file watcher
-- **WebSocket push**: `ws` package; `ws://localhost:PORT/ws`; session token required; broadcasts `{ type: "graph:updated", indexVersion, stats, changedFiles }` on patch; Web UI shows "Graph updated" toast + green "Live" dot; auto-reconnect with 3s + jitter backoff
+- **`FileWatcher`** (`src/pipeline/file-watcher.ts`): chokidar-based watcher on workspace root; respects `.codeintelignore`; 300ms debounce for rapid saves
+- **`IncrementalIndexer.patchGraph()`** (`src/pipeline/incremental-indexer.ts`): removes stale nodes/edges, re-parses changed files, merges and upserts — non-blocking for HTTP API reads
+- **`code-intel watch`** CLI command: starts HTTP server + file watcher; auto-reindexes on any file save
+- **`WsServer`** (`src/http/websocket-server.ts`): WebSocket server at `ws://localhost:PORT/ws`; broadcasts `{ type: "graph:updated", indexVersion, stats, changedFiles }` after each patch; requires valid session token; client auto-reconnects with 3s + jitter backoff
+- **Web UI**: "Live" green dot indicator, "Graph updated" toast, and auto-reconnect on WebSocket disconnect
+- **`/api/v1/health`**: `watching: true` + `lastWatchEvent` fields added
 
 ### 🏥 Code Health Signals
 
-- **Dead code detection**: exported symbol + zero callers + zero importers → `metadata.health.deadCode: boolean`; excludes entry points, test files, `@deprecated` symbols
-- **Circular dependency detection**: Tarjan's SCC on import graph; SCC size > 1 = cycle; `metadata.health.inCycle: boolean` + `metadata.health.cycleId: string`; < 100ms on 10k-node graph
-- **God node detection**: > 20 methods OR > 50 callers → `metadata.health.isGodNode: boolean` + `metadata.health.godReason: string` (thresholds configurable)
-- **Orphan file detection**: no imports + no importers → `file.metadata.health.orphan: boolean`; excludes config files, test fixtures, `*.d.ts`
-- **`code-intel health [path]`** CLI: summary table (dead code count, cycle count, god classes, orphan files, health score); `--dead-code`, `--cycles`, `--orphans` detail flags; `--json`; health score formula `100 − (deadCode×0.5 + cycles×5 + godNodes×2 + orphans×1)`; exit code 1 when score < threshold (configurable)
-- `health` field added to MCP `overview` tool response
+- **Dead code detection** (`src/health/dead-code.ts`): exported symbol with zero callers and zero importers → `metadata.health.deadCode: boolean`; excludes entry points, test files, `@deprecated`
+- **Circular dependency detection** (`src/health/circular-deps.ts`): Tarjan's SCC on import graph (< 100ms for 10k nodes); `metadata.health.inCycle: boolean` + `metadata.health.cycleId: string`
+- **God node detection** (`src/health/god-nodes.ts`): > 20 methods or > 50 callers → `metadata.health.isGodNode: boolean` + `metadata.health.godReason: string` (thresholds configurable)
+- **Orphan file detection** (`src/health/orphan-files.ts`): no imports and no importers → `file.metadata.health.orphan: boolean`; excludes config files, test fixtures, `*.d.ts`
+- **`code-intel health`** CLI command: summary table with dead code, cycles, god nodes, orphan files, and a 0–100 health score; `--dead-code`, `--cycles`, `--orphans` for detail lists; `--json` for machine output; exit code 1 when score < configurable threshold
+- **Health score formula**: `100 - (deadCode×0.5 + cycles×5 + godNodes×2 + orphans×1)`
+- **MCP `overview` tool**: now includes `health` field with score and signal counts
+
+### 🔧 Bug Fixes
+
+- **Express 5 unmatched routes**: silent 404 JSON response replaces noisy `Unhandled error: Not Found` log
+- **tsup build**: `@anthropic-ai/sdk` and `openai` marked as external — resolved `Could not resolve` build errors
 
 ---
 
