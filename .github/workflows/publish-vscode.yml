@@ -83,7 +83,7 @@ jobs:
 
       # ── Publish to Open VSX Registry (optional, community mirror) ────────────
       - name: Publish to Open VSX Registry
-        if: startsWith(github.ref, 'refs/tags/') && !inputs.dry_run && secrets.OVSX_TOKEN != ''
+        if: startsWith(github.ref, 'refs/tags/') && !inputs.dry_run
         run: npx --yes ovsx publish vscode-code-intel.vsix --pat "$OVSX_TOKEN"
         working-directory: extensions/vscode
         env:
