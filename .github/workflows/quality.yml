@@ -9,6 +9,6 @@ jobs:
         with:
           node-version: '24'
           cache: 'npm'
-      - run: npm ci --legacy-peer-deps
+      - run: npm ci --legacy-peer-deps --ignore-scripts
       - run: npx tsc -b code-intel/shared code-intel/core
       - run: npx tsc -b code-intel/web
