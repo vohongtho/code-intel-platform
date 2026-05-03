@@ -18,7 +18,7 @@ jobs:
     name: Validate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-node@v4
         with:
@@ -54,7 +54,7 @@ jobs:
     needs: validate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-node@v4
         with:
@@ -85,7 +85,7 @@ jobs:
       digest: ${{ steps.push.outputs.digest }}
       image: ghcr.io/vohongtho/code-intel
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up QEMU (ARM emulation)
         uses: docker/setup-qemu-action@v3
@@ -131,7 +131,7 @@ jobs:
     needs: publish-docker
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # Produce SARIF for the GitHub Security tab (CRITICAL + HIGH, no fail)
       - name: Trivy — SARIF report (CRITICAL + HIGH)
@@ -190,7 +190,7 @@ jobs:
     needs: [publish-npm, sign-image]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0   # needed for accurate release notes
 
