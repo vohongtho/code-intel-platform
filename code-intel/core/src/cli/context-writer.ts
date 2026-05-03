@@ -44,6 +44,21 @@ export function writeContextFiles(
   const block = buildBlock(projectName, stats, skills);
   upsertFile(path.join(workspaceRoot, 'AGENTS.md'), block, 'AGENTS.md');
   upsertFile(path.join(workspaceRoot, 'CLAUDE.md'),  block, 'CLAUDE.md');
+
+  // GitHub Copilot (VS Code Copilot Chat, GitHub Copilot CLI)
+  const githubDir = path.join(workspaceRoot, '.github');
+  if (!fs.existsSync(githubDir)) fs.mkdirSync(githubDir, { recursive: true });
+  upsertFile(path.join(githubDir, 'copilot-instructions.md'), block, 'copilot-instructions.md');
+
+  // Cursor IDE
+  const cursorDir = path.join(workspaceRoot, '.cursor', 'rules');
+  if (!fs.existsSync(cursorDir)) fs.mkdirSync(cursorDir, { recursive: true });
+  upsertFile(path.join(cursorDir, 'code-intel.mdc'), block, 'code-intel.mdc');
+
+  // Kiro IDE/CLI
+  const kiroDir = path.join(workspaceRoot, '.kiro', 'steering');
+  if (!fs.existsSync(kiroDir)) fs.mkdirSync(kiroDir, { recursive: true });
+  upsertFile(path.join(kiroDir, 'code-intel.md'), block, 'code-intel.md');
 }
 
 // ─── Block content ────────────────────────────────────────────────────────────
@@ -77,30 +92,54 @@ Indexed: **${stats.nodes.toLocaleString()} nodes** | **${stats.edges.toLocaleStr
 
 > Index stale? Re-run: \`code-intel analyze\`
 
-## Always Do
+## Mandatory Rules — ALL Agents (Amp, Claude Code, Codex, Copilot, Cursor, Aider, Gemini, Kiro, Trae, Hermes, Factory, OpenCode, Pi, Antigravity, OpenClaw, and others)
 
-- **Before editing any symbol**, run \`code-intel impact <symbol>\` to review its blast radius.
-- **Before committing**, verify scope with \`code-intel inspect <symbol>\`.
-- Use \`code-intel search "<concept>"\` to find related symbols instead of grepping.
-- Warn the user if impact shows ≥ 5 direct callers (**HIGH risk**).
+These rules apply to **every coding agent or AI assistant** working in this repository.
+
+### Before Implementing Any Change
+1. Run \`code-intel search "<concept>"\` — find existing symbols related to the task.
+2. Run \`code-intel inspect <symbol>\` — understand callers, callees, and imports.
+3. Run \`code-intel impact <symbol>\` — check blast radius before touching anything.
+4. **If impact shows ≥ 5 direct callers → warn the user: HIGH risk.**
+
+### While Implementing / Fixing a Bug
+- NEVER open a file cold — always \`code-intel search\` first.
+- NEVER grep for symbols — use \`code-intel search\` instead.
+- NEVER rename symbols with find-and-replace — use \`code-intel inspect\` to find all usages first.
+- Use \`code-intel query summarize <symbol>\` to understand a function before modifying it.
+- Use \`code-intel query flows <symbol>\` to trace execution paths through complex logic.
+
+### Before Committing / Code Review
+- Run \`code-intel impact <symbol>\` for every symbol you changed.
+- Run \`code-intel pr-impact --base main --head HEAD\` to see full PR blast radius.
+- Fail PR if HIGH risk symbols are changed without reviewer sign-off.
+
+### Studying the Codebase
+- Use \`code-intel search "<concept>"\` to explore unfamiliar areas.
+- Use \`code-intel inspect <symbol>\` to see a symbol's full context.
+- Use \`code-intel serve\` to open the interactive Web UI for graph exploration.
+- Use subsystem skills (see table below) for deep-dive on a specific area.
 
 ## Never Do
 
-- NEVER rename symbols with find-and-replace — use \`code-intel inspect\` to find all usages first.
 - NEVER ignore impact warnings — always report blast radius to the user.
-- NEVER open a file cold — always \`code-intel search\` first.
-- NEVER grep for symbols — use \`code-intel search\` instead.
+- NEVER skip \`code-intel search\` before grepping or opening files.
+- NEVER make changes to a symbol with ≥ 5 callers without running \`code-intel impact\` first.
+- NEVER use find-and-replace for symbol renames.
 
 ## CLI Quick Reference
 
 \`\`\`bash
-code-intel analyze [path]          # Build / refresh the knowledge graph
-code-intel serve [path]            # Start HTTP API + Web UI on :4747
-code-intel search <query>          # Text search across all symbols
-code-intel inspect <symbol>        # Callers, callees, imports, cluster
-code-intel impact <symbol>         # Blast radius (who breaks if this changes)
-code-intel status [path]           # Index freshness and stats
-code-intel clean [path]            # Remove index data
+code-intel analyze [path]                      # Build / refresh the knowledge graph
+code-intel serve [path]                        # Start HTTP API + Web UI on :4747
+code-intel search <query>                      # Find symbols by concept/name
+code-intel inspect <symbol>                    # Callers, callees, imports, cluster
+code-intel impact <symbol>                     # Blast radius (who breaks if this changes)
+code-intel query summarize <symbol>            # AI summary of a symbol
+code-intel query flows <symbol>                # Execution flows through a symbol
+code-intel pr-impact --base main --head HEAD   # Full PR blast radius report
+code-intel status [path]                       # Index freshness and stats
+code-intel clean [path]                        # Remove index data
 \`\`\`
 
 ## Skills

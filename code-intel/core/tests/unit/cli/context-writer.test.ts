@@ -117,3 +117,57 @@ describe('writeContextFiles — skill rows in block', () => {
     assert.ok(content.includes('auth-module'));
   });
 });
+
+describe('writeContextFiles — creates agent-specific context files', () => {
+  let dir: string;
+
+  before(() => { dir = tmpDir(); });
+  after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+  it('creates .github/copilot-instructions.md for GitHub Copilot', () => {
+    writeContextFiles(dir, 'MyProject', stats, []);
+    assert.ok(fs.existsSync(path.join(dir, '.github', 'copilot-instructions.md')));
+  });
+
+  it('creates .cursor/rules/code-intel.mdc for Cursor IDE', () => {
+    writeContextFiles(dir, 'MyProject', stats, []);
+    assert.ok(fs.existsSync(path.join(dir, '.cursor', 'rules', 'code-intel.mdc')));
+  });
+
+  it('creates .kiro/steering/code-intel.md for Kiro IDE', () => {
+    writeContextFiles(dir, 'MyProject', stats, []);
+    assert.ok(fs.existsSync(path.join(dir, '.kiro', 'steering', 'code-intel.md')));
+  });
+
+  it('all agent files contain the mandatory rules section', () => {
+    writeContextFiles(dir, 'MyProject', stats, []);
+    const files = [
+      path.join(dir, '.github', 'copilot-instructions.md'),
+      path.join(dir, '.cursor', 'rules', 'code-intel.mdc'),
+      path.join(dir, '.kiro', 'steering', 'code-intel.md'),
+    ];
+    for (const f of files) {
+      const content = fs.readFileSync(f, 'utf-8');
+      assert.ok(content.includes('Mandatory Rules'), `${f} should contain Mandatory Rules`);
+      assert.ok(content.includes('code-intel search'), `${f} should reference code-intel search`);
+      assert.ok(content.includes('code-intel impact'), `${f} should reference code-intel impact`);
+      assert.ok(content.includes('code-intel inspect'), `${f} should reference code-intel inspect`);
+    }
+  });
+
+  it('block content mentions key agent names', () => {
+    writeContextFiles(dir, 'MyProject', stats, []);
+    const content = fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf-8');
+    assert.ok(content.includes('Cursor'), 'should mention Cursor');
+    assert.ok(content.includes('Copilot'), 'should mention Copilot');
+    assert.ok(content.includes('Kiro'), 'should mention Kiro');
+    assert.ok(content.includes('Aider'), 'should mention Aider');
+    assert.ok(content.includes('Amp'), 'should mention Amp');
+  });
+
+  it('block content includes pr-impact command', () => {
+    writeContextFiles(dir, 'MyProject', stats, []);
+    const content = fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf-8');
+    assert.ok(content.includes('pr-impact'), 'should include pr-impact command');
+  });
+});
