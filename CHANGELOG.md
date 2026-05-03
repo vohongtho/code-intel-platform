@@ -4,7 +4,61 @@ All notable changes to this project are documented in this file.
 
 ---
 
-## [0.7.0] — 2026-05-03 — Multi-Repo & Monorepo
+## [0.8.0] — 2026-05-03 — Security & Quality Scanning
+
+> **Theme:** Enterprise-grade security awareness and code quality signals.
+
+### 🔐 Epic 1 — Hardcoded Secret Detection
+
+- **`SecretScanner`** (`src/security/secret-scanner.ts`): scans string literals from tree-sitter AST for API keys (`sk-...`, `pk_live_...`, `AKIA...`, `xoxb-...`), DB URLs with credentials, RSA private keys, and high-entropy strings in sensitive variable names
+- `.codeintelignore` patterns respected during secret scanning (`ignorePatterns` option)
+- **`code-intel secrets [path]`** CLI: prints findings table (file, line, variable, pattern); `--format table|json`, `--fail-on`, `--fix-hint`, `--include-tests`
+- **`secrets` MCP tool**: `{ scope?, includeTestFiles? }` → `{ findings: [...], total }`
+
+### 🛡️ Epic 2 — OWASP Vulnerability Detection
+
+- **`VulnerabilityDetector`** (`src/security/vulnerability-detector.ts`): detects SQL Injection (CWE-89), XSS (CWE-79), SSRF (CWE-918), Path Traversal (CWE-22), Command Injection (CWE-78)
+- `VulnerabilityType` exported type for use in CLI and MCP server
+- `vulnerability` NodeKind and `has_vulnerability` EdgeKind added to graph model
+- **`code-intel scan [path]`** CLI: `--type`, `--severity`, `--format table|json|sarif`, `--fail-on`, `--exclude`
+- **`vulnerability_scan` MCP tool**: findings with CWE IDs
+
+### 📊 Epic 3 — Complexity Metrics
+
+- Cyclomatic + cognitive complexity computed for all functions/methods; stored in `metadata.complexity`
+- **`code-intel complexity [path] --top N`** CLI and `complexity_hotspots` MCP tool
+
+### 🧪 Epic 4 — Test Coverage Integration
+
+- Test file detection for all major languages; `tested_by` EdgeKind added
+- **`code-intel coverage [path]`** CLI and `coverage_gaps` MCP tool: untested exported symbols ranked by blast radius
+- `--threshold <pct>` → exit 1 if coverage below target
+
+### 🚫 Epic 5 — Deprecated API Detection
+
+- Detects `@deprecated` JSDoc (TS/JS), `@Deprecated` (Java), `#[deprecated]` (Rust), built-in Node.js deprecated APIs
+- `deprecated_use` EdgeKind added; `code-intel deprecated [path]` CLI and `deprecated_usage` MCP tool
+
+### 🤖 AI Agent Context — Multi-Agent Support
+
+- **`writeContextFiles()`** now writes to 5 locations on every `code-intel analyze`:
+  - `AGENTS.md` (Amp, Codex, OpenCode, Aider, Factory, Trae, Hermes, Pi, Antigravity, OpenClaw)
+  - `CLAUDE.md` (Claude Code)
+  - `.github/copilot-instructions.md` (GitHub Copilot / VS Code Copilot Chat)
+  - `.cursor/rules/code-intel.mdc` (Cursor IDE)
+  - `.kiro/steering/code-intel.md` (Kiro IDE/CLI)
+- Context block includes: **Mandatory Rules**, **Development Workflow** (implement, fix, study, review, refactor), **When to Load a Skill** (per-subsystem), and full **CLI Quick Reference** with all working commands
+
+### 🔧 Bug Fixes & Infrastructure
+
+- Added `anymatch`, `braces`, `glob-parent`, `is-binary-path`, `is-glob`, `normalize-path`, `readdirp` as explicit dependencies to fix `Cannot find module` errors in CI (Node 20 environments)
+- Fixed GitHub Action (`action.yml`): shell syntax error near `$(...)` — use temp file for JSON output instead of piping through `$GITHUB_OUTPUT`
+- Fixed `EdgeKind` type: added `deprecated_use` and `tested_by` (were missing, causing TS2367 errors)
+- Merged `main` → `release/0.8.0`
+
+---
+
+
 
 > **Theme:** First-class support for large-scale repo structures.
 
