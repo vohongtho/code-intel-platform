@@ -183,15 +183,16 @@ export function StatusFooter() {
         {/* Spacer */}
         <div className="flex-1" />
 
-        {/* Right section — selected node pill */}
+        {/* Right section — selected node pill + version */}
         {selectedNode && (
           <span
-            className="max-w-[30ch] truncate px-2 py-0.5 rounded-full bg-gray-800 text-gray-300 border border-gray-700 font-mono"
+            className="max-w-[30ch] truncate px-2 py-0.5 rounded-full bg-gray-800 text-gray-300 border border-gray-700 font-mono mr-3"
             title={selectedNode.name}
           >
             {selectedNode.name}
           </span>
         )}
+        <span className="font-mono text-gray-700 text-[10px] select-none">v{__APP_VERSION__}</span>
       </div>
     </>
   );
