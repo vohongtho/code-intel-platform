@@ -22,6 +22,11 @@ export function StatusFooter() {
     toastTimerRef.current = setTimeout(() => setToastMsg(null), 4000);
   };
 
+  // Clear toast timer on unmount to avoid state updates on unmounted component
+  useEffect(() => {
+    return () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); };
+  }, []);
+
   useEffect(() => {
     if (!state.connected || !state.currentUser) return;
 
