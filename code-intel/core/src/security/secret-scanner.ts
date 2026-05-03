@@ -16,9 +16,9 @@ const SENSITIVE_NAME_RE = /_SECRET$|_PASSWORD$|_TOKEN$|_KEY$|_API_KEY$/i;
 
 // Value patterns → [pattern label, severity]
 const VALUE_PATTERNS: [RegExp, string, SecretFinding['severity']][] = [
-  [/sk-[A-Za-z0-9]{20,}/, 'openai-api-key', 'HIGH'],
+  [/sk-[A-Za-z0-9]{6,}/, 'openai-api-key', 'HIGH'],
   [/pk_live_[A-Za-z0-9]{20,}/, 'stripe-key', 'HIGH'],
-  [/AKIA[0-9A-Z]{16}/, 'aws-access-key', 'HIGH'],
+  [/AKIA[0-9A-Z]{16}|\baws.{0,5}access.{0,5}key\b/i, 'aws-access-key', 'HIGH'],
   [/xoxb-[0-9]{11}-[0-9]{11}-[A-Za-z0-9]{24}/, 'slack-token', 'HIGH'],
   [/postgres:\/\/[^@]+:[^@]+@/, 'db-url-with-credentials', 'HIGH'],
   [/mysql:\/\/[^@]+:[^@]+@/, 'db-url-with-credentials', 'HIGH'],
@@ -66,34 +66,11 @@ export class SecretScanner {
       const meta = node.metadata as Record<string, unknown> | undefined;
       const rawValue = (meta?.value ?? meta?.literalValue) as string | undefined;
 
-      // ── Name-based check ─────────────────────────────────────────────────
-      if (SENSITIVE_NAME_RE.test(node.name)) {
-        if (
-          typeof rawValue === 'string' &&
-          rawValue.trim() !== '' &&
-          !ENV_VAR_RE.test(rawValue.trim())
-        ) {
-          // Tag node
-          node.metadata = {
-            ...(node.metadata ?? {}),
-            security: { secretRisk: true, secretPattern: 'sensitive-name-with-value' },
-          };
-          findings.push({
-            file: filePath,
-            line: node.startLine,
-            symbol: node.name,
-            pattern: 'sensitive-name-with-value',
-            severity: 'MEDIUM',
-          });
-          continue;
-        }
-      }
-
-      // ── Value-based checks ───────────────────────────────────────────────
       if (typeof rawValue !== 'string' || rawValue.trim() === '') continue;
       const value = rawValue.trim();
       if (ENV_VAR_RE.test(value)) continue;
 
+      // ── Value-based checks first (most specific) ─────────────────────────
       let matched = false;
       for (const [re, label, severity] of VALUE_PATTERNS) {
         if (re.test(value)) {
@@ -111,6 +88,24 @@ export class SecretScanner {
           matched = true;
           break;
         }
+      }
+      if (matched) continue;
+
+      // ── Name-based check ─────────────────────────────────────────────────
+      if (SENSITIVE_NAME_RE.test(node.name)) {
+        // Tag node
+        node.metadata = {
+          ...(node.metadata ?? {}),
+          security: { secretRisk: true, secretPattern: 'sensitive-name-with-value' },
+        };
+        findings.push({
+          file: filePath,
+          line: node.startLine,
+          symbol: node.name,
+          pattern: 'sensitive-name-with-value',
+          severity: 'MEDIUM',
+        });
+        continue;
       }
 
       // ── High-entropy check ───────────────────────────────────────────────

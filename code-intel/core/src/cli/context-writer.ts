@@ -88,6 +88,12 @@ Indexed: **${stats.nodes.toLocaleString()} nodes** | **${stats.edges.toLocaleStr
 
 - NEVER rename symbols with find-and-replace — use \`code-intel inspect\` to find all usages first.
 - NEVER ignore impact warnings — always report blast radius to the user.
+- NEVER open a file cold — always \`code-intel search\` first.
+- NEVER grep for symbols — use \`code-intel search\` instead.
+- NEVER skip blast-radius check — run \`code-intel impact <symbol>\` before every edit.
+- NEVER trace callers manually — use \`code-intel inspect <symbol>\` instead.
+- NEVER write ad-hoc graph queries — use \`code-intel query "<gql>"\` instead.
+- NEVER compute PR blast radius manually — use \`code-intel pr-impact\` instead.
 
 ## CLI Quick Reference
 
@@ -97,6 +103,14 @@ code-intel serve [path]            # Start HTTP API + Web UI on :4747
 code-intel search <query>          # Text search across all symbols
 code-intel inspect <symbol>        # Callers, callees, imports, cluster
 code-intel impact <symbol>         # Blast radius (who breaks if this changes)
+code-intel query "<gql>"           # Run a GQL query (FIND / TRAVERSE / PATH / COUNT)
+code-intel pr-impact               # PR blast radius with risk scores + SARIF output
+code-intel scan [path]             # OWASP + secret vulnerability scan
+code-intel secrets [path]          # Hardcoded secret detection
+code-intel complexity [path]       # Cyclomatic / cognitive complexity hotspots
+code-intel coverage [path]         # Test coverage gaps sorted by blast radius
+code-intel deprecated [path]       # Deprecated API usage report
+code-intel health [path]           # Code health score (dead code, cycles, god nodes)
 code-intel status [path]           # Index freshness and stats
 code-intel clean [path]            # Remove index data
 \`\`\`
