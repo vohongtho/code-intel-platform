@@ -1,11 +1,11 @@
 ---
 name: api
-description: "Covers the **api** subsystem of code-intel-platform. 32 symbols across 1 files. Key symbols: `constructor`, `login`, `logout`. Internal call density: 0.3 calls/symbol. Participates in 1 execution flow(s)."
+description: "Covers the **api** subsystem of code-intel-platform. 33 symbols across 1 files. Key symbols: `constructor`, `login`, `logout`. Internal call density: 0.3 calls/symbol. Participates in 1 execution flow(s)."
 ---
 
 # api
 
-> **32 symbols** | **1 files** | path: `code-intel/web/src/api/` | call density: 0.3/sym
+> **33 symbols** | **1 files** | path: `code-intel/web/src/api/` | call density: 0.3/sym
 
 ## When to Use
 
@@ -19,18 +19,18 @@ Load this skill when:
 
 | File | Symbols | Notes |
 |------|---------|-------|
-| `code-intel/web/src/api/client.ts` | `GQLResult`, `AuthStatus`, `NodeInspectInfo`, `BlastRadiusResult` +(28) | 32 exported |
+| `code-intel/web/src/api/client.ts` | `CountGroup`, `GQLResult`, `AuthStatus`, `NodeInspectInfo` +(29) | 33 exported |
 
 ## Entry Points
 
 Start exploration here — exported symbols with no external callers:
 
-- **`constructor`** `(method)` → `code-intel/web/src/api/client.ts:44`
-- **`login`** `(method)` → `code-intel/web/src/api/client.ts:79`
-- **`logout`** `(method)` → `code-intel/web/src/api/client.ts:94`
-- **`readFile`** `(method)` → `code-intel/web/src/api/client.ts:156`
-- **`grep`** `(method)` → `code-intel/web/src/api/client.ts:190`
-- **`listFlows`** `(method)` → `code-intel/web/src/api/client.ts:202`
+- **`constructor`** `(method)` → `code-intel/web/src/api/client.ts:49`
+- **`login`** `(method)` → `code-intel/web/src/api/client.ts:84`
+- **`logout`** `(method)` → `code-intel/web/src/api/client.ts:99`
+- **`readFile`** `(method)` → `code-intel/web/src/api/client.ts:161`
+- **`grep`** `(method)` → `code-intel/web/src/api/client.ts:195`
+- **`listFlows`** `(method)` → `code-intel/web/src/api/client.ts:207`
 
 ## Hot Symbols
 

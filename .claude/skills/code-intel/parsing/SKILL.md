@@ -40,7 +40,7 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `get` | method | 79 | 1 | `parsing/ast-cache.ts` |
+| `get` | method | 80 | 1 | `parsing/ast-cache.ts` |
 | `has` | method | 73 | 0 | `parsing/ast-cache.ts` |
 | `getLanguage` | function | 6 | 5 | `parsing/parser-manager.ts` |
 | `getParser` | function | 1 | 4 | `parsing/parser-manager.ts` |

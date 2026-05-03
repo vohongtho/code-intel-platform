@@ -110,8 +110,8 @@ These rules apply to **every coding agent or AI assistant** working in this repo
 - NEVER open a file cold — always \`code-intel search\` first.
 - NEVER grep for symbols — use \`code-intel search\` instead.
 - NEVER rename symbols with find-and-replace — use \`code-intel inspect\` to find all usages first.
-- Use \`code-intel query summarize <symbol>\` to understand a function before modifying it.
-- Use \`code-intel query flows <symbol>\` to trace execution paths through complex logic.
+- Use \`code-intel inspect <symbol>\` to understand a function's callers/callees before modifying it.
+- Use \`code-intel query "TRAVERSE CALLS FROM '<symbol>' DEPTH 3"\` to trace execution paths.
 
 ### Before Committing / Code Review
 - Run \`code-intel impact <symbol>\` for every symbol you changed.
@@ -145,20 +145,20 @@ These rules apply to **every coding agent or AI assistant** working in this repo
 
 ### 🐛 Fix a Bug
 \`\`\`
-1. code-intel search "<buggy behavior>"       # locate the symbol
-2. code-intel query flows <symbol>            # trace execution path
-3. code-intel inspect <symbol>                # find all callers that may be affected
+1. code-intel search "<buggy behavior>"                              # locate the symbol
+2. code-intel query "TRAVERSE CALLS FROM '<symbol>' DEPTH 3"        # trace execution path
+3. code-intel inspect <symbol>                                       # find all callers that may be affected
 4. Fix the bug
-5. code-intel impact <symbol>                 # confirm no unexpected side effects
+5. code-intel impact <symbol>                                        # confirm no unexpected side effects
 \`\`\`
 
 ### 🔬 Study / Understand Code
 \`\`\`
-1. code-intel search "<concept>"              # discover entry points
-2. code-intel query summarize <symbol>        # AI explanation of a function
-3. code-intel query flows <symbol>            # execution flow diagram
-4. code-intel inspect <symbol>                # full context: callers, callees, imports
-5. Load subsystem skill                       # structured deep-dive
+1. code-intel search "<concept>"                                     # discover entry points
+2. code-intel inspect <symbol>                                       # full context: callers, callees, imports
+3. code-intel query "TRAVERSE CALLS FROM '<symbol>' DEPTH 3"        # execution call graph
+4. code-intel query "PATH FROM '<symbol>' TO '<target>'"            # path between two symbols
+5. Load subsystem skill                                              # structured deep-dive
 \`\`\`
 
 ### 👀 Code Review
@@ -179,16 +179,22 @@ These rules apply to **every coding agent or AI assistant** working in this repo
 ## CLI Quick Reference
 
 \`\`\`bash
-code-intel analyze [path]                      # Build / refresh the knowledge graph
-code-intel serve [path]                        # Start HTTP API + Web UI on :4747
-code-intel search <query>                      # Find symbols by concept/name
-code-intel inspect <symbol>                    # Callers, callees, imports, cluster
-code-intel impact <symbol>                     # Blast radius (who breaks if this changes)
-code-intel query summarize <symbol>            # AI summary of a symbol
-code-intel query flows <symbol>                # Execution flows through a symbol
-code-intel pr-impact --base main --head HEAD   # Full PR blast radius report
-code-intel status [path]                       # Index freshness and stats
-code-intel clean [path]                        # Remove index data
+code-intel analyze [path]                                      # Build / refresh the knowledge graph
+code-intel serve [path]                                        # Start HTTP API + Web UI on :4747
+code-intel search <query>                                      # Find symbols by concept/name
+code-intel inspect <symbol>                                    # Callers, callees, imports, cluster
+code-intel impact <symbol>                                     # Blast radius (who breaks if this changes)
+code-intel query "TRAVERSE CALLS FROM '<symbol>' DEPTH 3"     # Trace execution call graph
+code-intel query "PATH FROM '<sym>' TO '<target>'"             # Find path between two symbols
+code-intel query "FIND function WHERE name CONTAINS '<x>'"    # GQL symbol search
+code-intel pr-impact --base main --head HEAD                   # Full PR blast radius report
+code-intel complexity [path] --top 10                         # Cyclomatic complexity hotspots
+code-intel coverage [path]                                     # Untested exported symbols by blast radius
+code-intel secrets [path]                                      # Scan for hardcoded secrets
+code-intel scan [path] --severity high                         # OWASP vulnerability scan
+code-intel deprecated [path]                                   # Find deprecated API usages
+code-intel status [path]                                       # Index freshness and stats
+code-intel clean [path]                                        # Remove index data
 \`\`\`
 
 ## Skills

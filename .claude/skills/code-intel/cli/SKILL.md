@@ -36,8 +36,8 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | `renderSkill` | function | 1 | 7 | `cli/skill-writer.ts` |
 | `writeSkillFiles` | function | 1 | 4 | `cli/skill-writer.ts` |
 | `writeContextFiles` | function | 2 | 2 | `cli/context-writer.ts` |
-| `buildBlock` | function | 1 | 3 | `cli/context-writer.ts` |
 | `purgeStaleTrashes` | function | 1 | 3 | `cli/main.ts` |
+| `buildBlock` | function | 1 | 2 | `cli/context-writer.ts` |
 | `softDeleteCodeIntel` | function | 1 | 2 | `cli/main.ts` |
 | `buildSARIF` | function | 2 | 1 | `cli/sarif-builder.ts` |
 | `upsertFile` | function | 1 | 1 | `cli/context-writer.ts` |

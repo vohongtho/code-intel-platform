@@ -43,7 +43,7 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `patchGraph` | method | 2 | 14 | `pipeline/incremental-indexer.ts` |
+| `patchGraph` | method | 2 | 17 | `pipeline/incremental-indexer.ts` |
 | `runPipeline` | function | 5 | 7 | `pipeline/orchestrator.ts` |
 | `decideIncremental` | function | 2 | 9 | `pipeline/incremental.ts` |
 | `dfs` | function | 1 | 4 | `pipeline/dag-validator.ts` |
