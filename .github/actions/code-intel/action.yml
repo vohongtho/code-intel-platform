@@ -47,11 +47,13 @@ runs:
       working-directory: ${{ inputs.repo-path }}
       run: |
         RESULT=$(code-intel pr-impact --base ${{ inputs.base-ref }} --head HEAD --format json 2>/dev/null || echo '{}')
-        echo "impact-json=$RESULT" >> $GITHUB_OUTPUT
+
+        # Write JSON to a temp file to avoid multiline/quoting issues in GITHUB_OUTPUT
+        echo "$RESULT" > /tmp/ci-impact.json
 
         # Determine highest risk level
-        HIGH_COUNT=$(echo "$RESULT" | node -e "const d=require('fs').readFileSync('/dev/stdin','utf8'); try { const r=JSON.parse(d); console.log((r.riskSummary||{}).HIGH||0); } catch(e) { console.log(0); }")
-        MEDIUM_COUNT=$(echo "$RESULT" | node -e "const d=require('fs').readFileSync('/dev/stdin','utf8'); try { const r=JSON.parse(d); console.log((r.riskSummary||{}).MEDIUM||0); } catch(e) { console.log(0); }")
+        HIGH_COUNT=$(node -e "try { const r=JSON.parse(require('fs').readFileSync('/tmp/ci-impact.json','utf8')); console.log((r.riskSummary||{}).HIGH||0); } catch(e) { console.log(0); }")
+        MEDIUM_COUNT=$(node -e "try { const r=JSON.parse(require('fs').readFileSync('/tmp/ci-impact.json','utf8')); console.log((r.riskSummary||{}).MEDIUM||0); } catch(e) { console.log(0); }")
 
         if [ "$HIGH_COUNT" -gt 0 ]; then
           echo "risk-level=HIGH" >> $GITHUB_OUTPUT
@@ -65,15 +67,28 @@ runs:
       if: inputs.comment-on-pr == 'true' && github.event_name == 'pull_request'
       shell: bash
       run: |
-        IMPACT='${{ steps.impact.outputs.impact-json }}'
         RISK='${{ steps.impact.outputs.risk-level }}'
 
-        COMMENT="## 🔍 Code Intel PR Impact\n\n**Risk Level: $RISK**\n\n\`\`\`\n$(echo '$IMPACT' | node -e \"const d=require('fs').readFileSync('/dev/stdin','utf8'); try { const r=JSON.parse(d); const high=(r.changedSymbols||[]).filter(s=>s.risk==='HIGH').map(s=>'HIGH: '+s.name+' ('+s.callerCount+' callers)').join('\\n'); const files=(r.filesToReview||[]).join('\\n'); console.log('HIGH risk:\\n'+high+'\\n\\nFiles to review:\\n'+files); } catch(e) { console.log('No impact data'); }\")\n\`\`\`"
+        BODY=$(node -e "
+          var fs = require('fs');
+          try {
+            var r = JSON.parse(fs.readFileSync('/tmp/ci-impact.json', 'utf8'));
+            var high = (r.changedSymbols || [])
+              .filter(function(s) { return s.risk === 'HIGH'; })
+              .map(function(s) { return 'HIGH: ' + s.name + ' (' + s.callerCount + ' callers)'; })
+              .join('\n');
+            var files = (r.filesToReview || []).join('\n');
+            var body = '## \uD83D\uDD0D Code Intel PR Impact\n\n**Risk Level: $RISK**\n\n\`\`\`\nHIGH risk:\n' + high + '\n\nFiles to review:\n' + files + '\n\`\`\`';
+            console.log(JSON.stringify(body));
+          } catch(e) {
+            console.log(JSON.stringify('## \uD83D\uDD0D Code Intel PR Impact\n\n**Risk Level: $RISK**\n\nNo impact data available.'));
+          }
+        ")
 
         curl -s -X POST \
           -H "Authorization: token ${{ inputs.token }}" \
           -H "Content-Type: application/json" \
-          -d "{\"body\": \"$COMMENT\"}" \
+          -d "{\"body\": $BODY}" \
           "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments"
 
     - name: Fail on risk level
