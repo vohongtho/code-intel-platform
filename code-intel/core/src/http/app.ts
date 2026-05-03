@@ -1113,13 +1113,22 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     }
 
     // Security: must be within workspaceRoot or a known repo
-    const normalizedFile = path.normalize(file);
+    // Resolve relative paths against workspaceRoot first, then use path.relative
+    // to safely detect escaping (handles prefix-collision like /repo vs /repo2).
+    let rawResolved = path.normalize(file);
+    if (!path.isAbsolute(rawResolved) && workspaceRoot) {
+      rawResolved = path.join(workspaceRoot, rawResolved);
+    }
+    const resolvedFile = path.resolve(rawResolved);
+    function isInsideDir(fileAbs: string, dir: string): boolean {
+      const rel = path.relative(path.resolve(dir), fileAbs);
+      return !rel.startsWith('..') && !path.isAbsolute(rel);
+    }
+
     if (workspaceRoot) {
-      const normalizedRoot = path.normalize(workspaceRoot);
-      if (!normalizedFile.startsWith(normalizedRoot)) {
-        // Also allow files from other indexed repos
+      if (!isInsideDir(resolvedFile, workspaceRoot)) {
         const registry = loadRegistry();
-        const inKnownRepo = registry.some((r) => normalizedFile.startsWith(path.normalize(r.path)));
+        const inKnownRepo = registry.some((r) => isInsideDir(resolvedFile, r.path));
         if (!inKnownRepo) {
           res.status(403).json({
             error: {
@@ -1135,7 +1144,7 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
       }
     } else {
       const registry = loadRegistry();
-      const inKnownRepo = registry.some((r) => normalizedFile.startsWith(path.normalize(r.path)));
+      const inKnownRepo = registry.some((r) => isInsideDir(resolvedFile, r.path));
       if (!inKnownRepo) {
         res.status(403).json({
           error: {
@@ -1153,7 +1162,7 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     // Read file
     let fileContent: string;
     try {
-      fileContent = fs.readFileSync(normalizedFile, 'utf-8');
+      fileContent = fs.readFileSync(resolvedFile, 'utf-8');
     } catch {
       res.status(404).json({
         error: {
@@ -1167,8 +1176,22 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     }
 
     const lines = fileContent.split('\n');
-    const startLine = startLineStr ? Math.max(1, parseInt(startLineStr, 10)) : 1;
-    const endLine = endLineStr ? Math.min(lines.length, parseInt(endLineStr, 10)) : startLine;
+
+    const parsedStart = startLineStr ? Number.parseInt(startLineStr, 10) : 1;
+    const parsedEnd   = endLineStr   ? Number.parseInt(endLineStr,   10) : parsedStart;
+    if (!Number.isFinite(parsedStart) || parsedStart < 1 || !Number.isFinite(parsedEnd) || parsedEnd < 1) {
+      res.status(400).json({
+        error: {
+          code: ErrorCodes.INVALID_REQUEST,
+          message: 'Invalid startLine or endLine: must be positive integers',
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+    const startLine = Math.max(1, parsedStart);
+    const endLine   = Math.min(lines.length, parsedEnd);
 
     // ±20 lines of context
     const contextStart = Math.max(1, startLine - 20);
@@ -1177,7 +1200,7 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     const content = lines.slice(contextStart - 1, contextEnd).join('\n');
 
     // Detect language from extension
-    const ext = path.extname(normalizedFile).toLowerCase();
+    const ext = path.extname(resolvedFile).toLowerCase();
     const languageMap: Record<string, string> = {
       '.ts': 'typescript',
       '.tsx': 'typescript',

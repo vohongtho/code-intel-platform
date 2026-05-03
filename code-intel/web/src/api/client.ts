@@ -1,10 +1,15 @@
 import type { CodeNode, CodeEdge } from 'code-intel-shared';
 import type { SearchResult, CurrentUser } from '../state/types';
 
+export interface CountGroup {
+  key: string;
+  count: number;
+}
+
 export interface GQLResult {
   nodes: CodeNode[];
   edges?: CodeEdge[];
-  groups?: Record<string, number>;
+  groups?: CountGroup[];
   executionTimeMs: number;
   truncated: boolean;
   totalCount: number;
