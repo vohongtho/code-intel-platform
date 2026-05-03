@@ -116,6 +116,26 @@ describe('writeContextFiles — skill rows in block', () => {
     assert.ok(content.includes('Auth Module'));
     assert.ok(content.includes('auth-module'));
   });
+
+  it('includes "When to Load a Skill" section with skill name when skills provided', () => {
+    writeContextFiles(dir, 'SkilledProject', stats, [
+      { name: 'auth-module', label: 'Auth Module', symbolCount: 15, fileCount: 3 },
+    ]);
+    const content = fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf-8');
+    assert.ok(content.includes('When to Load a Skill'), 'should include When to Load a Skill section');
+    assert.ok(content.includes('Working in **Auth Module**'), 'should include skill-specific load instruction');
+  });
+
+  it('includes Development Workflow section', () => {
+    writeContextFiles(dir, 'SkilledProject', stats, []);
+    const content = fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf-8');
+    assert.ok(content.includes('Development Workflow'), 'should include Development Workflow section');
+    assert.ok(content.includes('Implement a New Feature'), 'should include feature workflow');
+    assert.ok(content.includes('Fix a Bug'), 'should include bug fix workflow');
+    assert.ok(content.includes('Study / Understand Code'), 'should include study workflow');
+    assert.ok(content.includes('Code Review'), 'should include code review workflow');
+    assert.ok(content.includes('Maintain / Refactor'), 'should include maintenance workflow');
+  });
 });
 
 describe('writeContextFiles — creates agent-specific context files', () => {

@@ -68,7 +68,7 @@ function buildBlock(
   stats: ContextStats,
   skills: SkillSummary[],
 ): string {
-  const skillRows = skills
+  const skillTableRows = skills
     .map(
       (s) =>
         `| Work in \`${s.label}\` (${s.symbolCount} symbols) | \`.claude/skills/code-intel/${s.name}/SKILL.md\` |`,
@@ -80,7 +80,11 @@ function buildBlock(
 | Understand architecture / "How does X work?" | Load \`code-intel-exploring\` skill |
 | Blast radius / "What breaks if I change X?" | Load \`code-intel-impact\` skill |
 | Debugging / "Why is X failing?" | Load \`code-intel-debugging\` skill |
-${skillRows ? skillRows + '\n' : ''}`;
+${skillTableRows ? skillTableRows + '\n' : ''}`;
+
+  const skillLoadInstructions = skills.length > 0
+    ? `\n## When to Load a Skill\n\nBefore working deeply in a subsystem, **load the matching skill file** listed above.\nEach skill gives you symbol maps, key entry points, and safe-change guidance for that area.\n\n${skills.map((s) => `- Working in **${s.label}**? → Load \`.claude/skills/code-intel/${s.name}/SKILL.md\``).join('\n')}\n`
+    : '';
 
   return `${BLOCK_START}
 # Code Intelligence — ${projectName}
@@ -127,6 +131,51 @@ These rules apply to **every coding agent or AI assistant** working in this repo
 - NEVER make changes to a symbol with ≥ 5 callers without running \`code-intel impact\` first.
 - NEVER use find-and-replace for symbol renames.
 
+## Development Workflow
+
+### 🔧 Implement a New Feature
+\`\`\`
+1. code-intel search "<feature concept>"      # find related existing symbols
+2. code-intel inspect <related-symbol>        # understand context & callers
+3. Load subsystem skill (see Skills table)    # deep-dive the area
+4. Implement changes
+5. code-intel impact <changed-symbol>         # verify blast radius
+6. code-intel pr-impact --base main           # full PR summary before commit
+\`\`\`
+
+### 🐛 Fix a Bug
+\`\`\`
+1. code-intel search "<buggy behavior>"       # locate the symbol
+2. code-intel query flows <symbol>            # trace execution path
+3. code-intel inspect <symbol>                # find all callers that may be affected
+4. Fix the bug
+5. code-intel impact <symbol>                 # confirm no unexpected side effects
+\`\`\`
+
+### 🔬 Study / Understand Code
+\`\`\`
+1. code-intel search "<concept>"              # discover entry points
+2. code-intel query summarize <symbol>        # AI explanation of a function
+3. code-intel query flows <symbol>            # execution flow diagram
+4. code-intel inspect <symbol>                # full context: callers, callees, imports
+5. Load subsystem skill                       # structured deep-dive
+\`\`\`
+
+### 👀 Code Review
+\`\`\`
+1. code-intel pr-impact --base main --head HEAD   # blast radius of all PR changes
+2. code-intel impact <each-changed-symbol>         # per-symbol risk check
+3. Flag HIGH risk (≥ 5 callers) for reviewer sign-off
+\`\`\`
+
+### 🔄 Maintain / Refactor
+\`\`\`
+1. code-intel inspect <symbol>                # find ALL usages before touching
+2. code-intel impact <symbol>                 # blast radius — plan your changes
+3. Make changes incrementally
+4. code-intel pr-impact --base main           # validate scope hasn't exploded
+\`\`\`
+
 ## CLI Quick Reference
 
 \`\`\`bash
@@ -143,7 +192,7 @@ code-intel clean [path]                        # Remove index data
 \`\`\`
 
 ## Skills
-
+${skillLoadInstructions}
 ${skillTable}
 ${BLOCK_END}`;
 }
