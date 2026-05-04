@@ -43,9 +43,9 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
 | `extractFromTree` | function | 1 | 19 | `phases/parse-phase.ts` |
-| `execute` | method | 0 | 17 | `phases/parse-phase.ts` |
-| `execute` | method | 0 | 17 | `phases/summarize-phase.ts` |
+| `execute` | method | 0 | 16 | `phases/parse-phase.ts` |
 | `execute` | method | 0 | 16 | `phases/resolve-phase.ts` |
+| `execute` | method | 0 | 16 | `phases/summarize-phase.ts` |
 | `execute` | method | 0 | 10 | `phases/cluster-phase.ts` |
 | `execute` | method | 0 | 10 | `phases/flow-phase.ts` |
 | `extractWithRegex` | function | 1 | 7 | `phases/parse-phase.ts` |

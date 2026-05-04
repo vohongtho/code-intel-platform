@@ -6,7 +6,7 @@
 > ⚠ This section is auto-managed by `code-intel analyze`. Do **not** edit between the markers — your changes will be overwritten.
 > Add your own notes below the `<!-- code-intel:end -->` marker.
 
-Indexed: **5,787 nodes** | **10,522 edges** | **322 files** | analyzed in 1.1s
+Indexed: **5,835 nodes** | **10,625 edges** | **322 files** | analyzed in 1.3s
 
 > Index stale? Re-run: `code-intel analyze`
 
@@ -127,8 +127,8 @@ Each skill gives you symbol maps, key entry points, and safe-change guidance for
 - Working in **modules**? → Load `.claude/skills/code-intel/modules/SKILL.md`
 - Working in **search**? → Load `.claude/skills/code-intel/search/SKILL.md`
 - Working in **phases**? → Load `.claude/skills/code-intel/phases/SKILL.md`
-- Working in **panels**? → Load `.claude/skills/code-intel/panels/SKILL.md`
 - Working in **backup**? → Load `.claude/skills/code-intel/backup/SKILL.md`
+- Working in **panels**? → Load `.claude/skills/code-intel/panels/SKILL.md`
 - Working in **workers**? → Load `.claude/skills/code-intel/workers/SKILL.md`
 - Working in **api**? → Load `.claude/skills/code-intel/api/SKILL.md`
 - Working in **storage**? → Load `.claude/skills/code-intel/storage/SKILL.md`
@@ -146,15 +146,15 @@ Each skill gives you symbol maps, key entry points, and safe-change guidance for
 | Debugging / "Why is X failing?" | Load `code-intel-debugging` skill |
 | Work in `cli` (87 symbols) | `.claude/skills/code-intel/cli/SKILL.md` |
 | Work in `auth` (85 symbols) | `.claude/skills/code-intel/auth/SKILL.md` |
-| Work in `graph` (80 symbols) | `.claude/skills/code-intel/graph/SKILL.md` |
+| Work in `graph` (81 symbols) | `.claude/skills/code-intel/graph/SKILL.md` |
 | Work in `fixtures` (75 symbols) | `.claude/skills/code-intel/fixtures/SKILL.md` |
 | Work in `query` (65 symbols) | `.claude/skills/code-intel/query/SKILL.md` |
 | Work in `multi-repo` (41 symbols) | `.claude/skills/code-intel/multi-repo/SKILL.md` |
 | Work in `modules` (40 symbols) | `.claude/skills/code-intel/modules/SKILL.md` |
 | Work in `search` (40 symbols) | `.claude/skills/code-intel/search/SKILL.md` |
 | Work in `phases` (38 symbols) | `.claude/skills/code-intel/phases/SKILL.md` |
-| Work in `panels` (38 symbols) | `.claude/skills/code-intel/panels/SKILL.md` |
 | Work in `backup` (37 symbols) | `.claude/skills/code-intel/backup/SKILL.md` |
+| Work in `panels` (35 symbols) | `.claude/skills/code-intel/panels/SKILL.md` |
 | Work in `workers` (34 symbols) | `.claude/skills/code-intel/workers/SKILL.md` |
 | Work in `api` (34 symbols) | `.claude/skills/code-intel/api/SKILL.md` |
 | Work in `storage` (33 symbols) | `.claude/skills/code-intel/storage/SKILL.md` |

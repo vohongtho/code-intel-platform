@@ -195,10 +195,14 @@ ENTRYPOINT ["code-intel"]
 ### Analyze & Serve
 
 ```bash
-# Analyze current directory and start the server
+# First, analyze the project to build the index
+code-intel analyze
+
+# Then start the server (requires an existing index)
 code-intel serve
 
 # Or with a specific path and port
+code-intel analyze ./my-project
 code-intel serve ./my-project --port 4747
 ```
 
@@ -546,25 +550,6 @@ MCP resources are readable via `ReadResource` — your editor can pull them as s
 | `codeintel://repo/<name>/overview` | Repository stats: total nodes, edges, and per-kind node counts |
 | `codeintel://repo/<name>/clusters` | All cluster nodes with member counts |
 | `codeintel://repo/<name>/flows` | All detected execution flows with entry points and steps |
-
----
-
-## 🔬 Node Type Color Palette
-
-| Type | Color | Hex |
-|------|-------|-----|
-| Function | 🩵 Cyan | `#22D3EE` |
-| File | 🟠 Orange | `#FB923C` |
-| Class | 🟢 Green | `#4ADE80` |
-| Interface | 🟣 Purple | `#A78BFA` |
-| Enum | 🔷 Indigo | `#6366F1` |
-| Constant | 🟡 Yellow | `#FACC15` |
-| Type Alias | 🔴 Pink | `#FB7185` |
-| Flow | 🩵 Teal | `#14B8A6` |
-| Method | 💙 Sky Blue | `#38BDF8` |
-| Module | 🪻 Fuchsia | `#E879F9` |
-| Route | 🔴 Red | `#F87171` |
-| Cluster | ⬜ Slate | `#64748B` |
 
 ---
 

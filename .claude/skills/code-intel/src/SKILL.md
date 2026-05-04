@@ -44,7 +44,7 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | `apiNodeDetail` | function | 1 | 3 | `src/extension.ts` |
 | `apiFileSymbols` | function | 1 | 3 | `src/extension.ts` |
 | `provideHover` | method | 0 | 4 | `src/extension.ts` |
-| `refresh` | method | 2 | 1 | `src/extension.ts` |
+| `refresh` | method | 3 | 1 | `src/extension.ts` |
 | `loadSymbols` | method | 2 | 1 | `src/extension.ts` |
 
 ## Impact Guidance

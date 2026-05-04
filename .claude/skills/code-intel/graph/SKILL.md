@@ -1,11 +1,11 @@
 ---
 name: graph
-description: "Covers the **graph** subsystem of code-intel-platform. 80 symbols across 5 files. Key symbols: `constructor`, `addNode`, `addEdge`. Internal call density: 0.6 calls/symbol. Participates in 4 execution flow(s)."
+description: "Covers the **graph** subsystem of code-intel-platform. 81 symbols across 5 files. Key symbols: `constructor`, `addNode`, `addEdge`. Internal call density: 0.6 calls/symbol. Participates in 4 execution flow(s)."
 ---
 
 # graph
 
-> **80 symbols** | **5 files** | path: `code-intel/core/src/graph/` | call density: 0.6/sym
+> **81 symbols** | **5 files** | path: `code-intel/core/src/graph/` | call density: 0.6/sym
 
 ## When to Use
 
@@ -19,7 +19,7 @@ Load this skill when:
 
 | File | Symbols | Notes |
 |------|---------|-------|
-| `code-intel/core/src/graph/lazy-knowledge-graph.ts` | `LRUCache`, `constructor`, `get`, `set` +(29) | 22 exported |
+| `code-intel/core/src/graph/lazy-knowledge-graph.ts` | `LRUCache`, `constructor`, `get`, `set` +(30) | 23 exported |
 | `code-intel/core/src/graph/compact-knowledge-graph.ts` | `CompactKnowledgeGraph`, `constructor`, `addNode`, `addEdge` +(18) | 22 exported |
 | `code-intel/core/src/graph/knowledge-graph.ts` | `KnowledgeGraph`, `createKnowledgeGraph`, `indexEdge`, `unindexEdge` +(13) | 17 exported |
 | `code-intel/core/src/graph/intern-table.ts` | `InternTable`, `get`, `size`, `clear` +(2) | 6 exported |
@@ -51,8 +51,8 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | `generateEdgeId` | function | 14 | 0 | `graph/id-generator.ts` |
 | `findEdgesByKind` | method | 13 | 1 | `graph/lazy-knowledge-graph.ts` |
 | `generateNodeId` | function | 13 | 0 | `graph/id-generator.ts` |
-| `get` | method | 10 | 2 | `graph/lazy-knowledge-graph.ts` |
-| `set` | method | 7 | 4 | `graph/lazy-knowledge-graph.ts` |
+| `get` | method | 11 | 2 | `graph/lazy-knowledge-graph.ts` |
+| `set` | method | 9 | 4 | `graph/lazy-knowledge-graph.ts` |
 | `getNodeAsync` | method | 4 | 5 | `graph/lazy-knowledge-graph.ts` |
 
 ## Execution Flows

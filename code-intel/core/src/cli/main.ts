@@ -1093,10 +1093,8 @@ program
       // 1.1: Warn + re-analyze if old regex index
       const meta = loadMetadata(workspaceRoot)!;
       if (meta.parser === 'regex' || meta.parser === undefined) {
-        Logger.warn(`  [serve] Index was built with regex parser — running full re-analysis to upgrade to tree-sitter`);
-        console.log(`Re-analyzing with tree-sitter parser: ${workspaceRoot}`);
-        const { graph: newGraph, workspaceRoot: root, repoName: name } = await analyzeWorkspace(targetPath, { force: true });
-        await startHttpServer(newGraph, name, parseInt(options.port, 10), root);
+        Logger.warn(`  [serve] Index was built with regex parser. Run \`code-intel analyze\` to upgrade to tree-sitter, then re-run \`code-intel serve\`.`);
+        process.exit(1);
       } else {
         console.log(`Loading index (lazy): ${workspaceRoot}`);
         console.log(`  ◈  ${meta.stats.nodes} nodes · ${meta.stats.edges} edges · ${meta.stats.files} files  (indexed ${meta.indexedAt})`);
@@ -1110,9 +1108,10 @@ program
         await startHttpServer(lazyGraph, repoName, parseInt(options.port, 10), workspaceRoot);
       }
     } else {
-      // No index or --force: run full analysis then serve
-      const { graph, workspaceRoot: root, repoName: name } = await analyzeWorkspace(targetPath, { force: options.force });
-      await startHttpServer(graph, name, parseInt(options.port, 10), root);
+      // No index: prompt user to run analyze first
+      Logger.warn(`  [serve] No index found for: ${workspaceRoot}`);
+      Logger.warn(`  [serve] Run \`code-intel analyze\` first, then re-run \`code-intel serve\`.`);
+      process.exit(1);
     }
   });
 

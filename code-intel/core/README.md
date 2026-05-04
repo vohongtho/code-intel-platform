@@ -27,42 +27,88 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 - **Complexity Metrics** — `code-intel complexity --top N` ranks functions by cyclomatic + cognitive complexity; `complexity_hotspots` MCP tool
 - **Test Coverage Gaps** — `code-intel coverage` lists untested exported symbols sorted by blast radius; `--threshold <pct>` fails CI if below target
 - **Deprecated API Detection** — `code-intel deprecated` finds usages of `@deprecated` JSDoc, `@Deprecated` (Java), `#[deprecated]` (Rust), and built-in Node.js deprecated APIs
-- **AI Context Files** — auto-generates `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `.cursor/rules/code-intel.mdc`, and `.kiro/steering/code-intel.md` after every analysis — supporting Amp, Claude Code, Codex, Copilot, Cursor, Aider, Gemini, Kiro, Trae, Hermes, Factory, OpenCode, Pi, Antigravity, OpenClaw, and more
+- **CLI** — analyze, serve, watch, query, search, inspect, impact, health commands with animated `█░` progress bars and braille spinners
 - **Multi-language** — TypeScript, JavaScript, Python, Java, Go, C, C++, C#, Rust, PHP, Ruby, Swift, Kotlin, Dart (14 languages via tree-sitter AST)
-- **Incremental Analysis** — `--incremental` re-parses only changed files; 10k-file repo / 3 changes: 288ms
-- **Parallel Analysis** — `--parallel` runs parse + resolve phases on worker threads for large repos
-- **Structured Logging** — winston-based logger with daily-rotating log files, sensitive-data masking, and configurable log levels
-- **`code-intel init` Wizard** _(v0.9)_ — interactive 5-step setup wizard; creates `~/.code-intel/config.json`
-- **Config Management CLI** _(v0.9)_ — `config get/set/list/validate/reset` with JSON Schema, `$ENV_VAR` expansion, masked secrets
-- **Better Error Messages** _(v0.9)_ — `CI-XXXX` codes, actionable hints, `--debug` stack traces, startup prerequisite checks
-- **Shell Completion** _(v0.9)_ — `code-intel completion bash|zsh|fish`; `setup --completion` auto-installs
-- **VS Code Extension** _(v0.9)_ — symbol hover, Symbol Explorer panel, status bar, command palette, go-to-definition from graph
-- **Self-Update** _(v0.9)_ — `code-intel update`; background version check; `--no-update-check` to suppress
-- **`--dry-run` flag** _(v0.9)_ — `analyze`, `clean`, `group sync` preview without side effects
-- **`code-intel doctor`** _(v0.9)_ — full diagnostics: Node.js, git, config, registry, DB integrity, network
-- **Lazy Graph Loading** _(v1.0)_ — `serve` starts in <2s for 10k-file repos; LRU node cache; background warm of high-blast-radius nodes
-- **Pre-Built BM25 Index** _(v1.0)_ — inverted index built at analysis time; loaded on startup; 2,000+ q/s throughput; incremental updates
-- **Memory-Efficient Graph** _(v1.0)_ — `Int32Array` adjacency, symbol interning (≥30% memory reduction), `--max-memory <MB>` flag
-- **Pipeline Profiling** _(v1.0)_ — `analyze --profile` writes `.code-intel/profile.json`; per-phase heap memory; bottleneck warnings; verbose timing table
-- **Load & Soak Tests** _(v1.0)_ — nightly CI (1k/10k fixture repos), weekly soak (memory stability, watcher throughput), regression gate >20% fails CI
-- **Graceful Degradation** _(v1.0)_ — stale graph headers (`X-Stale`, `X-Stale-Since`) on DB outage; LLM-unavailable skip; MCP tool timeout returns `{ truncated: true }`; watcher crash recovery
+- **Incremental Analysis** — `--incremental` flag re-parses only git-changed/mtime-changed files; 10k-file repo with 3 changes: 288ms
+- **Parallel Analysis** — `--parallel` flag runs parse + resolve phases on worker threads for large repos
+- **AI Context Files** — auto-generates `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `.cursor/rules/code-intel.mdc`, and `.kiro/steering/code-intel.md` after every analysis with live stats, CLI reference, development workflows, and skill links — supporting Amp, Claude Code, Codex, Copilot, Cursor, Aider, Gemini, Kiro, Trae, Hermes, Factory, OpenCode, Pi, Antigravity, OpenClaw, and more
+- **Skill Files** — generates `.claude/skills/code-intel/` with per-cluster SKILL.md files (hot symbols, entry points, impact guidance) for AI assistants
+- **Repository Groups** — multi-repo / monorepo service tracking with workspace auto-discovery (npm, pnpm, Nx, Turborepo), contract extraction (OpenAPI, GraphQL, Protobuf), type-aware similarity scoring, and cross-repo dependency detection
+- **`.codeintelignore`** — exclude directories from analysis (like `.gitignore` but for code-intel)
+- **Structured Logging** — winston-based logger with daily-rotating log files at `~/.code-intel/logs/`, sensitive-data masking, and configurable log levels
+- **Performance** — parallel batch file I/O, shared file cache (zero double-reads), O(log n) binary-search enclosing-function lookup
+- **`code-intel init` Wizard** _(v0.9)_ — interactive 5-step setup wizard; creates `~/.code-intel/config.json` with editor MCP registration, LLM provider, embeddings, auth mode, and port settings
+- **Config Management CLI** _(v0.9)_ — `config get/set/list/validate/reset` with JSON Schema, `$ENV_VAR` expansion, and masked secret output
+- **Better Error Messages** _(v0.9)_ — `CI-XXXX` error codes, actionable hints, `--debug` stack traces, startup prerequisite checks
+- **Shell Completion** _(v0.9)_ — `code-intel completion bash|zsh|fish`; dynamic repo + group name completion; `setup --completion` auto-installs
+- **VS Code Extension** _(v0.9)_ — symbol hover tooltips, Symbol Explorer panel, status bar freshness indicator, "Open in Graph" command, command palette integration
+- **Self-Update** _(v0.9)_ — `code-intel update` checks npm registry; background version check on startup; `--no-update-check` to suppress
+- **`--dry-run` flag** _(v0.9)_ — `analyze`, `clean`, `group sync` preview what would happen without side effects
+- **`code-intel doctor`** _(v0.9)_ — full diagnostics: Node.js, git, config, registry, DB integrity, network; exit 1 on any failure
+- **Lazy Graph Loading** _(v1.0)_ — `serve` starts in <2s for 10k-file repos; LRU node cache (5,000 nodes by default, `GRAPH_CACHE_SIZE` env var); background warm of high-blast-radius nodes
+- **Pre-Built BM25 Index** _(v1.0)_ — inverted index built at analysis time; loaded into memory on `serve` startup; 2,000+ q/s throughput; incremental-only updates on re-index
+- **Memory-Efficient Graph** _(v1.0)_ — `Int32Array`-packed adjacency + symbol interning = ≥30% memory reduction; `--max-memory <MB>` flag spills node content to DB
+- **Pipeline Profiling** _(v1.0)_ — `analyze --profile` writes `.code-intel/profile.json`; per-phase heap memory captured; bottleneck warning if any phase >50% of total; verbose timing table
+- **Load & Soak Tests** _(v1.0)_ — nightly CI load tests (1k/10k fixture repos), weekly soak tests (memory stability, watcher throughput), regression gate: >20% regression fails CI; `tests/perf/baseline.json` committed to repo
+- **Graceful Degradation** _(v1.0)_ — `X-Stale`/`X-Stale-Since` headers on DB outage; LLM-unavailable summarize skip; MCP tool timeout → `{ truncated: true }`; watcher crash recovery; worker crash retry
 
 ---
 
 ## 🚀 Quick Start
 
-### Install from npm _(recommended)_
+### Requirements
+
+- **Node.js** 22+
+- **npm** 10+
+
+---
+
+### Option A — Install globally from npm _(recommended)_
 
 ```bash
 npm install -g @vohongtho.infotech/code-intel
 ```
 
-> **Note:** You may see `npm warn ERESOLVE overriding peer dependency` warnings about `tree-sitter`. These are **harmless** — they relate to the native Node.js bindings which are not used. The CLI uses `web-tree-sitter` (WASM) exclusively. If you prefer a warning-free install, use:
-> ```bash
-> npm install -g @vohongtho.infotech/code-intel --legacy-peer-deps
-> ```
+> **Note:** You may see `npm warn ERESOLVE overriding peer dependency` warnings about `tree-sitter`. These are **harmless** — they relate to native Node.js bindings that are not used; the CLI uses `web-tree-sitter` (WASM) exclusively. For a warning-free install, add `--legacy-peer-deps`.
 
-The `code-intel` binary is placed in your `$PATH` automatically (via the `bin` field in `package.json`).
+Verify the installation:
+
+```bash
+code-intel --version
+```
+
+---
+
+### Option B — Build from source
+
+Use this if you want to develop, modify, or contribute to the platform.
+
+**1. Clone the repository**
+
+```bash
+git clone https://github.com/vohongtho/code-intel-platform.git
+cd code-intel-platform
+```
+
+**2. Install all workspace dependencies**
+
+```bash
+npm install --legacy-peer-deps
+```
+
+**3. Build all packages** (shared → core → web)
+
+```bash
+npm run build
+```
+
+This runs `tsup` for the core package (outputs to `code-intel/core/dist/`) and `vite` for the web UI (outputs to `code-intel/web/dist/`).
+
+**4. Install the built CLI globally**
+
+```bash
+npm install -g ./code-intel/core
+```
 
 Verify:
 
@@ -70,12 +116,142 @@ Verify:
 code-intel --version
 ```
 
-### Build from source
+> **Tip:** After making code changes, re-run `npm run build` — the CLI picks up the new build automatically since the global install points to the local `dist/` folder.
+
+---
+
+### Option C — Build locally & install globally _(CI / automation)_
+
+Use this approach in CI pipelines, Docker images, or any environment where you need a clean, self-contained global install from local source without a persistent `node_modules` link.
+
+**1. Clone & install dependencies**
 
 ```bash
+git clone https://github.com/vohongtho/code-intel-platform.git
+cd code-intel-platform
 npm install --legacy-peer-deps
+```
+
+**2. Build all packages**
+
+```bash
 npm run build
 ```
+
+**3. Pack the core package into a tarball**
+
+```bash
+cd code-intel/core
+npm pack
+# produces: vohongtho.infotech-code-intel-0.1.4.tgz (version number may vary)
+cd ../..
+```
+
+**4. Install the tarball globally**
+
+```bash
+npm install -g code-intel/core/vohongtho.infotech-code-intel-*.tgz
+```
+
+**5. Verify**
+
+```bash
+code-intel --version
+```
+
+#### One-liner (copy-paste for CI scripts)
+
+```bash
+git clone https://github.com/vohongtho/code-intel-platform.git && \
+  cd code-intel-platform && \
+  npm install --legacy-peer-deps && \
+  npm run build && \
+  npm pack --workspace=code-intel/core && \
+  npm install -g vohongtho.infotech-code-intel-*.tgz
+```
+
+#### Docker example
+
+```dockerfile
+FROM node:22-bookworm-slim
+
+RUN git clone https://github.com/vohongtho/code-intel-platform.git /opt/code-intel && \
+    cd /opt/code-intel && \
+    npm install --legacy-peer-deps && \
+    npm run build && \
+    npm pack --workspace=code-intel/core && \
+    npm install -g vohongtho.infotech-code-intel-*.tgz && \
+    rm -rf /opt/code-intel
+
+WORKDIR /workspace
+ENTRYPOINT ["code-intel"]
+```
+
+> **Why pack instead of `npm install -g ./code-intel/core`?**
+> `npm pack` produces a standalone tarball containing only the published `files` (the `dist/` folder + `package.json`). This mirrors exactly what is published to npm and avoids bringing in dev symlinks or workspace hoisting artefacts.
+
+---
+
+### Analyze & Serve
+
+```bash
+# First, analyze the project to build the index
+code-intel analyze
+
+# Then start the server (requires an existing index)
+code-intel serve
+
+# Or with a specific path and port
+code-intel analyze ./my-project
+code-intel serve ./my-project --port 4747
+```
+
+Then open **http://localhost:4747** in your browser — the Web UI auto-connects and loads the graph.
+
+### After analysis
+
+`code-intel analyze` automatically generates or updates:
+- **`AGENTS.md`** + **`CLAUDE.md`** — AI context files with stats, CLI reference, and skill links. These files are managed with **surgical precision**:
+  - **File does not exist** → created from a template with a managed block and a clearly marked section for your own notes
+  - **File exists with markers** → only the `<!-- code-intel:start -->…<!-- code-intel:end -->` block is updated; all your custom content is preserved untouched
+  - **File exists without markers** → the block is appended at the end; existing content is never overwritten
+- **`.claude/skills/code-intel/`** — per-cluster SKILL.md files with hot symbols, entry points, and impact guidance
+
+### Exclude directories
+
+Create a `.codeintelignore` file in your project root:
+
+```
+# one directory name per line
+vendor
+generated
+fixtures
+```
+
+---
+
+## 🤖 MCP Setup (one-time)
+
+Run the one-time setup command to configure the MCP server for your AI editor (Claude Desktop / Claude Code):
+
+```bash
+code-intel setup
+```
+
+This writes the MCP server configuration to `~/.config/claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "code-intel": {
+      "command": "npx",
+      "args": ["@vohongtho.infotech/code-intel", "mcp", "."]
+    }
+  }
+}
+```
+
+After setup, the MCP server starts automatically when your AI editor launches, giving it direct access to all code-intel tools.
 
 ---
 
@@ -86,9 +262,8 @@ npm run build
 | **Explorer** | Graph composition stats, search results, overview counters |
 | **Filters** | Toggle node/edge types, set focus depth |
 | **Files** | Recursive file tree with search filter and file icons |
+| **Group** | Multi-repo group view with contracts and cross-repo links (visible when in group mode) |
 | **Graph Canvas** | Force-directed graph, click nodes to inspect, hover to highlight neighbors |
-| **Source Preview** | Syntax-highlighted source code at the exact symbol line; resizable panel; "Open in editor" button |
-| **Query Console** | GQL editor with keyword highlighting, run button (`Ctrl+Enter`), sortable results table, query history |
 | **Code AI** | Chat with grounded answers citing source file locations |
 
 ### Search Modes
@@ -105,54 +280,93 @@ Toggle between modes using the `vec` button in the header search bar.
 ```
 code-intel-platform/
 ├── code-intel/
-│   ├── shared/       # Shared types: CodeNode, CodeEdge, NodeKind, EdgeKind, Language
-│   ├── core/         # Backend: pipeline, parser, HTTP API, MCP, CLI, storage
+│   ├── shared/                    # Shared types published alongside core
 │   │   └── src/
-│   │       ├── pipeline/      # 6-phase DAG: scan→structure→parse→resolve→cluster→flow
-│   │       ├── languages/     # 14 language modules (tree-sitter queries)
-│   │       ├── graph/         # In-memory knowledge graph with O(1) lookup
-│   │       ├── search/        # BM25 text search + vector embeddings
-│   │       ├── storage/       # LadybugDB persistence, repo registry
-│   │       ├── http/          # Express REST API + static web UI serving
-│   │       ├── mcp-server/    # MCP stdio transport
-│   │       ├── multi-repo/    # Group registry, group sync, cross-repo query
-│   │       ├── shared/        # Logger, language detection utilities
-│   │       └── cli/           # Commander CLI (progress bars, spinners)
-│   └── web/          # React + Sigma.js frontend
+│   │       ├── graph-types.ts     # CodeNode, CodeEdge, NodeKind, EdgeKind
+│   │       ├── languages.ts       # Language enum (14 languages)
+│   │       ├── pipeline-types.ts  # PipelineContext, PhaseResult
+│   │       └── detection.ts       # Language detection helpers
+│   │
+│   ├── core/                      # Backend: pipeline, parsers, HTTP API, MCP, CLI, storage
+│   │   └── src/
+│   │       ├── pipeline/          # 6-phase DAG orchestrator + DAG validator
+│   │       │   └── phases/        # scan · structure · parse · resolve · cluster · flow
+│   │       │
+│   │       ├── parsing/           # Tree-sitter AST parsing layer
+│   │       │   ├── parser-manager.ts   # Loads + caches tree-sitter parsers
+│   │       │   ├── ast-cache.ts        # AST memoization
+│   │       │   ├── query-runner.ts     # Executes tree-sitter queries
+│   │       │   └── queries/            # Per-language query files (14 languages)
+│   │       │
+│   │       ├── languages/         # Language registry + per-language extraction modules
+│   │       │   ├── registry.ts         # Maps file extension → language module
+│   │       │   └── modules/            # ts · js · py · java · go · rs · c · cpp · cs
+│   │       │                           # php · kt · rb · swift · dart
+│   │       │
+│   │       ├── resolver/          # Import resolution (edges between files/symbols)
+│   │       │   ├── import-resolver.ts
+│   │       │   ├── binding-tracker.ts
+│   │       │   └── strategies/    # relative-path · package-lookup · namespace-alias · wildcard-expand
+│   │       │
+│   │       ├── call-graph/        # Call edge builder + call classifier
+│   │       ├── inheritance/       # Heritage builder, MRO walker, override detector
+│   │       ├── scope-analysis/    # Scope builder (variable / binding scope trees)
+│   │       ├── clustering/        # Directory-based community detection
+│   │       ├── flow-detection/    # Entry-point finder + execution flow tracer
+│   │       │
+│   │       ├── graph/             # In-memory knowledge graph (O(1) node/edge lookup)
+│   │       ├── search/            # BM25 text search · vector embedder · vector index (LadybugDB)
+│   │       ├── storage/           # LadybugDB graph persistence · repo registry · metadata
+│   │       │
+│   │       ├── multi-repo/        # Repository groups, contract extraction, cross-repo linking
+│   │       │   ├── group-registry.ts   # Load/save group configs + sync results
+│   │       │   ├── group-sync.ts       # Extract contracts + match via RRF
+│   │       │   ├── group-query.ts      # Cross-repo BM25 search with RRF merge
+│   │       │   └── types.ts            # RepoGroup, Contract, ContractLink, GroupSyncResult
+│   │       │
+│   │       ├── http/              # Express REST API + static web UI serving
+│   │       ├── mcp-server/        # MCP stdio transport + all tool/resource handlers
+│   │       ├── shared/            # Logger (winston, sensitive-data masking, ~/.code-intel/logs/)
+│   │       └── cli/               # Commander CLI (progress bars, spinners)
+│   │           ├── main.ts              # All CLI commands
+│   │           ├── skill-writer.ts      # Generates .claude/skills/code-intel/ SKILL.md files
+│   │           └── context-writer.ts    # Upserts AGENTS.md + CLAUDE.md blocks
+│   │
+│   └── web/                       # React + Sigma.js frontend
 │       └── src/
-│           ├── components/    # GraphView, NodeDetail, SidebarChat, SidebarFiles, Filters
-│           ├── ai/            # Agent with intent parsing + tool calls
-│           ├── api/           # ApiClient (search, vector-search, inspect, blast-radius)
-│           ├── graph/         # Colors palette, layout utilities
-│           └── state/         # React context + reducer
-└── .code-intel/      # Generated per-repo: graph.db, vector.db, meta.json
+│           ├── pages/             # ConnectPage · LoadingPage · ExplorerPage
+│           ├── components/
+│           │   ├── graph/         # GraphView (Sigma.js force-directed canvas)
+│           │   ├── panels/        # NodeDetail · SearchBar · SidebarChat · SidebarFiles · SidebarFilters
+│           │   └── shared/        # Header · StatusFooter · KeyboardShortcutsModal
+│           ├── ai/                # Chat agent with intent parsing + tool calls
+│           ├── api/               # ApiClient (search, vector-search, inspect, blast-radius, flows, clusters)
+│           ├── graph/             # Node color palette + ForceAtlas2 layout utilities
+│           └── state/             # React context + reducer (AppContext, AppState)
+│
+├── .code-intel/                   # Generated per-repo: graph.db · vector.db · meta.json
+└── .codeintelignore               # Optional: directories to exclude (like .gitignore)
 ```
 
 ### Pipeline Phases
 
 | Phase | Description |
 |-------|-------------|
-| `scan` | Walk filesystem, collect source files (parallel batch I/O), ignore `node_modules`, `dist`, large files, etc. |
+| `scan` | Walk filesystem, collect source files (parallel batch I/O, 512 KB limit), ignore `node_modules`, `dist`, `.venv`, etc. |
 | `structure` | Create file and directory nodes in the graph |
-| `parse` | Read files in parallel batches of 64, extract symbols (functions, classes, etc.), build per-file function index |
-| `resolve` | Resolve imports → edges, build call graph (O(log n) lookup), detect heritage (extends/implements) |
+| `parse` | Read files in parallel batches of 64, extract symbols (functions, classes, etc.), build per-file sorted function index |
+| `resolve` | Resolve imports → edges, build call graph (O(log n) binary-search lookup), detect heritage (extends/implements) |
 | `cluster` | Directory-based community detection, add cluster nodes |
 | `flow` | Detect entry points, trace execution flows |
-| `summarize` | _(opt-in)_ Generate 1–2 sentence AI summaries via OpenAI, Anthropic, or Ollama; skips unchanged nodes |
+| `summarize` | _(opt-in)_ Generate 1–2 sentence AI summaries for `function`/`class`/`method`/`interface` nodes via OpenAI, Anthropic, or Ollama; skips unchanged nodes (code-hash cache) |
 
-Each phase reports live progress to the CLI via animated `█░` progress bars.
-
----
-
-## 🖥️ CLI Progress Display
-
-When running `code-intel analyze`, each pipeline phase shows a real-time progress bar:
+Each phase streams live progress to the CLI via animated `█░` progress bars:
 
 ```
   [parse    ] ████████████████░░░░░░░░░░░░░░  53% (80/151)
 ```
 
-Post-pipeline steps (DB persist, skill generation, context files) show a braille spinner:
+Post-pipeline steps (DB persist, skill files, context files) show a braille spinner:
 
 ```
   ⠹ Persisting graph to DB…
@@ -162,7 +376,7 @@ Post-pipeline steps (DB persist, skill generation, context files) show a braille
 
 ## 📋 Logging
 
-Logs are written to **`~/.code-intel/logs/`** using daily rotation:
+Logs are written to **`~/.code-intel/logs/`** using daily rotation (powered by [winston](https://github.com/winstonjs/winston)):
 
 | Setting | Default | Override |
 |---------|---------|----------|
@@ -173,38 +387,103 @@ Logs are written to **`~/.code-intel/logs/`** using daily rotation:
 | Log level | `info` | `LOG_LEVEL=debug\|info\|warn\|error\|silent` |
 | Production mode | Console only | `NODE_ENV=production` |
 
-Sensitive data (passwords, tokens, API keys, emails, etc.) is automatically masked before writing.
+Sensitive data (passwords, tokens, API keys, emails, credit cards, etc.) is automatically **masked** before writing — only the first and last character are visible.
 
 ---
 
 ## 🛠️ CLI Commands
 
+### Setup
+
 ```bash
-code-intel analyze [path]          # Analyze and persist graph
-code-intel analyze --incremental   # Re-parse only changed files (git diff / mtime)
-code-intel analyze --parallel      # Use worker threads (faster on multi-core)
-code-intel analyze --summarize     # Generate AI summaries after analysis
-code-intel analyze --skills        # Emit per-cluster SKILL.md files
-code-intel serve [path] -p 4747    # Analyze + start HTTP server
-code-intel watch [path] -p 4747    # HTTP server + file watcher (auto-reindex on save)
-code-intel mcp [path]              # Start MCP server (stdio)
-code-intel setup                   # Register MCP server in editor config (one-time)
-code-intel query "<gql>"           # Run a GQL query (FIND / TRAVERSE / PATH / COUNT GROUP BY)
-code-intel query "<gql>" --format table|json|csv
-code-intel query --save <name> "<gql>"   # Save a named query
-code-intel query --run <name>            # Run a saved query
-code-intel query --list                  # List saved queries
-code-intel health [path]           # Code health: dead code, cycles, god nodes, orphans, score
-code-intel health --dead-code      # List dead-code symbols
-code-intel health --cycles         # List circular dependency cycles
-code-intel health --json           # Machine-readable output
-code-intel search <query>          # Text search
-code-intel inspect <symbol>        # Inspect a symbol
-code-intel impact <symbol>         # Blast radius analysis
-code-intel list                    # List indexed repos
-code-intel status [path]           # Show index status
-code-intel clean [path]            # Remove index data
+code-intel setup                         # Register the MCP server in your editor config (one-time)
 ```
+
+### Analyze
+
+```bash
+code-intel analyze [path]                # Parse source code and build the knowledge graph
+code-intel analyze --force               # Discard existing index and perform a full re-analysis
+code-intel analyze --skills              # Emit per-cluster SKILL.md files under .claude/skills/code-intel/
+code-intel analyze --embeddings          # Build a vector index for semantic (natural-language) search
+code-intel analyze --skip-embeddings     # Omit embedding generation for a significantly faster run
+code-intel analyze --skip-agents-md      # Preserve any hand-edited content in AGENTS.md / CLAUDE.md
+code-intel analyze --skip-git            # Allow analysis of directories that are not Git repositories
+code-intel analyze --verbose             # Print every file skipped due to an unsupported parser
+```
+
+### Server
+
+```bash
+code-intel mcp [path]                    # Launch the MCP stdio server consumed by AI-enabled editors
+code-intel serve [path] --port <n>       # Start the HTTP API and serve the interactive web UI (default :4747)
+code-intel watch [path] --port <n>       # Start HTTP server + file watcher (auto-reindex on file saves)
+```
+
+### Query (GQL)
+
+```bash
+code-intel query "<gql>"                 # Run a GQL query (FIND / TRAVERSE / PATH / COUNT GROUP BY)
+code-intel query "<gql>" --format table|json|csv   # Output format (default: table)
+code-intel query --file <path.gql>       # Load query from file
+code-intel query "<gql>" --limit <n>     # Override LIMIT in the query
+code-intel query --save <name> "<gql>"   # Save a named query to .code-intel/queries/
+code-intel query --run <name>            # Run a saved query by name
+code-intel query --list                  # List all saved queries
+code-intel query --delete <name>         # Delete a saved query
+```
+
+### Health
+
+```bash
+code-intel health [path]                 # Show health score + dead code / cycles / god nodes / orphans
+code-intel health --dead-code            # List all dead-code symbols
+code-intel health --cycles               # List all circular dependency cycles
+code-intel health --orphans              # List all orphan files
+code-intel health --json                 # Machine-readable JSON output
+```
+
+### Registry
+
+```bash
+code-intel list                          # Display all repositories that have been indexed
+code-intel status [path]                 # Report index freshness, symbol counts, and last-run duration
+code-intel clean [path]                  # Remove the .code-intel/ index for the specified repository
+code-intel clean --all --force           # Permanently remove all indexed repositories (requires --force)
+```
+
+### Exploration
+
+```bash
+code-intel search <query>                # Execute a BM25 keyword search across all indexed symbols
+code-intel search <query> --limit <n>    # Limit number of results (default: 20)
+code-intel inspect <symbol>              # Show callers, callees, import edges, and source location
+code-intel impact <symbol>               # Compute the transitive blast radius of a change to a symbol
+code-intel impact <symbol> --depth <n>   # Set maximum traversal depth / hops (default: 5)
+```
+
+### Groups (multi-repo / monorepo service tracking)
+
+```bash
+code-intel group create <name>                                              # Create a named group to track multiple repositories together
+code-intel group add <group> <groupPath> <registryName>                    # Enroll an indexed repo in a group under the given hierarchy path
+code-intel group remove <group> <groupPath>                                # Remove a repository from a group by its hierarchy path
+code-intel group list [name]                                               # List all groups, or print the full membership of one group
+code-intel group sync <name>                                               # Extract cross-repo contracts and resolve provider/consumer links
+code-intel group contracts <name> [--kind] [--repo] [--min-confidence]    # Inspect extracted contracts and confidence-ranked cross-links
+code-intel group query <name> <q>                                          # Run a merged RRF search across every repository in a group
+code-intel group status <name>                                             # Audit index freshness and sync staleness for all group members
+```
+
+**`group add` parameters:**
+- `<group>` — name of the group
+- `<groupPath>` — hierarchy path (e.g. `hr/hiring/backend`)
+- `<registryName>` — the repo's name as shown by `code-intel list`
+
+**`group contracts` options:**
+- `--kind <kind>` — filter by contract kind: `export` | `route` | `schema` | `event`
+- `--repo <repo>` — filter by registry name
+- `--min-confidence <pct>` — minimum link confidence 0–100 (default: 0)
 
 ---
 
@@ -220,58 +499,73 @@ code-intel clean [path]            # Remove index data
 | `GET`  | `/api/v1/vector-status` | Vector index ready/building status |
 | `GET`  | `/api/v1/nodes/:id` | Node detail (callers, callees, imports, etc.) |
 | `POST` | `/api/v1/blast-radius` | Impact analysis |
-| `POST` | `/api/v1/query` | Execute GQL query; 408 on timeout with partial results |
+| `POST` | `/api/v1/query` | Execute a GQL query string; returns nodes/edges/groups + executionTimeMs |
 | `POST` | `/api/v1/query/explain` | Return query plan without executing |
-| `GET`  | `/api/v1/source` | File content with ±20 lines context; path-traversal protected |
+| `GET`  | `/api/v1/source` | Fetch file content with ±20 lines context; path-traversal protected |
 | `POST` | `/api/v1/grep` | Regex search in file content |
 | `GET`  | `/api/v1/flows` | List detected flows |
 | `GET`  | `/api/v1/clusters` | List clusters |
-| `GET`  | `/api/v1/openapi.json` | OpenAPI 3.1 spec |
 
 ---
 
 ## 🤖 MCP Server Tools
 
-| Tool | Description |
-|------|-------------|
-| `repos` | List all indexed repositories |
-| `overview` | Repository summary: total nodes/edges + full breakdown by kind |
-| `search` | BM25 / hybrid keyword + semantic search across all symbols |
-| `inspect` | 360° view of a symbol: definition, callers, callees, imports, heritage, members, cluster |
-| `blast_radius` | Impact analysis: traverse call/import graph to find all affected symbols |
-| `file_symbols` | List all symbols defined in a file, ordered by line number |
-| `find_path` | Shortest call/import path between two symbols via BFS |
-| `list_exports` | List all exported symbols — the public API surface of the codebase |
-| `routes` | List all HTTP route handler mappings detected in the codebase |
-| `clusters` | List detected code clusters with member counts and top symbols |
-| `flows` | List detected execution flows with entry points and steps |
-| `query` | Execute a GQL query (`FIND`, `TRAVERSE`, `PATH`, `COUNT GROUP BY`); returns nodes/edges/groups + executionTimeMs |
-| `detect_changes` | Git-diff impact analysis: maps changed lines to graph symbols |
-| `raw_query` | _(deprecated — use `query`)_ Simplified Cypher-like graph query |
-| `group_list` | List all configured repository groups |
-| `group_sync` | Extract contracts and detect cross-repo provider→consumer links |
-| `group_contracts` | Inspect extracted contracts and confidence-ranked cross-repo links |
-| `group_query` | BM25 search across all repos in a group merged via RRF |
-| `group_status` | Check index freshness and sync staleness for all group members |
+All tools are available to any MCP-capable editor (Claude Desktop, Claude Code, VS Code, Cursor, etc.) after running `code-intel setup`.
+
+### Core Tools
+
+| Tool | Input | Description |
+|------|-------|-------------|
+| `repos` | _(none)_ | List all indexed repositories with path, indexedAt, and node/edge counts |
+| `overview` | _(none)_ | Repository summary: total nodes/edges + full breakdown by kind. **Use this first** to understand the codebase shape. |
+| `search` | `query` (string), `limit` (number, default 20) | BM25 / hybrid keyword + semantic search across all symbols |
+| `inspect` | `symbol_name` (string) | 360° view of a symbol: definition, callers, callees, imports, heritage (extends/implements), members, cluster, and source preview |
+| `blast_radius` | `target` (string), `direction` (`callers`\|`callees`\|`both`), `max_hops` (number, default 5) | Impact analysis: traverse the call/import graph to find all affected symbols. Returns a `riskLevel` (LOW / MEDIUM / HIGH). |
+| `file_symbols` | `file_path` (string, partial match) | List all symbols defined in a file, ordered by line number. Avoids having to read raw source. |
+| `find_path` | `from` (string), `to` (string), `max_hops` (number, default 8) | Find the shortest call/import path between two symbols via BFS. |
+| `list_exports` | `kind` (string, optional), `limit` (number, default 100) | List all exported symbols — the public API surface of the codebase. Filter by kind: `function`, `class`, `interface`, etc. |
+| `routes` | _(none)_ | List all HTTP route handler mappings detected in the codebase |
+| `clusters` | `limit` (number, default 50) | List detected code clusters (directory-based communities) with member counts and top 10 symbols each |
+| `flows` | `limit` (number, default 50) | List detected execution flows with entry points, steps, and step counts |
+| `query` | `gql` (string), `limit` (number, optional) | Execute a GQL query (`FIND`, `TRAVERSE`, `PATH`, `COUNT GROUP BY`) against the live graph; returns nodes/edges/groups + executionTimeMs |
+| `detect_changes` | `base_ref` (string, default `HEAD`), `diff_text` (string, optional) | **Git-diff impact analysis**: maps changed lines to graph symbols and computes combined blast radius. Ideal for PR review or pre-commit checks. |
+| `raw_query` | `cypher` (string) | _(deprecated — use `query` instead)_ Simplified Cypher-like graph query: `name='X'` or `:kind` |
+
+### Group / Multi-Repo Tools
+
+| Tool | Input | Description |
+|------|-------|-------------|
+| `group_list` | `name` (string, optional) | List all configured repository groups, or show full membership of one group |
+| `group_sync` | `name` (string) | Extract contracts (exports, routes, schemas, events) from all member repos and detect cross-repo provider→consumer links via name matching + RRF scoring |
+| `group_contracts` | `name` (string), `kind` (`export`\|`route`\|`schema`\|`event`, optional), `repo` (string, optional), `min_confidence` (number 0–1, optional) | Inspect extracted contracts and confidence-ranked cross-repo links from the last sync |
+| `group_query` | `name` (string), `query` (string), `limit` (number, default 10) | BM25 search across all repos in a group, merged via Reciprocal Rank Fusion. Returns unified ranked list + per-repo breakdown. |
+| `group_status` | `name` (string) | Check index freshness and sync staleness for all repos in a group. Flags repos as `OK`, `STALE` (>24h), or `NOT_INDEXED`. |
+
+### Resources
+
+MCP resources are readable via `ReadResource` — your editor can pull them as structured context.
+
+| URI | Description |
+|-----|-------------|
+| `codeintel://repo/<name>/overview` | Repository stats: total nodes, edges, and per-kind node counts |
+| `codeintel://repo/<name>/clusters` | All cluster nodes with member counts |
+| `codeintel://repo/<name>/flows` | All detected execution flows with entry points and steps |
 
 ---
 
-## 🔬 Node Type Color Palette
+## 💾 Storage
 
-| Type | Color | Hex |
-|------|-------|-----|
-| Function | 🩵 Cyan | `#22D3EE` |
-| File | 🟠 Orange | `#FB923C` |
-| Class | 🟢 Green | `#4ADE80` |
-| Interface | 🟣 Purple | `#A78BFA` |
-| Enum | 🔷 Indigo | `#6366F1` |
-| Constant | 🟡 Yellow | `#FACC15` |
-| Type Alias | 🔴 Pink | `#FB7185` |
-| Flow | 🩵 Teal | `#14B8A6` |
-| Method | 💙 Sky Blue | `#38BDF8` |
-| Module | 🪻 Fuchsia | `#E879F9` |
-| Route | 🔴 Red | `#F87171` |
-| Cluster | ⬜ Slate | `#64748B` |
+All generated files are stored locally — nothing is sent to external servers.
+
+| Path | Contents |
+|------|----------|
+| `.code-intel/graph.db` | LadybugDB knowledge graph |
+| `.code-intel/vector.db` | LadybugDB vector index |
+| `.code-intel/meta.json` | Index metadata (timestamp, stats) |
+| `~/.code-intel/registry.json` | Global registry of all indexed repos |
+| `~/.code-intel/groups/<name>.json` | Repository group configuration |
+| `~/.code-intel/groups/<name>.sync.json` | Last group sync results (contracts + cross-repo links) |
+| `~/.code-intel/logs/YYYY-MM-DD-code-intel.log` | Daily-rotating application logs (14-day retention) |
 
 ---
 
@@ -281,7 +575,7 @@ code-intel clean [path]            # Remove index data
 npm run test
 ```
 
-46+ tests across unit + integration suites covering:
+46 tests across unit + integration suites covering:
 - Knowledge graph operations
 - Language detection
 - Call classifier
@@ -289,15 +583,142 @@ npm run test
 - Scope analysis
 - Text search
 - Pipeline integration (parse → resolve)
-- Parser corpus golden-file regression (10 languages, 100% recall)
-- Tree-sitter query correctness (Swift, Kotlin, Dart)
 
 ---
 
-## 📋 Requirements
+## 📊 Benchmark / Eval
 
-- **Node.js** 22+
-- **npm** 10+
+Measure accuracy of the knowledge graph, skill files, MCP tools, and context file generation:
+
+```bash
+# Single-language fixture (TypeScript)
+npm run eval
+
+# Multi-language fixture (Python + TypeScript)
+npm run eval:multi
+
+# Run all fixtures
+npm run eval:all
+
+# Save results as JSON
+npm run eval:json
+```
+
+Results are written to `eval/results/`. Each run scores:
+
+| Phase | What is tested |
+|-------|---------------|
+| Analysis | Symbol count, edge count, exit code |
+| Search | BM25 keyword search accuracy |
+| Inspect | Symbol detail retrieval |
+| Impact | Blast radius correctness |
+| Skill Files | SKILL.md generation, hot symbols, frontmatter |
+| Context Files | AGENTS.md / CLAUDE.md upsert + idempotency |
+| Status | Index freshness reporting |
+| Clean | Index removal |
+
+Current score: **25/25 (100%)** TypeScript · **15/15 (100%)** multi-lang
+
+### Agent Benchmark (Before vs After)
+
+The `bench` command simulates an AI agent answering code questions with and without code-intel:
+
+```bash
+npm run bench
+```
+
+Latest results on the TypeScript fixture (6 tasks):
+
+| Metric | Baseline (grep + read files) | Enhanced (code-intel tools) | Δ |
+|--------|-----------------------------|-----------------------------|---|
+| **Accuracy** | 58% | **100%** | +42pp |
+| **Tool calls/task** | 2.0 | **1.0** | −50% |
+| **Response size** | 1023 chars | **189 chars** | −82% token cost |
+
+### MCP Server Benchmark
+
+Test all MCP tools directly over the JSON-RPC stdio transport:
+
+```bash
+npm run bench:mcp
+```
+
+Latest results (16 cases, TypeScript fixture):
+
+| Metric | Result |
+|--------|--------|
+| **Score** | 16/16 (100%) |
+| **Avg tool latency** | 39ms/call |
+
+Tools tested: `repos`, `search`, `inspect`, `blast_radius`, `routes`, `raw_query` + `ListTools`, `ListResources`, `ReadResource`
+
+---
+
+## 🔧 Technical Implementation Details
+
+### web-tree-sitter v0.26 API
+
+- `Parser.SyntaxNode` → `Node` (named export)
+- `Parser.Language` → `Language` (named export)
+- `language.query(src)` → `new Query(language, src)`
+- `Parser.Language.load()` → `Language.load()`
+
+### GraphView (Sigma.js)
+
+- Graph built once from data; Sigma `nodeReducer`/`edgeReducer` used for filter/selection/hover changes (no remount)
+- `stateRef`/`dispatchRef` pattern to avoid stale closures in event handlers
+- `suppressNextStage` guard ensures `clickNode` event wins over `clickStage`
+- Camera fly-to uses `renderer.getNodeDisplayData(id)` for normalized coordinates (NOT raw graphology attributes)
+- ForceAtlas2 layout applied synchronously after graph build
+
+### Multi-repo Groups
+
+- Contract kinds: `export`, `route`, `schema`, `event`
+- Cross-repo matching via Reciprocal Rank Fusion (RRF)
+- Confidence scoring for cross-repo links
+
+### Build System
+
+- Core: `tsup` bundler → `dist/cli/main.js` + `dist/index.js`
+- Web: Vite + Tailwind CSS v4
+- `esbuild` and `vite` must be in root `devDependencies` to be hoisted for monorepo npm workspaces
+
+---
+
+## 🚢 CI/CD
+
+### GitHub Actions Workflows
+
+| Workflow | Trigger | Steps |
+|----------|---------|-------|
+| **test.yml** | PRs | `npm ci --legacy-peer-deps` + `npm test` |
+| **quality.yml** | PRs | Typecheck shared + core + web |
+| **publish.yml** | `v*.*.*` tags | Typecheck → Test → npm audit → License gate → Build core → Build web → `npm publish --provenance` → Build + push multi-arch Docker (linux/amd64 + linux/arm64) → Trivy CRITICAL CVE gate → cosign keyless sign → GitHub Release with CycloneDX SBOM → Discord notification |
+
+### Publishing a New Version
+
+```bash
+# Bump version in code-intel/core/package.json, then:
+git tag v0.1.5
+git push origin v0.1.5
+```
+
+The publish workflow automatically runs all checks, builds the packages, publishes to npm, and sends a Discord notification (📦 success or ❌ failure).
+
+**Required GitHub Secrets:**
+
+| Secret | Purpose |
+|--------|---------|
+| `NPM_TOKEN` | npm access token with publish rights |
+| `DISCORD_WEBHOOK` | Discord webhook URL for deploy notifications |
+
+### Local CI Simulation
+
+```bash
+docker compose -f docker-compose.build.yml build
+```
+
+Uses `node:22-bookworm-slim` — the same base image as GitHub Actions.
 
 ---
 

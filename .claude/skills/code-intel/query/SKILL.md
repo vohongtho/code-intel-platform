@@ -1,6 +1,6 @@
 ---
 name: query
-description: "Covers the **query** subsystem of code-intel-platform. 65 symbols across 9 files. Key symbols: `parse`, `summarizeCluster`, `computePRImpact`. Internal call density: 1.1 calls/symbol."
+description: "Covers the **query** subsystem of code-intel-platform. 65 symbols across 9 files. Key symbols: `parse`, `summarizeCluster`, `computePRImpact`. Internal call density: 1.1 calls/symbol. Participates in 4 execution flow(s)."
 ---
 
 # query
@@ -47,6 +47,11 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | `executeTRAVERSE` | function | 1 | 7 | `query/gql-executor.ts` |
 | `executeCOUNT` | function | 1 | 7 | `query/gql-executor.ts` |
 | `executeGQL` | function | 4 | 4 | `query/gql-executor.ts` |
+
+## Execution Flows
+
+**4** execution path(s) pass through this area.
+Run `code-intel inspect <symbol>` on a hot symbol to trace the full call chain.
 
 ## Impact Guidance
 
