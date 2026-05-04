@@ -550,7 +550,7 @@ function GraphLegend() {
   const [collapsed, setCollapsed] = React.useState(true);
   const topKinds: NodeKind[] = ['function', 'class', 'interface', 'file', 'method', 'enum'];
   return (
-    <div className="absolute bottom-14 right-3 bg-deep/90 backdrop-blur border border-border-subtle rounded-lg shadow-xl overflow-hidden">
+    <div className="absolute bottom-3 right-14 bg-deep/90 backdrop-blur border border-border-subtle rounded-lg shadow-xl overflow-hidden">
       <button
         onClick={() => setCollapsed(v => !v)}
         className="flex items-center gap-2 px-3 py-1.5 text-[10px] text-text-muted hover:text-text-secondary w-full transition"
