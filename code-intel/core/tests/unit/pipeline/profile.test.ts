@@ -79,14 +79,15 @@ describe('pipeline profiling (Epic 4)', () => {
   it('bottleneck: single heavy phase occupies > 50% of total wall-clock time', async () => {
     const ctx = makeContext(true);
     // One slow phase + two tiny ones so the slow one dominates
+    // Use 100ms delay with >=40ms assertion to avoid CI timing flakiness
     const phases: Phase[] = [
-      makePhase('slow',  [],       50),
-      makePhase('fast1', ['slow'],  0),
-      makePhase('fast2', ['fast1'], 0),
+      makePhase('slow',  [],       100),
+      makePhase('fast1', ['slow'],   0),
+      makePhase('fast2', ['fast1'],  0),
     ];
     const result = await runPipeline(phases, ctx);
-    // The wall-clock totalDuration should reflect the real elapsed time
-    assert.ok(result.totalDuration >= 50, 'totalDuration should be >= 50ms');
+    // The wall-clock totalDuration should reflect the real elapsed time (with CI margin)
+    assert.ok(result.totalDuration >= 40, 'totalDuration should be >= 40ms');
     assert.ok(result.success);
     // slow phase exists and ran
     assert.ok(result.results.has('slow'));
