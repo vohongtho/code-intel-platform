@@ -109,6 +109,7 @@ export function ExplorerPage() {
               file={state.selectedNode.filePath}
               startLine={state.selectedNode.startLine}
               endLine={state.selectedNode.endLine ?? state.selectedNode.startLine}
+              repo={state.repoName || undefined}
               onClose={() => setSourcePanelOpen(false)}
             />
           )}

@@ -1263,10 +1263,11 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
   // ── Source preview ──────────────────────────────────────────────────────────
   // GET /api/v1/source?file=<path>&startLine=<n>&endLine=<n>
   app.get('/api/v1/source', requireAuth, requireRole('viewer'), (req: Request, res: Response) => {
-    const { file, startLine: startLineStr, endLine: endLineStr } = req.query as {
+    const { file, startLine: startLineStr, endLine: endLineStr, repo } = req.query as {
       file?: string;
       startLine?: string;
       endLine?: string;
+      repo?: string;
     };
 
     if (!file) {
@@ -1295,12 +1296,20 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
       return;
     }
 
+    // Determine base directory: prefer repo param, then workspaceRoot
+    let baseDir = workspaceRoot;
+    if (repo && repo !== repoName) {
+      const registry = loadRegistry();
+      const entry = registry.find((r) => r.name === repo || r.path === repo);
+      if (entry) baseDir = entry.path;
+    }
+
     // Security: must be within workspaceRoot or a known repo
     // Resolve relative paths against workspaceRoot first, then use path.relative
     // to safely detect escaping (handles prefix-collision like /repo vs /repo2).
     let rawResolved = path.normalize(file);
-    if (!path.isAbsolute(rawResolved) && workspaceRoot) {
-      rawResolved = path.join(workspaceRoot, rawResolved);
+    if (!path.isAbsolute(rawResolved) && baseDir) {
+      rawResolved = path.join(baseDir, rawResolved);
     }
     const resolvedFile = path.resolve(rawResolved);
     function isInsideDir(fileAbs: string, dir: string): boolean {
