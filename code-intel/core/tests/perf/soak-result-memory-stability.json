@@ -1,0 +1,69 @@
+{
+  "scenario": "memory-stability",
+  "measuredAt": "2026-05-03T14:27:05.607Z",
+  "passed": true,
+  "totalGrowth": 7.800000000000004,
+  "growthPerCycle": 0.7800000000000005,
+  "heapSamples": [
+    {
+      "cycle": 0,
+      "before": "36.9",
+      "after": "40.1",
+      "growth": "3.2"
+    },
+    {
+      "cycle": 1,
+      "before": "40.1",
+      "after": "42.0",
+      "growth": "1.8"
+    },
+    {
+      "cycle": 2,
+      "before": "42.0",
+      "after": "43.8",
+      "growth": "1.9"
+    },
+    {
+      "cycle": 3,
+      "before": "43.8",
+      "after": "37.4",
+      "growth": "-6.4"
+    },
+    {
+      "cycle": 4,
+      "before": "37.7",
+      "after": "35.8",
+      "growth": "-1.8"
+    },
+    {
+      "cycle": 5,
+      "before": "35.8",
+      "after": "37.6",
+      "growth": "1.8"
+    },
+    {
+      "cycle": 6,
+      "before": "37.6",
+      "after": "39.4",
+      "growth": "1.8"
+    },
+    {
+      "cycle": 7,
+      "before": "39.4",
+      "after": "41.1",
+      "growth": "1.8"
+    },
+    {
+      "cycle": 8,
+      "before": "41.1",
+      "after": "42.9",
+      "growth": "1.8"
+    },
+    {
+      "cycle": 9,
+      "before": "42.9",
+      "after": "44.7",
+      "growth": "1.8"
+    }
+  ]
+}

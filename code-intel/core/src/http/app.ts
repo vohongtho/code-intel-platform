@@ -9,8 +9,10 @@ import { rateLimit } from 'express-rate-limit';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
+import { isLazyGraph } from '../graph/lazy-knowledge-graph.js';
 import { textSearch } from '../search/text-search.js';
 import { hybridSearch } from '../search/hybrid-search.js';
+import { Bm25Index, getBm25DbPath } from '../search/bm25-index.js';
 import { DbManager, getDbPath, getVectorDbPath } from '../storage/index.js';
 import { loadMetadata } from '../storage/metadata.js';
 import { VectorIndex } from '../search/vector-index.js';
@@ -90,13 +92,23 @@ function getAllowedOrigins(): string[] {
 function createDefaultLimiter() {
   const max = parseInt(process.env['CODE_INTEL_RATE_LIMIT_MAX'] ?? '100', 10);
   const windowMs =
-    parseInt(process.env['CODE_INTEL_RATE_LIMIT_WINDOW_MS'] ?? `${15 * 60 * 1000}`, 10);
+    parseInt(process.env['CODE_INTEL_RATE_LIMIT_WINDOW_MS'] ?? `${60 * 1000}`, 10);
   return rateLimit({
     windowMs,
     max,
     standardHeaders: true,
     legacyHeaders: false,
-    skip: (req) => req.path.startsWith('/health') || req.path === '/metrics',
+    // Skip health checks, metrics, and read-only listing/pagination endpoints.
+    // The node pagination and group/repo listing endpoints are hit many times
+    // when loading a large graph — rate-limiting them only hurts the user's own
+    // session without providing meaningful abuse protection.
+    skip: (req) =>
+      req.path.startsWith('/health') ||
+      req.path === '/metrics' ||
+      req.path === '/api/v1/repos' ||
+      req.path === '/api/v1/groups' ||
+      req.method === 'GET' && req.path.startsWith('/api/v1/groups/') ||
+      /^\/api\/v1\/graph\/[^/]+\/nodes$/.test(req.path),
     message: {
       error: {
         code: ErrorCodes.RATE_LIMIT_EXCEEDED,
@@ -171,13 +183,39 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
   app.use(requestIdMiddleware);
   app.use(authMiddleware);
 
-  // ── X-Index-Version header on every response ─────────────────────────────
+  // ── X-Index-Version + X-Stale headers on every response (Epic 6) ────────────
+  // If the DB/meta becomes unavailable, we still serve the in-memory graph (stale)
+  // and advertise it with X-Stale: true + X-Stale-Since: <ISO timestamp>.
+  let dbUnavailableSince: string | null = null;
+
   app.use((_req: Request, res: Response, next: NextFunction): void => {
     if (workspaceRoot) {
+      // Use a raw read so corrupted or unreadable files throw (loadMetadata swallows errors)
+      const metaFilePath = path.join(workspaceRoot, '.code-intel', 'meta.json');
+      let metaOk = false;
       try {
-        const meta = loadMetadata(workspaceRoot);
-        if (meta?.indexVersion) res.setHeader('X-Index-Version', meta.indexVersion);
-      } catch { /* non-fatal */ }
+        if (fs.existsSync(metaFilePath)) {
+          const raw = fs.readFileSync(metaFilePath, 'utf-8');
+          const meta = JSON.parse(raw) as { indexVersion?: string } | null;
+          if (meta?.indexVersion) res.setHeader('X-Index-Version', meta.indexVersion);
+        }
+        metaOk = true;
+        // If we previously flagged DB unavailability, clear it now
+        if (dbUnavailableSince !== null) {
+          dbUnavailableSince = null;
+          Logger.info('[serve] DB back online — cleared stale flag');
+        }
+      } catch (err) {
+        // DB/meta temporarily unavailable — flag it and serve stale graph
+        if (dbUnavailableSince === null) {
+          dbUnavailableSince = new Date().toISOString();
+          Logger.warn(`[serve] DB unavailable since ${dbUnavailableSince}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+      if (!metaOk) {
+        res.setHeader('X-Stale', 'true');
+        res.setHeader('X-Stale-Since', dbUnavailableSince!);
+      }
     }
     next();
   });
@@ -240,6 +278,26 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
   let vectorIndex: VectorIndex | null = null;
   let vectorIndexBuilding = false;
   let vectorIndexReady = false;
+
+  // ── BM25 pre-built inverted index (Epic 2) ──────────────────────────────────
+  let bm25Index: Bm25Index | null = null;
+
+  function ensureBm25Index(): Bm25Index | null {
+    if (bm25Index) return bm25Index;
+    if (!workspaceRoot) return null;
+    const idx = new Bm25Index(getBm25DbPath(workspaceRoot));
+    idx.load();
+    if (idx.isLoaded) {
+      bm25Index = idx;
+      return idx;
+    }
+    return null;
+  }
+
+  // Load BM25 index on startup (non-blocking)
+  if (workspaceRoot && process.env['NODE_ENV'] !== 'test') {
+    setImmediate(() => ensureBm25Index());
+  }
 
   async function ensureVectorIndex(): Promise<VectorIndex | null> {
     if (vectorIndexReady && vectorIndex) return vectorIndex;
@@ -716,7 +774,7 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     const dbPath = path.join(entry.path, '.code-intel', 'graph.db');
     if (!fs.existsSync(dbPath)) return null;
     const repoGraph = createKnowledgeGraph();
-    const db = new DbManager(dbPath);
+    const db = new DbManager(dbPath, true);
     try {
       await db.init();
       await loadGraphFromDB(repoGraph, db);
@@ -728,10 +786,34 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     }
   }
 
+  async function loadGroupGraph(groupName: string): Promise<KnowledgeGraph | null> {
+    const group = loadGroup(groupName);
+    if (!group) return null;
+    const registry = loadRegistry();
+    const mergedGraph = createKnowledgeGraph();
+    for (const member of group.members) {
+      const regEntry = registry.find((r) => r.name === member.registryName);
+      if (!regEntry) continue;
+      const dbPath = path.join(regEntry.path, '.code-intel', 'graph.db');
+      if (!fs.existsSync(dbPath)) continue;
+      const db = new DbManager(dbPath, true);
+      try {
+        await db.init();
+        await loadGraphFromDB(mergedGraph, db);
+        db.close();
+      } catch { db.close(); }
+    }
+    return mergedGraph.size.nodes > 0 ? mergedGraph : null;
+  }
+
   async function getGraphForRepo(requestedRepo: string | undefined): Promise<KnowledgeGraph> {
     if (!requestedRepo || requestedRepo === repoName) return graph;
+    // Try as a single repo first
     const g = await loadRepoGraph(requestedRepo);
-    return g ?? graph;
+    if (g) return g;
+    // Fall back to group
+    const gg = await loadGroupGraph(requestedRepo);
+    return gg ?? graph;
   }
 
   // ── Graph download ──────────────────────────────────────────────────────────
@@ -758,12 +840,69 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     res.json({ nodes: [...g.allNodes()], edges: [...g.allEdges()] });
   });
 
+  // ── Paginated node list (Epic 1.2) ──────────────────────────────────────────
+  // GET /api/v1/graph/:repo/nodes?limit=200&offset=0
+  // Returns a page of nodes. In lazy mode uses native SKIP/LIMIT; eager mode slices an array.
+  app.get('/api/v1/graph/:repo/nodes', requireRepoAccess((req) => {
+    const p = req.params['repo'];
+    const repo = Array.isArray(p) ? p[0] : p;
+    return repo ? decodeURIComponent(repo) : undefined;
+  }), async (req, res) => {
+    const rawRepo = req.params['repo'];
+    const requestedRepo = decodeURIComponent(Array.isArray(rawRepo) ? (rawRepo[0] ?? '') : (rawRepo ?? ''));
+    const limit = Math.min(parseInt((req.query['limit'] as string | undefined) ?? '200', 10), 1000);
+    const offset = Math.max(parseInt((req.query['offset'] as string | undefined) ?? '0', 10), 0);
+
+    const g = requestedRepo === repoName ? graph : await loadRepoGraph(requestedRepo);
+    if (!g) {
+      res.status(404).json({
+        error: {
+          code: ErrorCodes.NOT_FOUND,
+          message: `Repo "${requestedRepo}" not found or not indexed`,
+          hint: `Run: code-intel analyze <path>`,
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+
+    let nodes: import('../shared/index.js').CodeNode[];
+    if (isLazyGraph(g)) {
+      // Lazy mode: native SKIP/LIMIT — O(1) regardless of offset
+      nodes = await g.getNodePage(offset, limit);
+    } else {
+      // Eager mode: build array once, cache on graph object, then slice — O(1) per page
+      const eager = g as typeof g & { _nodeArray?: import('../shared/index.js').CodeNode[] };
+      if (!eager._nodeArray) {
+        eager._nodeArray = [...g.allNodes()];
+      }
+      nodes = eager._nodeArray.slice(offset, offset + limit);
+    }
+
+    res.json({
+      nodes,
+      offset,
+      limit,
+      total: g.size.nodes,
+      hasMore: offset + nodes.length < g.size.nodes,
+    });
+  });
+
   // ── Search ──────────────────────────────────────────────────────────────────
   app.post('/api/v1/search', requireToolScope('search'), async (req, res) => {
     const { query, limit, repo } = req.body as { query?: string; limit?: number; repo?: string };
     const g = await getGraphForRepo(repo);
     const vdbPath = workspaceRoot ? getVectorDbPath(workspaceRoot) : undefined;
-    const { results, searchMode } = await hybridSearch(g, query ?? '', limit ?? 20, { vectorDbPath: vdbPath });
+
+    // Use pre-built BM25 index when available and querying the current repo
+    const bm25 = (!repo || repo === repoName) ? ensureBm25Index() : null;
+    const bm25Results = bm25 ? bm25.search(query ?? '', (limit ?? 20) * 3) : null;
+
+    const { results, searchMode } = await hybridSearch(g, query ?? '', limit ?? 20, {
+      vectorDbPath: vdbPath,
+      bm25Results: bm25Results ?? undefined,
+    });
     res.json({ results, searchMode });
   });
 
@@ -848,7 +987,7 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     if (workspaceRoot) {
       try {
         const dbPath = getDbPath(workspaceRoot);
-        const dbm = new DbManager(dbPath);
+        const dbm = new DbManager(dbPath, true);
         await dbm.init();
         const rows = await dbm.query(q);
         dbm.close();
@@ -890,23 +1029,40 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
   app.get('/api/v1/nodes/:id', async (req, res) => {
     const nodeId = decodeURIComponent(req.params.id);
     const g = await getGraphForRepo(req.query['repo'] as string | undefined);
-    const node = g.getNode(nodeId);
+    // In lazy mode, fall through to DB if node is not in LRU cache
+    const node = isLazyGraph(g)
+      ? await g.getNodeAsync(nodeId)
+      : g.getNode(nodeId);
     if (!node) {
       res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: 'Node not found', requestId: req.requestId } });
       return;
     }
     const incoming = [...g.findEdgesTo(nodeId)];
     const outgoing = [...g.findEdgesFrom(nodeId)];
+    // In lazy mode, resolve neighbor names from cache/DB
+    const resolveName = isLazyGraph(g)
+      ? async (id: string) => {
+          const n = g.getNode(id) ?? await g.getNodeAsync(id);
+          return n?.name;
+        }
+      : (id: string) => Promise.resolve(g.getNode(id)?.name);
+    const resolveKind = isLazyGraph(g)
+      ? async (id: string) => {
+          const n = g.getNode(id) ?? await g.getNodeAsync(id);
+          return n?.kind;
+        }
+      : (id: string) => Promise.resolve(g.getNode(id)?.kind);
+
     res.json({
       node,
-      callers: incoming.filter((e) => e.kind === 'calls').map((e) => ({ id: e.source, name: g.getNode(e.source)?.name, weight: e.weight })),
-      callees: outgoing.filter((e) => e.kind === 'calls').map((e) => ({ id: e.target, name: g.getNode(e.target)?.name, weight: e.weight })),
-      imports: outgoing.filter((e) => e.kind === 'imports').map((e) => ({ id: e.target, name: g.getNode(e.target)?.name })),
-      importedBy: incoming.filter((e) => e.kind === 'imports').map((e) => ({ id: e.source, name: g.getNode(e.source)?.name })),
-      extends: outgoing.filter((e) => e.kind === 'extends').map((e) => ({ id: e.target, name: g.getNode(e.target)?.name })),
-      implementsEdges: outgoing.filter((e) => e.kind === 'implements').map((e) => ({ id: e.target, name: g.getNode(e.target)?.name })),
-      members: outgoing.filter((e) => e.kind === 'has_member').map((e) => ({ id: e.target, name: g.getNode(e.target)?.name, kind: g.getNode(e.target)?.kind })),
-      cluster: incoming.filter((e) => e.kind === 'belongs_to').map((e) => g.getNode(e.target)?.name)[0],
+      callers: await Promise.all(incoming.filter((e) => e.kind === 'calls').map(async (e) => ({ id: e.source, name: await resolveName(e.source), weight: e.weight }))),
+      callees: await Promise.all(outgoing.filter((e) => e.kind === 'calls').map(async (e) => ({ id: e.target, name: await resolveName(e.target), weight: e.weight }))),
+      imports: await Promise.all(outgoing.filter((e) => e.kind === 'imports').map(async (e) => ({ id: e.target, name: await resolveName(e.target) }))),
+      importedBy: await Promise.all(incoming.filter((e) => e.kind === 'imports').map(async (e) => ({ id: e.source, name: await resolveName(e.source) }))),
+      extends: await Promise.all(outgoing.filter((e) => e.kind === 'extends').map(async (e) => ({ id: e.target, name: await resolveName(e.target) }))),
+      implementsEdges: await Promise.all(outgoing.filter((e) => e.kind === 'implements').map(async (e) => ({ id: e.target, name: await resolveName(e.target) }))),
+      members: await Promise.all(outgoing.filter((e) => e.kind === 'has_member').map(async (e) => ({ id: e.target, name: await resolveName(e.target), kind: await resolveKind(e.target) }))),
+      cluster: (await Promise.all(incoming.filter((e) => e.kind === 'belongs_to').map(async (e) => resolveName(e.target))))[0],
     });
   });
 
@@ -915,8 +1071,18 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     const { target, direction = 'both', max_hops = 5, repo } = req.body as { target?: string; direction?: string; max_hops?: number; repo?: string };
     const g = await getGraphForRepo(repo);
     let targetNode = null;
-    for (const node of g.allNodes()) {
-      if (node.name === target || node.id === target) { targetNode = node; break; }
+    if (isLazyGraph(g) && target) {
+      // Lazy mode: search by ID first (fast), then stream all nodes if needed
+      targetNode = g.getNode(target) ?? await g.getNodeAsync(target) ?? null;
+      if (!targetNode) {
+        for await (const node of g.allNodesAsync()) {
+          if (node.name === target || node.id === target) { targetNode = node; break; }
+        }
+      }
+    } else {
+      for (const node of g.allNodes()) {
+        if (node.name === target || node.id === target) { targetNode = node; break; }
+      }
     }
     if (!targetNode) {
       res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: `Symbol "${target}" not found`, requestId: req.requestId } });
@@ -1067,7 +1233,7 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
       if (!regEntry) continue;
       const dbPath = path.join(regEntry.path, '.code-intel', 'graph.db');
       if (!fs.existsSync(dbPath)) continue;
-      const db = new DbManager(dbPath);
+      const db = new DbManager(dbPath, true);
       try {
         await db.init();
         await loadGraphFromDB(mergedGraph, db);
@@ -1092,7 +1258,7 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
         const dbPath = path.join(regEntry.path, '.code-intel', 'graph.db');
         if (fs.existsSync(dbPath)) {
           try {
-            const db = new DbManager(dbPath);
+            const db = new DbManager(dbPath, true);
             await db.init();
             const g = createKnowledgeGraph();
             await loadGraphFromDB(g, db);
@@ -1121,10 +1287,11 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
   // ── Source preview ──────────────────────────────────────────────────────────
   // GET /api/v1/source?file=<path>&startLine=<n>&endLine=<n>
   app.get('/api/v1/source', requireAuth, requireRole('viewer'), (req: Request, res: Response) => {
-    const { file, startLine: startLineStr, endLine: endLineStr } = req.query as {
+    const { file, startLine: startLineStr, endLine: endLineStr, repo } = req.query as {
       file?: string;
       startLine?: string;
       endLine?: string;
+      repo?: string;
     };
 
     if (!file) {
@@ -1153,12 +1320,38 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
       return;
     }
 
+    // Determine base directory: prefer repo param, then workspaceRoot
+    // If repo is a group name, search all group members for a matching base
+    let baseDir = workspaceRoot;
+    if (repo && repo !== repoName) {
+      const registry = loadRegistry();
+      const entry = registry.find((r) => r.name === repo || r.path === repo);
+      if (entry) {
+        baseDir = entry.path;
+      } else {
+        // Maybe it's a group name — try all member repos to find one that contains the file
+        const group = loadGroup(repo);
+        if (group) {
+          const normalizedFile = path.normalize(file);
+          for (const member of group.members) {
+            const regEntry = registry.find((r) => r.name === member.registryName);
+            if (!regEntry) continue;
+            const candidate = path.resolve(path.join(regEntry.path, normalizedFile));
+            if (fs.existsSync(candidate)) {
+              baseDir = regEntry.path;
+              break;
+            }
+          }
+        }
+      }
+    }
+
     // Security: must be within workspaceRoot or a known repo
     // Resolve relative paths against workspaceRoot first, then use path.relative
     // to safely detect escaping (handles prefix-collision like /repo vs /repo2).
     let rawResolved = path.normalize(file);
-    if (!path.isAbsolute(rawResolved) && workspaceRoot) {
-      rawResolved = path.join(workspaceRoot, rawResolved);
+    if (!path.isAbsolute(rawResolved) && baseDir) {
+      rawResolved = path.join(baseDir, rawResolved);
     }
     const resolvedFile = path.resolve(rawResolved);
     function isInsideDir(fileAbs: string, dir: string): boolean {

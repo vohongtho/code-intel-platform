@@ -15,6 +15,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import Logger from '../shared/logger.js';
 import { createKnowledgeGraph } from '../graph/knowledge-graph.js';
+import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
+import { LazyKnowledgeGraph } from '../graph/lazy-knowledge-graph.js';
 import { runPipeline } from '../pipeline/orchestrator.js';
 import {
   scanPhase,
@@ -238,8 +240,25 @@ async function analyzeWorkspace(targetPath: string, options?: {
   llmMaxNodes?: number;
   /** v0.7.0: skip automatic group sync after analysis */
   noGroupSync?: boolean;
+  /** v1.0.0: max memory (MB) before spilling node content */
+  maxMemoryMB?: number;
+  /** v1.0.0: capture per-phase profiling data and write .code-intel/profile.json */
+  profile?: boolean;
 }) {
   const workspaceRoot = path.resolve(targetPath);
+
+  if (!fs.existsSync(workspaceRoot)) {
+    Logger.error(`Path does not exist: ${workspaceRoot}`);
+    console.error(`  ✗  Path does not exist: ${workspaceRoot}`);
+    process.exit(1);
+  }
+
+  if (!fs.statSync(workspaceRoot).isDirectory()) {
+    Logger.error(`Path is not a directory: ${workspaceRoot}`);
+    console.error(`  ✗  Path is not a directory: ${workspaceRoot}`);
+    process.exit(1);
+  }
+
   if (!options?.silent) console.log(`Analyzing: ${workspaceRoot}`);
   Logger.info(`analyze started: ${workspaceRoot}`);
 
@@ -266,6 +285,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
   }
 
   const graph = createKnowledgeGraph();
+  let activeGraph: KnowledgeGraph = graph;
 
   // ── Progress bar + spinner helpers ───────────────────────────────────────
   const BAR_WIDTH = 30;
@@ -297,12 +317,23 @@ async function analyzeWorkspace(targetPath: string, options?: {
     process.stdout.write('\r' + ' '.repeat(60) + '\r');
   }
 
+  // Build graph — use CompactKnowledgeGraph when --max-memory is set, for memory efficiency
+  const maxMemoryMB = options?.maxMemoryMB ??
+    (() => { const v = parseInt(process.env['GRAPH_MAX_MEMORY_MB'] ?? '', 10); return Number.isFinite(v) && v >= 1 ? v : 0; })();
+
+  if (maxMemoryMB > 0) {
+    const { createCompactKnowledgeGraph } = await import('../graph/compact-knowledge-graph.js');
+    activeGraph = createCompactKnowledgeGraph(maxMemoryMB);
+    Logger.info(`  [analyze] Using CompactKnowledgeGraph with ${maxMemoryMB} MB memory limit`);
+  }
+
   const context: PipelineContext = {
     workspaceRoot,
-    graph,
+    graph: activeGraph,
     filePaths: [],
     verbose: options?.verbose,
     summarize: options?.summarize,
+    profile: options?.profile,
     llmConfig: options?.summarize ? {
       provider: options.llmProvider ?? 'ollama',
       model:    options.llmModel,
@@ -384,6 +415,68 @@ async function analyzeWorkspace(targetPath: string, options?: {
     ? [noopScanPhase, structurePhase, chosenParsePhase, chosenResolvePhase, clusterPhase, flowPhase, summarizePhase]
     : [scanPhase, structurePhase, chosenParsePhase, chosenResolvePhase, clusterPhase, flowPhase, summarizePhase];
   const result = await runPipeline(phases, context);
+
+  // ── Epic 4: --profile: write profile.json + phase timing table + bottleneck warn ──
+  if (options?.profile) {
+    const profileEntries: {
+      phase: string;
+      duration: number;
+      memoryBeforeMB?: number;
+      memoryAfterMB?: number;
+      memoryDeltaMB?: number;
+    }[] = [];
+    for (const [phaseName, pr] of result.results) {
+      const entry = {
+        phase: phaseName,
+        duration: pr.duration,
+        memoryBeforeMB: pr.memoryBeforeMB,
+        memoryAfterMB: pr.memoryAfterMB,
+        memoryDeltaMB: pr.memoryBeforeMB !== undefined && pr.memoryAfterMB !== undefined
+          ? pr.memoryAfterMB - pr.memoryBeforeMB
+          : undefined,
+      };
+      profileEntries.push(entry);
+    }
+    const profileJson = {
+      profiledAt: new Date().toISOString(),
+      totalDuration: result.totalDuration,
+      phases: profileEntries,
+    };
+    const profilePath = path.join(workspaceRoot, '.code-intel', 'profile.json');
+    try {
+      fs.mkdirSync(path.join(workspaceRoot, '.code-intel'), { recursive: true });
+      fs.writeFileSync(profilePath, JSON.stringify(profileJson, null, 2));
+      if (!options?.silent) console.log(`  ✓ Profile written: ${profilePath}`);
+    } catch (err) {
+      Logger.warn(`Failed to write profile.json: ${err instanceof Error ? err.message : err}`);
+    }
+    // Bottleneck detection: warn if any phase > 50% of total time
+    for (const entry of profileEntries) {
+      if (result.totalDuration > 0 && entry.duration / result.totalDuration > 0.5) {
+        Logger.warn(`[profile] Bottleneck detected: phase '${entry.phase}' took ${entry.duration}ms (${((entry.duration / result.totalDuration) * 100).toFixed(0)}% of total ${result.totalDuration}ms)`);
+        if (!options?.silent) {
+          console.warn(`  ⚠  Bottleneck: '${entry.phase}' took ${((entry.duration / result.totalDuration) * 100).toFixed(0)}% of total time (${entry.duration}ms)`);
+        }
+      }
+    }
+  }
+
+  // ── Verbose phase timing table ─────────────────────────────────────────────
+  if (options?.verbose && !options?.silent) {
+    console.log('\n  Phase timing:');
+    const nameW = 12;
+    const durW  = 8;
+    for (const [phaseName, pr] of result.results) {
+      const durStr = pr.duration >= 1000
+        ? `${(pr.duration / 1000).toFixed(2)}s`
+        : `${pr.duration}ms`;
+      const memStr = pr.memoryBeforeMB !== undefined && pr.memoryAfterMB !== undefined
+        ? `  mem: ${pr.memoryBeforeMB}→${pr.memoryAfterMB} MB`
+        : '';
+      console.log(`    ${phaseName.padEnd(nameW)} ${durStr.padStart(durW)}${memStr}`);
+    }
+    console.log('');
+  }
 
   // ── After incremental pipeline: remove stale nodes from DB for changed files ─
   if (isIncremental && incrementalChangedFiles && incrementalChangedFiles.length > 0) {
@@ -508,6 +601,19 @@ async function analyzeWorkspace(targetPath: string, options?: {
     Logger.warn(`DB persist failed: ${err instanceof Error ? err.message : err}`);
   }
 
+  // BM25 pre-built inverted index (always built, regardless of embedding flag)
+  startSpinner('Building BM25 inverted index');
+  try {
+    const { Bm25Index, getBm25DbPath } = await import('../search/bm25-index.js');
+    const bm25 = new Bm25Index(getBm25DbPath(workspaceRoot));
+    bm25.build(graph);
+    stopSpinner();
+    if (!options?.silent) console.log(`  ✓ BM25 index built`);
+  } catch (err) {
+    stopSpinner();
+    Logger.warn(`BM25 index build failed: ${err instanceof Error ? err.message : err}`);
+  }
+
   // Vector embeddings (opt-in or --embeddings, skip if --skip-embeddings)
   const doEmbeddings = options?.embeddings && !options?.skipEmbeddings;
   if (doEmbeddings) {
@@ -621,7 +727,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
     }
   }
 
-  return { graph, result, repoName, workspaceRoot };
+  return { graph: activeGraph, result, repoName, workspaceRoot };
 }
 
 // ─── 0. init ─────────────────────────────────────────────────────────────────
@@ -839,6 +945,8 @@ program
   .option('--llm-max-nodes <n>',       'Max nodes to summarize per run (cost guard)')
   .option('--no-group-sync',           'Skip automatic group sync after analysis')
   .option('--dry-run',                 'Preview files that would be scanned + estimated time; no DB write')
+  .option('--max-memory <MB>',         'Limit graph memory (MB); spill node content to free RAM when exceeded')
+  .option('--profile',                 'Write per-phase profiling data to .code-intel/profile.json')
   .addHelpText('after', `
   Parses your source code with tree-sitter, builds a Knowledge Graph of
   symbols and their relationships, persists it to .code-intel/graph.db,
@@ -878,6 +986,8 @@ program
     llmMaxNodes?: string;
     groupSync?: boolean;
     dryRun?: boolean;
+    maxMemory?: string;
+    profile?: boolean;
   }) => {
     // ── --dry-run: scan files only, no DB write ──────────────────────────────
     if (opts.dryRun) {
@@ -917,6 +1027,8 @@ program
       llmModel: opts.llmModel,
       llmBatchSize: (() => { const v = parseInt(opts.llmBatchSize ?? '', 10); return Number.isFinite(v) && v >= 1 ? v : undefined; })(),
       llmMaxNodes:  (() => { const v = parseInt(opts.llmMaxNodes  ?? '', 10); return Number.isFinite(v) && v >= 1 ? v : undefined; })(),
+      maxMemoryMB:  (() => { const v = parseInt(opts.maxMemory    ?? '', 10); return Number.isFinite(v) && v >= 1 ? v : undefined; })(),
+      profile: opts.profile,
     });
     // LadybugDB keeps background checkpoint threads alive after close(),
     // preventing Node from exiting naturally.  Force-exit once the work is done.
@@ -943,11 +1055,17 @@ program
     const workspaceRoot = path.resolve(targetPath);
     const repoName = path.basename(workspaceRoot);
     const dbPath = getDbPath(workspaceRoot);
+
+    if (!fs.existsSync(workspaceRoot) || !fs.statSync(workspaceRoot).isDirectory()) {
+      console.error(`  ✗  Path does not exist: ${workspaceRoot}`);
+      process.exit(1);
+    }
+
     const existingIndex = fs.existsSync(dbPath) && loadMetadata(workspaceRoot) !== null;
 
     if (existingIndex) {
       const graph = createKnowledgeGraph();
-      const db = new DbManager(dbPath);
+      const db = new DbManager(dbPath, true);
       await db.init();
       await loadGraphFromDB(graph, db);
       db.close();
@@ -987,6 +1105,12 @@ program
     const workspaceRoot = path.resolve(targetPath);
     const repoName = path.basename(workspaceRoot);
     const dbPath = getDbPath(workspaceRoot);
+
+    if (!fs.existsSync(workspaceRoot) || !fs.statSync(workspaceRoot).isDirectory()) {
+      console.error(`  ✗  Path does not exist: ${workspaceRoot}`);
+      process.exit(1);
+    }
+
     const existingIndex = !options.force && fs.existsSync(dbPath) && loadMetadata(workspaceRoot) !== null;
 
     if (existingIndex) {
@@ -994,24 +1118,25 @@ program
       // 1.1: Warn + re-analyze if old regex index
       const meta = loadMetadata(workspaceRoot)!;
       if (meta.parser === 'regex' || meta.parser === undefined) {
-        Logger.warn(`  [serve] Index was built with regex parser — running full re-analysis to upgrade to tree-sitter`);
-        console.log(`Re-analyzing with tree-sitter parser: ${workspaceRoot}`);
-        const { graph: newGraph, workspaceRoot: root, repoName: name } = await analyzeWorkspace(targetPath, { force: true });
-        await startHttpServer(newGraph, name, parseInt(options.port, 10), root);
+        Logger.warn(`  [serve] Index was built with regex parser. Run \`code-intel analyze\` to upgrade to tree-sitter, then re-run \`code-intel serve\`.`);
+        process.exit(1);
       } else {
-        console.log(`Loading index: ${workspaceRoot}`);
+        console.log(`Loading index (lazy): ${workspaceRoot}`);
         console.log(`  ◈  ${meta.stats.nodes} nodes · ${meta.stats.edges} edges · ${meta.stats.files} files  (indexed ${meta.indexedAt})`);
-        const graph = createKnowledgeGraph();
-        const db = new DbManager(dbPath);
+        const lazyGraph = new LazyKnowledgeGraph();
+        const db = new DbManager(dbPath, true);
         await db.init();
-        await loadGraphFromDB(graph, db);
-        db.close();
-        await startHttpServer(graph, repoName, parseInt(options.port, 10), workspaceRoot);
+        await lazyGraph.init(db, meta.stats.nodes, meta.stats.edges);
+        Logger.info(`  [serve] Lazy graph ready — ${lazyGraph.size.edges} edges loaded; nodes fetched on demand`);
+        // Background warm: pre-load high-blast-radius nodes without blocking startup
+        setImmediate(() => lazyGraph.warmTopNodes(500).catch(() => {}));
+        await startHttpServer(lazyGraph, repoName, parseInt(options.port, 10), workspaceRoot);
       }
     } else {
-      // No index or --force: run full analysis then serve
-      const { graph, workspaceRoot: root, repoName: name } = await analyzeWorkspace(targetPath, { force: options.force });
-      await startHttpServer(graph, name, parseInt(options.port, 10), root);
+      // No index: prompt user to run analyze first
+      Logger.warn(`  [serve] No index found for: ${workspaceRoot}`);
+      Logger.warn(`  [serve] Run \`code-intel analyze\` first, then re-run \`code-intel serve\`.`);
+      process.exit(1);
     }
   });
 
@@ -1038,22 +1163,29 @@ program
     const workspaceRoot = path.resolve(targetPath);
     const repoName = path.basename(workspaceRoot);
     const dbPath = getDbPath(workspaceRoot);
+
+    if (!fs.existsSync(workspaceRoot) || !fs.statSync(workspaceRoot).isDirectory()) {
+      console.error(`  ✗  Path does not exist: ${workspaceRoot}`);
+      process.exit(1);
+    }
+
     const existingIndex = !options.force && fs.existsSync(dbPath) && loadMetadata(workspaceRoot) !== null;
 
-    let graph;
+    let graph: KnowledgeGraph;
     if (existingIndex) {
       const meta = loadMetadata(workspaceRoot)!;
       if (meta.parser === 'regex' || meta.parser === undefined) {
         const result = await analyzeWorkspace(targetPath, { force: true });
         graph = result.graph;
       } else {
-        graph = createKnowledgeGraph();
-        const db = new DbManager(dbPath);
+        const lazyGraph = new LazyKnowledgeGraph();
+        const db = new DbManager(dbPath, true);
         await db.init();
-        await loadGraphFromDB(graph, db);
-        db.close();
-        console.log(`Loading index: ${workspaceRoot}`);
+        await lazyGraph.init(db, meta.stats.nodes, meta.stats.edges);
+        console.log(`Loading index (lazy): ${workspaceRoot}`);
         console.log(`  ◈  ${meta.stats.nodes} nodes · ${meta.stats.edges} edges`);
+        setImmediate(() => lazyGraph.warmTopNodes(500).catch(() => {}));
+        graph = lazyGraph;
       }
     } else {
       const result = await analyzeWorkspace(targetPath, { force: options.force });
@@ -1066,26 +1198,36 @@ program
     const indexer = new IncrementalIndexer(graph, workspaceRoot, dbPath);
     const watcher = new FileWatcher(workspaceRoot);
 
-    watcher.start(async (changedFiles) => {
-      watcherState.lastEventAt = Date.now();
-      console.log(`\n  ⟳  Re-indexing ${changedFiles.length} changed file(s)…`);
-      const result = await indexer.patchGraph(changedFiles);
+    // Epic 6: watcher crash → log error + restart watcher; no server crash
+    let watcherActive = true;
+    function startWatcher(): void {
+      watcher.start(async (changedFiles) => {
+        watcherState.lastEventAt = Date.now();
+        console.log(`\n  ⟳  Re-indexing ${changedFiles.length} changed file(s)…`);
+        try {
+          const result = await indexer.patchGraph(changedFiles);
 
-      if (wsServer) {
-        const meta = loadMetadata(workspaceRoot);
-        wsServer.broadcast({
-          type: 'graph:updated',
-          indexVersion: meta?.indexVersion ?? 'unknown',
-          stats: { nodes: graph.size.nodes, edges: graph.size.edges },
-          changedFiles: changedFiles.map((f) => path.relative(workspaceRoot, f)),
-          timestamp: new Date().toISOString(),
-        });
-      }
+          if (wsServer) {
+            const meta = loadMetadata(workspaceRoot);
+            wsServer.broadcast({
+              type: 'graph:updated',
+              indexVersion: meta?.indexVersion ?? 'unknown',
+              stats: { nodes: graph.size.nodes, edges: graph.size.edges },
+              changedFiles: changedFiles.map((f) => path.relative(workspaceRoot, f)),
+              timestamp: new Date().toISOString(),
+            });
+          }
 
-      console.log(
-        `  ✅  Patch done: -${result.nodesRemoved} +${result.nodesAdded} nodes · ${result.duration}ms`,
-      );
-    });
+          console.log(
+            `  ✅  Patch done: -${result.nodesRemoved} +${result.nodesAdded} nodes · ${result.duration}ms`,
+          );
+        } catch (err) {
+          Logger.error(`[watcher] patchGraph error: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      });
+    }
+
+    startWatcher();
 
     console.log(`\n  👁  Watching: ${workspaceRoot}`);
     console.log(`     Web UI:   http://localhost:${options.port}`);
@@ -1353,7 +1495,7 @@ async function loadOrAnalyzeWorkspace(targetPath: string) {
 
   if (existingIndex) {
     const graph = createKnowledgeGraph();
-    const db = new DbManager(dbPath);
+    const db = new DbManager(dbPath, true);
     await db.init();
     await loadGraphFromDB(graph, db);
     db.close();
@@ -2716,7 +2858,7 @@ program
     // Load graph from DB
     const { computeHealthReport } = await import('../health/health-score.js');
     const graph = createKnowledgeGraph();
-    const db = new DbManager(dbPath);
+    const db = new DbManager(dbPath, true);
     await db.init();
     await loadGraphFromDB(graph, db);
     db.close();

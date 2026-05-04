@@ -3,6 +3,7 @@ import type { Phase, PhaseResult, PipelineContext } from '../types.js';
 import { governanceLogger } from '../../governance/llm-governance.js';
 import type { LLMProvider, LLMConfig } from '../../llm/provider.js';
 import { CircuitBreaker, withRetry } from '../../llm/retry.js';
+import Logger from '../../shared/logger.js';
 
 const SUMMARIZABLE_KINDS = new Set(['function', 'class', 'method', 'interface']);
 const MAX_SNIPPET_LINES  = 200;
@@ -50,8 +51,15 @@ export function createSummarizePhase(providerOverride?: LLMProvider): Phase {
       if (providerOverride) {
         provider = providerOverride;
       } else {
-        const { createLLMProvider } = await import('../../llm/factory.js');
-        provider = await createLLMProvider(llmConfig ?? {});
+        try {
+          const { createLLMProvider } = await import('../../llm/factory.js');
+          provider = await createLLMProvider(llmConfig ?? {});
+        } catch (err) {
+          // Epic 6: LLM API unavailable → skip summarize; analysis still completes
+          const msg = err instanceof Error ? err.message : String(err);
+          Logger.warn(`[summarize] LLM provider unavailable: ${msg}. Skipping summarize phase.`);
+          return { status: 'completed', duration: Date.now() - start, message: `Summarize skipped: LLM API unavailable (${msg})` };
+        }
       }
 
       const breaker    = new CircuitBreaker();

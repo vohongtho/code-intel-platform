@@ -1,6 +1,6 @@
 ---
 name: eval
-description: "Covers the **eval** subsystem of code-intel-platform. 29 symbols across 6 files. Key symbols: `run`, `start`, `call`. Internal call density: 0.2 calls/symbol. Participates in 1 execution flow(s)."
+description: "Covers the **eval** subsystem of code-intel-platform. 29 symbols across 6 files. Key symbols: `run`, `start`, `call`. Internal call density: 0.2 calls/symbol. Participates in 8 execution flow(s)."
 ---
 
 # eval
@@ -32,12 +32,12 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `run` | function | 17 | 0 | `eval/run-eval.mjs` |
-| `start` | method | 5 | 7 | `eval/run-mcp-bench.mjs` |
+| `run` | function | 19 | 0 | `eval/run-eval.mjs` |
+| `start` | method | 6 | 7 | `eval/run-mcp-bench.mjs` |
 | `call` | method | 3 | 5 | `eval/run-mcp-bench.mjs` |
+| `stop` | method | 6 | 0 | `eval/run-mcp-bench.mjs` |
 | `bench` | function | 1 | 4 | `eval/run-mcp-bench.mjs` |
 | `baselineAnswer` | function | 1 | 3 | `eval/run-agent-bench.mjs` |
-| `stop` | method | 4 | 0 | `eval/run-mcp-bench.mjs` |
 | `readFile` | function | 3 | 0 | `eval/run-agent-bench.mjs` |
 | `enhancedAnswer` | function | 1 | 2 | `eval/run-agent-bench.mjs` |
 | `runCLI` | function | 2 | 0 | `eval/run-agent-bench.mjs` |
@@ -47,7 +47,7 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 ## Execution Flows
 
-**1** execution path(s) pass through this area.
+**8** execution path(s) pass through this area.
 Run `code-intel inspect <symbol>` on a hot symbol to trace the full call chain.
 
 ## Impact Guidance

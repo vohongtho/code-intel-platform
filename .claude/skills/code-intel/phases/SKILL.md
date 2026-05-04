@@ -1,6 +1,6 @@
 ---
 name: phases
-description: "Covers the **phases** subsystem of code-intel-platform. 38 symbols across 6 files. Key symbols: `execute`, `execute`, `execute`. Internal call density: 0.7 calls/symbol. Participates in 3 execution flow(s)."
+description: "Covers the **phases** subsystem of code-intel-platform. 38 symbols across 6 files. Key symbols: `execute`, `execute`, `execute`. Internal call density: 0.7 calls/symbol. Participates in 8 execution flow(s)."
 ---
 
 # phases
@@ -34,7 +34,7 @@ Start exploration here — exported symbols with no external callers:
 - **`execute`** `(method)` → `code-intel/core/src/pipeline/phases/flow-phase.ts:7`
 - **`execute`** `(method)` → `code-intel/core/src/pipeline/phases/parse-phase.ts:460`
 - **`execute`** `(method)` → `code-intel/core/src/pipeline/phases/resolve-phase.ts:37`
-- **`execute`** `(method)` → `code-intel/core/src/pipeline/phases/summarize-phase.ts:39`
+- **`execute`** `(method)` → `code-intel/core/src/pipeline/phases/summarize-phase.ts:40`
 
 ## Hot Symbols
 
@@ -45,19 +45,19 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | `extractFromTree` | function | 1 | 19 | `phases/parse-phase.ts` |
 | `execute` | method | 0 | 16 | `phases/parse-phase.ts` |
 | `execute` | method | 0 | 16 | `phases/resolve-phase.ts` |
-| `execute` | method | 0 | 15 | `phases/summarize-phase.ts` |
+| `execute` | method | 0 | 16 | `phases/summarize-phase.ts` |
 | `execute` | method | 0 | 10 | `phases/cluster-phase.ts` |
 | `execute` | method | 0 | 10 | `phases/flow-phase.ts` |
 | `extractWithRegex` | function | 1 | 7 | `phases/parse-phase.ts` |
 | `isExported` | function | 5 | 0 | `phases/parse-phase.ts` |
 | `execute` | method | 1 | 4 | `phases/scan-phase.ts` |
 | `extractFromTreeAsync` | function | 1 | 3 | `phases/parse-phase.ts` |
+| `createSummarizePhase` | function | 4 | 0 | `phases/summarize-phase.ts` |
 | `extractParams` | function | 1 | 2 | `phases/parse-phase.ts` |
-| `extractDoc` | function | 1 | 2 | `phases/parse-phase.ts` |
 
 ## Execution Flows
 
-**3** execution path(s) pass through this area.
+**8** execution path(s) pass through this area.
 Run `code-intel inspect <symbol>` on a hot symbol to trace the full call chain.
 
 ## Impact Guidance

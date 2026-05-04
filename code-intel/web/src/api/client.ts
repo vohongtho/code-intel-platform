@@ -122,6 +122,21 @@ export class ApiClient {
     return res.json() as Promise<{ nodes: CodeNode[]; edges: CodeEdge[] }>;
   }
 
+  /**
+   * Fetch a paginated page of nodes from the server.
+   * Used for progressive graph loading (Epic 1.2).
+   */
+  async fetchGraphNodes(
+    repo: string,
+    offset: number,
+    limit: number,
+  ): Promise<{ nodes: CodeNode[]; offset: number; limit: number; total: number; hasMore: boolean }> {
+    const url = `${this.baseUrl}/api/v1/graph/${encodeURIComponent(repo)}/nodes?limit=${limit}&offset=${offset}`;
+    const res = await fetch(url, { credentials: 'include' });
+    if (!res.ok) throw new Error(`Failed to fetch graph nodes: ${res.statusText}`);
+    return res.json() as Promise<{ nodes: CodeNode[]; offset: number; limit: number; total: number; hasMore: boolean }>;
+  }
+
   async search(query: string, limit = 20): Promise<{ results: SearchResult[] }> {
     const csrfToken = await this.getCsrfToken();
     const res = await fetch(`${this.baseUrl}/api/v1/search`, {
@@ -170,8 +185,9 @@ export class ApiClient {
     return res.json() as Promise<{ content: string }>;
   }
 
-  async inspectNode(nodeId: string): Promise<NodeInspectInfo> {
-    const res = await fetch(`${this.baseUrl}/api/v1/nodes/${encodeURIComponent(nodeId)}`, { credentials: 'include' });
+  async inspectNode(nodeId: string, repo?: string): Promise<NodeInspectInfo> {
+    const url = `${this.baseUrl}/api/v1/nodes/${encodeURIComponent(nodeId)}${repo ? `?repo=${encodeURIComponent(repo)}` : ''}`;
+    const res = await fetch(url, { credentials: 'include' });
     if (!res.ok) throw new Error(`Inspect failed: ${res.statusText}`);
     return res.json() as Promise<NodeInspectInfo>;
   }
@@ -180,13 +196,14 @@ export class ApiClient {
     target: string,
     direction: 'callers' | 'callees' | 'both' = 'both',
     maxHops = 3,
+    repo?: string,
   ): Promise<BlastRadiusResult> {
     const csrfToken = await this.getCsrfToken();
     const res = await fetch(`${this.baseUrl}/api/v1/blast-radius`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
       credentials: 'include',
-      body: JSON.stringify({ target, direction, max_hops: maxHops }),
+      body: JSON.stringify({ target, direction, max_hops: maxHops, repo }),
     });
     if (!res.ok) throw new Error(`Blast radius failed: ${res.statusText}`);
     return res.json() as Promise<BlastRadiusResult>;
@@ -258,10 +275,11 @@ export class ApiClient {
     return res.json() as Promise<{ nodes: import('code-intel-shared').CodeNode[]; edges: import('code-intel-shared').CodeEdge[] }>;
   }
 
-  async sourcePreview(file: string, startLine?: number, endLine?: number): Promise<{ content: string; language: string; startLine: number; endLine: number }> {
+  async sourcePreview(file: string, startLine?: number, endLine?: number, repo?: string): Promise<{ content: string; language: string; startLine: number; endLine: number }> {
     const params = new URLSearchParams({ file });
     if (startLine !== undefined) params.set('startLine', String(startLine));
     if (endLine !== undefined) params.set('endLine', String(endLine));
+    if (repo) params.set('repo', repo);
     const res = await fetch(`${this.baseUrl}/api/v1/source?${params.toString()}`, { credentials: 'include' });
     if (!res.ok) {
       const body = await res.json().catch(() => ({})) as { error?: { message?: string } };

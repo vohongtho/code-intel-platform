@@ -1,6 +1,6 @@
 ---
 name: query
-description: "Covers the **query** subsystem of code-intel-platform. 65 symbols across 9 files. Key symbols: `parse`, `summarizeCluster`, `computePRImpact`. Internal call density: 1.1 calls/symbol."
+description: "Covers the **query** subsystem of code-intel-platform. 65 symbols across 9 files. Key symbols: `parse`, `summarizeCluster`, `computePRImpact`. Internal call density: 1.1 calls/symbol. Participates in 4 execution flow(s)."
 ---
 
 # query
@@ -35,7 +35,7 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `parse` | method | 38 | 6 | `query/gql-parser.ts` |
+| `parse` | method | 54 | 6 | `query/gql-parser.ts` |
 | `summarizeCluster` | function | 2 | 10 | `query/cluster-summary.ts` |
 | `computePRImpact` | function | 4 | 8 | `query/pr-impact.ts` |
 | `executePATH` | function | 1 | 10 | `query/gql-executor.ts` |
@@ -47,6 +47,11 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | `executeTRAVERSE` | function | 1 | 7 | `query/gql-executor.ts` |
 | `executeCOUNT` | function | 1 | 7 | `query/gql-executor.ts` |
 | `executeGQL` | function | 4 | 4 | `query/gql-executor.ts` |
+
+## Execution Flows
+
+**4** execution path(s) pass through this area.
+Run `code-intel inspect <symbol>` on a hot symbol to trace the full call chain.
 
 ## Impact Guidance
 

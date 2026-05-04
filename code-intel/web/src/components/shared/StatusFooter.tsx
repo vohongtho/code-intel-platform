@@ -11,7 +11,6 @@ export function StatusFooter() {
   const [spin, setSpin] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ── WebSocket live-update indicator + toast ───────────────────────────────
   const [wsConnected, setWsConnected] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -22,11 +21,11 @@ export function StatusFooter() {
     toastTimerRef.current = setTimeout(() => setToastMsg(null), 4000);
   };
 
-  // Clear toast timer on unmount to avoid state updates on unmounted component
   useEffect(() => {
     return () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); };
   }, []);
 
+  // WebSocket live-update
   useEffect(() => {
     if (!state.connected || !state.currentUser) return;
 
@@ -39,29 +38,24 @@ export function StatusFooter() {
       if (destroyed) return;
       try {
         ws = new WebSocket(wsUrl);
-
         ws.onopen = () => setWsConnected(true);
         ws.onclose = () => {
           setWsConnected(false);
           if (!destroyed) {
-            const jitter = Math.random() * 500;
-            reconnectTimer = setTimeout(connect, 3000 + jitter);
+            reconnectTimer = setTimeout(connect, 3000 + Math.random() * 500);
           }
         };
-        ws.onerror = () => { /* onclose will fire next */ };
+        ws.onerror = () => { /* onclose fires next */ };
         ws.onmessage = (ev) => {
           try {
-            const msg = JSON.parse(ev.data as string) as {
-              type: string;
-              changedFiles?: string[];
-            };
+            const msg = JSON.parse(ev.data as string) as { type: string; changedFiles?: string[] };
             if (msg.type === 'graph:updated') {
               const n = msg.changedFiles?.length ?? 0;
               showToast(`Graph updated — ${n} file${n !== 1 ? 's' : ''} changed`);
             }
-          } catch { /* ignore malformed messages */ }
+          } catch { /* ignore */ }
         };
-      } catch { /* WebSocket not available in this env */ }
+      } catch { /* WebSocket unavailable */ }
     }
 
     connect();
@@ -74,7 +68,7 @@ export function StatusFooter() {
     };
   }, [state.connected, state.currentUser, state.serverUrl]);
 
-  // ── Vector index polling ──────────────────────────────────────────────────
+  // Vector index polling
   const pollVectorStatus = useCallback(async () => {
     if (!state.connected) return;
     const client = new ApiClient(state.serverUrl);
@@ -101,77 +95,69 @@ export function StatusFooter() {
     setSpin(false);
     if (state.connected) void pollVectorStatus();
     return () => { if (timerRef.current) clearTimeout(timerRef.current); };
-  }, [state.connected, state.serverUrl]); // intentionally omit pollVectorStatus
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.connected, state.serverUrl]);
 
-  /* ── connection dot ── */
-  const dotColor = !state.connected ? 'bg-gray-500' : 'bg-green-500';
+  const dotColor = !state.connected ? 'bg-text-muted' : 'bg-node-function';
 
-  /* ── vector badge ── */
   let vecBadge: React.ReactNode;
   if (vecState === 'building') {
     vecBadge = (
-      <span className="flex items-center gap-1 text-yellow-400">
+      <span className="flex items-center gap-1 text-amber-400">
         <span className="inline-block" style={{ animation: spin ? 'spin 1s linear infinite' : 'none' }}>⟳</span>
         <span>vec building…</span>
       </span>
     );
   } else if (vecState === 'ready') {
-    vecBadge = <span className="text-green-400">⚡ vec ready</span>;
+    vecBadge = <span className="text-node-function">⚡ vec ready</span>;
   } else {
-    vecBadge = <span className="text-gray-600">vec –</span>;
+    vecBadge = <span className="text-text-muted/50">vec –</span>;
   }
 
   const selectedNode: CodeNode | null = state.selectedNode;
 
   return (
     <>
-      {/* Keyframe for the spinning ⟳ */}
       <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
 
       {/* Graph-updated toast */}
       {toastMsg && (
-        <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-50 bg-cyan-900/90 border border-cyan-500/50 text-cyan-200 text-xs px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 pointer-events-none">
-          <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+        <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-50 bg-accent/90 border border-accent/50 text-white text-xs px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 pointer-events-none animate-fade-in">
+          <span className="w-2 h-2 rounded-full bg-white/60 animate-pulse" />
           {toastMsg}
         </div>
       )}
 
-      <div className="h-7 bg-[#050810] border-t border-gray-800 flex items-center px-3 text-xs text-gray-500 shrink-0">
-        {/* Left section */}
+      <footer className="h-7 bg-deep border-t border-border-subtle flex items-center px-3 text-xs text-text-muted shrink-0">
+        {/* Left */}
         <div className="flex items-center gap-3 min-w-0">
-          {/* Connection dot + label */}
           <span className="flex items-center gap-1.5">
             <span className={`w-2 h-2 rounded-full ${dotColor}`} />
-            <span className={state.connected ? 'text-gray-400' : 'text-gray-600'}>
+            <span className={state.connected ? 'text-text-secondary' : 'text-text-muted/60'}>
               {state.connected ? state.serverUrl : 'Disconnected'}
             </span>
           </span>
 
-          {/* Live WebSocket indicator */}
           {state.connected && (
             <>
-              <span className="text-gray-700">·</span>
+              <span className="text-border-default">·</span>
               <span
                 className="flex items-center gap-1"
                 title={wsConnected ? 'Live updates active' : 'Live updates disconnected'}
               >
-                <span className={`w-1.5 h-1.5 rounded-full ${wsConnected ? 'bg-green-400' : 'bg-gray-600'}`} />
-                <span className={wsConnected ? 'text-green-400' : 'text-gray-600'}>live</span>
+                <span className={`w-1.5 h-1.5 rounded-full ${wsConnected ? 'bg-node-function' : 'bg-text-muted/40'}`} />
+                <span className={wsConnected ? 'text-node-function' : 'text-text-muted/40'}>live</span>
               </span>
             </>
           )}
 
-          {/* Separator */}
-          <span className="text-gray-700">·</span>
-
-          {/* Vector index state */}
+          <span className="text-border-default">·</span>
           {vecBadge}
 
-          {/* Node / edge counts */}
           {state.nodes.length > 0 && (
             <>
-              <span className="text-gray-700">·</span>
-              <span className="text-gray-500">
+              <span className="text-border-default">·</span>
+              <span>
                 {state.nodes.length.toLocaleString()} nodes
                 &thinsp;/&thinsp;
                 {state.edges.length.toLocaleString()} edges
@@ -180,20 +166,19 @@ export function StatusFooter() {
           )}
         </div>
 
-        {/* Spacer */}
         <div className="flex-1" />
 
-        {/* Right section — selected node pill + version */}
+        {/* Right */}
         {selectedNode && (
           <span
-            className="max-w-[30ch] truncate px-2 py-0.5 rounded-full bg-gray-800 text-gray-300 border border-gray-700 font-mono mr-3"
+            className="max-w-[30ch] truncate px-2 py-0.5 rounded-full bg-elevated text-text-secondary border border-border-subtle font-mono mr-3"
             title={selectedNode.name}
           >
             {selectedNode.name}
           </span>
         )}
-        <span className="font-mono text-gray-700 text-[10px] select-none">v{__APP_VERSION__}</span>
-      </div>
+        <span className="font-mono text-text-muted/50 text-[10px] select-none">v{__APP_VERSION__}</span>
+      </footer>
     </>
   );
 }

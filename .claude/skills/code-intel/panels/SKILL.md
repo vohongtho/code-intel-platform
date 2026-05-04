@@ -1,11 +1,11 @@
 ---
 name: panels
-description: "Covers the **panels** subsystem of code-intel-platform. 38 symbols across 7 files. Key symbols: `SearchBar`, `handleSearch`. Internal call density: 0.1 calls/symbol. Participates in 3 execution flow(s)."
+description: "Covers the **panels** subsystem of code-intel-platform. 35 symbols across 7 files. Key symbols: `SearchBar`, `handleSearch`. Internal call density: 0.1 calls/symbol. Participates in 3 execution flow(s)."
 ---
 
 # panels
 
-> **38 symbols** | **7 files** | path: `code-intel/web/src/components/panels/` | call density: 0.1/sym
+> **35 symbols** | **7 files** | path: `code-intel/web/src/components/panels/` | call density: 0.1/sym
 
 ## When to Use
 
@@ -19,7 +19,7 @@ Load this skill when:
 
 | File | Symbols | Notes |
 |------|---------|-------|
-| `code-intel/web/src/components/panels/QueryPanel.tsx` | `loadHistory`, `saveHistory`, `addToHistory`, `escapeHtml` +(8) | internal |
+| `code-intel/web/src/components/panels/QueryPanel.tsx` | `loadHistory`, `saveHistory`, `addToHistory`, `escapeHtml` +(5) | internal |
 | `code-intel/web/src/components/panels/GroupPanel.tsx` | `GroupInfo`, `TopoRepo`, `TopoEdge`, `SelectedEdge` +(3) | internal |
 | `code-intel/web/src/components/panels/SourcePanel.tsx` | `loadHighlightJs`, `SourcePanelProps`, `SourceData`, `onMouseDownResize` +(2) | internal |
 | `code-intel/web/src/components/panels/SidebarFiles.tsx` | `TreeNode`, `buildTree`, `countLeaves`, `TreeNodeViewProps` +(1) | internal |
@@ -49,9 +49,9 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | `loadImpact` | function | 0 | 2 | `panels/NodeDetail.tsx` |
 | `jumpTo` | function | 0 | 2 | `panels/NodeDetail.tsx` |
 | `highlightGQL` | function | 1 | 1 | `panels/QueryPanel.tsx` |
-| `NodeTable` | function | 0 | 2 | `panels/QueryPanel.tsx` |
 | `onCitationClick` | function | 0 | 2 | `panels/SidebarChat.tsx` |
 | `countLeaves` | function | 1 | 1 | `panels/SidebarFiles.tsx` |
+| `onFileClick` | function | 0 | 2 | `panels/SidebarFiles.tsx` |
 
 ## Execution Flows
 

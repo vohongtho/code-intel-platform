@@ -39,6 +39,7 @@ export type { EntryPoint, FlowTrace } from './flow-detection/index.js';
 
 export { textSearch, reciprocalRankFusion } from './search/index.js';
 export type { SearchResult } from './search/index.js';
+export { Bm25Index, getBm25DbPath } from './search/index.js';
 
 export { createMcpServer, startMcpStdio } from './mcp-server/index.js';
 export { createApp, startHttpServer } from './http/index.js';

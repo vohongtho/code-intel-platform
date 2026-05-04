@@ -22,10 +22,9 @@ export function ConnectPage() {
   const [loadingGroups, setLoadingGroups] = useState(false);
   const [connectingGroup, setConnectingGroup] = useState<string | null>(null);
 
-  // Probe server on mount
   useEffect(() => {
     probeServer(defaultUrl);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const probeServer = async (probeUrl: string) => {
@@ -39,7 +38,6 @@ export function ConnectPage() {
     }
   };
 
-  // Load groups when switching to group tab
   useEffect(() => {
     if (tab === 'group') loadGroups();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -67,12 +65,53 @@ export function ConnectPage() {
       dispatch({ type: 'SET_MODE', mode: 'repo' });
       dispatch({ type: 'SET_REPO_NAME', name: repoName });
       dispatch({ type: 'SET_VIEW', view: 'loading' });
-      const { nodes, edges } = await client.fetchGraph(repoName);
-      dispatch({ type: 'SET_GRAPH', nodes, edges });
+
+      const PAGE = 200;
+
+      // Phase 1: fetch edges + first node page in parallel (both are fast)
+      dispatch({ type: 'SET_GRAPH_LOAD', progress: { loaded: 0, total: 0, phase: 'edges' } });
+      const [fullGraph, firstPage] = await Promise.all([
+        client.fetchGraph(repoName),
+        client.fetchGraphNodes(repoName, 0, PAGE),
+      ]);
+
+      const total = firstPage.total;
+      const allNodes = [...firstPage.nodes];
+      const allIds = new Set(allNodes.map((n) => n.id));
+
+      dispatch({ type: 'SET_GRAPH_LOAD', progress: { loaded: allNodes.length, total, phase: 'nodes' } });
+
+      // Phase 2: fetch ALL remaining pages in parallel
+      if (firstPage.hasMore) {
+        // Build every offset we still need
+        const offsets: number[] = [];
+        for (let off = PAGE; off < total; off += PAGE) offsets.push(off);
+
+        // Fire all requests concurrently in batches of 8 to avoid overwhelming the server
+        const CONCURRENCY = 8;
+        for (let i = 0; i < offsets.length; i += CONCURRENCY) {
+          const batch = offsets.slice(i, i + CONCURRENCY);
+          const pages = await Promise.all(
+            batch.map(off => client.fetchGraphNodes(repoName, off, PAGE).catch(() => null))
+          );
+          for (const page of pages) {
+            if (!page) continue;
+            for (const n of page.nodes) {
+              if (!allIds.has(n.id)) { allIds.add(n.id); allNodes.push(n); }
+            }
+          }
+          dispatch({ type: 'SET_GRAPH_LOAD', progress: { loaded: allNodes.length, total, phase: 'nodes' } });
+        }
+      }
+
+      // All nodes loaded — render the full graph at once (single FA2 run, no re-layout)
+      dispatch({ type: 'SET_GRAPH_LOAD', progress: null });
+      dispatch({ type: 'SET_GRAPH', nodes: allNodes, edges: fullGraph.edges });
       dispatch({ type: 'SET_CONNECTED', connected: true });
       dispatch({ type: 'SET_VIEW', view: 'exploring' });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Connection failed');
+      dispatch({ type: 'SET_GRAPH_LOAD', progress: null });
       dispatch({ type: 'SET_VIEW', view: 'connect' });
       setConnecting(false);
     }
@@ -99,7 +138,6 @@ export function ConnectPage() {
       dispatch({ type: 'SET_CONNECTED', connected: true });
       dispatch({ type: 'SET_VIEW', view: 'exploring' });
 
-      // Load contracts silently in background
       client.getGroupContracts(groupName).then((contracts) => {
         if (contracts) {
           dispatch({
@@ -118,29 +156,32 @@ export function ConnectPage() {
     }
   };
 
-  return (
-    <div className="flex items-center justify-center min-h-screen bg-[#040812]">
-      <div className="bg-[#0a0d18] border border-gray-800/60 rounded-2xl shadow-2xl w-full max-w-md p-10">
+  const inputClass =
+    'w-full bg-elevated text-text-primary rounded-lg px-4 py-2.5 border border-border-default focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 placeholder-text-muted transition disabled:opacity-50 text-sm';
 
-        {/* Logo + branding */}
+  return (
+    <div className="flex items-center justify-center min-h-screen bg-void">
+      <div className="bg-deep border border-border-subtle rounded-2xl shadow-2xl w-full max-w-md p-10">
+
+        {/* Logo */}
         <div className="flex flex-col items-center mb-8">
-          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center text-white text-2xl font-bold shadow-lg mb-4 select-none">
+          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-accent to-accent-dim flex items-center justify-center text-white text-2xl font-bold shadow-glow mb-4 select-none">
             ◈
           </div>
-          <h1 className="text-2xl font-bold text-white tracking-tight">Code Intel</h1>
-          <p className="text-gray-400 text-sm mt-1">Knowledge Graph Explorer</p>
+          <h1 className="text-2xl font-bold text-text-primary tracking-tight">Code Intel</h1>
+          <p className="text-text-muted text-sm mt-1">Knowledge Graph Explorer</p>
         </div>
 
         {/* Tab switcher */}
-        <div className="flex bg-gray-900/60 rounded-lg p-1 mb-6 border border-gray-800/50">
+        <div className="flex bg-surface rounded-lg p-1 mb-6 border border-border-subtle">
           {(['repo', 'group'] as ConnectTab[]).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
               className={`flex-1 py-1.5 rounded-md text-sm font-medium transition ${
                 tab === t
-                  ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white shadow'
-                  : 'text-gray-400 hover:text-gray-200'
+                  ? 'bg-gradient-to-r from-accent to-accent-dim text-white shadow'
+                  : 'text-text-muted hover:text-text-secondary'
               }`}
             >
               {t === 'repo' ? '⬡ Repository' : '⬢ Group'}
@@ -151,7 +192,7 @@ export function ConnectPage() {
         <div className="space-y-4">
           {/* URL input */}
           <div>
-            <label className="block text-xs font-medium text-gray-400 uppercase tracking-widest mb-2">
+            <label className="block text-xs font-medium text-text-secondary uppercase tracking-widest mb-2">
               Server URL
             </label>
             <input
@@ -159,7 +200,7 @@ export function ConnectPage() {
               value={url}
               onChange={(e) => { setUrl(e.target.value); probeServer(e.target.value); }}
               disabled={connecting || connectingGroup !== null}
-              className="w-full bg-gray-900 text-white rounded-lg px-4 py-2.5 border border-gray-700 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500/40 placeholder-gray-600 transition disabled:opacity-50"
+              className={inputClass}
               placeholder="http://localhost:4747"
             />
           </div>
@@ -179,42 +220,43 @@ export function ConnectPage() {
             <div>
               {repos.length > 0 ? (
                 <div className="space-y-2">
-                  <p className="text-xs text-gray-500 uppercase tracking-widest font-medium">Indexed repositories</p>
+                  <p className="text-xs text-text-muted uppercase tracking-widest font-medium">Indexed repositories</p>
                   {repos.map((r) => (
                     <button
                       key={r.name}
                       onClick={() => handleConnectRepo(r.name)}
                       disabled={connecting}
-                      className={`w-full flex items-center justify-between bg-gray-900/60 hover:bg-gray-800/60 border rounded-lg px-4 py-3 transition group disabled:opacity-50 disabled:cursor-not-allowed text-left ${
+                      className={`w-full flex items-center justify-between bg-surface hover:bg-hover border rounded-xl px-4 py-3 transition group disabled:opacity-50 disabled:cursor-not-allowed text-left ${
                         r.active
-                          ? 'border-cyan-700/60 hover:border-cyan-600'
-                          : 'border-gray-700/60 hover:border-cyan-700/50'
+                          ? 'border-accent/40 hover:border-accent/60'
+                          : 'border-border-subtle hover:border-border-default'
                       }`}
                     >
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
-                          <div className="text-sm font-semibold text-cyan-400 truncate">{r.name}</div>
+                          <span className="h-1.5 w-1.5 rounded-full bg-node-function animate-pulse shrink-0" />
+                          <div className="text-sm font-semibold text-text-primary truncate">{r.name}</div>
                           {r.active && (
-                            <span className="text-[9px] bg-cyan-900/50 text-cyan-400 border border-cyan-700/50 px-1.5 py-0.5 rounded-full font-medium shrink-0">active</span>
+                            <span className="text-[9px] bg-accent/20 text-accent border border-accent/30 px-1.5 py-0.5 rounded-full font-medium shrink-0">active</span>
                           )}
                         </div>
-                        <div className="text-xs text-gray-500 truncate">{r.nodes.toLocaleString()} nodes · {r.edges.toLocaleString()} edges</div>
+                        <div className="text-xs text-text-muted mt-0.5 pl-3.5">{r.nodes.toLocaleString()} nodes · {r.edges.toLocaleString()} edges</div>
                         {r.path && (
-                          <div className="text-[10px] text-gray-600 font-mono truncate mt-0.5">{r.path}</div>
+                          <div className="text-[10px] text-text-muted/50 font-mono truncate mt-0.5 pl-3.5">{r.path}</div>
                         )}
                       </div>
                       {connecting ? (
-                        <Spinner className="w-4 h-4 text-cyan-400 ml-2 shrink-0" />
+                        <Spinner className="w-4 h-4 text-accent ml-2 shrink-0" />
                       ) : (
-                        <span className="text-gray-600 group-hover:text-cyan-500 transition text-lg ml-2 shrink-0">→</span>
+                        <span className="text-text-muted group-hover:text-accent transition text-lg ml-2 shrink-0">→</span>
                       )}
                     </button>
                   ))}
                 </div>
               ) : (
-                <div className="bg-gray-900/40 border border-gray-800 rounded-lg px-4 py-6 text-center">
-                  <p className="text-gray-500 text-sm mb-2">No repositories found at this URL.</p>
-                  <p className="text-gray-600 text-xs font-mono">code-intel analyze</p>
+                <div className="bg-surface border border-border-subtle rounded-xl px-4 py-6 text-center">
+                  <p className="text-text-muted text-sm mb-2">No repositories found at this URL.</p>
+                  <p className="text-text-muted/60 text-xs font-mono">code-intel analyze</p>
                 </div>
               )}
             </div>
@@ -224,55 +266,55 @@ export function ConnectPage() {
           {tab === 'group' && (
             <div>
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-medium text-gray-400 uppercase tracking-widest">Available Groups</span>
+                <span className="text-xs font-medium text-text-secondary uppercase tracking-widest">Available Groups</span>
                 <button
                   onClick={loadGroups}
                   disabled={loadingGroups}
-                  className="text-xs text-cyan-500 hover:text-cyan-400 transition disabled:opacity-50"
+                  className="text-xs text-accent hover:text-accent/80 transition disabled:opacity-50"
                 >
                   ↻ Refresh
                 </button>
               </div>
 
               {loadingGroups ? (
-                <div className="flex items-center justify-center py-8 text-gray-500 text-sm gap-2">
+                <div className="flex items-center justify-center py-8 text-text-muted text-sm gap-2">
                   <Spinner className="w-4 h-4" />
                   Loading groups…
                 </div>
               ) : groups.length === 0 ? (
-                <div className="bg-gray-900/40 border border-gray-800 rounded-lg px-4 py-6 text-center">
-                  <p className="text-gray-500 text-sm mb-2">No groups found.</p>
-                  <p className="text-gray-600 text-xs font-mono">code-intel group create &lt;name&gt;</p>
+                <div className="bg-surface border border-border-subtle rounded-xl px-4 py-6 text-center">
+                  <p className="text-text-muted text-sm mb-2">No groups found.</p>
+                  <p className="text-text-muted/60 text-xs font-mono">code-intel group create &lt;name&gt;</p>
                 </div>
               ) : (
-                <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                <div className="space-y-2 max-h-64 overflow-y-auto pr-1 scrollbar-thin">
                   {groups.map((g) => (
                     <button
                       key={g.name}
                       onClick={() => handleConnectGroup(g.name)}
                       disabled={connectingGroup !== null}
-                      className="w-full flex items-center justify-between bg-gray-900/60 hover:bg-gray-800/60 border border-gray-700/60 hover:border-indigo-700/50 rounded-lg px-4 py-3 transition group disabled:opacity-50 disabled:cursor-not-allowed text-left"
+                      className="w-full flex items-center justify-between bg-surface hover:bg-hover border border-border-subtle hover:border-border-default rounded-xl px-4 py-3 transition group disabled:opacity-50 disabled:cursor-not-allowed text-left"
                     >
                       <div>
                         <div className="flex items-center gap-2">
-                          <span className="text-indigo-400 font-semibold text-sm">⬢ {g.name}</span>
-                          {connectingGroup === g.name && <Spinner className="w-3 h-3 text-indigo-400" />}
+                          <span className="text-accent font-semibold text-sm">⬢ {g.name}</span>
+                          {connectingGroup === g.name && <Spinner className="w-3 h-3 text-accent" />}
                         </div>
-                        <div className="text-gray-500 text-xs mt-0.5">
+                        <div className="text-text-muted text-xs mt-0.5">
                           {g.memberCount} repo{g.memberCount !== 1 ? 's' : ''}
                           {g.lastSync
                             ? ` · synced ${new Date(g.lastSync).toLocaleDateString()}`
                             : ' · not synced'}
                         </div>
                       </div>
-                      <span className="text-gray-600 group-hover:text-indigo-400 transition text-lg">→</span>
+                      <span className="text-text-muted group-hover:text-accent transition text-lg">→</span>
                     </button>
                   ))}
                 </div>
               )}
 
-              <p className="text-[10px] text-gray-600 mt-3 text-center">
-                Create groups with <span className="font-mono text-gray-500">code-intel group create &lt;name&gt;</span>
+              <p className="text-[10px] text-text-muted/50 mt-3 text-center">
+                Create groups with <span className="font-mono text-text-muted">code-intel group create &lt;name&gt;</span>
               </p>
             </div>
           )}

@@ -1,17 +1,17 @@
 ---
 name: pipeline-2
-description: "Covers the **pipeline** subsystem of code-intel-platform. 20 symbols across 7 files. Key symbols: `execute`, `extractWithTreeSitter`, `extractWithRegex`. Internal call density: 0.3 calls/symbol."
+description: "Covers the **pipeline** subsystem of code-intel-platform. 26 symbols across 9 files. Key symbols: `execute`, `extractWithTreeSitter`, `rawReq`. Internal call density: 0.2 calls/symbol."
 ---
 
 # pipeline
 
-> **20 symbols** | **7 files** | path: `code-intel/core/tests/unit/pipeline/` | call density: 0.3/sym
+> **26 symbols** | **9 files** | path: `code-intel/core/tests/unit/pipeline/` | call density: 0.2/sym
 
 ## When to Use
 
 Load this skill when:
 - The task involves code in `code-intel/core/tests/unit/pipeline/`
-- The user mentions `execute`, `extractWithTreeSitter`, `extractWithRegex` or asks how they work
+- The user mentions `execute`, `extractWithTreeSitter`, `rawReq` or asks how they work
 - Adding, modifying, or debugging pipeline-related functionality
 - Tracing call chains that pass through the pipeline layer
 
@@ -20,7 +20,9 @@ Load this skill when:
 | File | Symbols | Notes |
 |------|---------|-------|
 | `code-intel/core/tests/unit/pipeline/parser-corpus.test.ts` | `ExpectedSymbol`, `GoldenFile`, `ExtractedSymbol`, `captureKind` +(5) | internal |
+| `code-intel/core/tests/unit/pipeline/graceful-degradation.test.ts` | `rawReq`, `summarize`, `execute` | internal |
 | `code-intel/core/tests/unit/pipeline/orchestrator.test.ts` | `makeContext`, `makePhase`, `execute` | internal |
+| `code-intel/core/tests/unit/pipeline/profile.test.ts` | `makeContext`, `makePhase`, `execute` | internal |
 | `code-intel/core/tests/unit/pipeline/summarize-phase.test.ts` | `makeContext`, `makeFakeProvider`, `runPhaseWithProvider` | internal |
 | `code-intel/core/tests/unit/pipeline/dag-validator.test.ts` | `makePhase`, `execute` | internal |
 | `code-intel/core/tests/unit/pipeline/incremental-indexer.test.ts` | `makeGraph` | internal |
@@ -33,8 +35,9 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `execute` | method | 12 | 0 | `pipeline/orchestrator.test.ts` |
+| `execute` | method | 12 | 0 | `pipeline/profile.test.ts` |
 | `extractWithTreeSitter` | function | 1 | 9 | `pipeline/parser-corpus.test.ts` |
+| `rawReq` | function | 1 | 4 | `pipeline/graceful-degradation.test.ts` |
 | `extractWithRegex` | function | 1 | 3 | `pipeline/parser-corpus.test.ts` |
 | `runOnce` | function | 1 | 3 | `pipeline/worker-pool.test.ts` |
 | `extractSymbols` | function | 1 | 2 | `pipeline/parser-corpus.test.ts` |
@@ -43,8 +46,7 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | `makeContext` | function | 1 | 1 | `pipeline/orchestrator.test.ts` |
 | `loadGoldenFiles` | function | 1 | 1 | `pipeline/parser-corpus.test.ts` |
 | `makeContext` | function | 1 | 1 | `pipeline/phases.test.ts` |
-| `makeContext` | function | 1 | 1 | `pipeline/summarize-phase.test.ts` |
-| `makePhase` | function | 1 | 0 | `pipeline/dag-validator.test.ts` |
+| `makeContext` | function | 1 | 1 | `pipeline/profile.test.ts` |
 
 ## Impact Guidance
 

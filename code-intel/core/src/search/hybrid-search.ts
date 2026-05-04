@@ -9,6 +9,8 @@ export interface HybridSearchOptions {
   vectorDbPath?: string; // path to vector.db; if absent → BM25 only
   bm25Limit?: number;    // results to fetch from BM25 before RRF (default: 50)
   vectorLimit?: number;  // results to fetch from vector before RRF (default: 50)
+  /** Pre-computed BM25 results (from Bm25Index). If supplied, skips linear textSearch. */
+  bm25Results?: SearchResult[];
 }
 
 export interface HybridSearchResult {
@@ -27,10 +29,12 @@ export async function hybridSearch(
   limit: number,
   options: HybridSearchOptions = {},
 ): Promise<{ results: HybridSearchResult[]; searchMode: 'bm25' | 'vector' | 'hybrid' }> {
-  const { vectorDbPath, bm25Limit = 50, vectorLimit = 50 } = options;
+  const { vectorDbPath, bm25Limit = 50, vectorLimit = 50, bm25Results: precomputedBm25 } = options;
 
-  // Always run BM25 search
-  const bm25Promise = Promise.resolve(textSearch(graph, query, bm25Limit));
+  // Use pre-computed BM25 results if supplied; otherwise fall back to linear textSearch
+  const bm25Promise = precomputedBm25
+    ? Promise.resolve(precomputedBm25)
+    : Promise.resolve(textSearch(graph, query, bm25Limit));
 
   // Determine if vector search is available
   const hasVectorDb = Boolean(vectorDbPath && fs.existsSync(vectorDbPath));

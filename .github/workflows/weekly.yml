@@ -1,0 +1,59 @@
+name: Weekly Soak Tests
+
+on:
+  schedule:
+    # Run every Saturday at 00:00 UTC
+    - cron: '0 0 * * 6'
+  workflow_dispatch: {}
+
+jobs:
+  soak-test:
+    name: Soak Test — ${{ matrix.scenario }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [memory-stability, watcher-throughput]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps --ignore-scripts
+
+      - name: Rebuild native modules
+        run: npm rebuild @ladybugdb/core better-sqlite3 --legacy-peer-deps
+
+      - name: Build
+        run: npm run build --workspace=code-intel/core
+
+      - name: Run soak test — ${{ matrix.scenario }}
+        run: node tests/perf/soak-test.mjs --scenario=${{ matrix.scenario }}
+        working-directory: code-intel/core
+        # Memory-stability runs for up to 30 min (CI-shortened from 24h);
+        # watcher-throughput runs for up to 15 min.
+        timeout-minutes: 45
+
+      - name: Upload result artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak-result-${{ matrix.scenario }}-${{ github.run_id }}
+          path: code-intel/core/tests/perf/soak-result-${{ matrix.scenario }}.json
+          if-no-files-found: ignore
+
+  notify-failure:
+    name: Notify on failure
+    needs: soak-test
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post failure summary
+        run: |
+          echo "::error::Weekly soak test FAILED — check run ${{ github.run_id }} for details."
+          echo "Memory leak or throughput regression detected."

@@ -477,24 +477,47 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
     const startMs = Date.now();
     const dispatch = () => dispatchTool(name, a, graph, repoName, workspaceRoot);
 
+    // Epic 6: MCP tool timeout — if any tool takes > 30s, return partial result
+    const MCP_TIMEOUT_MS = parseInt(process.env['CODE_INTEL_MCP_TIMEOUT_MS'] ?? '30000', 10);
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    let timedOut = false;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutHandle = setTimeout(() => {
+        timedOut = true;
+        reject(new Error(`MCP tool '${name}' timed out after ${MCP_TIMEOUT_MS}ms`));
+      }, MCP_TIMEOUT_MS);
+    });
+
     let result: Awaited<ReturnType<typeof dispatchTool>>;
     let status = 'success';
     try {
       if (isTracingEnabled()) {
-        result = await withSpan(
-          `mcp.tool.${name}`,
-          sanitizeAttrs({ 'mcp.tool': name, 'mcp.repo': repoName }),
-          dispatch,
-        );
+        result = await Promise.race([
+          withSpan(
+            `mcp.tool.${name}`,
+            sanitizeAttrs({ 'mcp.tool': name, 'mcp.repo': repoName }),
+            dispatch,
+          ),
+          timeoutPromise,
+        ]);
       } else {
-        result = await dispatch();
+        result = await Promise.race([dispatch(), timeoutPromise]);
       }
       if (result.isError) status = 'error';
     } catch (err) {
       status = 'error';
       mcpToolCallsTotal.inc({ tool: name, status });
       mcpToolDurationSeconds.observe({ tool: name }, (Date.now() - startMs) / 1000);
+      if (timedOut) {
+        // Return partial result rather than crashing the MCP session
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ truncated: true, reason: `Tool '${name}' timed out after ${MCP_TIMEOUT_MS}ms`, partialResults: [] }) }],
+          isError: false,
+        };
+      }
       throw err;
+    } finally {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
     }
     mcpToolCallsTotal.inc({ tool: name, status });
     mcpToolDurationSeconds.observe({ tool: name }, (Date.now() - startMs) / 1000);

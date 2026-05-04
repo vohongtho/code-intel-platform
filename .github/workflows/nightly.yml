@@ -1,0 +1,63 @@
+name: Nightly Load Tests
+
+on:
+  schedule:
+    # Run at 02:00 UTC every night
+    - cron: '0 2 * * *'
+  # Allow manual trigger for debugging
+  workflow_dispatch:
+    inputs:
+      size:
+        description: 'Fixture size (1k or 10k)'
+        required: false
+        default: '1k'
+
+jobs:
+  load-test:
+    name: Load Test — ${{ matrix.size }} fixture
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        size: [1k, 10k]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps --ignore-scripts
+
+      - name: Rebuild native modules
+        run: npm rebuild @ladybugdb/core better-sqlite3 --legacy-peer-deps
+
+      - name: Build
+        run: npm run build --workspace=code-intel/core
+
+      - name: Run load test — ${{ matrix.size }}
+        run: node tests/perf/load-test.mjs --size=${{ matrix.size }} --regression-gate
+        working-directory: code-intel/core
+        timeout-minutes: 30
+
+      - name: Upload result artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-result-${{ matrix.size }}-${{ github.run_id }}
+          path: code-intel/core/tests/perf/result-${{ matrix.size }}.json
+          if-no-files-found: ignore
+
+  notify-failure:
+    name: Notify on failure
+    needs: load-test
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post failure summary
+        run: |
+          echo "::error::Nightly load test FAILED — check run ${{ github.run_id }} for perf regression details."
+          echo "One or more load test metrics regressed > 20% vs baseline.json"

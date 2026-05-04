@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useReducer } from 'react';
-import type { AppState, SearchResult, ChatMessage, FocusDepth, CurrentUser } from './types';
+import type { AppState, SearchResult, ChatMessage, FocusDepth, CurrentUser, GraphLoadProgress } from './types';
 import type { CodeNode, CodeEdge, NodeKind, EdgeKind } from 'code-intel-shared';
 
 type Action =
@@ -23,12 +23,14 @@ type Action =
   | { type: 'SET_MODE'; mode: 'repo' | 'group' }
   | { type: 'SET_GROUP_NAME'; name: string }
   | { type: 'SET_GROUP_MEMBERS'; members: { groupPath: string; registryName: string }[] }
-  | { type: 'SET_GROUP_CONTRACTS'; contracts: AppState['groupContracts']; links: AppState['groupLinks']; syncedAt: string };
+  | { type: 'SET_GROUP_CONTRACTS'; contracts: AppState['groupContracts']; links: AppState['groupLinks']; syncedAt: string }
+  | { type: 'SET_GRAPH_LOAD'; progress: GraphLoadProgress | null };
 
 const initialState: AppState = {
   view: 'login',
   serverUrl: 'http://localhost:4747',
   connected: false,
+  graphLoad: null,
   currentUser: null,
   repoName: '',
   nodes: [],
@@ -105,6 +107,7 @@ function reducer(state: AppState, action: Action): AppState {
     case 'SET_GROUP_NAME': return { ...state, groupName: action.name };
     case 'SET_GROUP_MEMBERS': return { ...state, groupMembers: action.members };
     case 'SET_GROUP_CONTRACTS': return { ...state, groupContracts: action.contracts, groupLinks: action.links, groupSyncedAt: action.syncedAt };
+    case 'SET_GRAPH_LOAD': return { ...state, graphLoad: action.progress };
     default:
       return state;
   }

@@ -1,6 +1,6 @@
 # Code Intelligence Platform
 
-[![npm version](https://img.shields.io/badge/npm-v0.9.0-blue)](https://www.npmjs.com/package/@vohongtho.infotech/code-intel)
+[![npm version](https://img.shields.io/badge/npm-v1.0.0-blue)](https://www.npmjs.com/package/@vohongtho.infotech/code-intel)
 
 A static code analysis platform that builds a **Knowledge Graph** from your source code and makes it explorable through a Web UI, HTTP API, CLI, and MCP server.
 
@@ -45,6 +45,12 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 - **Self-Update** _(v0.9)_ — `code-intel update` checks npm registry; background version check on startup; `--no-update-check` to suppress
 - **`--dry-run` flag** _(v0.9)_ — `analyze`, `clean`, `group sync` preview what would happen without side effects
 - **`code-intel doctor`** _(v0.9)_ — full diagnostics: Node.js, git, config, registry, DB integrity, network; exit 1 on any failure
+- **Lazy Graph Loading** _(v1.0)_ — `serve` starts in <2s for 10k-file repos; LRU node cache (5,000 nodes by default, `GRAPH_CACHE_SIZE` env var); background warm of high-blast-radius nodes
+- **Pre-Built BM25 Index** _(v1.0)_ — inverted index built at analysis time; loaded into memory on `serve` startup; 2,000+ q/s throughput; incremental-only updates on re-index
+- **Memory-Efficient Graph** _(v1.0)_ — `Int32Array`-packed adjacency + symbol interning = ≥30% memory reduction; `--max-memory <MB>` flag spills node content to DB
+- **Pipeline Profiling** _(v1.0)_ — `analyze --profile` writes `.code-intel/profile.json`; per-phase heap memory captured; bottleneck warning if any phase >50% of total; verbose timing table
+- **Load & Soak Tests** _(v1.0)_ — nightly CI load tests (1k/10k fixture repos), weekly soak tests (memory stability, watcher throughput), regression gate: >20% regression fails CI; `tests/perf/baseline.json` committed to repo
+- **Graceful Degradation** _(v1.0)_ — `X-Stale`/`X-Stale-Since` headers on DB outage; LLM-unavailable summarize skip; MCP tool timeout → `{ truncated: true }`; watcher crash recovery; worker crash retry
 
 ---
 
@@ -189,10 +195,14 @@ ENTRYPOINT ["code-intel"]
 ### Analyze & Serve
 
 ```bash
-# Analyze current directory and start the server
+# First, analyze the project to build the index
+code-intel analyze
+
+# Then start the server (requires an existing index)
 code-intel serve
 
 # Or with a specific path and port
+code-intel analyze ./my-project
 code-intel serve ./my-project --port 4747
 ```
 
@@ -540,25 +550,6 @@ MCP resources are readable via `ReadResource` — your editor can pull them as s
 | `codeintel://repo/<name>/overview` | Repository stats: total nodes, edges, and per-kind node counts |
 | `codeintel://repo/<name>/clusters` | All cluster nodes with member counts |
 | `codeintel://repo/<name>/flows` | All detected execution flows with entry points and steps |
-
----
-
-## 🔬 Node Type Color Palette
-
-| Type | Color | Hex |
-|------|-------|-----|
-| Function | 🩵 Cyan | `#22D3EE` |
-| File | 🟠 Orange | `#FB923C` |
-| Class | 🟢 Green | `#4ADE80` |
-| Interface | 🟣 Purple | `#A78BFA` |
-| Enum | 🔷 Indigo | `#6366F1` |
-| Constant | 🟡 Yellow | `#FACC15` |
-| Type Alias | 🔴 Pink | `#FB7185` |
-| Flow | 🩵 Teal | `#14B8A6` |
-| Method | 💙 Sky Blue | `#38BDF8` |
-| Module | 🪻 Fuchsia | `#E879F9` |
-| Route | 🔴 Red | `#F87171` |
-| Cluster | ⬜ Slate | `#64748B` |
 
 ---
 
