@@ -32,6 +32,22 @@ function makeMockDb(
     close() {},
     async execute() {},
     async query(cypher: string) {
+      // COUNT query for getTableNodeCounts
+      const countMatch = cypher.match(/MATCH \(n:(\w+)\) RETURN count\(n\)/i);
+      if (countMatch) {
+        const table = countMatch[1]!;
+        const tableToKind: Record<string, string> = {
+          func_nodes: 'function',
+          class_nodes: 'class',
+          method_nodes: 'method',
+          file_nodes: 'file',
+          iface_nodes: 'interface',
+          var_nodes: 'variable',
+        };
+        const kind = tableToKind[table];
+        const cnt = kind ? nodes.filter((n) => n.kind === kind).length : 0;
+        return [{ cnt }];
+      }
       // Edge query
       if (cypher.includes('code_edges')) {
         return edges.map((e) => ({
@@ -61,7 +77,7 @@ function makeMockDb(
           },
         ];
       }
-      // Bulk MATCH (n:table) — return nodes for that table
+      // Bulk MATCH (n:table) with optional SKIP/LIMIT — return nodes for that table
       const tableMatch = cypher.match(/MATCH \(n:(\w+)\)/);
       if (tableMatch) {
         const table = tableMatch[1]!;
@@ -76,8 +92,16 @@ function makeMockDb(
         };
         const kind = tableToKind[table];
         if (!kind) return [];
+
+        // Parse SKIP and LIMIT from cypher
+        const skipMatch = cypher.match(/SKIP\s+(\d+)/i);
+        const limitMatch = cypher.match(/LIMIT\s+(\d+)/i);
+        const skip = skipMatch ? parseInt(skipMatch[1]!, 10) : 0;
+        const limit = limitMatch ? parseInt(limitMatch[1]!, 10) : Infinity;
+
         return nodes
           .filter((n) => n.kind === kind)
+          .slice(skip, skip + limit)
           .map((n) => ({
             'n.id': n.id,
             'n.name': n.name,

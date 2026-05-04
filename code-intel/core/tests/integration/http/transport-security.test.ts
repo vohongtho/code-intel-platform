@@ -272,11 +272,11 @@ describe('Transport Security — rate limit', () => {
   });
 
   it('exceeding rate limit returns 429', async () => {
-    // /api/v1/repos is not in the skip list (only /health and /metrics are skipped).
+    // /api/v1/health is not in the skip list — use it to trigger rate limit.
     // Fire 6 requests; the 6th should exceed the limit of 5.
     let last: { status: number; body: unknown } | null = null;
     for (let i = 0; i < 6; i++) {
-      last = await rawReq(server, { method: 'GET', path: '/api/v1/repos' });
+      last = await rawReq(server, { method: 'GET', path: '/api/v1/health' });
     }
     assert.ok(last !== null);
     assert.equal(last.status, 429);
