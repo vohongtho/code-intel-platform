@@ -6,14 +6,19 @@ export class DbManager {
   private db: InstanceType<typeof Database> | null = null;
   private conn: InstanceType<typeof Connection> | null = null;
   private dbPath: string;
+  private readOnly: boolean;
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, readOnly = false) {
     this.dbPath = dbPath;
+    this.readOnly = readOnly;
   }
 
   async init(): Promise<void> {
-    fs.mkdirSync(path.dirname(this.dbPath), { recursive: true });
-    this.db = new Database(this.dbPath);
+    if (!this.readOnly) {
+      fs.mkdirSync(path.dirname(this.dbPath), { recursive: true });
+    }
+    // Database constructor: (path, bufferManagerSize, enableCompression, readOnly, ...)
+    this.db = new Database(this.dbPath, 0, true, this.readOnly);
     await this.db.init();
     this.conn = new Connection(this.db);
     await this.conn.init();

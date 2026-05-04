@@ -37,7 +37,7 @@ export async function queryGroup(
     if (!fs.existsSync(dbPath)) continue;
 
     const graph = createKnowledgeGraph();
-    const db = new DbManager(dbPath);
+    const db = new DbManager(dbPath, true);
     try {
       await db.init();
       await loadGraphFromDB(graph, db);

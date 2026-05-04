@@ -1046,7 +1046,7 @@ program
 
     if (existingIndex) {
       const graph = createKnowledgeGraph();
-      const db = new DbManager(dbPath);
+      const db = new DbManager(dbPath, true);
       await db.init();
       await loadGraphFromDB(graph, db);
       db.close();
@@ -1099,7 +1099,7 @@ program
         console.log(`Loading index (lazy): ${workspaceRoot}`);
         console.log(`  ◈  ${meta.stats.nodes} nodes · ${meta.stats.edges} edges · ${meta.stats.files} files  (indexed ${meta.indexedAt})`);
         const lazyGraph = new LazyKnowledgeGraph();
-        const db = new DbManager(dbPath);
+        const db = new DbManager(dbPath, true);
         await db.init();
         await lazyGraph.init(db, meta.stats.nodes, meta.stats.edges);
         Logger.info(`  [serve] Lazy graph ready — ${lazyGraph.size.edges} edges loaded; nodes fetched on demand`);
@@ -1148,7 +1148,7 @@ program
         graph = result.graph;
       } else {
         const lazyGraph = new LazyKnowledgeGraph();
-        const db = new DbManager(dbPath);
+        const db = new DbManager(dbPath, true);
         await db.init();
         await lazyGraph.init(db, meta.stats.nodes, meta.stats.edges);
         console.log(`Loading index (lazy): ${workspaceRoot}`);
@@ -1464,7 +1464,7 @@ async function loadOrAnalyzeWorkspace(targetPath: string) {
 
   if (existingIndex) {
     const graph = createKnowledgeGraph();
-    const db = new DbManager(dbPath);
+    const db = new DbManager(dbPath, true);
     await db.init();
     await loadGraphFromDB(graph, db);
     db.close();
@@ -2827,7 +2827,7 @@ program
     // Load graph from DB
     const { computeHealthReport } = await import('../health/health-score.js');
     const graph = createKnowledgeGraph();
-    const db = new DbManager(dbPath);
+    const db = new DbManager(dbPath, true);
     await db.init();
     await loadGraphFromDB(graph, db);
     db.close();

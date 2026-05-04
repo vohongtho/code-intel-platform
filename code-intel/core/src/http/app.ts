@@ -774,7 +774,7 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     const dbPath = path.join(entry.path, '.code-intel', 'graph.db');
     if (!fs.existsSync(dbPath)) return null;
     const repoGraph = createKnowledgeGraph();
-    const db = new DbManager(dbPath);
+    const db = new DbManager(dbPath, true);
     try {
       await db.init();
       await loadGraphFromDB(repoGraph, db);
@@ -963,7 +963,7 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     if (workspaceRoot) {
       try {
         const dbPath = getDbPath(workspaceRoot);
-        const dbm = new DbManager(dbPath);
+        const dbm = new DbManager(dbPath, true);
         await dbm.init();
         const rows = await dbm.query(q);
         dbm.close();
@@ -1209,7 +1209,7 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
       if (!regEntry) continue;
       const dbPath = path.join(regEntry.path, '.code-intel', 'graph.db');
       if (!fs.existsSync(dbPath)) continue;
-      const db = new DbManager(dbPath);
+      const db = new DbManager(dbPath, true);
       try {
         await db.init();
         await loadGraphFromDB(mergedGraph, db);
@@ -1234,7 +1234,7 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
         const dbPath = path.join(regEntry.path, '.code-intel', 'graph.db');
         if (fs.existsSync(dbPath)) {
           try {
-            const db = new DbManager(dbPath);
+            const db = new DbManager(dbPath, true);
             await db.init();
             const g = createKnowledgeGraph();
             await loadGraphFromDB(g, db);

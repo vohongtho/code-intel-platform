@@ -187,7 +187,7 @@ export async function syncGroup(group: RepoGroup): Promise<GroupSyncResult> {
     }
 
     const graph = createKnowledgeGraph();
-    const db = new DbManager(dbPath);
+    const db = new DbManager(dbPath, true);
     try {
       await db.init();
       await loadGraphFromDB(graph, db);
