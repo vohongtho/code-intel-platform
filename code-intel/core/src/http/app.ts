@@ -786,10 +786,34 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     }
   }
 
+  async function loadGroupGraph(groupName: string): Promise<KnowledgeGraph | null> {
+    const group = loadGroup(groupName);
+    if (!group) return null;
+    const registry = loadRegistry();
+    const mergedGraph = createKnowledgeGraph();
+    for (const member of group.members) {
+      const regEntry = registry.find((r) => r.name === member.registryName);
+      if (!regEntry) continue;
+      const dbPath = path.join(regEntry.path, '.code-intel', 'graph.db');
+      if (!fs.existsSync(dbPath)) continue;
+      const db = new DbManager(dbPath, true);
+      try {
+        await db.init();
+        await loadGraphFromDB(mergedGraph, db);
+        db.close();
+      } catch { db.close(); }
+    }
+    return mergedGraph.size.nodes > 0 ? mergedGraph : null;
+  }
+
   async function getGraphForRepo(requestedRepo: string | undefined): Promise<KnowledgeGraph> {
     if (!requestedRepo || requestedRepo === repoName) return graph;
+    // Try as a single repo first
     const g = await loadRepoGraph(requestedRepo);
-    return g ?? graph;
+    if (g) return g;
+    // Fall back to group
+    const gg = await loadGroupGraph(requestedRepo);
+    return gg ?? graph;
   }
 
   // ── Graph download ──────────────────────────────────────────────────────────
@@ -1297,11 +1321,29 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     }
 
     // Determine base directory: prefer repo param, then workspaceRoot
+    // If repo is a group name, search all group members for a matching base
     let baseDir = workspaceRoot;
     if (repo && repo !== repoName) {
       const registry = loadRegistry();
       const entry = registry.find((r) => r.name === repo || r.path === repo);
-      if (entry) baseDir = entry.path;
+      if (entry) {
+        baseDir = entry.path;
+      } else {
+        // Maybe it's a group name — try all member repos to find one that contains the file
+        const group = loadGroup(repo);
+        if (group) {
+          const normalizedFile = path.normalize(file);
+          for (const member of group.members) {
+            const regEntry = registry.find((r) => r.name === member.registryName);
+            if (!regEntry) continue;
+            const candidate = path.resolve(path.join(regEntry.path, normalizedFile));
+            if (fs.existsSync(candidate)) {
+              baseDir = regEntry.path;
+              break;
+            }
+          }
+        }
+      }
     }
 
     // Security: must be within workspaceRoot or a known repo
