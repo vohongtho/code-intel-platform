@@ -246,6 +246,19 @@ async function analyzeWorkspace(targetPath: string, options?: {
   profile?: boolean;
 }) {
   const workspaceRoot = path.resolve(targetPath);
+
+  if (!fs.existsSync(workspaceRoot)) {
+    Logger.error(`Path does not exist: ${workspaceRoot}`);
+    console.error(`  ✗  Path does not exist: ${workspaceRoot}`);
+    process.exit(1);
+  }
+
+  if (!fs.statSync(workspaceRoot).isDirectory()) {
+    Logger.error(`Path is not a directory: ${workspaceRoot}`);
+    console.error(`  ✗  Path is not a directory: ${workspaceRoot}`);
+    process.exit(1);
+  }
+
   if (!options?.silent) console.log(`Analyzing: ${workspaceRoot}`);
   Logger.info(`analyze started: ${workspaceRoot}`);
 
@@ -1042,6 +1055,12 @@ program
     const workspaceRoot = path.resolve(targetPath);
     const repoName = path.basename(workspaceRoot);
     const dbPath = getDbPath(workspaceRoot);
+
+    if (!fs.existsSync(workspaceRoot) || !fs.statSync(workspaceRoot).isDirectory()) {
+      console.error(`  ✗  Path does not exist: ${workspaceRoot}`);
+      process.exit(1);
+    }
+
     const existingIndex = fs.existsSync(dbPath) && loadMetadata(workspaceRoot) !== null;
 
     if (existingIndex) {
@@ -1086,6 +1105,12 @@ program
     const workspaceRoot = path.resolve(targetPath);
     const repoName = path.basename(workspaceRoot);
     const dbPath = getDbPath(workspaceRoot);
+
+    if (!fs.existsSync(workspaceRoot) || !fs.statSync(workspaceRoot).isDirectory()) {
+      console.error(`  ✗  Path does not exist: ${workspaceRoot}`);
+      process.exit(1);
+    }
+
     const existingIndex = !options.force && fs.existsSync(dbPath) && loadMetadata(workspaceRoot) !== null;
 
     if (existingIndex) {
@@ -1138,6 +1163,12 @@ program
     const workspaceRoot = path.resolve(targetPath);
     const repoName = path.basename(workspaceRoot);
     const dbPath = getDbPath(workspaceRoot);
+
+    if (!fs.existsSync(workspaceRoot) || !fs.statSync(workspaceRoot).isDirectory()) {
+      console.error(`  ✗  Path does not exist: ${workspaceRoot}`);
+      process.exit(1);
+    }
+
     const existingIndex = !options.force && fs.existsSync(dbPath) && loadMetadata(workspaceRoot) !== null;
 
     let graph: KnowledgeGraph;
