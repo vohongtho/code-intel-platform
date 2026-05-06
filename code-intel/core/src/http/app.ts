@@ -425,13 +425,13 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
       return;
     }
     const user = db.createUser(username, password, 'admin');
-    const sessionId = createSession({ id: user.id, username: user.username, role: user.role });
-    res.setHeader('Set-Cookie', buildSessionCookie(sessionId));
+    const { sessionId, ttlMs } = createSession({ id: user.id, username: user.username, role: user.role });
+    res.setHeader('Set-Cookie', buildSessionCookie(sessionId, ttlMs));
     res.status(201).json({ user: { id: user.id, username: user.username, role: user.role } });
   });
 
   app.post('/auth/login', async (req: Request, res: Response) => {
-    const { username, password } = req.body as { username?: string; password?: string };
+    const { username, password, rememberMe } = req.body as { username?: string; password?: string; rememberMe?: boolean };
     if (!username || !password) {
       res.status(400).json({
         error: {
@@ -479,10 +479,10 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
       return;
     }
 
-    const sessionId = createSession({ id: user.id, username: user.username, role: user.role });
+    const { sessionId, ttlMs } = createSession({ id: user.id, username: user.username, role: user.role }, rememberMe === true);
     db.logAccess(user.id, '/auth/login', 'login', 'allow', req.ip ?? 'unknown');
     authAttemptsTotal.inc({ method: 'local', outcome: 'success' });
-    res.setHeader('Set-Cookie', buildSessionCookie(sessionId));
+    res.setHeader('Set-Cookie', buildSessionCookie(sessionId, ttlMs));
     res.json({ user: { id: user.id, username: user.username, role: user.role } });
   });
 
@@ -629,9 +629,9 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
         Logger.info(`[oidc] Auto-provisioned new user: ${finalUsername} (${cfg.defaultRole})`);
       }
 
-      const sessionId = createSession({ id: user.id, username: user.username, role: user.role });
+      const { sessionId, ttlMs } = createSession({ id: user.id, username: user.username, role: user.role });
       db.logAccess(user.id, '/auth/callback', 'oidc-login', 'allow', req.ip ?? 'unknown');
-      res.setHeader('Set-Cookie', buildSessionCookie(sessionId));
+      res.setHeader('Set-Cookie', buildSessionCookie(sessionId, ttlMs));
       // Redirect back to the web UI
       res.redirect(302, '/');
     } catch (err) {

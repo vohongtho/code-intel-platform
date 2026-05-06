@@ -1,6 +1,6 @@
 # Code Intelligence Platform
 
-[![npm version](https://img.shields.io/badge/npm-v1.0.0-blue)](https://www.npmjs.com/package/@vohongtho.infotech/code-intel)
+[![npm version](https://img.shields.io/badge/npm-v1.0.1-blue)](https://www.npmjs.com/package/@vohongtho.infotech/code-intel)
 
 A static code analysis platform that builds a **Knowledge Graph** from your source code and makes it explorable through a Web UI, HTTP API, CLI, and MCP server.
 
@@ -51,6 +51,9 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 - **Pipeline Profiling** _(v1.0)_ — `analyze --profile` writes `.code-intel/profile.json`; per-phase heap memory captured; bottleneck warning if any phase >50% of total; verbose timing table
 - **Load & Soak Tests** _(v1.0)_ — nightly CI load tests (1k/10k fixture repos), weekly soak tests (memory stability, watcher throughput), regression gate: >20% regression fails CI; `tests/perf/baseline.json` committed to repo
 - **Graceful Degradation** _(v1.0)_ — `X-Stale`/`X-Stale-Since` headers on DB outage; LLM-unavailable summarize skip; MCP tool timeout → `{ truncated: true }`; watcher crash recovery; worker crash retry
+- **Token-Efficient MCP** _(v1.0.1)_ — compact JSON responses (null/undefined stripped); MCP tool defaults tuned for LLM sessions: `search`/`file_symbols`/`list_exports` default 10 results (was 50), `blast_radius`/`pr_impact` default 2 hops (was 5); `suggested_next_tools` opt-in via `CODE_INTEL_SUGGEST_NEXT_TOOLS=true`; ~63% fewer tokens per typical 5-tool session
+- **Context Builder** _(v1.0.1)_ — `src/context/builder.ts` builds structured `[SUMMARY]` / `[LOGIC]` / `[RELATION]` / `[FOCUS CODE]` documents from seed symbols in ≤50% of v1.0.0 token cost; query-intent presets (`code`, `callers`, `architecture`, `auto`); adaptive snippets; cross-block dedup; `code-intel context <symbols...> --show-context`
+- **Enforced Tool Policy in AI Context Files** _(v1.0.1)_ — `AGENTS.md`/`CLAUDE.md`/`copilot-instructions.md`/`.cursor/rules`/`.kiro/steering` now include a `TOOL POLICY: ENFORCED` block forbidding raw `grep`/`find`/`cat` in favour of `code-intel search` → `inspect` → `impact`; saves ~3,000 tokens per cold-file lookup
 
 ---
 
@@ -518,18 +521,39 @@ All tools are available to any MCP-capable editor (Claude Desktop, Claude Code, 
 |------|-------|-------------|
 | `repos` | _(none)_ | List all indexed repositories with path, indexedAt, and node/edge counts |
 | `overview` | _(none)_ | Repository summary: total nodes/edges + full breakdown by kind. **Use this first** to understand the codebase shape. |
-| `search` | `query` (string), `limit` (number, default 20) | BM25 / hybrid keyword + semantic search across all symbols |
+| `search` | `query` (string), `limit` (number, default 10) | BM25 / hybrid keyword + semantic search across all symbols |
 | `inspect` | `symbol_name` (string) | 360° view of a symbol: definition, callers, callees, imports, heritage (extends/implements), members, cluster, and source preview |
-| `blast_radius` | `target` (string), `direction` (`callers`\|`callees`\|`both`), `max_hops` (number, default 5) | Impact analysis: traverse the call/import graph to find all affected symbols. Returns a `riskLevel` (LOW / MEDIUM / HIGH). |
-| `file_symbols` | `file_path` (string, partial match) | List all symbols defined in a file, ordered by line number. Avoids having to read raw source. |
+| `blast_radius` | `target` (string), `direction` (`callers`\|`callees`\|`both`), `max_hops` (number, default 2) | Impact analysis: traverse the call/import graph to find all affected symbols. Returns a `riskLevel` (LOW / MEDIUM / HIGH). |
+| `file_symbols` | `file_path` (string, partial match), `limit` (number, default 10) | List all symbols defined in a file, ordered by line number. Avoids having to read raw source. |
 | `find_path` | `from` (string), `to` (string), `max_hops` (number, default 8) | Find the shortest call/import path between two symbols via BFS. |
-| `list_exports` | `kind` (string, optional), `limit` (number, default 100) | List all exported symbols — the public API surface of the codebase. Filter by kind: `function`, `class`, `interface`, etc. |
+| `list_exports` | `kind` (string, optional), `limit` (number, default 10) | List all exported symbols — the public API surface of the codebase. Filter by kind: `function`, `class`, `interface`, etc. |
 | `routes` | _(none)_ | List all HTTP route handler mappings detected in the codebase |
-| `clusters` | `limit` (number, default 50) | List detected code clusters (directory-based communities) with member counts and top 10 symbols each |
-| `flows` | `limit` (number, default 50) | List detected execution flows with entry points, steps, and step counts |
+| `clusters` | `limit` (number, default 10) | List detected code clusters (directory-based communities) with member counts and top 10 symbols each |
+| `flows` | `limit` (number, default 10) | List detected execution flows with entry points, steps, and step counts |
 | `query` | `gql` (string), `limit` (number, optional) | Execute a GQL query (`FIND`, `TRAVERSE`, `PATH`, `COUNT GROUP BY`) against the live graph; returns nodes/edges/groups + executionTimeMs |
 | `detect_changes` | `base_ref` (string, default `HEAD`), `diff_text` (string, optional) | **Git-diff impact analysis**: maps changed lines to graph symbols and computes combined blast radius. Ideal for PR review or pre-commit checks. |
 | `raw_query` | `cypher` (string) | _(deprecated — use `query` instead)_ Simplified Cypher-like graph query: `name='X'` or `:kind` |
+
+### Reasoning Tools
+
+| Tool | Input | Description |
+|------|-------|-------------|
+| `explain_relationship` | `from` (string), `to` (string) | Explain how two symbols are connected: directed paths, shared imports, and heritage (extends/implements). Returns up to 10 paths with at most 5 hops each. |
+| `pr_impact` | `changedFiles` (string[]), `diff` (string, optional), `maxHops` (number, default 2) | Given changed files or a unified diff, compute full blast radius with risk scores (HIGH/MEDIUM/LOW), test coverage gaps, and top files to review. |
+| `similar_symbols` | `symbol` (string), `limit` (number, default 10) | Find symbols with similar names or structure using Levenshtein distance and kind matching. Useful for finding related functions, classes, or interfaces. |
+| `health_report` | `scope` (string, optional) | Code health signals for a scope: dead code, cycles, god nodes, orphan files, complexity hotspots. |
+| `suggest_tests` | `symbol` (string) | Suggest test cases for a symbol: call paths, suggested cases, existing tests, untested callers. |
+| `cluster_summary` | `cluster` (string) | Rich summary of a module/cluster: purpose, key symbols, dependencies, dependents, and health score. |
+
+### Security & Quality Tools
+
+| Tool | Input | Description |
+|------|-------|-------------|
+| `deprecated_usage` | `scope` (string, optional) | Find usages of deprecated APIs (`@deprecated` JSDoc, `@Deprecated` Java, `#[deprecated]` Rust, built-in Node.js) in the codebase. |
+| `complexity_hotspots` | `scope` (string, optional), `limit` (number, default 10) | Ranked list of functions/methods by cyclomatic complexity. Useful for identifying refactoring candidates. |
+| `coverage_gaps` | `scope` (string, optional), `threshold` (number, optional) | Find exported symbols with no test coverage, ranked by blast radius. Useful for prioritizing test writing. |
+| `secrets` | `scope` (string, optional) | Scan the knowledge graph for hardcoded secrets: API keys, passwords, tokens, private keys, high-entropy strings. |
+| `vulnerability_scan` | `scope` (string, optional), `severity` (string, optional) | Scan the knowledge graph for OWASP vulnerabilities: SQL injection (CWE-89), XSS (CWE-79), SSRF (CWE-918), path traversal (CWE-22), command injection (CWE-78). |
 
 ### Group / Multi-Repo Tools
 

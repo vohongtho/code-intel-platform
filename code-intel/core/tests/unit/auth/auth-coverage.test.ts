@@ -88,7 +88,7 @@ describe('getSession — sliding window', () => {
   after(() => sessionStore.clear());
 
   it('renews expiresAt when < 75% TTL remains', () => {
-    const sid = createSession({ id: 'sw1', username: 'alice', role: 'admin' });
+    const { sessionId: sid } = createSession({ id: 'sw1', username: 'alice', role: 'admin' });
     const entry = sessionStore.get(sid)!;
     const ttlMs = 8 * 60 * 60 * 1000;
     entry.expiresAt = Date.now() + ttlMs * 0.1; // only 10% left → should renew
@@ -99,7 +99,7 @@ describe('getSession — sliding window', () => {
   });
 
   it('does not renew when > 75% TTL remains', () => {
-    const sid = createSession({ id: 'sw2', username: 'bob', role: 'viewer' });
+    const { sessionId: sid } = createSession({ id: 'sw2', username: 'bob', role: 'viewer' });
     const entry = sessionStore.get(sid)!;
     const originalExpiry = entry.expiresAt;
     getSession(sid);
@@ -107,7 +107,7 @@ describe('getSession — sliding window', () => {
   });
 
   it('returns null and deletes expired session', () => {
-    const sid = createSession({ id: 'sw3', username: 'carol', role: 'analyst' });
+    const { sessionId: sid } = createSession({ id: 'sw3', username: 'carol', role: 'analyst' });
     sessionStore.get(sid)!.expiresAt = Date.now() - 1;
     assert.equal(getSession(sid), null);
     assert.equal(sessionStore.has(sid), false);
@@ -120,7 +120,7 @@ describe('deleteSession', () => {
   after(() => sessionStore.clear());
 
   it('removes session from store', () => {
-    const sid = createSession({ id: 'del1', username: 'alice', role: 'admin' });
+    const { sessionId: sid } = createSession({ id: 'del1', username: 'alice', role: 'admin' });
     assert.ok(sessionStore.has(sid));
     deleteSession(sid);
     assert.ok(!sessionStore.has(sid));

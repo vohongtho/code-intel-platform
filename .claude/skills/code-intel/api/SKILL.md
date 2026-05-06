@@ -29,8 +29,8 @@ Start exploration here — exported symbols with no external callers:
 - **`login`** `(method)` → `code-intel/web/src/api/client.ts:84`
 - **`logout`** `(method)` → `code-intel/web/src/api/client.ts:99`
 - **`readFile`** `(method)` → `code-intel/web/src/api/client.ts:176`
-- **`grep`** `(method)` → `code-intel/web/src/api/client.ts:210`
-- **`listFlows`** `(method)` → `code-intel/web/src/api/client.ts:222`
+- **`grep`** `(method)` → `code-intel/web/src/api/client.ts:212`
+- **`listFlows`** `(method)` → `code-intel/web/src/api/client.ts:224`
 
 ## Hot Symbols
 
@@ -40,7 +40,7 @@ Sorted by call graph degree (changing these has the highest blast radius):
 |--------|------|-----:|------:|------|
 | `ApiClient` | class | 20 | 0 | `api/client.ts` |
 | `getCsrfToken` | method | 11 | 1 | `api/client.ts` |
-| `search` | method | 9 | 2 | `api/client.ts` |
+| `search` | method | 10 | 2 | `api/client.ts` |
 | `listGroups` | method | 7 | 1 | `api/client.ts` |
 | `syncGroup` | method | 4 | 2 | `api/client.ts` |
 | `vectorSearch` | method | 2 | 2 | `api/client.ts` |

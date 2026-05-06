@@ -92,6 +92,14 @@ ${skillTableRows ? skillTableRows + '\n' : ''}`;
 > ⚠ This section is auto-managed by \`code-intel analyze\`. Do **not** edit between the markers — your changes will be overwritten.
 > Add your own notes below the \`${BLOCK_END}\` marker.
 
+<!-- TOOL POLICY: ENFORCED -->
+FORBIDDEN: grep, rg, find, cat, sed, ls (for symbol/code discovery)
+REQUIRED BEFORE ANY CODE ACTION:
+  1. code-intel search "<concept>"    ← replaces grep/rg/find
+  2. code-intel inspect <symbol>      ← replaces cat + manual file reading
+  3. code-intel impact <symbol>       ← replaces manual caller tracing
+<!-- /TOOL POLICY -->
+
 Indexed: **${stats.nodes.toLocaleString()} nodes** | **${stats.edges.toLocaleString()} edges** | **${stats.files} files** | analyzed in ${(stats.duration / 1000).toFixed(1)}s
 
 > Index stale? Re-run: \`code-intel analyze\`
@@ -127,7 +135,9 @@ These rules apply to **every coding agent or AI assistant** working in this repo
 ## Never Do
 
 - NEVER ignore impact warnings — always report blast radius to the user.
-- NEVER skip \`code-intel search\` before grepping or opening files.
+- **STOP** — do not call grep, rg, find, cat, sed, or read a file cold.
+  Always run \`code-intel search "<concept>"\` first.
+  Violating this wastes ~3,000 tokens per lookup and degrades session quality.
 - NEVER make changes to a symbol with ≥ 5 callers without running \`code-intel impact\` first.
 - NEVER use find-and-replace for symbol renames.
 

@@ -221,6 +221,40 @@ program
   Docs: https://github.com/vohongtho/code-intel-platform
 `);
 
+/**
+ * Ensures `.code-intel/` is present in the project's `.gitignore`.
+ * Skips silently if the entry already exists; creates the file if absent.
+ */
+function ensureGitignore(workspaceRoot: string, silent: boolean): void {
+  const gitignorePath = path.join(workspaceRoot, '.gitignore');
+  const entry = '.code-intel/';
+
+  try {
+    // Read existing content (if file exists)
+    let existing = '';
+    if (fs.existsSync(gitignorePath)) {
+      existing = fs.readFileSync(gitignorePath, 'utf-8');
+    }
+
+    // Check if already present (with or without trailing slash)
+    const lines = existing.split('\n').map((l) => l.trim());
+    if (lines.includes('.code-intel/') || lines.includes('.code-intel')) {
+      return; // already present — nothing to do
+    }
+
+    // Append entry (with a leading newline if the file doesn't end with one)
+    const suffix = existing.length > 0 && !existing.endsWith('\n') ? '\n' : '';
+    fs.appendFileSync(gitignorePath, `${suffix}${entry}\n`, 'utf-8');
+
+    Logger.info('.gitignore updated: added .code-intel/');
+    if (!silent) {
+      console.log(`  ✓ .gitignore: added .code-intel/`);
+    }
+  } catch (err) {
+    Logger.warn(`.gitignore update failed: ${err instanceof Error ? err.message : err}`);
+  }
+}
+
 async function analyzeWorkspace(targetPath: string, options?: {
   silent?: boolean;
   force?: boolean;
@@ -691,6 +725,9 @@ async function analyzeWorkspace(targetPath: string, options?: {
       Logger.warn(`Context file write failed: ${err instanceof Error ? err.message : err}`);
     }
   }
+
+  // Ensure .code-intel/ is listed in .gitignore
+  ensureGitignore(workspaceRoot, options?.silent ?? false);
 
   if (!options?.silent) {
     const dur = result.totalDuration;
@@ -3762,6 +3799,90 @@ program
       process.exit(1);
     } else {
       console.log('  ✅  All checks passed.\n');
+    }
+  });
+
+// ─── context (B.7.1 --show-context) ──────────────────────────────────────────
+program
+  .command('context')
+  .description('Build a token-efficient context document for a set of seed symbols')
+  .argument('<symbols...>', 'One or more symbol names to use as seeds')
+  .option('-p, --path <path>', 'Path to the repository (default: current directory)', '.')
+  .option('-l, --limit <n>', 'Max seeds to resolve (default: 10)', '10')
+  .option('--intent <intent>', 'Query intent: code | callers | architecture | auto (default: auto)', 'auto')
+  .option('--max-tokens <n>', 'Max total tokens for output (default: 6000)', '6000')
+  .option('--show-context', 'Print per-block token breakdown after output')
+  .addHelpText('after', `
+  Builds a structured [SUMMARY] / [LOGIC] / [RELATION] / [FOCUS CODE] context
+  document for one or more symbols. Designed to give AI assistants dense,
+  token-efficient context instead of raw file reads.
+
+  Examples:
+    $ code-intel context UserService
+    $ code-intel context createUser login --intent callers
+    $ code-intel context AuthService --show-context
+    $ code-intel context handlePayment --max-tokens 3000 --intent code
+`)
+  .action(async (symbols: string[], opts: {
+    path: string;
+    limit: string;
+    intent: string;
+    maxTokens: string;
+    showContext?: boolean;
+  }) => {
+    const { graph } = await loadOrAnalyzeWorkspace(opts.path);
+    const { build, detectQueryIntent } = await import('../context/builder.js');
+    const { measureBlocks } = await import('../context/token-counter.js');
+
+    const maxSeeds = parseInt(opts.limit, 10);
+    const maxTokens = parseInt(opts.maxTokens, 10);
+    const intent = (['code', 'callers', 'architecture', 'auto'].includes(opts.intent)
+      ? opts.intent
+      : detectQueryIntent(opts.intent)) as import('../context/builder.js').QueryIntent;
+
+    // Resolve symbol names to node IDs
+    const seeds: import('../context/builder.js').SeedSymbol[] = [];
+    for (const symbol of symbols.slice(0, maxSeeds)) {
+      for (const node of graph.allNodes()) {
+        if (node.name === symbol) {
+          seeds.push({ nodeId: node.id, refinedScore: 1.0 });
+          break;
+        }
+      }
+    }
+
+    if (seeds.length === 0) {
+      console.log(`\n  No symbols found for: ${symbols.join(', ')}\n`);
+      console.log('  Try: code-intel search "<name>" to find symbol names.\n');
+      return;
+    }
+
+    const doc = build(seeds, graph, { maxTokens, queryIntent: intent });
+
+    // Print output blocks
+    console.log('');
+    if (doc.summary) { console.log(doc.summary); console.log(''); }
+    if (doc.logic)   { console.log(doc.logic);   console.log(''); }
+    if (doc.relation){ console.log(doc.relation); console.log(''); }
+    if (doc.focusCode){ console.log(doc.focusCode); console.log(''); }
+    if (doc.truncated) {
+      console.log('  ⚠  Output was truncated due to token budget. Use --max-tokens to increase.');
+      console.log('');
+    }
+
+    // --show-context: print per-block token breakdown
+    if (opts.showContext) {
+      const counts = measureBlocks(doc);
+      console.log('  ── Token breakdown ──────────────────────────────');
+      console.log(`  [SUMMARY]    ${String(counts.summary).padStart(5)} tokens`);
+      console.log(`  [LOGIC]      ${String(counts.logic).padStart(5)} tokens`);
+      console.log(`  [RELATION]   ${String(counts.relation).padStart(5)} tokens`);
+      console.log(`  [FOCUS CODE] ${String(counts.focusCode).padStart(5)} tokens`);
+      console.log(`  ─────────────────────────────────────────────────`);
+      console.log(`  Total        ${String(counts.total).padStart(5)} tokens  (budget: ${maxTokens})`);
+      console.log(`  Intent       ${doc.intent}`);
+      console.log(`  Truncated    ${doc.truncated}`);
+      console.log('');
     }
   });
 

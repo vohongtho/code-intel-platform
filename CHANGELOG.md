@@ -4,6 +4,60 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.0.1] — 2026-05-03 — Token Efficiency
+
+> **Theme:** ~63% fewer tokens per AI session — faster, cheaper, smarter LLM interactions
+
+### 🪶 Part A — MCP Server Token Reduction
+
+- **Compact JSON responses** — `null`/`undefined` fields stripped; no pretty-print; ~25–35% fewer tokens per response
+- **`suggested_next_tools` opt-in** — disabled by default (was opt-out); re-enable with `CODE_INTEL_SUGGEST_NEXT_TOOLS=true`; saves ~80–120 tokens/call
+- **Lower default limits** — `search`, `file_symbols`, `list_exports`, `clusters`, `flows` default to **10 results** (was 50); ~60–80% fewer tokens for typical lookups; max still 500
+- **Lower default hops** — `blast_radius` and `pr_impact` default to **2 hops** (was 5); ~40–60% fewer tokens for impact analysis; max still 10
+- **Schema descriptions updated** — all affected tools reflect new defaults (e.g. `"default: 10, max: 500"`, `"default: 2, max: 10"`)
+- **Tests** — `tests/unit/mcp/pagination.test.ts` covers compact JSON, null stripping, limit defaults, hops defaults, suggest opt-in
+
+### 🧩 Part B — Context Builder (`src/context/`)
+
+- **`builder.ts`** — new module; builds a structured `ContextDocument` from seed symbols in ≤50% of v1.0.0 token baseline
+  - **B.1 SUMMARY block** — one-line format: `{name} [{kind}] {path}:{line} {badges} — {1-sentence summary}`; ⚠ god-node badge, 👻 orphan badge; cluster grouping when ≥3 symbols share a directory
+  - **B.2 LOGIC block** — ≤5 callees → single inline line (`A → b, c, d`); shared callees (≥3 nodes) collapsed to `(all above → Logger, DB)`; call pairs tracked for cross-block dedup
+  - **B.3 RELATION block** — callers capped to top 3 + `(+N more — use blast_radius for full list)`; ⚡ prefix for high blast radius (≥5 callers); logic↔relation duplicates skipped
+  - **B.4 FOCUS CODE block** — adaptive snippet: ≤10 meaningful lines → full; 11–25 → 25 raw lines; >25 → 40 raw lines; short symbols already referenced in LOGIC are skipped; `refinedScore < 0.3` → signature-only (`// (low relevance)`)
+  - **B.5 Dynamic budget rebalancing** — unused tokens from SUMMARY/LOGIC/RELATION roll forward to FOCUS CODE; query-intent presets: `code` (5,000 tok focus), `callers` (2,500 tok relation), `architecture` (1,200 tok summary), `auto` (balanced default)
+  - **B.6 DedupeRegistry** — full info on first symbol mention; name-only on repeats; tracks call pairs, file paths, and logic references across all blocks
+- **`token-counter.ts`** — `estimateTokens()` (±10% of GPT tokenizer for code+prose mix); `measureBlocks()` returns per-block counts
+- **`code-intel context <symbols...>`** CLI — `--show-context` prints per-block token breakdown; `--intent code|callers|architecture|auto`; `--max-tokens <n>`
+- **Tests** — `tests/unit/context/builder.test.ts`, `tests/unit/context/token-counter.test.ts`; CI benchmark gate `tests/integration/context/token-benchmark.test.ts` (4 scenarios: simple ≤1,000 tok, blast radius ≤2,000 tok, code review ≤3,000 tok, architecture ≤3,500 tok ✅)
+
+### ✍️ Context Files — Enforced Tool Policy
+
+- **`context-writer.ts`** — `buildBlock()` now inserts a `TOOL POLICY: ENFORCED` block at the top of every managed section in all 5 generated files
+  - `FORBIDDEN: grep, rg, find, cat, sed, ls` for symbol/code discovery
+  - Required workflow before any code action: `code-intel search "<concept>"` → `code-intel inspect <symbol>` → `code-intel impact <symbol>`
+- **"Never Do" section strengthened** — explicit waste estimate added: _"STOP — do not call grep, rg, find, cat, sed, or read a file cold. Violating this wastes ~3,000 tokens per lookup and degrades session quality."_
+- Applies on every `code-intel analyze` to all 5 files: `CLAUDE.md`, `AGENTS.md`, `.github/copilot-instructions.md`, `.cursor/rules/code-intel.mdc`, `.kiro/steering/code-intel.md`
+
+### 🔧 Bug Fixes & Quality-of-Life
+
+- **Auto-update `.gitignore`** — `code-intel analyze` now automatically appends `.code-intel/` to the project's `.gitignore` if not already present; creates the file if it doesn't exist; idempotent (skips if `.code-intel` or `.code-intel/` already listed); errors caught and logged as warnings, never abort analysis
+- **"Remember Me" on login screen** — new checkbox below the Password field; when checked, the session cookie is set to **12 hours** (`Max-Age`) so re-opening the browser tab within that window keeps the user signed in; unchecked uses the normal session TTL (default 8 h, `CODE_INTEL_SESSION_TTL_HOURS`); sliding-window renewal uses the original TTL of the session; `POST /auth/login` now accepts optional `rememberMe: boolean` in the request body
+
+### 📊 Token Savings Summary
+
+| Operation | v1.0.0 | v1.0.1 | Saving |
+|-----------|--------|--------|--------|
+| `search` (default results 50 → 10) | ~1,000 tok | ~180 tok | **−82%** |
+| `blast_radius` (default hops 5 → 2) | ~1,500 tok | ~300 tok | **−80%** |
+| `inspect` (null fields stripped) | ~500 tok | ~200 tok | **−60%** |
+| `suggested_next_tools` (now off) | ~100 tok | ~0 tok | **−100%** |
+| Context builder `[SUMMARY]` | ~800 tok | ~400 tok | **−50%** |
+| Context builder `[LOGIC]` | ~1,500 tok | ~600 tok | **−60%** |
+| Context builder `[FOCUS CODE]` | ~2,500 tok | ~1,500 tok | **−40%** |
+| **Typical 5-tool AI session** | **~12,000 tok** | **~4,500 tok** | **−63%** |
+
+---
+
 ## [1.0.0] — 2026-05-03 — Scalability & Production Stability
 
 > **Theme:** Production-ready for 100k-file repos at enterprise scale

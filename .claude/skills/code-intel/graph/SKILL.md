@@ -42,18 +42,18 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `createKnowledgeGraph` | function | 55 | 0 | `graph/knowledge-graph.ts` |
-| `addNode` | method | 46 | 1 | `graph/lazy-knowledge-graph.ts` |
-| `getNode` | method | 39 | 1 | `graph/lazy-knowledge-graph.ts` |
-| `addEdge` | method | 31 | 2 | `graph/lazy-knowledge-graph.ts` |
-| `findEdgesTo` | method | 21 | 1 | `graph/lazy-knowledge-graph.ts` |
-| `findEdgesFrom` | method | 20 | 1 | `graph/lazy-knowledge-graph.ts` |
+| `createKnowledgeGraph` | function | 59 | 0 | `graph/knowledge-graph.ts` |
+| `getNode` | method | 43 | 1 | `graph/lazy-knowledge-graph.ts` |
+| `findEdgesFrom` | method | 23 | 1 | `graph/lazy-knowledge-graph.ts` |
+| `findEdgesTo` | method | 23 | 1 | `graph/lazy-knowledge-graph.ts` |
 | `generateEdgeId` | function | 14 | 0 | `graph/id-generator.ts` |
 | `findEdgesByKind` | method | 13 | 1 | `graph/lazy-knowledge-graph.ts` |
 | `generateNodeId` | function | 13 | 0 | `graph/id-generator.ts` |
 | `get` | method | 11 | 2 | `graph/lazy-knowledge-graph.ts` |
 | `set` | method | 9 | 4 | `graph/lazy-knowledge-graph.ts` |
 | `getNodeAsync` | method | 4 | 5 | `graph/lazy-knowledge-graph.ts` |
+| `getNodePage` | method | 3 | 6 | `graph/lazy-knowledge-graph.ts` |
+| `allEdges` | method | 8 | 1 | `graph/lazy-knowledge-graph.ts` |
 
 ## Execution Flows
 

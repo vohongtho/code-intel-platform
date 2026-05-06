@@ -42,7 +42,7 @@ Sorted by call graph degree (changing these has the highest blast radius):
 |--------|------|-----:|------:|------|
 | `resolve` | function | 52 | 2 | `shared/config-validator.ts` |
 | `warn` | method | 26 | 1 | `shared/logger.ts` |
-| `error` | method | 14 | 1 | `shared/logger.ts` |
+| `error` | method | 15 | 1 | `shared/logger.ts` |
 | `getLogger` | method | 5 | 2 | `shared/logger.ts` |
 | `secureMkdir` | function | 5 | 0 | `shared/fs-secure.ts` |
 | `walk` | function | 1 | 3 | `shared/config-validator.ts` |

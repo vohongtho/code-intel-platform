@@ -42,15 +42,15 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
 | `runInitWizard` | function | 1 | 14 | `cli/init-wizard.ts` |
+| `analyzeWorkspace` | function | 2 | 8 | `cli/main.ts` |
 | `startWatcher` | function | 1 | 9 | `cli/main.ts` |
 | `loadOrAnalyzeWorkspace` | function | 1 | 9 | `cli/main.ts` |
 | `configSet` | function | 1 | 8 | `cli/config-manager.ts` |
-| `analyzeWorkspace` | function | 2 | 7 | `cli/main.ts` |
 | `buildAreaMap` | function | 1 | 8 | `cli/skill-writer.ts` |
+| `backgroundVersionCheck` | function | 1 | 8 | `cli/update-checker.ts` |
 | `runUpdate` | function | 1 | 8 | `cli/update-checker.ts` |
 | `configGet` | function | 1 | 7 | `cli/config-manager.ts` |
 | `renderSkill` | function | 1 | 7 | `cli/skill-writer.ts` |
-| `backgroundVersionCheck` | function | 1 | 7 | `cli/update-checker.ts` |
 | `loadConfig` | function | 5 | 2 | `cli/init-wizard.ts` |
 | `fishCompletion` | function | 2 | 4 | `cli/completion.ts` |
 
