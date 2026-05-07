@@ -90,13 +90,15 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
       // ── Search & inspect ─────────────────────────────────────────────────
       {
         name: 'search',
-        description: 'BM25 keyword search across all indexed symbols — functions, classes, files, routes, etc.',
+        description: 'BM25 keyword search across all indexed symbols — functions, classes, files, routes, etc. Optionally scope to a specific repo or group.',
         inputSchema: {
           type: 'object' as const,
           properties: {
             query: { type: 'string', description: 'Search query (symbol name, keyword, or partial match)' },
             offset: { type: 'number', description: 'Number of results to skip for pagination (default: 0)' },
             limit: { type: 'number', description: 'Max results per page (default: 10, max: 500)' },
+            repo: { type: 'string', description: 'Scope search to a specific indexed repo name (optional; defaults to current repo)' },
+            group: { type: 'string', description: 'Scope search across all repos in a group via cross-repo RRF merge (optional; overrides repo)' },
             ..._tokenProp,
           },
           required: ['query'],
@@ -625,13 +627,55 @@ async function dispatchTool(
         const query = a.query as string;
         const offset = (a.offset as number) ?? 0;
         const effectiveLimit = Math.min((a.limit as number) ?? 10, 500);
+
+        // ── Group-scoped cross-repo search ──────────────────────────────────
+        if (a.group) {
+          const grp = loadGroup(a.group as string);
+          if (!grp) {
+            return { content: [{ type: 'text', text: `Group "${a.group}" not found. Use list_groups to see available groups.` }] };
+          }
+          const { perRepo, merged } = await queryGroup(grp, query, effectiveLimit + offset);
+          const paged = merged.slice(offset, offset + effectiveLimit);
+          return {
+            content: [{
+              type: 'text',
+              text: compact({
+                results: paged,
+                perRepo,
+                searchMode: 'bm25-cross-repo',
+                group: a.group,
+                total: merged.length,
+                offset,
+                limit: effectiveLimit,
+                hasMore: offset + effectiveLimit < merged.length,
+              }),
+            }],
+          };
+        }
+
+        // ── Single-repo search ──────────────────────────────────────────────
+        const repoGraph = a.repo ? (await (async () => {
+          const registry = loadRegistry();
+          const entry = registry.find((r) => r.name === (a.repo as string) || r.path === (a.repo as string));
+          if (!entry) return graph;
+          const { DbManager: DbMgr } = await import('../storage/db-manager.js');
+          const { loadGraphFromDB: loadG } = await import('../multi-repo/graph-from-db.js');
+          const { createKnowledgeGraph: createG } = await import('../graph/knowledge-graph.js');
+          const dbPath = path.join(entry.path, '.code-intel', 'graph.db');
+          if (!fs.existsSync(dbPath)) return graph;
+          const db = new DbMgr(dbPath, true);
+          await db.init();
+          const g = createG();
+          await loadG(g, db);
+          db.close();
+          return g;
+        })()) : graph;
+
         const vdbPath = workspaceRoot ? getVectorDbPath(workspaceRoot) : undefined;
-        // Fetch enough results to cover pagination (offset + limit, up to 500)
         const fetchLimit = Math.min(offset + effectiveLimit, 500);
-        // Use pre-built BM25 index when available (faster than linear textSearch)
-        const bm25 = bm25Resolver ? bm25Resolver() : null;
+        const bm25 = (!a.repo || a.repo === repoName) ? (bm25Resolver ? bm25Resolver() : null) : null;
         const bm25Results = bm25 ? bm25.search(query, fetchLimit * 3) : undefined;
-        const { results: allResults, searchMode } = await hybridSearch(graph, query, fetchLimit, {
+        const { results: allResults, searchMode } = await hybridSearch(repoGraph, query, fetchLimit, {
           vectorDbPath: vdbPath,
           bm25Results: bm25Results ?? undefined,
         });
@@ -655,6 +699,7 @@ async function dispatchTool(
             text: compact({
               results,
               searchMode,
+              repo: a.repo ?? repoName,
               total,
               offset,
               limit: effectiveLimit,

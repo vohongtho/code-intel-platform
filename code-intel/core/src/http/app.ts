@@ -891,7 +891,25 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
 
   // ── Search ──────────────────────────────────────────────────────────────────
   app.post('/api/v1/search', requireToolScope('search'), async (req, res) => {
-    const { query, limit, repo } = req.body as { query?: string; limit?: number; repo?: string };
+    const { query, limit, repo, group } = req.body as { query?: string; limit?: number; repo?: string; group?: string };
+
+    // ── Group-scoped search (cross-repo) ──────────────────────────────────────
+    if (group) {
+      const grp = loadGroup(group);
+      if (!grp) {
+        res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: `Group '${group}' not found`, hint: 'Use /api/v1/groups to list available groups' } });
+        return;
+      }
+      try {
+        const { perRepo, merged } = await queryGroup(grp, query ?? '', limit ?? 20);
+        res.json({ results: merged, perRepo, searchMode: 'bm25', group });
+      } catch (err) {
+        res.status(500).json({ error: { code: ErrorCodes.INTERNAL_ERROR, message: err instanceof Error ? err.message : String(err) } });
+      }
+      return;
+    }
+
+    // ── Single-repo search ────────────────────────────────────────────────────
     const g = await getGraphForRepo(repo);
     const vdbPath = workspaceRoot ? getVectorDbPath(workspaceRoot) : undefined;
 
@@ -903,7 +921,7 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
       vectorDbPath: vdbPath,
       bm25Results: bm25Results ?? undefined,
     });
-    res.json({ results, searchMode });
+    res.json({ results, searchMode, repo: repo ?? repoName });
   });
 
   // ── Vector search ───────────────────────────────────────────────────────────

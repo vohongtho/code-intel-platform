@@ -42,7 +42,7 @@ REQUIRED BEFORE ANY CODE ACTION:
   3. code-intel impact <symbol>       ← replaces manual caller tracing
 <!-- /TOOL POLICY -->
 
-Indexed: **6,041 nodes** | **10,984 edges** | **327 files** | analyzed in 5.2s
+Indexed: **6,055 nodes** | **11,008 edges** | **328 files** | analyzed in 4.0s
 
 > Index stale? Re-run: `code-intel analyze`
 
@@ -182,7 +182,7 @@ Each skill gives you symbol maps, key entry points, and safe-change guidance for
 | Understand architecture / "How does X work?" | Load `code-intel-exploring` skill |
 | Blast radius / "What breaks if I change X?" | Load `code-intel-impact` skill |
 | Debugging / "Why is X failing?" | Load `code-intel-debugging` skill |
-| Work in `cli` (87 symbols) | `.claude/skills/code-intel/cli/SKILL.md` |
+| Work in `cli` (88 symbols) | `.claude/skills/code-intel/cli/SKILL.md` |
 | Work in `auth` (85 symbols) | `.claude/skills/code-intel/auth/SKILL.md` |
 | Work in `graph` (81 symbols) | `.claude/skills/code-intel/graph/SKILL.md` |
 | Work in `fixtures` (75 symbols) | `.claude/skills/code-intel/fixtures/SKILL.md` |

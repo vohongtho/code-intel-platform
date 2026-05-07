@@ -47,15 +47,15 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `log` | method | 42 | 0 | `fixtures/php-sample.php` |
+| `log` | method | 43 | 0 | `fixtures/php-sample.php` |
 | `createUser` | function | 12 | 1 | `fixtures/typescript-sample.ts` |
 | `HttpServer` | class | 2 | 0 | `fixtures/cpp-sample.cpp` |
+| `helper` | function | 2 | 0 | `fixtures/go-sample.go` |
 | `TcpServer` | function | 0 | 1 | `fixtures/cpp-sample.cpp` |
 | `UserService` | class | 1 | 0 | `fixtures/csharp-sample.cs` |
 | `GetUser` | method | 1 | 0 | `fixtures/csharp-sample.cs` |
 | `Start` | method | 0 | 1 | `fixtures/go-sample.go` |
 | `Stop` | method | 0 | 1 | `fixtures/go-sample.go` |
-| `helper` | function | 1 | 0 | `fixtures/go-sample.go` |
 | `UserService` | class | 1 | 0 | `fixtures/java-sample.java` |
 | `getUser` | method | 1 | 0 | `fixtures/php-sample.php` |
 | `UserService` | class | 1 | 0 | `fixtures/python-sample.py` |
