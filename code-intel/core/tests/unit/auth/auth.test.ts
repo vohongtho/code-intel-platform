@@ -183,7 +183,7 @@ describe('Session middleware', () => {
   });
 
   it('createSession + getSession — returns valid session', () => {
-    const sessionId = createSession({ id: 'u1', username: 'alice', role: 'admin' });
+    const { sessionId } = createSession({ id: 'u1', username: 'alice', role: 'admin' });
     const session = getSession(sessionId);
     assert.ok(session !== null);
     assert.equal(session!.username, 'alice');
@@ -196,7 +196,7 @@ describe('Session middleware', () => {
   });
 
   it('deleteSession — removes session', () => {
-    const sessionId = createSession({ id: 'u2', username: 'bob', role: 'viewer' });
+    const { sessionId } = createSession({ id: 'u2', username: 'bob', role: 'viewer' });
     deleteSession(sessionId);
     const session = getSession(sessionId);
     assert.equal(session, null);

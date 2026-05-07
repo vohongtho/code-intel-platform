@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 //   any other    → undefined
 //
 // The flag corresponds to:
-//   process.env['CODE_INTEL_SUGGEST_NEXT_TOOLS'] !== 'false'
+//   process.env['CODE_INTEL_SUGGEST_NEXT_TOOLS'] === 'true'  ← opt-IN since v1.0.1 (was opt-out)
 
 interface Hint {
   tool: string;

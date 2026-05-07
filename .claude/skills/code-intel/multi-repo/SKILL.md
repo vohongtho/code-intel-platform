@@ -49,8 +49,8 @@ Sorted by call graph degree (changing these has the highest blast radius):
 |--------|------|-----:|------:|------|
 | `syncGroup` | function | 0 | 15 | `multi-repo/group-sync.ts` |
 | `queryGroup` | function | 3 | 9 | `multi-repo/group-query.ts` |
-| `loadGraphFromDB` | function | 6 | 4 | `multi-repo/graph-from-db.ts` |
-| `loadGroup` | function | 6 | 2 | `multi-repo/group-registry.ts` |
+| `loadGraphFromDB` | function | 7 | 4 | `multi-repo/graph-from-db.ts` |
+| `loadGroup` | function | 7 | 2 | `multi-repo/group-registry.ts` |
 | `matchContracts` | function | 1 | 7 | `multi-repo/group-sync.ts` |
 | `saveGroup` | function | 6 | 1 | `multi-repo/group-registry.ts` |
 | `computeContractSimilarity` | function | 2 | 4 | `multi-repo/type-similarity.ts` |

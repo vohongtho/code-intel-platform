@@ -14,6 +14,7 @@ export function LoginPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(true);
@@ -51,7 +52,7 @@ export function LoginPage() {
     setLoading(true);
     try {
       const client = new ApiClient(serverUrl);
-      const { user } = await client.login(username.trim(), password);
+      const { user } = await client.login(username.trim(), password, rememberMe);
       dispatch({ type: 'SET_SERVER_URL', url: serverUrl });
       dispatch({ type: 'SET_CURRENT_USER', user });
       dispatch({ type: 'SET_VIEW', view: 'connect' });
@@ -166,6 +167,27 @@ export function LoginPage() {
             <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
               disabled={loading} autoComplete="current-password" className={inputClass} placeholder="••••••••" />
           </Field>
+
+          {/* Remember Me */}
+          <label className="flex items-center gap-2.5 cursor-pointer select-none group">
+            <div
+              onClick={() => !loading && setRememberMe((v) => !v)}
+              className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition
+                ${rememberMe
+                  ? 'bg-accent border-accent'
+                  : 'bg-elevated border-border-default group-hover:border-accent/60'}
+                ${loading ? 'opacity-40 cursor-not-allowed' : ''}`}
+            >
+              {rememberMe && (
+                <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 12 12" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M2 6l3 3 5-5" />
+                </svg>
+              )}
+            </div>
+            <span className="text-sm text-text-secondary">
+              Remember me <span className="text-text-muted text-xs">(stay signed in for 12 h)</span>
+            </span>
+          </label>
 
           {error && <ErrorBanner message={error} />}
 

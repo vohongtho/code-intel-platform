@@ -26,22 +26,38 @@ export interface SessionEntry {
   username: string;
   role: Role;
   expiresAt: number;
+  /** TTL used when this session was created — needed for correct cookie Max-Age. */
+  ttlMs: number;
 }
 
 export const sessionStore = new Map<string, SessionEntry>();
 
 const SESSION_COOKIE_NAME = 'code_intel_session';
 
+/** Normal session TTL (default 8 h, overridable via CODE_INTEL_SESSION_TTL_HOURS). */
 function getSessionTtlMs(): number {
   const hours = parseInt(process.env['CODE_INTEL_SESSION_TTL_HOURS'] ?? '8', 10);
   return (isNaN(hours) ? 8 : hours) * 60 * 60 * 1000;
 }
 
-export function createSession(user: { id: string; username: string; role: Role }): string {
+/** "Remember me" TTL — always 12 hours regardless of env. */
+const REMEMBER_ME_TTL_MS = 12 * 60 * 60 * 1000;
+
+export function createSession(
+  user: { id: string; username: string; role: Role },
+  rememberMe = false,
+): { sessionId: string; ttlMs: number } {
   const sessionId = uuidv4();
-  const expiresAt = Date.now() + getSessionTtlMs();
-  sessionStore.set(sessionId, { userId: user.id, username: user.username, role: user.role, expiresAt });
-  return sessionId;
+  const ttlMs = rememberMe ? REMEMBER_ME_TTL_MS : getSessionTtlMs();
+  const expiresAt = Date.now() + ttlMs;
+  sessionStore.set(sessionId, {
+    userId: user.id,
+    username: user.username,
+    role: user.role,
+    expiresAt,
+    ttlMs,
+  });
+  return { sessionId, ttlMs };
 }
 
 export function getSession(sessionId: string): SessionEntry | null {
@@ -51,11 +67,10 @@ export function getSession(sessionId: string): SessionEntry | null {
     sessionStore.delete(sessionId);
     return null;
   }
-  // Slide the window: if more than 25% of TTL has elapsed, renew
-  const ttlMs = getSessionTtlMs();
+  // Slide the window: if more than 25% of the original TTL has elapsed, renew
   const remaining = entry.expiresAt - Date.now();
-  if (remaining < ttlMs * 0.75) {
-    entry.expiresAt = Date.now() + ttlMs;
+  if (remaining < entry.ttlMs * 0.75) {
+    entry.expiresAt = Date.now() + entry.ttlMs;
   }
   return entry;
 }
@@ -89,8 +104,8 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
     const session = getSession(sessionId);
     if (session) {
       req.user = { id: session.userId, username: session.username, role: session.role, authMethod: 'session' };
-      // Refresh session cookie if the session was renewed (sliding window)
-      res.setHeader('Set-Cookie', buildSessionCookie(sessionId));
+      // Refresh session cookie with the original TTL (sliding window)
+      res.setHeader('Set-Cookie', buildSessionCookie(sessionId, session.ttlMs));
       next();
       return;
     }
@@ -304,9 +319,9 @@ export function parseCookies(cookieHeader: string): Record<string, string> {
 
 // ── Cookie helpers (used in app.ts auth routes) ───────────────────────────────
 
-export function buildSessionCookie(sessionId: string): string {
+export function buildSessionCookie(sessionId: string, ttlMs?: number): string {
   const isProduction = process.env['NODE_ENV'] === 'production';
-  const maxAge = Math.floor(getSessionTtlMs() / 1000);
+  const maxAge = Math.floor((ttlMs ?? getSessionTtlMs()) / 1000);
   const parts = [
     `${SESSION_COOKIE_NAME}=${encodeURIComponent(sessionId)}`,
     `HttpOnly`,

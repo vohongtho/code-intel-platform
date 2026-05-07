@@ -81,13 +81,13 @@ export class ApiClient {
     return res.json() as Promise<{ user: CurrentUser }>;
   }
 
-  async login(username: string, password: string): Promise<{ user: CurrentUser }> {
+  async login(username: string, password: string, rememberMe = false): Promise<{ user: CurrentUser }> {
     const csrfToken = await this.getCsrfToken();
     const res = await fetch(`${this.baseUrl}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
       credentials: 'include',
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ username, password, rememberMe }),
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({})) as { error?: { message?: string } };
@@ -137,16 +137,16 @@ export class ApiClient {
     return res.json() as Promise<{ nodes: CodeNode[]; offset: number; limit: number; total: number; hasMore: boolean }>;
   }
 
-  async search(query: string, limit = 20): Promise<{ results: SearchResult[] }> {
+  async search(query: string, limit = 20, options?: { repo?: string; group?: string }): Promise<{ results: SearchResult[]; searchMode?: string; repo?: string; group?: string }> {
     const csrfToken = await this.getCsrfToken();
     const res = await fetch(`${this.baseUrl}/api/v1/search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
       credentials: 'include',
-      body: JSON.stringify({ query, limit }),
+      body: JSON.stringify({ query, limit, ...options }),
     });
     if (!res.ok) throw new Error(`Search failed: ${res.statusText}`);
-    return res.json() as Promise<{ results: SearchResult[] }>;
+    return res.json() as Promise<{ results: SearchResult[]; searchMode?: string; repo?: string; group?: string }>;
   }
 
   async vectorSearch(query: string, limit = 10): Promise<{ results: SearchResult[]; source: string; vectorReady: boolean }> {

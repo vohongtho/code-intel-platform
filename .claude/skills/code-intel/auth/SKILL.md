@@ -29,7 +29,7 @@ Load this skill when:
 
 Start exploration here — exported symbols with no external callers:
 
-- **`authMiddleware`** `(function)` → `code-intel/core/src/auth/middleware.ts:84`
+- **`authMiddleware`** `(function)` → `code-intel/core/src/auth/middleware.ts:99`
 - **`constructor`** `(method)` → `code-intel/core/src/auth/users-db.ts:45`
 - **`createUser`** `(method)` → `code-intel/core/src/auth/users-db.ts:111`
 - **`createToken`** `(method)` → `code-intel/core/src/auth/users-db.ts:162`
@@ -43,10 +43,10 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | `authMiddleware` | function | 0 | 13 | `auth/middleware.ts` |
 | `UsersDB` | class | 10 | 0 | `auth/users-db.ts` |
 | `resetUsersDBForTesting` | function | 9 | 1 | `auth/users-db.ts` |
-| `getSession` | function | 4 | 4 | `auth/middleware.ts` |
 | `getDiscoveredConfig` | function | 5 | 3 | `auth/oidc.ts` |
 | `saveSecrets` | function | 3 | 5 | `auth/secret-store.ts` |
 | `getOrCreateUsersDB` | function | 6 | 2 | `auth/users-db.ts` |
+| `getSession` | function | 4 | 3 | `auth/middleware.ts` |
 | `requireRole` | function | 3 | 4 | `auth/middleware.ts` |
 | `getOIDCConfig` | function | 7 | 0 | `auth/oidc.ts` |
 | `handleOIDCCallback` | function | 2 | 5 | `auth/oidc.ts` |

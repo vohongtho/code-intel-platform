@@ -9,7 +9,6 @@ import {
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
 import { textSearch } from '../search/text-search.js';
 import { hybridSearch } from '../search/hybrid-search.js';
-import { Bm25Index, getBm25DbPath } from '../search/bm25-index.js';
 import { getVectorDbPath } from '../storage/index.js';
 import { loadRegistry } from '../storage/repo-registry.js';
 import { loadMetadata } from '../storage/metadata.js';
@@ -34,37 +33,11 @@ import { computeHealthReport } from '../query/health-report.js';
 import { suggestTests } from '../query/suggest-tests.js';
 import { summarizeCluster } from '../query/cluster-summary.js';
 
-/** Strip null/undefined fields and serialize compactly — saves ~10–15% tokens on sparse graph nodes */
-function compact(obj: unknown): string {
-  return JSON.stringify(obj, (_key, value) => (value === null || value === undefined ? undefined : value));
-}
-
 export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspaceRoot?: string): Server {
   const server = new Server(
     { name: 'code-intel', version: '0.1.0' },
     { capabilities: { tools: {}, resources: {} } },
   );
-
-  // ── Pre-built BM25 index (faster than linear textSearch for large graphs) ──
-  let bm25Index: Bm25Index | null = null;
-
-  function ensureBm25Index(): Bm25Index | null {
-    if (bm25Index) return bm25Index;
-    if (!workspaceRoot) return null;
-    try {
-      const idx = new Bm25Index(getBm25DbPath(workspaceRoot));
-      idx.load();
-      bm25Index = idx;
-      return bm25Index;
-    } catch {
-      return null;
-    }
-  }
-
-  // Load BM25 index on startup (non-blocking)
-  if (workspaceRoot) {
-    setImmediate(() => ensureBm25Index());
-  }
 
   // ─── Tool Definitions ──────────────────────────────────────────────────────
 
@@ -90,15 +63,13 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
       // ── Search & inspect ─────────────────────────────────────────────────
       {
         name: 'search',
-        description: 'BM25 keyword search across all indexed symbols — functions, classes, files, routes, etc. Optionally scope to a specific repo or group.',
+        description: 'BM25 keyword search across all indexed symbols — functions, classes, files, routes, etc.',
         inputSchema: {
           type: 'object' as const,
           properties: {
             query: { type: 'string', description: 'Search query (symbol name, keyword, or partial match)' },
             offset: { type: 'number', description: 'Number of results to skip for pagination (default: 0)' },
-            limit: { type: 'number', description: 'Max results per page (default: 10, max: 500)' },
-            repo: { type: 'string', description: 'Scope search to a specific indexed repo name (optional; defaults to current repo)' },
-            group: { type: 'string', description: 'Scope search across all repos in a group via cross-repo RRF merge (optional; overrides repo)' },
+            limit: { type: 'number', description: 'Max results per page (default: 50, max: 500)' },
             ..._tokenProp,
           },
           required: ['query'],
@@ -128,7 +99,7 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
               enum: ['callers', 'callees', 'both'],
               description: 'Which direction to trace — callers (who depends on it), callees (what it depends on), or both (default: both)',
             },
-            max_hops: { type: 'number', description: 'Maximum traversal depth (default: 2, max: 10)' },
+            max_hops: { type: 'number', description: 'Maximum traversal depth (default: 5)' },
             ..._tokenProp,
           },
           required: ['target'],
@@ -142,7 +113,7 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
           properties: {
             file_path: { type: 'string', description: 'File path (partial match is supported, e.g. "auth/login.ts")' },
             offset: { type: 'number', description: 'Number of results to skip for pagination (default: 0)' },
-            limit: { type: 'number', description: 'Max results per page (default: 10, max: 500)' },
+            limit: { type: 'number', description: 'Max results per page (default: 50, max: 500)' },
             ..._tokenProp,
           },
           required: ['file_path'],
@@ -173,7 +144,7 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
               description: 'Filter by node kind: function | class | interface | method | type_alias | constant | enum (optional)',
             },
             offset: { type: 'number', description: 'Number of results to skip for pagination (default: 0)' },
-            limit: { type: 'number', description: 'Max results per page (default: 10, max: 500)' },
+            limit: { type: 'number', description: 'Max results per page (default: 50, max: 500)' },
             ..._tokenProp,
           },
         },
@@ -192,7 +163,7 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
           type: 'object' as const,
           properties: {
             offset: { type: 'number', description: 'Number of results to skip for pagination (default: 0)' },
-            limit: { type: 'number', description: 'Max clusters per page (default: 10, max: 500)' },
+            limit: { type: 'number', description: 'Max clusters per page (default: 50, max: 500)' },
             ..._tokenProp,
           },
         },
@@ -204,7 +175,7 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
           type: 'object' as const,
           properties: {
             offset: { type: 'number', description: 'Number of results to skip for pagination (default: 0)' },
-            limit: { type: 'number', description: 'Max flows per page (default: 10, max: 500)' },
+            limit: { type: 'number', description: 'Max flows per page (default: 50, max: 500)' },
             ..._tokenProp,
           },
         },
@@ -363,7 +334,7 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
             },
             maxHops: {
               type: 'number',
-              description: 'Maximum BFS depth for blast radius (default: 2, max: 10)',
+              description: 'Maximum BFS depth for blast radius (default: 5)',
             },
             ..._tokenProp,
           },
@@ -496,7 +467,7 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
       const providedToken = a._token;
       if (providedToken !== expectedToken) {
         return {
-          content: [{ type: 'text', text: compact({ error: 'Unauthorized: invalid or missing CODE_INTEL_TOKEN' }) }],
+          content: [{ type: 'text', text: JSON.stringify({ error: 'Unauthorized: invalid or missing CODE_INTEL_TOKEN' }) }],
           isError: true,
         };
       }
@@ -504,7 +475,7 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
 
     // ── OTel span + Prometheus metrics wrapper ─────────────────────────────
     const startMs = Date.now();
-    const dispatch = () => dispatchTool(name, a, graph, repoName, workspaceRoot, ensureBm25Index);
+    const dispatch = () => dispatchTool(name, a, graph, repoName, workspaceRoot);
 
     // Epic 6: MCP tool timeout — if any tool takes > 30s, return partial result
     const MCP_TIMEOUT_MS = parseInt(process.env['CODE_INTEL_MCP_TIMEOUT_MS'] ?? '30000', 10);
@@ -540,7 +511,7 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
       if (timedOut) {
         // Return partial result rather than crashing the MCP session
         return {
-          content: [{ type: 'text' as const, text: compact({ truncated: true, reason: `Tool '${name}' timed out after ${MCP_TIMEOUT_MS}ms`, partialResults: [] }) }],
+          content: [{ type: 'text' as const, text: JSON.stringify({ truncated: true, reason: `Tool '${name}' timed out after ${MCP_TIMEOUT_MS}ms`, partialResults: [] }) }],
           isError: false,
         };
       }
@@ -568,7 +539,6 @@ async function dispatchTool(
   graph: KnowledgeGraph,
   repoName: string,
   workspaceRoot: string | undefined,
-  bm25Resolver?: () => Bm25Index | null,
 ): Promise<ToolResult> {
   switch (name) {
 
@@ -578,8 +548,9 @@ async function dispatchTool(
         return {
           content: [{
             type: 'text',
-            text: compact(
-              registry.map((r) => ({ name: r.name, path: r.path, indexedAt: r.indexedAt, stats: r.stats }))
+            text: JSON.stringify(
+              registry.map((r) => ({ name: r.name, path: r.path, indexedAt: r.indexedAt, stats: r.stats })),
+              null, 2,
             ),
           }],
         };
@@ -611,13 +582,13 @@ async function dispatchTool(
         return {
           content: [{
             type: 'text',
-            text: compact({
+            text: JSON.stringify({
               repo: repoName,
               stats: graph.size,
               nodeCounts: kindCounts,
               edgeCounts,
               health,
-            }),
+            }, null, 2),
           }],
         };
       }
@@ -626,65 +597,17 @@ async function dispatchTool(
       case 'search': {
         const query = a.query as string;
         const offset = (a.offset as number) ?? 0;
-        const effectiveLimit = Math.min((a.limit as number) ?? 10, 500);
-
-        // ── Group-scoped cross-repo search ──────────────────────────────────
-        if (a.group) {
-          const grp = loadGroup(a.group as string);
-          if (!grp) {
-            return { content: [{ type: 'text', text: `Group "${a.group}" not found. Use list_groups to see available groups.` }] };
-          }
-          const { perRepo, merged } = await queryGroup(grp, query, effectiveLimit + offset);
-          const paged = merged.slice(offset, offset + effectiveLimit);
-          return {
-            content: [{
-              type: 'text',
-              text: compact({
-                results: paged,
-                perRepo,
-                searchMode: 'bm25-cross-repo',
-                group: a.group,
-                total: merged.length,
-                offset,
-                limit: effectiveLimit,
-                hasMore: offset + effectiveLimit < merged.length,
-              }),
-            }],
-          };
-        }
-
-        // ── Single-repo search ──────────────────────────────────────────────
-        const repoGraph = a.repo ? (await (async () => {
-          const registry = loadRegistry();
-          const entry = registry.find((r) => r.name === (a.repo as string) || r.path === (a.repo as string));
-          if (!entry) return graph;
-          const { DbManager: DbMgr } = await import('../storage/db-manager.js');
-          const { loadGraphFromDB: loadG } = await import('../multi-repo/graph-from-db.js');
-          const { createKnowledgeGraph: createG } = await import('../graph/knowledge-graph.js');
-          const dbPath = path.join(entry.path, '.code-intel', 'graph.db');
-          if (!fs.existsSync(dbPath)) return graph;
-          const db = new DbMgr(dbPath, true);
-          await db.init();
-          const g = createG();
-          await loadG(g, db);
-          db.close();
-          return g;
-        })()) : graph;
-
+        const effectiveLimit = Math.min((a.limit as number) ?? 50, 500);
         const vdbPath = workspaceRoot ? getVectorDbPath(workspaceRoot) : undefined;
+        // Fetch enough results to cover pagination (offset + limit, up to 500)
         const fetchLimit = Math.min(offset + effectiveLimit, 500);
-        const bm25 = (!a.repo || a.repo === repoName) ? (bm25Resolver ? bm25Resolver() : null) : null;
-        const bm25Results = bm25 ? bm25.search(query, fetchLimit * 3) : undefined;
-        const { results: allResults, searchMode } = await hybridSearch(repoGraph, query, fetchLimit, {
-          vectorDbPath: vdbPath,
-          bm25Results: bm25Results ?? undefined,
-        });
+        const { results: allResults, searchMode } = await hybridSearch(graph, query, fetchLimit, { vectorDbPath: vdbPath });
         const total = allResults.length;
         const results = allResults.slice(offset, offset + effectiveLimit);
         const hasMore = offset + effectiveLimit < total;
 
         const suggestNextTools: unknown[] = [];
-        const suggestEnabled = process.env['CODE_INTEL_SUGGEST_NEXT_TOOLS'] === 'true';
+        const suggestEnabled = process.env['CODE_INTEL_SUGGEST_NEXT_TOOLS'] !== 'false';
         if (suggestEnabled && results.length > 0) {
           const topName = results[0].name;
           suggestNextTools.push(
@@ -696,16 +619,15 @@ async function dispatchTool(
         return {
           content: [{
             type: 'text',
-            text: compact({
+            text: JSON.stringify({
               results,
               searchMode,
-              repo: a.repo ?? repoName,
               total,
               offset,
               limit: effectiveLimit,
               hasMore,
               ...(suggestEnabled ? { suggested_next_tools: suggestNextTools } : {}),
-            }),
+            }, null, 2),
           }],
         };
       }
@@ -727,7 +649,7 @@ async function dispatchTool(
         }));
         const cluster = incoming.filter((e) => e.kind === 'belongs_to').map((e) => graph.getNode(e.target)?.name)[0];
 
-        const suggestEnabled = process.env['CODE_INTEL_SUGGEST_NEXT_TOOLS'] === 'true';
+        const suggestEnabled = process.env['CODE_INTEL_SUGGEST_NEXT_TOOLS'] !== 'false';
         const suggestNextTools: unknown[] = [];
         if (suggestEnabled) {
           const topCallerName = callers[0]?.name;
@@ -744,7 +666,7 @@ async function dispatchTool(
         return {
           content: [{
             type: 'text',
-            text: compact({
+            text: JSON.stringify({
               node: {
                 id: node.id,
                 kind: node.kind,
@@ -766,7 +688,7 @@ async function dispatchTool(
               cluster,
               content: node.content?.slice(0, 500),
               ...(suggestEnabled ? { suggested_next_tools: suggestNextTools } : {}),
-            }),
+            }, null, 2),
           }],
         };
       }
@@ -775,7 +697,7 @@ async function dispatchTool(
       case 'blast_radius': {
         const target = a.target as string;
         const direction = (a.direction as string) ?? 'both';
-        const maxHops = (a.max_hops as number) ?? 2;
+        const maxHops = (a.max_hops as number) ?? 5;
         const node = findNodeByName(graph, target);
         if (!node) return { content: [{ type: 'text', text: `Symbol "${target}" not found.` }] };
 
@@ -808,7 +730,7 @@ async function dispatchTool(
 
         const risk = affected.size > 10 ? 'HIGH' : affected.size > 5 ? 'MEDIUM' : 'LOW';
 
-        const suggestEnabled = process.env['CODE_INTEL_SUGGEST_NEXT_TOOLS'] === 'true';
+        const suggestEnabled = process.env['CODE_INTEL_SUGGEST_NEXT_TOOLS'] !== 'false';
         const suggestNextTools: unknown[] = [];
         if (suggestEnabled) {
           const highestRiskSymbol = node.name;
@@ -822,13 +744,13 @@ async function dispatchTool(
         return {
           content: [{
             type: 'text',
-            text: compact({
+            text: JSON.stringify({
               target: node.name,
               affectedCount: affected.size,
               riskLevel: risk,
               affected: affectedDetails,
               ...(suggestEnabled ? { suggested_next_tools: suggestNextTools } : {}),
-            }),
+            }, null, 2),
           }],
         };
       }
@@ -837,7 +759,7 @@ async function dispatchTool(
       case 'file_symbols': {
         const filePath = a.file_path as string;
         const offset = (a.offset as number) ?? 0;
-        const effectiveLimit = Math.min((a.limit as number) ?? 10, 500);
+        const effectiveLimit = Math.min((a.limit as number) ?? 50, 500);
         const allMatches: { kind: string; name: string; startLine: number | undefined; exported: boolean | undefined }[] = [];
         for (const node of graph.allNodes()) {
           if (node.filePath && node.filePath.includes(filePath)) {
@@ -854,7 +776,7 @@ async function dispatchTool(
         return {
           content: [{
             type: 'text',
-            text: compact({ symbols: matches, total, offset, limit: effectiveLimit, hasMore }),
+            text: JSON.stringify({ symbols: matches, total, offset, limit: effectiveLimit, hasMore }, null, 2),
           }],
         };
       }
@@ -904,7 +826,7 @@ async function dispatchTool(
         return {
           content: [{
             type: 'text',
-            text: compact({ from: fromName, to: toName, hops: foundPath.length - 1, path: pathDetails }),
+            text: JSON.stringify({ from: fromName, to: toName, hops: foundPath.length - 1, path: pathDetails }, null, 2),
           }],
         };
       }
@@ -913,7 +835,7 @@ async function dispatchTool(
       case 'list_exports': {
         const kindFilter = a.kind as string | undefined;
         const offset = (a.offset as number) ?? 0;
-        const effectiveLimit = Math.min((a.limit as number) ?? 10, 500);
+        const effectiveLimit = Math.min((a.limit as number) ?? 50, 500);
         const allExports: { kind: string; name: string; filePath: string; startLine: number | undefined }[] = [];
 
         for (const node of graph.allNodes()) {
@@ -929,7 +851,7 @@ async function dispatchTool(
         return {
           content: [{
             type: 'text',
-            text: compact({ exports, total, offset, limit: effectiveLimit, hasMore }),
+            text: JSON.stringify({ exports, total, offset, limit: effectiveLimit, hasMore }, null, 2),
           }],
         };
       }
@@ -942,13 +864,13 @@ async function dispatchTool(
             routes.push({ name: node.name, filePath: node.filePath, startLine: node.startLine });
           }
         }
-        return { content: [{ type: 'text', text: compact(routes) }] };
+        return { content: [{ type: 'text', text: JSON.stringify(routes, null, 2) }] };
       }
 
       // ── clusters ───────────────────────────────────────────────────────────
       case 'clusters': {
         const offset = (a.offset as number) ?? 0;
-        const effectiveLimit = Math.min((a.limit as number) ?? 10, 500);
+        const effectiveLimit = Math.min((a.limit as number) ?? 50, 500);
         const allClusters: {
           id: string;
           name: string;
@@ -981,7 +903,7 @@ async function dispatchTool(
         return {
           content: [{
             type: 'text',
-            text: compact({ clusters, total, offset, limit: effectiveLimit, hasMore }),
+            text: JSON.stringify({ clusters, total, offset, limit: effectiveLimit, hasMore }, null, 2),
           }],
         };
       }
@@ -989,7 +911,7 @@ async function dispatchTool(
       // ── flows ──────────────────────────────────────────────────────────────
       case 'flows': {
         const offset = (a.offset as number) ?? 0;
-        const effectiveLimit = Math.min((a.limit as number) ?? 10, 500);
+        const effectiveLimit = Math.min((a.limit as number) ?? 50, 500);
         const allFlows: {
           id: string;
           name: string;
@@ -1016,7 +938,7 @@ async function dispatchTool(
         return {
           content: [{
             type: 'text',
-            text: compact({ flows, total, offset, limit: effectiveLimit, hasMore }),
+            text: JSON.stringify({ flows, total, offset, limit: effectiveLimit, hasMore }, null, 2),
           }],
         };
       }
@@ -1103,14 +1025,14 @@ async function dispatchTool(
         return {
           content: [{
             type: 'text',
-            text: compact({
+            text: JSON.stringify({
               baseRef,
               changedFiles: changedFiles.map((f) => f.filePath),
               directlyChangedSymbols: changedSymbols,
               transitivelyAffectedSymbols: affectedSymbols,
               totalAffected: allAffected.size,
               riskLevel: risk,
-            }),
+            }, null, 2),
           }],
         };
       }
@@ -1119,7 +1041,7 @@ async function dispatchTool(
       case 'query': {
         const gqlInput = a.gql as string;
         if (!gqlInput) {
-          return { content: [{ type: 'text', text: compact({ error: 'Missing required parameter: gql' }) }], isError: true };
+          return { content: [{ type: 'text', text: JSON.stringify({ error: 'Missing required parameter: gql' }) }], isError: true };
         }
 
         // Dynamic import to avoid circular deps
@@ -1129,7 +1051,7 @@ async function dispatchTool(
         const ast = parseGQL(gqlInput);
         if (isGQLParseError(ast)) {
           return {
-            content: [{ type: 'text', text: compact({ error: `GQL parse error: ${ast.message}`, pos: ast.pos, expected: ast.expected, got: ast.got }) }],
+            content: [{ type: 'text', text: JSON.stringify({ error: `GQL parse error: ${ast.message}`, pos: ast.pos, expected: ast.expected, got: ast.got }) }],
             isError: true,
           };
         }
@@ -1143,7 +1065,7 @@ async function dispatchTool(
         return {
           content: [{
             type: 'text',
-            text: compact({
+            text: JSON.stringify({
               nodes: result.nodes,
               edges: result.edges,
               groups: result.groups,
@@ -1151,7 +1073,7 @@ async function dispatchTool(
               executionTimeMs: result.executionTimeMs,
               truncated: result.truncated,
               totalCount: result.totalCount,
-            }),
+            }, null, 2),
           }],
         };
       }
@@ -1166,7 +1088,7 @@ async function dispatchTool(
           for (const node of graph.allNodes()) {
             if (node.name === nameMatch[1]) results.push(node);
           }
-          return { content: [{ type: 'text', text: compact({ deprecation: deprecationWarning, results }) }] };
+          return { content: [{ type: 'text', text: JSON.stringify({ deprecation: deprecationWarning, results }, null, 2) }] };
         }
         const kindMatch = q?.match(/:\s*(\w+)/);
         if (kindMatch) {
@@ -1175,9 +1097,9 @@ async function dispatchTool(
             if (node.kind === kindMatch[1]) results.push(node);
             if (results.length >= 50) break;
           }
-          return { content: [{ type: 'text', text: compact({ deprecation: deprecationWarning, results }) }] };
+          return { content: [{ type: 'text', text: JSON.stringify({ deprecation: deprecationWarning, results }, null, 2) }] };
         }
-        return { content: [{ type: 'text', text: compact({ deprecation: deprecationWarning, error: 'Query not recognized. Use name=\'X\' or :kind syntax. Or use the query tool with GQL instead.' }) }] };
+        return { content: [{ type: 'text', text: JSON.stringify({ deprecation: deprecationWarning, error: 'Query not recognized. Use name=\'X\' or :kind syntax. Or use the query tool with GQL instead.' }) }] };
       }
 
       // ── group_list ─────────────────────────────────────────────────────────
@@ -1186,14 +1108,15 @@ async function dispatchTool(
         if (groupName) {
           const group = loadGroup(groupName);
           if (!group) return { content: [{ type: 'text', text: `Group "${groupName}" not found.` }] };
-          return { content: [{ type: 'text', text: compact(group) }] };
+          return { content: [{ type: 'text', text: JSON.stringify(group, null, 2) }] };
         }
         const groups = listGroups();
         return {
           content: [{
             type: 'text',
-            text: compact(
-              groups.map((g) => ({ name: g.name, createdAt: g.createdAt, lastSync: g.lastSync, memberCount: g.members.length, members: g.members }))
+            text: JSON.stringify(
+              groups.map((g) => ({ name: g.name, createdAt: g.createdAt, lastSync: g.lastSync, memberCount: g.members.length, members: g.members })),
+              null, 2,
             ),
           }],
         };
@@ -1214,14 +1137,14 @@ async function dispatchTool(
         return {
           content: [{
             type: 'text',
-            text: compact({
+            text: JSON.stringify({
               groupName: result.groupName,
               syncedAt: result.syncedAt,
               memberCount: result.memberCount,
               contractCount: result.contracts.length,
               linkCount: result.links.length,
               topLinks: result.links.slice(0, 20),
-            }),
+            }, null, 2),
           }],
         };
       }
@@ -1246,7 +1169,7 @@ async function dispatchTool(
         return {
           content: [{
             type: 'text',
-            text: compact({ syncedAt: result.syncedAt, contracts, links }),
+            text: JSON.stringify({ syncedAt: result.syncedAt, contracts, links }, null, 2),
           }],
         };
       }
@@ -1264,7 +1187,7 @@ async function dispatchTool(
         return {
           content: [{
             type: 'text',
-            text: compact({ query, merged, perRepo }),
+            text: JSON.stringify({ query, merged, perRepo }, null, 2),
           }],
         };
       }
@@ -1305,12 +1228,12 @@ async function dispatchTool(
         return {
           content: [{
             type: 'text',
-            text: compact({
+            text: JSON.stringify({
               group: groupName,
               lastSync: group.lastSync ?? null,
               syncAgeMinutes: syncAge,
               members: memberStatus,
-            }),
+            }, null, 2),
           }],
         };
       }
@@ -1320,12 +1243,12 @@ async function dispatchTool(
         const fromName = a.from as string;
         const toName = a.to as string;
         const result = explainRelationship(graph, fromName, toName);
-        return { content: [{ type: 'text', text: compact(result) }] };
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
       }
 
       // ── pr_impact ──────────────────────────────────────────────────────────
       case 'pr_impact': {
-        const maxHops = (a.maxHops as number) ?? 2;
+        const maxHops = (a.maxHops as number) ?? 5;
         let changedFiles: string[] = (a.changedFiles as string[]) ?? [];
 
         // If a diff string is provided, extract files from it
@@ -1338,13 +1261,13 @@ async function dispatchTool(
           return {
             content: [{
               type: 'text',
-              text: compact({ error: 'No changed files provided. Supply "changedFiles" or "diff".' }),
+              text: JSON.stringify({ error: 'No changed files provided. Supply "changedFiles" or "diff".' }),
             }],
           };
         }
 
         const result = computePRImpact(graph, changedFiles, maxHops);
-        return { content: [{ type: 'text', text: compact(result) }] };
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
       }
 
       // ── similar_symbols ────────────────────────────────────────────────────
@@ -1352,28 +1275,28 @@ async function dispatchTool(
         const symbolName = a.symbol as string;
         const limit = (a.limit as number) ?? 10;
         const result = findSimilarSymbols(graph, symbolName, limit);
-        return { content: [{ type: 'text', text: compact(result) }] };
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
       }
 
       // ── health_report ──────────────────────────────────────────────────────
       case 'health_report': {
         const scope = (a.scope as string | undefined) ?? '.';
         const result = computeHealthReport(graph, scope);
-        return { content: [{ type: 'text', text: compact(result) }] };
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
       }
 
       // ── suggest_tests ──────────────────────────────────────────────────────
       case 'suggest_tests': {
         const sym = a.symbol as string;
         const result = suggestTests(graph, sym);
-        return { content: [{ type: 'text', text: compact(result) }] };
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
       }
 
       // ── cluster_summary ────────────────────────────────────────────────────
       case 'cluster_summary': {
         const cluster = a.cluster as string;
         const result = summarizeCluster(graph, cluster);
-        return { content: [{ type: 'text', text: compact(result) }] };
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
       }
 
       case 'deprecated_usage': {
@@ -1382,7 +1305,7 @@ async function dispatchTool(
         const detector = new DeprecatedDetector();
         detector.tagDeprecated(graph);
         const findings = detector.detect(graph, scope);
-        return { content: [{ type: 'text', text: compact({ findings, total: findings.length }) }] };
+        return { content: [{ type: 'text', text: JSON.stringify({ findings, total: findings.length }, null, 2) }] };
       }
 
       // ── complexity_hotspots ────────────────────────────────────────────────
@@ -1391,7 +1314,7 @@ async function dispatchTool(
         const scope = a.scope as string | undefined;
         const limit = typeof a.limit === 'number' ? a.limit : 20;
         const hotspots = computeComplexity(graph, scope).slice(0, limit);
-        return { content: [{ type: 'text', text: compact({ hotspots, total: hotspots.length }) }] };
+        return { content: [{ type: 'text', text: JSON.stringify({ hotspots, total: hotspots.length }, null, 2) }] };
       }
 
       // ── coverage_gaps ──────────────────────────────────────────────────────
@@ -1404,12 +1327,12 @@ async function dispatchTool(
         return {
           content: [{
             type: 'text',
-            text: compact({
+            text: JSON.stringify({
               untestedByRisk,
               coveragePct: summary.coveragePct,
               totalExported: summary.totalExported,
               testedExported: summary.testedExported,
-            }),
+            }, null, 2),
           }],
         };
       }
@@ -1421,7 +1344,7 @@ async function dispatchTool(
         const scope = a.scope as string | undefined;
         const includeTestFiles = (a.includeTestFiles as boolean | undefined) ?? false;
         const findings = scanner.scan(graph, { scope, includeTestFiles });
-        return { content: [{ type: 'text', text: compact({ findings, total: findings.length }) }] };
+        return { content: [{ type: 'text', text: JSON.stringify({ findings, total: findings.length }, null, 2) }] };
       }
 
       // ── vulnerability_scan ─────────────────────────────────────────────────
@@ -1436,7 +1359,7 @@ async function dispatchTool(
         const minRank = sevRank[minSev] ?? 1;
         let findings = detector.detect(graph, { scope, types });
         findings = findings.filter((f) => (sevRank[f.severity] ?? 1) >= minRank);
-        return { content: [{ type: 'text', text: compact({ findings, total: findings.length }) }] };
+        return { content: [{ type: 'text', text: JSON.stringify({ findings, total: findings.length }, null, 2) }] };
       }
 
       default:
@@ -1465,7 +1388,7 @@ function registerResources(server: Server, graph: KnowledgeGraph, repoName: stri
       for (const node of graph.allNodes()) {
         kindCounts[node.kind] = (kindCounts[node.kind] ?? 0) + 1;
       }
-      return { contents: [{ uri, mimeType: 'application/json', text: compact({ repo: repoName, stats: graph.size, nodeCounts: kindCounts }) }] };
+      return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify({ repo: repoName, stats: graph.size, nodeCounts: kindCounts }) }] };
     }
 
     if (uri.endsWith('/clusters')) {
@@ -1473,7 +1396,7 @@ function registerResources(server: Server, graph: KnowledgeGraph, repoName: stri
       for (const node of graph.allNodes()) {
         if (node.kind === 'cluster') clusters.push({ id: node.id, name: node.name, memberCount: node.metadata?.memberCount });
       }
-      return { contents: [{ uri, mimeType: 'application/json', text: compact(clusters) }] };
+      return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(clusters) }] };
     }
 
     if (uri.endsWith('/flows')) {
@@ -1481,7 +1404,7 @@ function registerResources(server: Server, graph: KnowledgeGraph, repoName: stri
       for (const node of graph.allNodes()) {
         if (node.kind === 'flow') flows.push({ id: node.id, name: node.name, steps: node.metadata?.steps, entryPoint: node.metadata?.entryPoint });
       }
-      return { contents: [{ uri, mimeType: 'application/json', text: compact(flows) }] };
+      return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(flows) }] };
     }
 
     throw new Error(`Unknown resource: ${uri}`);

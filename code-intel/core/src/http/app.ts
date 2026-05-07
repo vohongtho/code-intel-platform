@@ -425,13 +425,13 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
       return;
     }
     const user = db.createUser(username, password, 'admin');
-    const sessionId = createSession({ id: user.id, username: user.username, role: user.role });
-    res.setHeader('Set-Cookie', buildSessionCookie(sessionId));
+    const { sessionId, ttlMs } = createSession({ id: user.id, username: user.username, role: user.role });
+    res.setHeader('Set-Cookie', buildSessionCookie(sessionId, ttlMs));
     res.status(201).json({ user: { id: user.id, username: user.username, role: user.role } });
   });
 
   app.post('/auth/login', async (req: Request, res: Response) => {
-    const { username, password } = req.body as { username?: string; password?: string };
+    const { username, password, rememberMe } = req.body as { username?: string; password?: string; rememberMe?: boolean };
     if (!username || !password) {
       res.status(400).json({
         error: {
@@ -479,10 +479,10 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
       return;
     }
 
-    const sessionId = createSession({ id: user.id, username: user.username, role: user.role });
+    const { sessionId, ttlMs } = createSession({ id: user.id, username: user.username, role: user.role }, rememberMe === true);
     db.logAccess(user.id, '/auth/login', 'login', 'allow', req.ip ?? 'unknown');
     authAttemptsTotal.inc({ method: 'local', outcome: 'success' });
-    res.setHeader('Set-Cookie', buildSessionCookie(sessionId));
+    res.setHeader('Set-Cookie', buildSessionCookie(sessionId, ttlMs));
     res.json({ user: { id: user.id, username: user.username, role: user.role } });
   });
 
@@ -629,9 +629,9 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
         Logger.info(`[oidc] Auto-provisioned new user: ${finalUsername} (${cfg.defaultRole})`);
       }
 
-      const sessionId = createSession({ id: user.id, username: user.username, role: user.role });
+      const { sessionId, ttlMs } = createSession({ id: user.id, username: user.username, role: user.role });
       db.logAccess(user.id, '/auth/callback', 'oidc-login', 'allow', req.ip ?? 'unknown');
-      res.setHeader('Set-Cookie', buildSessionCookie(sessionId));
+      res.setHeader('Set-Cookie', buildSessionCookie(sessionId, ttlMs));
       // Redirect back to the web UI
       res.redirect(302, '/');
     } catch (err) {
@@ -891,7 +891,25 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
 
   // ── Search ──────────────────────────────────────────────────────────────────
   app.post('/api/v1/search', requireToolScope('search'), async (req, res) => {
-    const { query, limit, repo } = req.body as { query?: string; limit?: number; repo?: string };
+    const { query, limit, repo, group } = req.body as { query?: string; limit?: number; repo?: string; group?: string };
+
+    // ── Group-scoped search (cross-repo) ──────────────────────────────────────
+    if (group) {
+      const grp = loadGroup(group);
+      if (!grp) {
+        res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: `Group '${group}' not found`, hint: 'Use /api/v1/groups to list available groups' } });
+        return;
+      }
+      try {
+        const { perRepo, merged } = await queryGroup(grp, query ?? '', limit ?? 20);
+        res.json({ results: merged, perRepo, searchMode: 'bm25', group });
+      } catch (err) {
+        res.status(500).json({ error: { code: ErrorCodes.INTERNAL_ERROR, message: err instanceof Error ? err.message : String(err) } });
+      }
+      return;
+    }
+
+    // ── Single-repo search ────────────────────────────────────────────────────
     const g = await getGraphForRepo(repo);
     const vdbPath = workspaceRoot ? getVectorDbPath(workspaceRoot) : undefined;
 
@@ -903,7 +921,7 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
       vectorDbPath: vdbPath,
       bm25Results: bm25Results ?? undefined,
     });
-    res.json({ results, searchMode });
+    res.json({ results, searchMode, repo: repo ?? repoName });
   });
 
   // ── Vector search ───────────────────────────────────────────────────────────

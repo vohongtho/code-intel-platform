@@ -6,7 +6,15 @@
 > ⚠ This section is auto-managed by `code-intel analyze`. Do **not** edit between the markers — your changes will be overwritten.
 > Add your own notes below the `<!-- code-intel:end -->` marker.
 
-Indexed: **5,835 nodes** | **10,625 edges** | **322 files** | analyzed in 1.3s
+<!-- TOOL POLICY: ENFORCED -->
+FORBIDDEN: grep, rg, find, cat, sed, ls (for symbol/code discovery)
+REQUIRED BEFORE ANY CODE ACTION:
+  1. code-intel search "<concept>"    ← replaces grep/rg/find
+  2. code-intel inspect <symbol>      ← replaces cat + manual file reading
+  3. code-intel impact <symbol>       ← replaces manual caller tracing
+<!-- /TOOL POLICY -->
+
+Indexed: **6,063 nodes** | **11,018 edges** | **328 files** | analyzed in 1.4s
 
 > Index stale? Re-run: `code-intel analyze`
 
@@ -41,7 +49,9 @@ These rules apply to **every coding agent or AI assistant** working in this repo
 ## Never Do
 
 - NEVER ignore impact warnings — always report blast radius to the user.
-- NEVER skip `code-intel search` before grepping or opening files.
+- **STOP** — do not call grep, rg, find, cat, sed, or read a file cold.
+  Always run `code-intel search "<concept>"` first.
+  Violating this wastes ~3,000 tokens per lookup and degrades session quality.
 - NEVER make changes to a symbol with ≥ 5 callers without running `code-intel impact` first.
 - NEVER use find-and-replace for symbol renames.
 
@@ -135,16 +145,16 @@ Each skill gives you symbol maps, key entry points, and safe-change guidance for
 - Working in **shared**? → Load `.claude/skills/code-intel/shared/SKILL.md`
 - Working in **pipeline**? → Load `.claude/skills/code-intel/pipeline/SKILL.md`
 - Working in **eval**? → Load `.claude/skills/code-intel/eval/SKILL.md`
+- Working in **context**? → Load `.claude/skills/code-intel/context/SKILL.md`
 - Working in **pipeline**? → Load `.claude/skills/code-intel/pipeline-2/SKILL.md`
 - Working in **src**? → Load `.claude/skills/code-intel/src/SKILL.md`
-- Working in **multi-lang**? → Load `.claude/skills/code-intel/multi-lang/SKILL.md`
 
 | Task | Skill file |
 |------|------------|
 | Understand architecture / "How does X work?" | Load `code-intel-exploring` skill |
 | Blast radius / "What breaks if I change X?" | Load `code-intel-impact` skill |
 | Debugging / "Why is X failing?" | Load `code-intel-debugging` skill |
-| Work in `cli` (87 symbols) | `.claude/skills/code-intel/cli/SKILL.md` |
+| Work in `cli` (88 symbols) | `.claude/skills/code-intel/cli/SKILL.md` |
 | Work in `auth` (85 symbols) | `.claude/skills/code-intel/auth/SKILL.md` |
 | Work in `graph` (81 symbols) | `.claude/skills/code-intel/graph/SKILL.md` |
 | Work in `fixtures` (75 symbols) | `.claude/skills/code-intel/fixtures/SKILL.md` |
@@ -161,9 +171,9 @@ Each skill gives you symbol maps, key entry points, and safe-change guidance for
 | Work in `shared` (31 symbols) | `.claude/skills/code-intel/shared/SKILL.md` |
 | Work in `pipeline` (30 symbols) | `.claude/skills/code-intel/pipeline/SKILL.md` |
 | Work in `eval` (29 symbols) | `.claude/skills/code-intel/eval/SKILL.md` |
+| Work in `context` (27 symbols) | `.claude/skills/code-intel/context/SKILL.md` |
 | Work in `pipeline` (26 symbols) | `.claude/skills/code-intel/pipeline-2/SKILL.md` |
 | Work in `src` (26 symbols) | `.claude/skills/code-intel/src/SKILL.md` |
-| Work in `multi-lang` (21 symbols) | `.claude/skills/code-intel/multi-lang/SKILL.md` |
 
 <!-- code-intel:end -->
 

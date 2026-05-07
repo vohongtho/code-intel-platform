@@ -30,10 +30,10 @@ Load this skill when:
 
 Start exploration here — exported symbols with no external callers:
 
-- **`constructor`** `(method)` → `code-intel/core/src/storage/db-manager.ts:10`
-- **`init`** `(method)` → `code-intel/core/src/storage/db-manager.ts:14`
-- **`execute`** `(method)` → `code-intel/core/src/storage/db-manager.ts:31`
-- **`isOpen`** `(method)` → `code-intel/core/src/storage/db-manager.ts:52`
+- **`constructor`** `(method)` → `code-intel/core/src/storage/db-manager.ts:11`
+- **`init`** `(method)` → `code-intel/core/src/storage/db-manager.ts:16`
+- **`execute`** `(method)` → `code-intel/core/src/storage/db-manager.ts:36`
+- **`isOpen`** `(method)` → `code-intel/core/src/storage/db-manager.ts:57`
 
 ## Hot Symbols
 
@@ -42,10 +42,10 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
 | `loadGraphToDB` | function | 1 | 12 | `storage/graph-loader.ts` |
-| `loadRegistry` | function | 9 | 1 | `storage/repo-registry.ts` |
+| `loadRegistry` | function | 10 | 1 | `storage/repo-registry.ts` |
 | `writeEdgeCSV` | function | 2 | 7 | `storage/csv-writer.ts` |
 | `writeNodeCSVs` | function | 2 | 6 | `storage/csv-writer.ts` |
-| `DbManager` | class | 7 | 0 | `storage/db-manager.ts` |
+| `DbManager` | class | 8 | 0 | `storage/db-manager.ts` |
 | `loadMetadata` | function | 5 | 1 | `storage/metadata.ts` |
 | `getVectorDbPath` | function | 6 | 0 | `storage/metadata.ts` |
 | `loadEdgeGroupFallback` | function | 1 | 4 | `storage/graph-loader.ts` |
