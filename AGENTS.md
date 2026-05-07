@@ -45,7 +45,7 @@ REQUIRED BEFORE ANY CODE ACTION:
   3. code-intel impact <symbol>       ← replaces manual caller tracing
 <!-- /TOOL POLICY -->
 
-Indexed: **6,055 nodes** | **11,008 edges** | **328 files** | analyzed in 4.0s
+Indexed: **6,063 nodes** | **11,018 edges** | **328 files** | analyzed in 1.4s
 
 > Index stale? Re-run: `code-intel analyze`
 
