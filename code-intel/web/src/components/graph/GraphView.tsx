@@ -494,18 +494,21 @@ function applyNodeEdgeReducers(
     const deg = degreeMap.get(nodeId) ?? 0;
     const baseLabel = deg >= topNThreshold ? (attrs.baseLabel ?? attrs.label) : '';
 
-    if (!highlightSet) return { ...attrs, hidden: false, color: baseColor, label: baseLabel };
+    // No highlight — nodes sit above edges (zIndex 2) by default
+    if (!highlightSet) return { ...attrs, hidden: false, color: baseColor, label: baseLabel, zIndex: 2 };
 
     if (highlightSet.has(nodeId)) {
+      // Highlighted/focus nodes always sit above all edges (zIndex 10+)
       return {
         ...attrs, hidden: false, color: baseColor,
         label: attrs.baseLabel ?? attrs.label,
-        zIndex: 2,
+        zIndex: nodeId === focusId ? 12 : 10,
         size: nodeId === focusId ? (attrs.size ?? 5) * 1.8 : (attrs.size ?? 5) * 1.1,
         highlighted: nodeId === focusId,
       };
     }
-    return { ...attrs, hidden: false, color: dimColor(baseColor, 0.12), label: '', zIndex: 0, size: (attrs.size ?? 3) * 0.5 };
+    // Dim nodes must still be above edges (zIndex 2 > highlighted edge zIndex 1)
+    return { ...attrs, hidden: false, color: dimColor(baseColor, 0.12), label: '', zIndex: 2, size: (attrs.size ?? 3) * 0.5 };
   });
 
   renderer.setSetting('edgeReducer', (edgeId, attrs) => {
@@ -517,9 +520,10 @@ function applyNodeEdgeReducers(
     if (hiddenEdgeKinds.has(edgeKind) || hiddenKinds.has(srcKind) || hiddenKinds.has(tgtKind)) return { ...attrs, hidden: true };
     if (focusDepthSet && (!focusDepthSet.has(ext[0]) || !focusDepthSet.has(ext[1]))) return { ...attrs, hidden: true };
 
-    if (!highlightSet) return { ...attrs, hidden: false, color: attrs.baseColor ?? attrs.color };
+    if (!highlightSet) return { ...attrs, hidden: false, color: attrs.baseColor ?? attrs.color, zIndex: 0 };
 
     if (highlightSet.has(ext[0]) && highlightSet.has(ext[1])) {
+      // Highlighted edges sit below all nodes (zIndex 1 < node zIndex 2)
       return { ...attrs, hidden: false, color: withAlpha(EDGE_COLORS[edgeKind] ?? '#9ca3af', 0.95), size: 1.5, zIndex: 1 };
     }
     return { ...attrs, hidden: false, color: '#1e1e2a40', size: 0.3, zIndex: 0 };
