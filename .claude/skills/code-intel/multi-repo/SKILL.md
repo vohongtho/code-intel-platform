@@ -37,9 +37,9 @@ Start exploration here — exported symbols with no external callers:
 - **`mergeSearchResults`** `(function)` → `code-intel/core/src/multi-repo/cross-repo-search.ts:4`
 - **`listGroups`** `(function)` → `code-intel/core/src/multi-repo/group-manager.ts:8`
 - **`getGroup`** `(function)` → `code-intel/core/src/multi-repo/group-manager.ts:21`
+- **`createGroup`** `(function)` → `code-intel/core/src/multi-repo/group-manager.ts:30`
 - **`deleteGroup`** `(function)` → `code-intel/core/src/multi-repo/group-manager.ts:35`
 - **`listGroups`** `(function)` → `code-intel/core/src/multi-repo/group-registry.ts:29`
-- **`syncGroup`** `(function)` → `code-intel/core/src/multi-repo/group-sync.ts:171`
 
 ## Hot Symbols
 
@@ -54,11 +54,11 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | `matchContracts` | function | 1 | 7 | `multi-repo/group-sync.ts` |
 | `saveGroup` | function | 6 | 1 | `multi-repo/group-registry.ts` |
 | `computeContractSimilarity` | function | 2 | 4 | `multi-repo/type-similarity.ts` |
+| `addMember` | function | 3 | 2 | `multi-repo/group-registry.ts` |
+| `removeMember` | function | 3 | 2 | `multi-repo/group-registry.ts` |
 | `loadSyncResult` | function | 4 | 1 | `multi-repo/group-registry.ts` |
 | `detectWorkspace` | function | 2 | 3 | `multi-repo/workspace-detector.ts` |
 | `groupFile` | function | 4 | 0 | `multi-repo/group-registry.ts` |
-| `addMember` | function | 2 | 2 | `multi-repo/group-registry.ts` |
-| `removeMember` | function | 2 | 2 | `multi-repo/group-registry.ts` |
 
 ## Impact Guidance
 

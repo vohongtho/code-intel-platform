@@ -1,11 +1,11 @@
 ---
 name: search
-description: "Covers the **search** subsystem of code-intel-platform. 40 symbols across 5 files. Key symbols: `constructor`, `isLoaded`, `search`. Internal call density: 0.5 calls/symbol."
+description: "Covers the **search** subsystem of code-intel-platform. 43 symbols across 5 files. Key symbols: `constructor`, `isLoaded`, `search`. Internal call density: 0.5 calls/symbol."
 ---
 
 # search
 
-> **40 symbols** | **5 files** | path: `code-intel/core/src/search/` | call density: 0.5/sym
+> **43 symbols** | **5 files** | path: `code-intel/core/src/search/` | call density: 0.5/sym
 
 ## When to Use
 
@@ -19,8 +19,8 @@ Load this skill when:
 
 | File | Symbols | Notes |
 |------|---------|-------|
+| `code-intel/core/src/search/bm25-index.ts` | `PostingEntry`, `NodeMeta`, `tokenize`, `nodeToDoc` +(11) | 8 exported |
 | `code-intel/core/src/search/vector-index.ts` | `CachedRow`, `VectorIndex`, `constructor`, `init` +(11) | 9 exported |
-| `code-intel/core/src/search/bm25-index.ts` | `PostingEntry`, `NodeMeta`, `tokenize`, `nodeToDoc` +(8) | 8 exported |
 | `code-intel/core/src/search/text-search.ts` | `SearchResult`, `textSearch`, `isTestPath`, `isDistPath` +(1) | 5 exported |
 | `code-intel/core/src/search/embedder.ts` | `EmbeddedNode`, `getEmbedder`, `embedNodes`, `buildText` | 4 exported |
 | `code-intel/core/src/search/hybrid-search.ts` | `HybridSearchOptions`, `HybridSearchResult`, `hybridSearch`, `runVectorSearch` | 3 exported |
@@ -29,9 +29,9 @@ Load this skill when:
 
 Start exploration here — exported symbols with no external callers:
 
-- **`constructor`** `(method)` → `code-intel/core/src/search/bm25-index.ts:62`
-- **`isLoaded`** `(method)` → `code-intel/core/src/search/bm25-index.ts:64`
-- **`search`** `(method)` → `code-intel/core/src/search/bm25-index.ts:201`
+- **`constructor`** `(method)` → `code-intel/core/src/search/bm25-index.ts:110`
+- **`isLoaded`** `(method)` → `code-intel/core/src/search/bm25-index.ts:112`
+- **`search`** `(method)` → `code-intel/core/src/search/bm25-index.ts:254`
 - **`hybridSearch`** `(function)` → `code-intel/core/src/search/hybrid-search.ts:26`
 - **`isTestPath`** `(function)` → `code-intel/core/src/search/text-search.ts:21`
 - **`isDistPath`** `(function)` → `code-intel/core/src/search/text-search.ts:23`

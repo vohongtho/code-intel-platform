@@ -137,8 +137,10 @@ class Logger {
       const logLevel = process.env.LOG_LEVEL ?? 'info';
       const transports: winston.transport[] = [];
 
-      // Always add console transport
-      transports.push(new winston.transports.Console());
+      // Always add console transport — write to STDERR so stdout stays clean for
+      // JSON-RPC (MCP stdio transport) and structured piping. Stderr is the
+      // conventional stream for logs in CLI/server tools.
+      transports.push(new winston.transports.Console({ stderrLevels: ['error', 'warn', 'info', 'http', 'verbose', 'debug', 'silly'] }));
 
       if (!isProduction) {
         // Dev + global installs: rotate logs into ~/.code-intel/logs/

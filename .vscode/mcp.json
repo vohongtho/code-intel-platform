@@ -2,8 +2,12 @@
   "servers": {
     "code-intel": {
       "type": "stdio",
-      "command": "code-intel",
-      "args": ["mcp", "${workspaceFolder}"]
+      "command": "npx",
+      "args": [
+        "code-intel",
+        "mcp",
+        "."
+      ]
     }
   }
 }
