@@ -62,21 +62,22 @@ export function ExplorerPage() {
         {/* ── Left sidebar ── */}
         <div className="w-72 bg-deep border-r border-border-subtle flex flex-col shrink-0">
           {/* Tab bar */}
-          <div className="flex border-b border-border-subtle overflow-x-auto scrollbar-none">
+          <div className="flex border-b border-border-subtle">
             {tabs.map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
-                className={`shrink-0 px-2.5 py-2.5 text-xs font-semibold capitalize tracking-wide transition whitespace-nowrap ${
+                title={tab}
+                className={`flex-1 min-w-0 px-1.5 py-2.5 text-xs font-semibold capitalize tracking-wide transition truncate text-center ${
                   activeTab === tab
                     ? 'text-accent border-b-2 border-accent bg-accent/5'
                     : 'text-text-muted hover:text-text-secondary hover:bg-hover'
                 }`}
               >
                 {tab === 'group'
-                  ? '⬢ group'
+                  ? '⬢'
                   : tab === 'groups'
-                  ? '⬡ groups'
+                  ? '⬡ Groups'
                   : tab}
               </button>
             ))}
