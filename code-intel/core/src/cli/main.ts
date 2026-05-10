@@ -1838,10 +1838,53 @@ program
         await startHttpServer(lazyGraph, repoName, parseInt(options.port, 10), workspaceRoot);
       }
     } else {
-      // No index: prompt user to run analyze first
-      Logger.warn(`  [serve] No index found for: ${workspaceRoot}`);
-      Logger.warn(`  [serve] Run \`code-intel analyze\` first, then re-run \`code-intel serve\`.`);
-      process.exit(1);
+      // No index for this path — try to fall back to a known indexed repo from registry.
+      // This handles the common case: `cd ~/new-project && code-intel serve`
+      // where the user wants the UI running against a previously analyzed repo.
+      console.log(`  ℹ  No index found for: ${workspaceRoot}`);
+
+      const registry = loadRegistry();
+      // Filter to repos whose DB file still exists, then sort by most recently indexed
+      const available = registry
+        .filter((r) => fs.existsSync(getDbPath(r.path)) && loadMetadata(r.path) !== null)
+        .sort((a, b) => new Date(b.indexedAt).getTime() - new Date(a.indexedAt).getTime());
+
+      if (available.length > 0) {
+        const fallback = available[0];
+        console.log(`  ◈  Falling back to most recently indexed repo: ${fallback.path}`);
+        console.log(`     (${fallback.stats.nodes} nodes · ${fallback.stats.edges} edges · indexed ${fallback.indexedAt})`);
+        console.log(`  ℹ  To index this folder run: code-intel analyze\n`);
+
+        const fallbackMeta = loadMetadata(fallback.path)!;
+        const fallbackDbPath = getDbPath(fallback.path);
+
+        if (fallbackMeta.parser === 'regex' || fallbackMeta.parser === undefined) {
+          // Fallback repo has old index — start with empty graph but still serve UI
+          console.log(`  ⚠  Fallback index was built with regex parser. Starting with empty graph.`);
+          const emptyGraph = createKnowledgeGraph();
+          await startHttpServer(emptyGraph, fallback.name, parseInt(options.port, 10), fallback.path);
+        } else {
+          const lazyGraph = new LazyKnowledgeGraph();
+          const db = new DbManager(fallbackDbPath, true);
+          await db.init();
+          await lazyGraph.init(db, fallbackMeta.stats.nodes, fallbackMeta.stats.edges);
+          setImmediate(() => lazyGraph.warmTopNodes(500).catch(() => {}));
+          await startHttpServer(lazyGraph, fallback.name, parseInt(options.port, 10), fallback.path);
+        }
+
+        if (available.length > 1) {
+          console.log(`\n  Other indexed repos available (switch via web UI or re-run serve with path):`);
+          for (const r of available.slice(1)) {
+            console.log(`    code-intel serve ${r.path}`);
+          }
+        }
+      } else {
+        // No indexed repos at all — start server with empty graph so UI is still accessible
+        console.log(`  ℹ  No indexed repositories found. Starting server with empty graph.`);
+        console.log(`     Run \`code-intel analyze\` to index a repository, then reload the UI.\n`);
+        const emptyGraph = createKnowledgeGraph();
+        await startHttpServer(emptyGraph, repoName, parseInt(options.port, 10), workspaceRoot);
+      }
     }
   });
 
