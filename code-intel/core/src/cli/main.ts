@@ -287,10 +287,12 @@ async function analyzeWorkspace(targetPath: string, options?: {
   verbose?: boolean;
   /** v0.4.0: opt-in AI summarize phase */
   summarize?: boolean;
-  llmProvider?: 'openai' | 'anthropic' | 'ollama';
+  llmProvider?: 'openai' | 'anthropic' | 'ollama' | 'custom';
   llmModel?: string;
   llmBatchSize?: number;
   llmMaxNodes?: number;
+  llmBaseUrl?: string;
+  llmApiKey?: string;
   /** v0.7.0: skip automatic group sync after analysis */
   noGroupSync?: boolean;
   /** v1.0.0: max memory (MB) before spilling node content */
@@ -392,6 +394,8 @@ async function analyzeWorkspace(targetPath: string, options?: {
       model:    options.llmModel,
       batchSize: options.llmBatchSize,
       maxNodesPerRun: options.llmMaxNodes,
+      baseUrl: options.llmBaseUrl,
+      apiKey: options.llmApiKey,
     } : undefined,
     onProgress: options?.silent ? undefined : (phase, msg) => {
       if (!options?.silent) {
@@ -1644,8 +1648,10 @@ program
   .option('--skip-git',                'Allow indexing directories that are not Git repositories')
   .option('--verbose',                 'Log every file skipped due to missing parser support')
   .option('--summarize',               'Generate AI summaries for function/class/method/interface nodes (opt-in)')
-  .option('--llm-provider <provider>', 'LLM provider for --summarize: openai | anthropic | ollama (default: ollama)')
-  .option('--llm-model <model>',       'LLM model name (e.g. gpt-4o-mini, claude-haiku-4-5, llama3)')
+  .option('--llm-provider <provider>', 'LLM provider for --summarize: openai | anthropic | ollama | custom (default: ollama)')
+  .option('--llm-model <model>',       'LLM model name (e.g. gpt-4o-mini, claude-haiku-4-5, llama3, mistral)')
+  .option('--llm-base-url <url>',      'Base URL for custom OpenAI-compatible API (e.g. http://localhost:1234/v1)')
+  .option('--llm-api-key <key>',       'API key/token for the LLM provider (custom or override)')
   .option('--llm-batch-size <n>',      'Concurrent LLM calls per batch (default: 20)', '20')
   .option('--llm-max-nodes <n>',       'Max nodes to summarize per run (cost guard)')
   .option('--no-group-sync',           'Skip automatic group sync after analysis')
@@ -1672,6 +1678,7 @@ program
     $ code-intel analyze --summarize            Generate AI summaries (uses Ollama by default)
     $ code-intel analyze --summarize --llm-provider openai --llm-model gpt-4o-mini
     $ code-intel analyze --summarize --llm-provider anthropic --llm-max-nodes 500
+    $ code-intel analyze --summarize --llm-provider custom --llm-base-url http://localhost:1234/v1 --llm-model mistral --llm-api-key mytoken
     $ code-intel analyze --dry-run             Preview files that would be scanned
 `)
   .action(async (targetPath: string, opts: {
@@ -1689,6 +1696,8 @@ program
     llmModel?: string;
     llmBatchSize?: string;
     llmMaxNodes?: string;
+    llmBaseUrl?: string;
+    llmApiKey?: string;
     groupSync?: boolean;
     dryRun?: boolean;
     maxMemory?: string;
@@ -1728,10 +1737,12 @@ program
       embeddings: opts.embeddings,
       verbose: opts.verbose,
       summarize: opts.summarize,
-      llmProvider: opts.llmProvider as 'openai' | 'anthropic' | 'ollama' | undefined,
+      llmProvider: opts.llmProvider as 'openai' | 'anthropic' | 'ollama' | 'custom' | undefined,
       llmModel: opts.llmModel,
       llmBatchSize: (() => { const v = parseInt(opts.llmBatchSize ?? '', 10); return Number.isFinite(v) && v >= 1 ? v : undefined; })(),
       llmMaxNodes:  (() => { const v = parseInt(opts.llmMaxNodes  ?? '', 10); return Number.isFinite(v) && v >= 1 ? v : undefined; })(),
+      llmBaseUrl: opts.llmBaseUrl,
+      llmApiKey: opts.llmApiKey,
       maxMemoryMB:  (() => { const v = parseInt(opts.maxMemory    ?? '', 10); return Number.isFinite(v) && v >= 1 ? v : undefined; })(),
       profile: opts.profile,
     });

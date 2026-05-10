@@ -42,7 +42,7 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `runInitWizard` | function | 1 | 14 | `cli/init-wizard.ts` |
+| `runInitWizard` | function | 1 | 16 | `cli/init-wizard.ts` |
 | `rewriteCommand` | function | 5 | 6 | `cli/hook-rewriter.ts` |
 | `analyzeWorkspace` | function | 2 | 8 | `cli/main.ts` |
 | `startWatcher` | function | 1 | 9 | `cli/main.ts` |

@@ -5,7 +5,7 @@
 import type { LLMConfig, LLMProvider } from './provider.js';
 
 export async function createLLMProvider(config: LLMConfig = {}): Promise<LLMProvider> {
-  const { provider = 'ollama', model } = config;
+  const { provider = 'ollama', model, baseUrl, apiKey } = config;
 
   switch (provider) {
     case 'openai': {
@@ -15,6 +15,13 @@ export async function createLLMProvider(config: LLMConfig = {}): Promise<LLMProv
     case 'anthropic': {
       const { AnthropicProvider } = await import('./providers/anthropic.js');
       return new AnthropicProvider(model);
+    }
+    case 'custom': {
+      const { CustomProvider } = await import('./providers/custom.js');
+      const url = baseUrl ?? 'http://localhost:1234/v1';
+      const mdl = model ?? 'default';
+      const key = apiKey ?? '';
+      return new CustomProvider(url, mdl, key);
     }
     case 'ollama':
     default: {
