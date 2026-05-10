@@ -4,6 +4,53 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.0.2] — 2026-05-10 — Agent Hook System
+
+> **Theme:** Automatic command interception across every major AI coding agent — grep/cat/rg silently rewritten to `code-intel search/inspect` before the LLM ever sees the output
+
+### 🪝 PreToolUse Hook System — Tier 1 (Programmatic, auto-rewrite)
+
+- **`code-intel-hook` binary** — new standalone binary (`dist/cli/hook.js`, ~10KB); starts in ~50ms (vs 850ms for `main.js`); registered as `code-intel-hook` in `package.json` `bin`
+- **`hook-rewriter.ts`** — single source of truth for all rewrite rules; four rules:
+  - `grep <symbol>` / `rg <symbol>` → `code-intel search "<symbol>"` (rejects regex meta-chars, passthrough flags `-c/-v/-l/-L/-o/-Z`, compound commands, rg structural flags)
+  - `cat <source-file>` → `code-intel inspect <stem>` (source extensions only; stdin `-` and write redirects pass through)
+  - `head/tail <source-file>` → `code-intel inspect <stem>` (common `-n N`, `--lines=N` flags; `tail -f` passes through)
+  - idempotency guard: `code-intel …` prefix never rewrites again; compound `&&`/`||`/`;`/`|` always passes through
+- **Claude Code** — installs `PreToolUse` hook in `~/.claude/settings.json`; prepended first so it runs before RTK; format: `hookSpecificOutput + permissionDecision:allow + updatedInput`
+- **Cursor** — installs `preToolUse` hook in `~/.cursor/hooks.json`; format: `{ permission: "allow", updated_input: { command } }` or `{}` for no-match
+- **Gemini CLI** — installs `BeforeTool` hook in `~/.gemini/settings.json`; format: `{ decision: "allow", hookSpecificOutput: { tool_input: { command } } }`
+- **GitHub Copilot** — installs `.github/hooks/code-intel-rewrite.json` (project-scoped); VS Code Chat: `updatedInput` transparent rewrite; Copilot CLI: `deny-with-suggestion` (camelCase `toolName`/`toolArgs` format)
+- All hooks: **always exit 0** — non-blocking guarantee; agent command execution is never blocked on any error path
+
+### 🔌 Plugin System — Tier 2 (Plugin API)
+
+- **OpenCode** — installs `~/.config/opencode/plugins/code-intel.ts`; plugin content inlined in binary (no external file dependency after `npm install`); API: `tool.execute.before` + `code-intel rewrite` subprocess
+- **OpenClaw** — installs `~/.openclaw/extensions/code-intel/index.ts`; API: `api.on("before_tool_call", handler, { priority: 10 })`; content inlined in binary
+
+### 📝 Rules Files — Tier 3 (Prompt-level, auto-written by `analyze`)
+
+- **Cline / Roo Code** → `.clinerules` (project root)
+- **Windsurf** → `.windsurfrules` (project root)
+- **Kilo Code** → `.kilocode/rules/code-intel-rules.md`
+- **Google Antigravity** → `.agents/rules/code-intel-rules.md`
+- **Codex CLI** → appended to `AGENTS.md` (already written by `context-writer.ts`)
+- All files written by `writeContextFiles()` on every `code-intel analyze`; idempotent (markers-based upsert, never overwrites custom content)
+
+### ⚙️ `code-intel setup` — Full Agent Registration
+
+- Now installs hooks for **all 9 agents** in a single command: Claude Code, Cursor, Gemini CLI, GitHub Copilot, OpenCode, OpenClaw, Cline, Windsurf, Kilo Code, Antigravity, Codex
+- All installs are idempotent (reports `already present` on re-run)
+- Backup + atomic write (`tmp → rename`) for all JSON config files
+- Graceful skip with informative message for agents not installed (no directory found)
+
+### 🏗️ Build
+
+- `tsup.config.ts` — added `cli/hook` build target: `external: [/^node:/]` only; keeps binary tiny (~10KB); no OTel, no DB, no graph
+- `scripts/add-shebang.mjs` — adds shebang to both `dist/cli/main.js` and `dist/cli/hook.js`
+- `package.json` — added `"code-intel-hook": "dist/cli/hook.js"` bin entry
+
+---
+
 ## [1.0.1] — 2026-05-03 — Token Efficiency
 
 > **Theme:** ~63% fewer tokens per AI session — faster, cheaper, smarter LLM interactions

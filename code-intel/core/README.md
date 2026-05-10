@@ -31,7 +31,8 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 - **Multi-language** — TypeScript, JavaScript, Python, Java, Go, C, C++, C#, Rust, PHP, Ruby, Swift, Kotlin, Dart (14 languages via tree-sitter AST)
 - **Incremental Analysis** — `--incremental` flag re-parses only git-changed/mtime-changed files; 10k-file repo with 3 changes: 288ms
 - **Parallel Analysis** — `--parallel` flag runs parse + resolve phases on worker threads for large repos
-- **AI Context Files** — auto-generates `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `.cursor/rules/code-intel.mdc`, and `.kiro/steering/code-intel.md` after every analysis with live stats, CLI reference, development workflows, and skill links — supporting Amp, Claude Code, Codex, Copilot, Cursor, Aider, Gemini, Kiro, Trae, Hermes, Factory, OpenCode, Pi, Antigravity, OpenClaw, and more
+- **AI Context Files** — auto-generates `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `.cursor/rules/code-intel.mdc`, `.kiro/steering/code-intel.md`, `.clinerules`, `.windsurfrules`, `.kilocode/rules/code-intel-rules.md`, and `.agents/rules/code-intel-rules.md` after every analysis — supporting Amp, Claude Code, Codex, Copilot, Cursor, Aider, Gemini, Kiro, Trae, Hermes, Factory, OpenCode, Pi, Antigravity, OpenClaw, Cline, Windsurf, Kilo Code, and more
+- **Agent Hook System** _(v1.0.2)_ — `code-intel setup` installs PreToolUse hooks for all major AI agents; when an agent runs `grep MyClass src/`, the `code-intel-hook` binary (~10KB, ~50ms startup) silently rewrites it to `code-intel search "MyClass"` — saving ~3,000 tokens per lookup; supports Claude Code, Cursor, Gemini CLI, GitHub Copilot (VS Code + CLI), OpenCode, OpenClaw; rules files for Cline/Roo Code, Windsurf, Kilo Code, Antigravity, Codex CLI
 - **Skill Files** — generates `.claude/skills/code-intel/` with per-cluster SKILL.md files (hot symbols, entry points, impact guidance) for AI assistants
 - **Repository Groups** — multi-repo / monorepo service tracking with workspace auto-discovery (npm, pnpm, Nx, Turborepo), contract extraction (OpenAPI, GraphQL, Protobuf), type-aware similarity scoring, and cross-repo dependency detection
 - **`.codeintelignore`** — exclude directories from analysis (like `.gitignore` but for code-intel)
@@ -235,13 +236,15 @@ fixtures
 
 ## 🤖 MCP Setup (one-time)
 
-Run the one-time setup command to configure the MCP server for your AI editor (Claude Desktop / Claude Code):
+Run the one-time setup command to configure the MCP server and install agent hooks:
 
 ```bash
 code-intel setup
 ```
 
-This writes the MCP server configuration to `~/.config/claude/claude_desktop_config.json`:
+This does two things:
+
+**1. MCP server** — writes `~/.config/claude/claude_desktop_config.json` so your editor can start the MCP server automatically:
 
 ```json
 {
@@ -253,6 +256,24 @@ This writes the MCP server configuration to `~/.config/claude/claude_desktop_con
   }
 }
 ```
+
+**2. Agent hooks** — installs PreToolUse hooks for every supported AI agent (idempotent, always safe to re-run):
+
+| Agent | Hook type | What it does |
+|-------|-----------|--------------|
+| **Claude Code** | `~/.claude/settings.json` PreToolUse | Auto-rewrites grep/cat → code-intel search/inspect |
+| **Cursor** | `~/.cursor/hooks.json` preToolUse | Auto-rewrites grep/cat → code-intel search/inspect |
+| **Gemini CLI** | `~/.gemini/settings.json` BeforeTool | Auto-rewrites grep/cat → code-intel search/inspect |
+| **GitHub Copilot** | `.github/hooks/code-intel-rewrite.json` | VS Code Chat: transparent rewrite; CLI: deny + suggestion |
+| **OpenCode** | `~/.config/opencode/plugins/code-intel.ts` | Plugin: intercepts before tool execution |
+| **OpenClaw** | `~/.openclaw/extensions/code-intel/` | Plugin: `before_tool_call` intercept |
+| **Cline / Roo Code** | `.clinerules` | Prompt-level policy (also written by `analyze`) |
+| **Windsurf** | `.windsurfrules` | Prompt-level policy (also written by `analyze`) |
+| **Kilo Code** | `.kilocode/rules/code-intel-rules.md` | Prompt-level policy (also written by `analyze`) |
+| **Antigravity** | `.agents/rules/code-intel-rules.md` | Prompt-level policy (also written by `analyze`) |
+| **Codex CLI** | `AGENTS.md` (appended) | Prompt-level policy (also written by `analyze`) |
+
+> **How hooks work:** The `code-intel-hook` binary (~10KB, ~50ms startup) intercepts every Bash tool call. When the agent tries to run `grep MyClass src/`, the hook silently rewrites it to `code-intel search "MyClass"` — saving ~3,000 tokens per lookup and returning structured graph results instead of raw text.
 
 After setup, the MCP server starts automatically when your AI editor launches, giving it direct access to all code-intel tools.
 

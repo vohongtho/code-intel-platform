@@ -1,13 +1,14 @@
 {
   "name": "@vohongtho.infotech/code-intel",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Static code analysis platform — builds a Knowledge Graph from source code with Web UI, HTTP API, CLI, and MCP server",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "code-intel": "dist/cli/main.js"
+    "code-intel": "dist/cli/main.js",
+    "code-intel-hook": "dist/cli/hook.js"
   },
   "exports": {
     ".": "./dist/index.js"
