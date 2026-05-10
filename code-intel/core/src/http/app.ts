@@ -18,7 +18,7 @@ import { loadMetadata } from '../storage/metadata.js';
 import { VectorIndex } from '../search/vector-index.js';
 // VectorIndex now uses better-sqlite3 directly (no DbManager needed)
 import fs from 'node:fs';
-import { listGroups, loadGroup, loadSyncResult, saveSyncResult } from '../multi-repo/group-registry.js';
+import { listGroups, loadGroup, saveGroup, deleteGroup, groupExists, addMember, removeMember, loadSyncResult, saveSyncResult } from '../multi-repo/group-registry.js';
 import { syncGroup } from '../multi-repo/group-sync.js';
 import { queryGroup } from '../multi-repo/group-query.js';
 import { createKnowledgeGraph } from '../graph/knowledge-graph.js';
@@ -1213,6 +1213,100 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     res.json(result);
   });
 
+  // ── Group CRUD ───────────────────────────────────────────────────────────────
+
+  // POST /api/v1/groups — create a new group
+  app.post('/api/v1/groups', requireAuth, requireRole('analyst'), (req: Request, res: Response) => {
+    const { name } = req.body as { name?: string };
+    if (!name || !name.trim()) {
+      res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: 'Group name is required' } });
+      return;
+    }
+    const trimmed = name.trim();
+    if (groupExists(trimmed)) {
+      res.status(409).json({ error: { code: ErrorCodes.CONFLICT, message: `Group "${trimmed}" already exists` } });
+      return;
+    }
+    const group = { name: trimmed, createdAt: new Date().toISOString(), members: [] };
+    saveGroup(group);
+    res.status(201).json(group);
+  });
+
+  // DELETE /api/v1/groups/:name — delete a group
+  app.delete('/api/v1/groups/:name', requireAuth, requireRole('analyst'), (req: Request, res: Response) => {
+    const groupName = req.params['name'] as string;
+    if (!groupExists(groupName)) {
+      res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: 'Group not found' } });
+      return;
+    }
+    deleteGroup(groupName);
+    res.status(204).end();
+  });
+
+  // PATCH /api/v1/groups/:name — rename a group
+  app.patch('/api/v1/groups/:name', requireAuth, requireRole('analyst'), (req: Request, res: Response) => {
+    const groupName = req.params['name'] as string;
+    const group = loadGroup(groupName);
+    if (!group) { res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: 'Group not found' } }); return; }
+    const { name } = req.body as { name?: string };
+    if (!name || !name.trim()) {
+      res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: 'New name is required' } });
+      return;
+    }
+    const newName = name.trim();
+    if (newName !== group.name && groupExists(newName)) {
+      res.status(409).json({ error: { code: ErrorCodes.CONFLICT, message: `Group "${newName}" already exists` } });
+      return;
+    }
+    if (newName !== group.name) {
+      deleteGroup(group.name);
+      group.name = newName;
+    }
+    saveGroup(group);
+    res.json(group);
+  });
+
+  // POST /api/v1/groups/:name/members — add a member
+  app.post('/api/v1/groups/:name/members', requireAuth, requireRole('analyst'), (req: Request, res: Response) => {
+    const groupName = req.params['name'] as string;
+    const group = loadGroup(groupName);
+    if (!group) { res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: 'Group not found' } }); return; }
+    const { groupPath, registryName } = req.body as { groupPath?: string; registryName?: string };
+    if (!groupPath || !registryName) {
+      res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: 'groupPath and registryName are required' } });
+      return;
+    }
+    const registry = loadRegistry();
+    if (!registry.find((r) => r.name === registryName)) {
+      res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: `Repo "${registryName}" not found in registry. Run code-intel analyze first.` } });
+      return;
+    }
+    try {
+      const updated = addMember(groupName, { groupPath, registryName });
+      res.json(updated);
+    } catch (err) {
+      res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: err instanceof Error ? err.message : String(err) } });
+    }
+  });
+
+  // DELETE /api/v1/groups/:name/members — remove a member by groupPath
+  app.delete('/api/v1/groups/:name/members', requireAuth, requireRole('analyst'), (req: Request, res: Response) => {
+    const groupName = req.params['name'] as string;
+    const group = loadGroup(groupName);
+    if (!group) { res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: 'Group not found' } }); return; }
+    const { groupPath } = req.body as { groupPath?: string };
+    if (!groupPath) {
+      res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: 'groupPath is required' } });
+      return;
+    }
+    try {
+      const updated = removeMember(groupName, groupPath);
+      res.json(updated);
+    } catch (err) {
+      res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: err instanceof Error ? err.message : String(err) } });
+    }
+  });
+
   app.post('/api/v1/groups/:name/sync', async (req, res) => {
     const group = loadGroup(req.params.name);
     if (!group) { res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: 'Group not found' } }); return; }
@@ -1220,7 +1314,6 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
       const result = await syncGroup(group);
       saveSyncResult(result);
       group.lastSync = result.syncedAt;
-      const { saveGroup } = await import('../multi-repo/group-registry.js');
       saveGroup(group);
       res.json(result);
     } catch (err) {

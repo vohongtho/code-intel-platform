@@ -300,6 +300,71 @@ export class ApiClient {
     }>;
   }
 
+  async createGroup(name: string): Promise<{ name: string; members: { groupPath: string; registryName: string }[]; createdAt: string }> {
+    const csrfToken = await this.getCsrfToken();
+    const res = await fetch(`${this.baseUrl}/api/v1/groups`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      credentials: 'include',
+      body: JSON.stringify({ name }),
+    });
+    const body = await res.json().catch(() => ({})) as { error?: { message?: string } };
+    if (!res.ok) throw new Error(body?.error?.message ?? `Create group failed: ${res.statusText}`);
+    return body as { name: string; members: { groupPath: string; registryName: string }[]; createdAt: string };
+  }
+
+  async renameGroup(oldName: string, newName: string): Promise<{ name: string; members: { groupPath: string; registryName: string }[] }> {
+    const csrfToken = await this.getCsrfToken();
+    const res = await fetch(`${this.baseUrl}/api/v1/groups/${encodeURIComponent(oldName)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      credentials: 'include',
+      body: JSON.stringify({ name: newName }),
+    });
+    const body = await res.json().catch(() => ({})) as { error?: { message?: string } };
+    if (!res.ok) throw new Error(body?.error?.message ?? `Rename failed: ${res.statusText}`);
+    return body as { name: string; members: { groupPath: string; registryName: string }[] };
+  }
+
+  async deleteGroup(name: string): Promise<void> {
+    const csrfToken = await this.getCsrfToken();
+    const res = await fetch(`${this.baseUrl}/api/v1/groups/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+      headers: { 'X-CSRF-Token': csrfToken },
+      credentials: 'include',
+    });
+    if (!res.ok && res.status !== 204) {
+      const body = await res.json().catch(() => ({})) as { error?: { message?: string } };
+      throw new Error(body?.error?.message ?? `Delete failed: ${res.statusText}`);
+    }
+  }
+
+  async addGroupMember(groupName: string, groupPath: string, registryName: string): Promise<{ name: string; members: { groupPath: string; registryName: string }[] }> {
+    const csrfToken = await this.getCsrfToken();
+    const res = await fetch(`${this.baseUrl}/api/v1/groups/${encodeURIComponent(groupName)}/members`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      credentials: 'include',
+      body: JSON.stringify({ groupPath, registryName }),
+    });
+    const body = await res.json().catch(() => ({})) as { error?: { message?: string } };
+    if (!res.ok) throw new Error(body?.error?.message ?? `Add member failed: ${res.statusText}`);
+    return body as { name: string; members: { groupPath: string; registryName: string }[] };
+  }
+
+  async removeGroupMember(groupName: string, groupPath: string): Promise<{ name: string; members: { groupPath: string; registryName: string }[] }> {
+    const csrfToken = await this.getCsrfToken();
+    const res = await fetch(`${this.baseUrl}/api/v1/groups/${encodeURIComponent(groupName)}/members`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      credentials: 'include',
+      body: JSON.stringify({ groupPath }),
+    });
+    const body = await res.json().catch(() => ({})) as { error?: { message?: string } };
+    if (!res.ok) throw new Error(body?.error?.message ?? `Remove member failed: ${res.statusText}`);
+    return body as { name: string; members: { groupPath: string; registryName: string }[] };
+  }
+
   async queryGQL(gql: string): Promise<GQLResult> {
     const csrfToken = await this.getCsrfToken();
     const res = await fetch(`${this.baseUrl}/api/v1/query`, {
