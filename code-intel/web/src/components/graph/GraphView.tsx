@@ -494,11 +494,11 @@ function applyNodeEdgeReducers(
     const deg = degreeMap.get(nodeId) ?? 0;
     const baseLabel = deg >= topNThreshold ? (attrs.baseLabel ?? attrs.label) : '';
 
-    // No highlight — nodes sit above dim edges (zIndex 2) by default
-    if (!highlightSet) return { ...attrs, hidden: false, color: baseColor, label: baseLabel, zIndex: 2 };
+    // No highlight active — normal rendering
+    if (!highlightSet) return { ...attrs, hidden: false, color: baseColor, label: baseLabel, zIndex: 0 };
 
     if (highlightSet.has(nodeId)) {
-      // Highlighted/focus nodes sit above highlighted edges (zIndex 20) so they are always clickable
+      // Highlighted/focus nodes: full size and color, highest zIndex
       return {
         ...attrs, hidden: false, color: baseColor,
         label: attrs.baseLabel ?? attrs.label,
@@ -507,8 +507,9 @@ function applyNodeEdgeReducers(
         highlighted: nodeId === focusId,
       };
     }
-    // Dim nodes stay above dim edges but below highlighted edges
-    return { ...attrs, hidden: false, color: dimColor(baseColor, 0.12), label: '', zIndex: 2, size: (attrs.size ?? 3) * 0.5 };
+
+    // Dim nodes: shrink to 1px dots and near-invisible so they CANNOT cover highlighted edges
+    return { ...attrs, hidden: false, color: dimColor(baseColor, 0.06), label: '', zIndex: 0, size: 1 };
   });
 
   renderer.setSetting('edgeReducer', (edgeId, attrs) => {
@@ -523,10 +524,11 @@ function applyNodeEdgeReducers(
     if (!highlightSet) return { ...attrs, hidden: false, color: attrs.baseColor ?? attrs.color, zIndex: 0 };
 
     if (highlightSet.has(ext[0]) && highlightSet.has(ext[1])) {
-      // Highlighted edges get the highest zIndex — above all nodes and dim edges
-      return { ...attrs, hidden: false, color: withAlpha(EDGE_COLORS[edgeKind] ?? '#9ca3af', 0.95), size: 1.5, zIndex: 20 };
+      // Highlighted edges: brightest, thickest, highest zIndex of all edges
+      return { ...attrs, hidden: false, color: withAlpha(EDGE_COLORS[edgeKind] ?? '#9ca3af', 1.0), size: 2, zIndex: 10 };
     }
-    return { ...attrs, hidden: false, color: '#1e1e2a40', size: 0.3, zIndex: 0 };
+    // Dim edges: near invisible so they don't compete visually with highlighted connections
+    return { ...attrs, hidden: false, color: '#0e0e1820', size: 0.25, zIndex: 0 };
   });
 }
 
