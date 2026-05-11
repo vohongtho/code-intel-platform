@@ -73,7 +73,7 @@
     "cors": "^2.8.5",
     "csrf-csrf": "^4.0.3",
     "express": "^5.2.1",
-    "express-rate-limit": "^7.5.0",
+    "express-rate-limit": "^8.5.1",
     "graphology": "^0.26.0",
     "graphology-communities-louvain": "^2.0.1",
     "helmet": "^8.1.0",
