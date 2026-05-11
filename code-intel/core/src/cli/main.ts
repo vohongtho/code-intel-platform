@@ -210,6 +210,8 @@ program
   │  server                                                                                                            │
   │    code-intel mcp [path]                    Launch the MCP stdio server consumed by AI-enabled editors            │
   │    code-intel serve [path] --port <n>       Start the HTTP API and serve the interactive web UI (default :4747)   │
+  │    code-intel serve --detach                Start the server in the background (frees the terminal)               │
+  │    code-intel stop [path]                   Stop a background server started with --detach                        │
   │                                                                                                                    │
   │  registry                                                                                                          │
   │    code-intel list                          Display all repositories that have been indexed                       │
@@ -1799,10 +1801,18 @@ program
   .argument('[path]', 'Path to analyze (default: current directory)', '.')
   .option('-p, --port <port>', 'Port to listen on', '4747')
   .option('--force', 'Force re-analysis even if an index already exists')
+  .option('-d, --detach', 'Run server in background (detached); PID written to .code-intel/serve.pid')
   .addHelpText('after', `
   If a .code-intel/graph.db index already exists for the path, the server
   loads the persisted graph directly and starts immediately — no re-analysis.
   Use --force to discard the existing index and re-analyze from scratch.
+
+  Background mode:
+    $ code-intel serve --detach          # start in background
+    $ code-intel serve --detach --port 8080
+    $ code-intel stop                    # stop the background server
+
+  PID file: <path>/.code-intel/serve.pid
 
   The web UI offers:
     · Force-directed Knowledge Graph with color-coded node types
@@ -1816,8 +1826,9 @@ program
     $ code-intel serve ./my-project
     $ code-intel serve --port 8080
     $ code-intel serve --force
+    $ code-intel serve --detach
 `)
-  .action(async (targetPath: string, options: { port: string; force?: boolean }) => {
+  .action(async (targetPath: string, options: { port: string; force?: boolean; detach?: boolean }) => {
     const workspaceRoot = path.resolve(targetPath);
     const repoName = path.basename(workspaceRoot);
     const dbPath = getDbPath(workspaceRoot);
@@ -1825,6 +1836,54 @@ program
     if (!fs.existsSync(workspaceRoot) || !fs.statSync(workspaceRoot).isDirectory()) {
       console.error(`  ✗  Path does not exist: ${workspaceRoot}`);
       process.exit(1);
+    }
+
+    // ── Detach mode: re-spawn self without --detach, fully detached ──────────
+    if (options.detach) {
+      const { spawn } = await import('node:child_process');
+      const pidDir = path.join(workspaceRoot, '.code-intel');
+      const pidFile = path.join(pidDir, 'serve.pid');
+
+      // Check if already running
+      if (fs.existsSync(pidFile)) {
+        const existingPid = parseInt(fs.readFileSync(pidFile, 'utf-8').trim(), 10);
+        try {
+          process.kill(existingPid, 0); // signal 0 = existence check
+          console.log(`  ⚠  Server already running (PID ${existingPid}). Stop it first with: code-intel stop`);
+          process.exit(0);
+        } catch {
+          // Process not running — stale PID file, continue
+          fs.unlinkSync(pidFile);
+        }
+      }
+
+      // Build args for re-spawned process (same as current invocation minus --detach/-d)
+      const selfArgs = ['serve', targetPath, '--port', options.port];
+      if (options.force) selfArgs.push('--force');
+
+      const logDir = path.join(os.homedir(), '.code-intel', 'logs');
+      fs.mkdirSync(logDir, { recursive: true });
+      const logFile = path.join(logDir, `serve-${Date.now()}.log`);
+      const logFd = fs.openSync(logFile, 'a');
+
+      const child = spawn(process.execPath, [process.argv[1]!, ...selfArgs], {
+        detached: true,
+        stdio: ['ignore', logFd, logFd],
+        env: process.env,
+      });
+      child.unref();
+
+      fs.mkdirSync(pidDir, { recursive: true });
+      fs.writeFileSync(pidFile, String(child.pid), 'utf-8');
+
+      console.log(`  ✅  Server started in background`);
+      console.log(`      PID      : ${child.pid}`);
+      console.log(`      Port     : ${options.port}`);
+      console.log(`      URL      : http://localhost:${options.port}`);
+      console.log(`      Log      : ${logFile}`);
+      console.log(`      PID file : ${pidFile}`);
+      console.log(`\n  Stop with: code-intel stop`);
+      process.exit(0);
     }
 
     const existingIndex = !options.force && fs.existsSync(dbPath) && loadMetadata(workspaceRoot) !== null;
@@ -1900,6 +1959,53 @@ program
   });
 
 // ─── 4b. watch ───────────────────────────────────────────────────────────────
+program
+  .command('stop')
+  .description('Stop a background server started with `code-intel serve --detach`')
+  .argument('[path]', 'Project path whose server to stop (default: current directory)', '.')
+  .addHelpText('after', `
+  Reads the PID from <path>/.code-intel/serve.pid and sends SIGTERM.
+  The PID file is removed automatically after a successful stop.
+
+  Examples:
+    $ code-intel stop
+    $ code-intel stop ./my-project
+`)
+  .action((targetPath: string) => {
+    const workspaceRoot = path.resolve(targetPath);
+    const pidFile = path.join(workspaceRoot, '.code-intel', 'serve.pid');
+
+    if (!fs.existsSync(pidFile)) {
+      console.log(`  ℹ  No background server found for: ${workspaceRoot}`);
+      console.log(`     (PID file not present: ${pidFile})`);
+      process.exit(0);
+    }
+
+    const pid = parseInt(fs.readFileSync(pidFile, 'utf-8').trim(), 10);
+    if (isNaN(pid)) {
+      console.error(`  ✗  Invalid PID file: ${pidFile}`);
+      fs.unlinkSync(pidFile);
+      process.exit(1);
+    }
+
+    try {
+      process.kill(pid, 'SIGTERM');
+      fs.unlinkSync(pidFile);
+      console.log(`  ✅  Stopped server (PID ${pid})`);
+    } catch (err: unknown) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'ESRCH') {
+        // Process already gone — clean up stale PID file
+        fs.unlinkSync(pidFile);
+        console.log(`  ℹ  Server (PID ${pid}) was not running. Stale PID file removed.`);
+      } else {
+        console.error(`  ✗  Failed to stop server (PID ${pid}): ${(err as Error).message}`);
+        process.exit(1);
+      }
+    }
+  });
+
+// ─── 4c. watch ───────────────────────────────────────────────────────────────
 program
   .command('watch')
   .description('Start HTTP server + file watcher (auto-reindex on file changes)')
