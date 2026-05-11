@@ -36,6 +36,19 @@ export default defineConfig([
     treeshake: true,
     splitting: false,
   },
+  // Hook entry — dist/cli/hook.js (tiny binary, fast startup ~50ms)
+  // Imports ONLY hook-rewriter.ts — no OTel, no DB, no graph.
+  {
+    entry: { 'cli/hook': 'src/cli/hook.ts' },
+    format: ['esm'],
+    outDir: 'dist',
+    dts: false,
+    sourcemap: true,
+    clean: false,
+    external: [/^node:/],
+    treeshake: true,
+    splitting: false,
+  },
   // CLI entry — dist/cli/main.js (bundled single file, no types needed)
   {
     entry: { 'cli/main': 'src/cli/main.ts' },

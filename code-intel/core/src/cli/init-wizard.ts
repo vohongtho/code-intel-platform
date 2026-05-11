@@ -25,9 +25,10 @@ const CONFIG_PATH = path.join(GLOBAL_DIR, 'config.json');
 export interface CodeIntelConfig {
   $schema?: string;
   llm: {
-    provider: 'openai' | 'anthropic' | 'ollama' | 'none';
+    provider: 'openai' | 'anthropic' | 'ollama' | 'custom' | 'none';
     model: string;
     apiKey: string;
+    baseUrl?: string;
     batchSize: number;
     maxTokensPerSummary: number;
   };
@@ -294,6 +295,7 @@ export async function runInitWizard(opts: { reset?: boolean; yes?: boolean } = {
       { label: 'Ollama (local, free, requires Ollama running)', value: 'ollama' as const },
       { label: 'OpenAI (requires OPENAI_API_KEY env var)', value: 'openai' as const },
       { label: 'Anthropic (requires ANTHROPIC_API_KEY env var)', value: 'anthropic' as const },
+      { label: 'Custom (OpenAI-compatible API — enter URL, token & model)', value: 'custom' as const },
       { label: 'Skip (configure later)', value: 'none' as const },
     ], 0);
 
@@ -311,6 +313,21 @@ export async function runInitWizard(opts: { reset?: boolean; yes?: boolean } = {
       cfg.llm.model = 'llama3';
       cfg.llm.apiKey = '';
       console.log('  Make sure Ollama is running: https://ollama.com');
+    } else if (llmProvider === 'custom') {
+      console.log('  Configure your OpenAI-compatible provider (e.g. LM Studio, vLLM, Together, Groq, Azure).\n');
+      const baseUrl = (await prompt(rl, '  API Base URL (e.g. http://localhost:1234/v1): ')).trim();
+      cfg.llm.baseUrl = baseUrl || 'http://localhost:1234/v1';
+
+      const apiKey = (await prompt(rl, '  API Token/Key (leave blank if not required): ')).trim();
+      cfg.llm.apiKey = apiKey || '';
+
+      const model = (await prompt(rl, '  Model name (e.g. mistral-7b-instruct): ')).trim();
+      cfg.llm.model = model || 'default';
+
+      console.log(`\n  ✅  Custom provider configured:`);
+      console.log(`     URL:   ${cfg.llm.baseUrl}`);
+      console.log(`     Model: ${cfg.llm.model}`);
+      console.log(`     Token: ${cfg.llm.apiKey ? '(set)' : '(none)'}`);
     } else {
       cfg.llm.apiKey = '';
       console.log('  Skipped. Run `code-intel config set llm.provider openai` later.');

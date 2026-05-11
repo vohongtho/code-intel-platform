@@ -35,7 +35,7 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `parse` | method | 55 | 6 | `query/gql-parser.ts` |
+| `parse` | method | 63 | 6 | `query/gql-parser.ts` |
 | `summarizeCluster` | function | 2 | 10 | `query/cluster-summary.ts` |
 | `computePRImpact` | function | 4 | 8 | `query/pr-impact.ts` |
 | `executePATH` | function | 1 | 10 | `query/gql-executor.ts` |

@@ -98,15 +98,27 @@ import {
 } from '../errors/codes.js';
 import { generateCompletion, autoInstallCompletion } from './completion.js';
 import { backgroundVersionCheck, runUpdate } from './update-checker.js';
+import { runRewrite, runClaudeHook } from './hook-rewriter.js';
+
+// ── Hook mode detection ───────────────────────────────────────────────────────
+// When called as `code-intel hook <agent>`, the process runs on EVERY Bash
+// tool use inside the AI agent. We must:
+//   1. Skip all expensive startup work (OTel, network, filesystem checks)
+//   2. Always exit(0) on errors — a non-zero exit blocks the agent's command
+const IS_HOOK_MODE = process.argv[2] === 'hook';
 
 // Bootstrap OTel tracing if enabled (must be called before any auto-instrumented code).
-initTracing();
+// Skipped in hook mode: OTel SDK adds significant startup latency.
+if (!IS_HOOK_MODE) {
+  initTracing();
+}
 
 // ── Global --debug flag ───────────────────────────────────────────────────────
 const debugMode = process.argv.includes('--debug');
 
 // ── Startup prerequisite checks ───────────────────────────────────────────────
-{
+// Skipped in hook mode: filesystem checks add latency to every bash call.
+if (!IS_HOOK_MODE) {
   const checks = runPrerequisiteChecks();
   for (const c of checks) {
     const icon = c.level === 'error' ? '✗' : '⚠';
@@ -115,24 +127,31 @@ const debugMode = process.argv.includes('--debug');
 }
 
 // ── First-run hint: if no config exists, suggest running init ─────────────────
-if (!configExists()) {
+if (!IS_HOOK_MODE && !configExists()) {
   process.stderr.write(
     '  ℹ  No config found. Run `code-intel init` to set up your environment.\n',
   );
 }
 
 // ── Global uncaught error handler ─────────────────────────────────────────────
+// In hook mode: always exit(0) — hooks MUST NEVER block agent command execution.
 process.on('uncaughtException', (err) => {
+  if (IS_HOOK_MODE) { process.exit(0); }
   process.stderr.write(formatCliError(err, debugMode));
   process.exit(1);
 });
 process.on('unhandledRejection', (err) => {
+  if (IS_HOOK_MODE) { process.exit(0); }
   process.stderr.write(formatCliError(err, debugMode));
   process.exit(1);
 });
 
 // ── Background version check (non-blocking) ───────────────────────────────────
-backgroundVersionCheck(_pkg.version);
+// Skipped in hook mode: makes a network request to npm registry — unacceptable
+// latency for a process called on every bash tool use.
+if (!IS_HOOK_MODE) {
+  backgroundVersionCheck(_pkg.version);
+}
 
 const program = new Command();
 
@@ -191,6 +210,8 @@ program
   │  server                                                                                                            │
   │    code-intel mcp [path]                    Launch the MCP stdio server consumed by AI-enabled editors            │
   │    code-intel serve [path] --port <n>       Start the HTTP API and serve the interactive web UI (default :4747)   │
+  │    code-intel serve --detach                Start the server in the background (frees the terminal)               │
+  │    code-intel stop [path]                   Stop a background server started with --detach                        │
   │                                                                                                                    │
   │  registry                                                                                                          │
   │    code-intel list                          Display all repositories that have been indexed                       │
@@ -268,10 +289,12 @@ async function analyzeWorkspace(targetPath: string, options?: {
   verbose?: boolean;
   /** v0.4.0: opt-in AI summarize phase */
   summarize?: boolean;
-  llmProvider?: 'openai' | 'anthropic' | 'ollama';
+  llmProvider?: 'openai' | 'anthropic' | 'ollama' | 'custom';
   llmModel?: string;
   llmBatchSize?: number;
   llmMaxNodes?: number;
+  llmBaseUrl?: string;
+  llmApiKey?: string;
   /** v0.7.0: skip automatic group sync after analysis */
   noGroupSync?: boolean;
   /** v1.0.0: max memory (MB) before spilling node content */
@@ -373,6 +396,8 @@ async function analyzeWorkspace(targetPath: string, options?: {
       model:    options.llmModel,
       batchSize: options.llmBatchSize,
       maxNodesPerRun: options.llmMaxNodes,
+      baseUrl: options.llmBaseUrl,
+      apiKey: options.llmApiKey,
     } : undefined,
     onProgress: options?.silent ? undefined : (phase, msg) => {
       if (!options?.silent) {
@@ -894,6 +919,510 @@ program
     process.stdout.write(generateCompletion(shell as 'bash' | 'zsh' | 'fish'));
   });
 
+// ─── Claude Code hook installation helpers ────────────────────────────────────
+
+const CODE_INTEL_HOOK_CMD = 'code-intel-hook claude';
+const CODE_INTEL_CURSOR_HOOK_CMD = 'code-intel-hook cursor';
+const CODE_INTEL_GEMINI_HOOK_CMD = 'code-intel-hook gemini';
+
+interface SettingsHookEntry {
+  type?: string;
+  command?: string;
+}
+interface SettingsPreToolUseEntry {
+  matcher?: string;
+  hooks?: SettingsHookEntry[];
+}
+interface SettingsJson {
+  hooks?: {
+    PreToolUse?: SettingsPreToolUseEntry[];
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
+function hookAlreadyPresent(root: SettingsJson): boolean {
+  const entries = root?.hooks?.PreToolUse;
+  if (!Array.isArray(entries)) return false;
+  return entries.some(
+    (entry) =>
+      Array.isArray(entry?.hooks) &&
+      entry.hooks.some(
+        (h) => typeof h?.command === 'string' && (h.command.includes('code-intel-hook') || h.command.includes('code-intel hook')),
+      ),
+  );
+}
+
+function insertHookEntry(root: SettingsJson): SettingsJson {
+  const existingHooks = root.hooks ?? {};
+  const existingPreToolUse: SettingsPreToolUseEntry[] = Array.isArray(
+    existingHooks.PreToolUse,
+  )
+    ? existingHooks.PreToolUse
+    : [];
+
+  const newEntry: SettingsPreToolUseEntry = {
+    matcher: 'Bash',
+    hooks: [{ type: 'command', command: CODE_INTEL_HOOK_CMD }],
+  };
+
+  // PREPEND so code-intel runs before RTK — prevents RTK from rewriting
+  // `grep X src/` to `rtk grep X src/` before code-intel gets a chance.
+  return {
+    ...root,
+    hooks: {
+      ...existingHooks,
+      PreToolUse: [newEntry, ...existingPreToolUse],
+    },
+  };
+}
+
+type HookInstallResult =
+  | { result: 'installed' }
+  | { result: 'already-present' }
+  | { result: 'skipped'; reason: string };
+
+function installClaudeHook(): HookInstallResult {
+  const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
+
+  // 1. Read or initialize settings.json
+  let root: SettingsJson = {};
+  if (fs.existsSync(settingsPath)) {
+    try {
+      const raw = fs.readFileSync(settingsPath, 'utf-8');
+      root = JSON.parse(raw) as SettingsJson;
+    } catch (err) {
+      return {
+        result: 'skipped',
+        reason: `Could not parse ~/.claude/settings.json: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
+  // 2. Idempotency: skip if already installed
+  if (hookAlreadyPresent(root)) {
+    return { result: 'already-present' };
+  }
+
+  // 3. Deep-merge — preserve ALL existing hook entries
+  const updated = insertHookEntry(root);
+
+  // 4. Backup original
+  if (fs.existsSync(settingsPath)) {
+    try {
+      fs.copyFileSync(settingsPath, `${settingsPath}.bak`);
+    } catch {
+      Logger.warn('  ⚠   Could not create settings.json backup — proceeding anyway');
+    }
+  }
+
+  // 5. Atomic write: temp file + rename (never leaves settings.json half-written)
+  try {
+    fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+    const tmp = `${settingsPath}.tmp.${Date.now()}`;
+    fs.writeFileSync(tmp, JSON.stringify(updated, null, 2) + '\n', 'utf-8');
+    fs.renameSync(tmp, settingsPath);
+  } catch (err) {
+    return {
+      result: 'skipped',
+      reason: `Could not write ~/.claude/settings.json: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
+  return { result: 'installed' };
+}
+
+// ─── GitHub Copilot (VS Code Chat + CLI) hook installation ───────────────────
+// Copilot uses .github/hooks/code-intel-rewrite.json (project-scoped)
+// { "hooks": { "PreToolUse": [{ "type": "command", "command": "...", "cwd": ".", "timeout": 5 }] } }
+
+const COPILOT_HOOK_JSON_CONTENT = JSON.stringify({
+  hooks: {
+    PreToolUse: [
+      { type: 'command', command: CODE_INTEL_HOOK_CMD.replace('claude', 'copilot'), cwd: '.', timeout: 5 },
+    ],
+  },
+}, null, 2) + '\n';
+
+function installCopilotHook(workspaceRoot: string = '.'): HookInstallResult {
+  const githubDir = path.join(workspaceRoot, '.github');
+  const hooksDir = path.join(githubDir, 'hooks');
+  const hookFile = path.join(hooksDir, 'code-intel-rewrite.json');
+
+  try {
+    fs.mkdirSync(hooksDir, { recursive: true });
+    // Idempotency: skip if already installed
+    if (fs.existsSync(hookFile)) {
+      try {
+        const existing = JSON.parse(fs.readFileSync(hookFile, 'utf-8')) as Record<string, unknown>;
+        const hooks = (existing?.hooks as Record<string, unknown>)?.PreToolUse;
+        if (Array.isArray(hooks) && hooks.some((h: unknown) =>
+          typeof (h as Record<string, unknown>)?.command === 'string' &&
+          ((h as Record<string, unknown>).command as string).includes('code-intel')
+        )) {
+          return { result: 'already-present' };
+        }
+      } catch { /* corrupt file — overwrite */ }
+    }
+    const tmp = `${hookFile}.tmp.${Date.now()}`;
+    fs.writeFileSync(tmp, COPILOT_HOOK_JSON_CONTENT, 'utf-8');
+    fs.renameSync(tmp, hookFile);
+    return { result: 'installed' };
+  } catch (err) {
+    return { result: 'skipped', reason: `Could not write .github/hooks/code-intel-rewrite.json: ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
+// ─── OpenCode plugin installation ─────────────────────────────────────────────
+// OpenCode plugin: ~/.config/opencode/plugins/code-intel.ts (global)
+// Content is inlined here so it works after npm install (no external file deps).
+
+const OPENCODE_PLUGIN_CONTENT = `import type { Plugin } from "@opencode-ai/plugin"
+import { execSync } from "node:child_process"
+
+// code-intel OpenCode plugin — rewrites symbol-discovery commands to semantic equivalents.
+// Requires: code-intel installed and in PATH.
+// To change rewrite rules, edit hook-rewriter.ts in the code-intel source.
+
+let codeIntelAvailable: boolean | null = null
+
+function checkCodeIntel(): boolean {
+  if (codeIntelAvailable !== null) return codeIntelAvailable
+  try {
+    execSync("which code-intel", { stdio: "ignore" })
+    codeIntelAvailable = true
+  } catch {
+    codeIntelAvailable = false
+  }
+  return codeIntelAvailable
+}
+
+function tryRewrite(command: string): string | null {
+  try {
+    const result = execSync(\`code-intel rewrite \${JSON.stringify(command)}\`, {
+      encoding: "utf-8",
+      timeout: 2000,
+    }).trim()
+    return result && result !== command ? result : null
+  } catch {
+    return null
+  }
+}
+
+export const CodeIntelOpenCodePlugin: Plugin = async ({ $ }) => {
+  if (!checkCodeIntel()) {
+    console.warn("[code-intel] code-intel binary not found in PATH — plugin disabled")
+    return {}
+  }
+  return {
+    "tool.execute.before": async (input, output) => {
+      const tool = String(input?.tool ?? "").toLowerCase()
+      if (tool !== "bash" && tool !== "shell") return
+      const args = output?.args
+      if (!args || typeof args !== "object") return
+      const command = (args as Record<string, unknown>).command
+      if (typeof command !== "string" || !command) return
+      try {
+        const rewritten = tryRewrite(command)
+        if (rewritten) {
+          ;(args as Record<string, unknown>).command = rewritten
+        }
+      } catch {
+        // non-blocking
+      }
+    },
+  }
+}
+`;
+
+function installOpenCodePlugin(): HookInstallResult {
+  const pluginDir = path.join(os.homedir(), '.config', 'opencode', 'plugins');
+  const pluginFile = path.join(pluginDir, 'code-intel.ts');
+
+  // Check if opencode is installed
+  const opencodeCfg = path.join(os.homedir(), '.config', 'opencode');
+  if (!fs.existsSync(opencodeCfg)) {
+    return { result: 'skipped', reason: 'OpenCode not installed (~/.config/opencode not found)' };
+  }
+
+  // Idempotency
+  if (fs.existsSync(pluginFile)) {
+    return { result: 'already-present' };
+  }
+
+  try {
+    fs.mkdirSync(pluginDir, { recursive: true });
+    const tmp = `${pluginFile}.tmp.${Date.now()}`;
+    fs.writeFileSync(tmp, OPENCODE_PLUGIN_CONTENT, 'utf-8');
+    fs.renameSync(tmp, pluginFile);
+    return { result: 'installed' };
+  } catch (err) {
+    return { result: 'skipped', reason: `Could not write plugin: ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
+// ─── OpenClaw plugin installation ─────────────────────────────────────────────
+// OpenClaw plugin: ~/.openclaw/extensions/code-intel/index.ts (global)
+// API: api.on("before_tool_call", handler, { priority: 10 })
+// Content is inlined here so it works after npm install (no external file deps).
+
+const OPENCLAW_PLUGIN_CONTENT = `import { execSync } from "node:child_process";
+
+// code-intel OpenClaw plugin — rewrites symbol-discovery commands to semantic equivalents.
+// Requires: code-intel installed and in PATH.
+// To change rewrite rules, edit hook-rewriter.ts in the code-intel source.
+
+let codeIntelAvailable: boolean | null = null;
+
+function checkCodeIntel(): boolean {
+  if (codeIntelAvailable !== null) return codeIntelAvailable;
+  try {
+    execSync("which code-intel", { stdio: "ignore" });
+    codeIntelAvailable = true;
+  } catch {
+    codeIntelAvailable = false;
+  }
+  return codeIntelAvailable;
+}
+
+function tryRewrite(command: string): string | null {
+  try {
+    const result = execSync(\`code-intel rewrite \${JSON.stringify(command)}\`, {
+      encoding: "utf-8",
+      timeout: 2000,
+    }).trim();
+    return result && result !== command ? result : null;
+  } catch {
+    return null;
+  }
+}
+
+export default function register(api: any) {
+  const pluginConfig = api.config ?? {};
+  const enabled = pluginConfig.enabled !== false;
+  const verbose = pluginConfig.verbose === true;
+
+  if (!enabled) return;
+
+  if (!checkCodeIntel()) {
+    console.warn("[code-intel] code-intel binary not found in PATH — plugin disabled");
+    return;
+  }
+
+  api.on(
+    "before_tool_call",
+    (event: { toolName: string; params: Record<string, unknown> }) => {
+      if (event.toolName !== "exec") return;
+      const command = event.params?.command;
+      if (typeof command !== "string") return;
+      const rewritten = tryRewrite(command);
+      if (!rewritten) return;
+      if (verbose) console.log(\`[code-intel] \${command} -> \${rewritten}\`);
+      return { params: { ...event.params, command: rewritten } };
+    },
+    { priority: 10 }
+  );
+
+  if (verbose) console.log("[code-intel] OpenClaw plugin registered");
+}
+`;
+
+function installOpenClawPlugin(): HookInstallResult {
+  const openclawDir = path.join(os.homedir(), '.openclaw');
+  if (!fs.existsSync(openclawDir)) {
+    return { result: 'skipped', reason: 'OpenClaw not installed (~/.openclaw directory not found)' };
+  }
+
+  const pluginDir = path.join(openclawDir, 'extensions', 'code-intel');
+  const pluginFile = path.join(pluginDir, 'index.ts');
+
+  // Idempotency
+  if (fs.existsSync(pluginFile)) {
+    return { result: 'already-present' };
+  }
+
+  try {
+    fs.mkdirSync(pluginDir, { recursive: true });
+    const tmp = `${pluginFile}.tmp.${Date.now()}`;
+    fs.writeFileSync(tmp, OPENCLAW_PLUGIN_CONTENT, 'utf-8');
+    fs.renameSync(tmp, pluginFile);
+    return { result: 'installed' };
+  } catch (err) {
+    return { result: 'skipped', reason: `Could not write plugin: ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
+// ─── Prompt-level rules file installation ─────────────────────────────────────
+// For agents without a programmatic hook API: write rules files to known locations.
+// Agents: Cline/Roo Code (.clinerules), Windsurf (.windsurfrules),
+//         Codex CLI (AGENTS.md block), Kilo Code (.kilocode/rules/),
+//         Google Antigravity (.agents/rules/)
+
+const CODE_INTEL_RULES_CONTENT = `# Code Intelligence — Tool Policy
+
+## MANDATORY: Use code-intel before any code action
+
+**FORBIDDEN** (never use for symbol/code discovery): \`grep\`, \`rg\`, \`find\`, \`cat\`, \`sed\`, \`ls\`
+
+**REQUIRED workflow**:
+\`\`\`bash
+code-intel search "<concept>"    # replaces grep/rg/find
+code-intel inspect <symbol>      # replaces cat + manual reading
+code-intel impact <symbol>       # replaces manual caller tracing
+\`\`\`
+
+Rules:
+- NEVER open a file cold — always \`code-intel search\` first
+- NEVER use grep for symbols — use \`code-intel search\` instead
+- If impact shows ≥ 5 callers → warn user: HIGH blast radius
+`;
+
+function installRulesFile(filePath: string, agentName: string): HookInstallResult {
+  try {
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
+    // Idempotency: skip if already contains code-intel policy
+    if (fs.existsSync(filePath)) {
+      const existing = fs.readFileSync(filePath, 'utf-8');
+      if (existing.includes('code-intel search') || existing.includes('code-intel inspect')) {
+        return { result: 'already-present' };
+      }
+      // Append to existing file
+      fs.appendFileSync(filePath, '\n---\n\n' + CODE_INTEL_RULES_CONTENT);
+      return { result: 'installed' };
+    }
+
+    fs.writeFileSync(filePath, CODE_INTEL_RULES_CONTENT, 'utf-8');
+    return { result: 'installed' };
+  } catch (err) {
+    return { result: 'skipped', reason: `Could not write ${agentName} rules: ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+// Cursor uses ~/.cursor/hooks.json with a different schema:
+// { "version": 1, "hooks": { "preToolUse": [{ "command": "...", "matcher": "Shell" }] } }
+
+function cursorHookAlreadyPresent(root: Record<string, unknown>): boolean {
+  const hooks = (root?.hooks as Record<string, unknown>);
+  const preToolUse = hooks?.preToolUse;
+  if (!Array.isArray(preToolUse)) return false;
+  return preToolUse.some((entry: unknown) => {
+    const cmd = (entry as Record<string, unknown>)?.command;
+    return typeof cmd === 'string' && (cmd.includes('code-intel-hook') || cmd.includes('code-intel hook'));
+  });
+}
+
+function installCursorHook(): HookInstallResult {
+  const cursorDir = path.join(os.homedir(), '.cursor');
+  const hooksPath = path.join(cursorDir, 'hooks.json');
+
+  // Read or initialize hooks.json
+  let root: Record<string, unknown> = { version: 1 };
+  if (fs.existsSync(hooksPath)) {
+    try {
+      const raw = fs.readFileSync(hooksPath, 'utf-8');
+      if (raw.trim()) root = JSON.parse(raw) as Record<string, unknown>;
+    } catch (err) {
+      return { result: 'skipped', reason: `Could not parse ~/.cursor/hooks.json: ${err instanceof Error ? err.message : String(err)}` };
+    }
+  } else if (!fs.existsSync(cursorDir)) {
+    // Cursor not installed
+    return { result: 'skipped', reason: 'Cursor not installed (~/.cursor directory not found)' };
+  }
+
+  if (cursorHookAlreadyPresent(root)) return { result: 'already-present' };
+
+  // Backup
+  if (fs.existsSync(hooksPath)) {
+    try { fs.copyFileSync(hooksPath, `${hooksPath}.bak`); } catch { /* non-fatal */ }
+  }
+
+  // Merge entry
+  const existingHooks = (root.hooks as Record<string, unknown>) ?? {};
+  const existingPreToolUse: unknown[] = Array.isArray(existingHooks.preToolUse) ? existingHooks.preToolUse : [];
+  const newEntry = { command: CODE_INTEL_CURSOR_HOOK_CMD, matcher: 'Shell' };
+  // Prepend so code-intel runs before any other hooks
+  const updated = { ...root, hooks: { ...existingHooks, preToolUse: [newEntry, ...existingPreToolUse] } };
+
+  // Atomic write
+  try {
+    fs.mkdirSync(cursorDir, { recursive: true });
+    const tmp = `${hooksPath}.tmp.${Date.now()}`;
+    fs.writeFileSync(tmp, JSON.stringify(updated, null, 2) + '\n', 'utf-8');
+    fs.renameSync(tmp, hooksPath);
+  } catch (err) {
+    return { result: 'skipped', reason: `Could not write ~/.cursor/hooks.json: ${err instanceof Error ? err.message : String(err)}` };
+  }
+
+  return { result: 'installed' };
+}
+
+// ─── Gemini CLI hook installation ─────────────────────────────────────────────
+// Gemini uses ~/.gemini/settings.json with BeforeTool hook:
+// { "hooks": { "BeforeTool": [{ "matcher": "run_shell_command", "hooks": [{ "type": "command", "command": "..." }] }] } }
+
+function geminiHookAlreadyPresent(root: Record<string, unknown>): boolean {
+  const hooks = (root?.hooks as Record<string, unknown>);
+  const beforeTool = hooks?.BeforeTool;
+  if (!Array.isArray(beforeTool)) return false;
+  return beforeTool.some((entry: unknown) => {
+    const entryHooks = (entry as Record<string, unknown>)?.hooks;
+    if (!Array.isArray(entryHooks)) return false;
+    return entryHooks.some((h: unknown) => {
+      const cmd = (h as Record<string, unknown>)?.command;
+      return typeof cmd === 'string' && (cmd.includes('code-intel-hook') || cmd.includes('code-intel hook'));
+    });
+  });
+}
+
+function installGeminiHook(): HookInstallResult {
+  const geminiDir = path.join(os.homedir(), '.gemini');
+  const settingsPath = path.join(geminiDir, 'settings.json');
+
+  if (!fs.existsSync(geminiDir)) {
+    return { result: 'skipped', reason: 'Gemini CLI not installed (~/.gemini directory not found)' };
+  }
+
+  let root: Record<string, unknown> = {};
+  if (fs.existsSync(settingsPath)) {
+    try {
+      const raw = fs.readFileSync(settingsPath, 'utf-8');
+      if (raw.trim()) root = JSON.parse(raw) as Record<string, unknown>;
+    } catch (err) {
+      return { result: 'skipped', reason: `Could not parse ~/.gemini/settings.json: ${err instanceof Error ? err.message : String(err)}` };
+    }
+  }
+
+  if (geminiHookAlreadyPresent(root)) return { result: 'already-present' };
+
+  // Backup
+  if (fs.existsSync(settingsPath)) {
+    try { fs.copyFileSync(settingsPath, `${settingsPath}.bak`); } catch { /* non-fatal */ }
+  }
+
+  // Merge entry (Gemini BeforeTool format)
+  const existingHooks = (root.hooks as Record<string, unknown>) ?? {};
+  const existingBeforeTool: unknown[] = Array.isArray(existingHooks.BeforeTool) ? existingHooks.BeforeTool : [];
+  const newEntry = {
+    matcher: 'run_shell_command',
+    hooks: [{ type: 'command', command: CODE_INTEL_GEMINI_HOOK_CMD }],
+  };
+  const updated = { ...root, hooks: { ...existingHooks, BeforeTool: [newEntry, ...existingBeforeTool] } };
+
+  // Atomic write
+  try {
+    const tmp = `${settingsPath}.tmp.${Date.now()}`;
+    fs.writeFileSync(tmp, JSON.stringify(updated, null, 2) + '\n', 'utf-8');
+    fs.renameSync(tmp, settingsPath);
+  } catch (err) {
+    return { result: 'skipped', reason: `Could not write ~/.gemini/settings.json: ${err instanceof Error ? err.message : String(err)}` };
+  }
+
+  return { result: 'installed' };
+}
+
 // ─── 1. setup ────────────────────────────────────────────────────────────────
 program
   .command('setup')
@@ -959,6 +1488,151 @@ program
     console.log('  ' + JSON.stringify({ servers: { 'code-intel': { type: 'stdio', command: 'npx', args: ['code-intel', 'mcp', '.'] } } }, null, 2).split('\n').join('\n  '));
     console.log('\n  To verify in VS Code: open Command Palette → "MCP: List Servers" and confirm code-intel is Running.');
     console.log('\n  Next: run `code-intel analyze` inside your project to build the knowledge graph.\n');
+
+    // ── Install Claude Code PreToolUse hook ────────────────────────────────
+    const hookResult = installClaudeHook();
+    if (hookResult.result === 'installed') {
+      const backupPath = path.join(os.homedir(), '.claude', 'settings.json.bak');
+      console.log('\n  ✅  Claude Code hook installed');
+      console.log('     grep/rg/cat on source files → code-intel search/inspect');
+      if (fs.existsSync(backupPath)) {
+        console.log(`     Backup: ${backupPath}`);
+      }
+      console.log('\n  ↺  Restart Claude Code for the hook to take effect.');
+    } else if (hookResult.result === 'already-present') {
+      console.log('\n  ✅  Claude Code hook already installed');
+    } else {
+      Logger.warn(`\n  ⚠   Claude Code hook skipped: ${hookResult.reason}`);
+      console.log('\n  Add manually to ~/.claude/settings.json under hooks.PreToolUse[]:');
+      console.log('  (insert as the FIRST entry so it runs before any existing hooks)\n');
+      console.log('  ' + JSON.stringify({
+        matcher: 'Bash',
+        hooks: [{ type: 'command', command: CODE_INTEL_HOOK_CMD }],
+      }, null, 2).split('\n').join('\n  '));
+    }
+
+    // ── Install Cursor hook ─────────────────────────────────────────────────
+    const cursorResult = installCursorHook();
+    if (cursorResult.result === 'installed') {
+      console.log('\n  ✅  Cursor hook installed');
+      console.log('     grep/rg/cat on source files → code-intel search/inspect');
+    } else if (cursorResult.result === 'already-present') {
+      console.log('\n  ✅  Cursor hook already installed');
+    } else {
+      console.log(`\n  ℹ   Cursor hook skipped: ${cursorResult.reason}`);
+    }
+
+    // ── Install Gemini CLI hook ─────────────────────────────────────────────
+    const geminiResult = installGeminiHook();
+    if (geminiResult.result === 'installed') {
+      console.log('\n  ✅  Gemini CLI hook installed');
+      console.log('     grep/rg/cat on source files → code-intel search/inspect');
+    } else if (geminiResult.result === 'already-present') {
+      console.log('\n  ✅  Gemini CLI hook already installed');
+    } else {
+      console.log(`\n  ℹ   Gemini CLI hook skipped: ${geminiResult.reason}`);
+    }
+
+    // ── Install GitHub Copilot hook (project-scoped) ────────────────────────
+    const copilotResult = installCopilotHook(process.cwd());
+    if (copilotResult.result === 'installed') {
+      console.log('\n  ✅  GitHub Copilot hook installed (.github/hooks/code-intel-rewrite.json)');
+      console.log('     grep/rg/cat on source files → code-intel search/inspect');
+    } else if (copilotResult.result === 'already-present') {
+      console.log('\n  ✅  GitHub Copilot hook already installed');
+    } else {
+      console.log(`\n  ℹ   GitHub Copilot hook skipped: ${copilotResult.reason}`);
+    }
+
+    // ── Install OpenCode plugin ─────────────────────────────────────────────
+    const openCodeResult = installOpenCodePlugin();
+    if (openCodeResult.result === 'installed') {
+      console.log('\n  ✅  OpenCode plugin installed (~/.config/opencode/plugins/code-intel.ts)');
+      console.log('     grep/rg/cat on source files → code-intel search/inspect');
+    } else if (openCodeResult.result === 'already-present') {
+      console.log('\n  ✅  OpenCode plugin already installed');
+    } else {
+      console.log(`\n  ℹ   OpenCode plugin skipped: ${openCodeResult.reason}`);
+    }
+
+    // ── Install OpenClaw plugin ─────────────────────────────────────────────
+    const openClawResult = installOpenClawPlugin();
+    if (openClawResult.result === 'installed') {
+      console.log('\n  ✅  OpenClaw plugin installed (~/.openclaw/extensions/code-intel/)');
+      console.log('     grep/rg/cat on source files → code-intel search/inspect');
+    } else if (openClawResult.result === 'already-present') {
+      console.log('\n  ✅  OpenClaw plugin already installed');
+    } else {
+      console.log(`\n  ℹ   OpenClaw plugin skipped: ${openClawResult.reason}`);
+    }
+
+    // ── Prompt-level rules files (project-scoped) ───────────────────────────
+    // These agents don't have programmatic hook APIs — we write rules files
+    // to well-known locations that the agents auto-load.
+    console.log('\n  ─── Prompt-level agents (rules files) ─────────────────────────────────');
+
+    const cwd = process.cwd();
+
+    // Cline / Roo Code → .clinerules
+    const clineResult = installRulesFile(path.join(cwd, '.clinerules'), 'Cline');
+    if (clineResult.result === 'installed') {
+      console.log('  ✅  Cline/Roo Code rules installed (.clinerules)');
+    } else if (clineResult.result === 'already-present') {
+      console.log('  ✅  Cline/Roo Code rules already present (.clinerules)');
+    } else {
+      console.log(`  ℹ   Cline/Roo Code rules skipped: ${clineResult.reason}`);
+    }
+
+    // Windsurf → .windsurfrules
+    const windsurfResult = installRulesFile(path.join(cwd, '.windsurfrules'), 'Windsurf');
+    if (windsurfResult.result === 'installed') {
+      console.log('  ✅  Windsurf rules installed (.windsurfrules)');
+    } else if (windsurfResult.result === 'already-present') {
+      console.log('  ✅  Windsurf rules already present (.windsurfrules)');
+    } else {
+      console.log(`  ℹ   Windsurf rules skipped: ${windsurfResult.reason}`);
+    }
+
+    // Kilo Code → .kilocode/rules/code-intel-rules.md
+    const kiloResult = installRulesFile(
+      path.join(cwd, '.kilocode', 'rules', 'code-intel-rules.md'),
+      'Kilo Code',
+    );
+    if (kiloResult.result === 'installed') {
+      console.log('  ✅  Kilo Code rules installed (.kilocode/rules/code-intel-rules.md)');
+    } else if (kiloResult.result === 'already-present') {
+      console.log('  ✅  Kilo Code rules already present');
+    } else {
+      console.log(`  ℹ   Kilo Code rules skipped: ${kiloResult.reason}`);
+    }
+
+    // Google Antigravity → .agents/rules/code-intel-rules.md
+    const antigravityResult = installRulesFile(
+      path.join(cwd, '.agents', 'rules', 'code-intel-rules.md'),
+      'Antigravity',
+    );
+    if (antigravityResult.result === 'installed') {
+      console.log('  ✅  Google Antigravity rules installed (.agents/rules/code-intel-rules.md)');
+    } else if (antigravityResult.result === 'already-present') {
+      console.log('  ✅  Google Antigravity rules already present');
+    } else {
+      console.log(`  ℹ   Google Antigravity rules skipped: ${antigravityResult.reason}`);
+    }
+
+    // Codex CLI → AGENTS.md (append block if not already present)
+    // Note: context-writer.ts already writes AGENTS.md on `analyze`.
+    // setup adds the rules to any existing AGENTS.md in cwd.
+    const codexResult = installRulesFile(path.join(cwd, 'AGENTS.md'), 'Codex');
+    if (codexResult.result === 'installed') {
+      console.log('  ✅  Codex CLI rules appended (AGENTS.md)');
+    } else if (codexResult.result === 'already-present') {
+      console.log('  ✅  Codex CLI rules already present (AGENTS.md)');
+    } else {
+      console.log(`  ℹ   Codex CLI rules skipped: ${codexResult.reason}`);
+    }
+
+    console.log('\n  ─────────────────────────────────────────────────────────────────────');
+    console.log('\n  ◈  Setup complete. Run `code-intel analyze` to build the knowledge graph.\n');
   });
 
 // ─── 2. analyze ──────────────────────────────────────────────────────────────
@@ -976,8 +1650,10 @@ program
   .option('--skip-git',                'Allow indexing directories that are not Git repositories')
   .option('--verbose',                 'Log every file skipped due to missing parser support')
   .option('--summarize',               'Generate AI summaries for function/class/method/interface nodes (opt-in)')
-  .option('--llm-provider <provider>', 'LLM provider for --summarize: openai | anthropic | ollama (default: ollama)')
-  .option('--llm-model <model>',       'LLM model name (e.g. gpt-4o-mini, claude-haiku-4-5, llama3)')
+  .option('--llm-provider <provider>', 'LLM provider for --summarize: openai | anthropic | ollama | custom (default: ollama)')
+  .option('--llm-model <model>',       'LLM model name (e.g. gpt-4o-mini, claude-haiku-4-5, llama3, mistral)')
+  .option('--llm-base-url <url>',      'Base URL for custom OpenAI-compatible API (e.g. http://localhost:1234/v1)')
+  .option('--llm-api-key <key>',       'API key/token for the LLM provider (custom or override)')
   .option('--llm-batch-size <n>',      'Concurrent LLM calls per batch (default: 20)', '20')
   .option('--llm-max-nodes <n>',       'Max nodes to summarize per run (cost guard)')
   .option('--no-group-sync',           'Skip automatic group sync after analysis')
@@ -1004,6 +1680,7 @@ program
     $ code-intel analyze --summarize            Generate AI summaries (uses Ollama by default)
     $ code-intel analyze --summarize --llm-provider openai --llm-model gpt-4o-mini
     $ code-intel analyze --summarize --llm-provider anthropic --llm-max-nodes 500
+    $ code-intel analyze --summarize --llm-provider custom --llm-base-url http://localhost:1234/v1 --llm-model mistral --llm-api-key mytoken
     $ code-intel analyze --dry-run             Preview files that would be scanned
 `)
   .action(async (targetPath: string, opts: {
@@ -1021,6 +1698,8 @@ program
     llmModel?: string;
     llmBatchSize?: string;
     llmMaxNodes?: string;
+    llmBaseUrl?: string;
+    llmApiKey?: string;
     groupSync?: boolean;
     dryRun?: boolean;
     maxMemory?: string;
@@ -1060,10 +1739,12 @@ program
       embeddings: opts.embeddings,
       verbose: opts.verbose,
       summarize: opts.summarize,
-      llmProvider: opts.llmProvider as 'openai' | 'anthropic' | 'ollama' | undefined,
+      llmProvider: opts.llmProvider as 'openai' | 'anthropic' | 'ollama' | 'custom' | undefined,
       llmModel: opts.llmModel,
       llmBatchSize: (() => { const v = parseInt(opts.llmBatchSize ?? '', 10); return Number.isFinite(v) && v >= 1 ? v : undefined; })(),
       llmMaxNodes:  (() => { const v = parseInt(opts.llmMaxNodes  ?? '', 10); return Number.isFinite(v) && v >= 1 ? v : undefined; })(),
+      llmBaseUrl: opts.llmBaseUrl,
+      llmApiKey: opts.llmApiKey,
       maxMemoryMB:  (() => { const v = parseInt(opts.maxMemory    ?? '', 10); return Number.isFinite(v) && v >= 1 ? v : undefined; })(),
       profile: opts.profile,
     });
@@ -1120,10 +1801,18 @@ program
   .argument('[path]', 'Path to analyze (default: current directory)', '.')
   .option('-p, --port <port>', 'Port to listen on', '4747')
   .option('--force', 'Force re-analysis even if an index already exists')
+  .option('-d, --detach', 'Run server in background (detached); PID written to .code-intel/serve.pid')
   .addHelpText('after', `
   If a .code-intel/graph.db index already exists for the path, the server
   loads the persisted graph directly and starts immediately — no re-analysis.
   Use --force to discard the existing index and re-analyze from scratch.
+
+  Background mode:
+    $ code-intel serve --detach          # start in background
+    $ code-intel serve --detach --port 8080
+    $ code-intel stop                    # stop the background server
+
+  PID file: <path>/.code-intel/serve.pid
 
   The web UI offers:
     · Force-directed Knowledge Graph with color-coded node types
@@ -1137,8 +1826,9 @@ program
     $ code-intel serve ./my-project
     $ code-intel serve --port 8080
     $ code-intel serve --force
+    $ code-intel serve --detach
 `)
-  .action(async (targetPath: string, options: { port: string; force?: boolean }) => {
+  .action(async (targetPath: string, options: { port: string; force?: boolean; detach?: boolean }) => {
     const workspaceRoot = path.resolve(targetPath);
     const repoName = path.basename(workspaceRoot);
     const dbPath = getDbPath(workspaceRoot);
@@ -1146,6 +1836,54 @@ program
     if (!fs.existsSync(workspaceRoot) || !fs.statSync(workspaceRoot).isDirectory()) {
       console.error(`  ✗  Path does not exist: ${workspaceRoot}`);
       process.exit(1);
+    }
+
+    // ── Detach mode: re-spawn self without --detach, fully detached ──────────
+    if (options.detach) {
+      const { spawn } = await import('node:child_process');
+      const pidDir = path.join(workspaceRoot, '.code-intel');
+      const pidFile = path.join(pidDir, 'serve.pid');
+
+      // Check if already running
+      if (fs.existsSync(pidFile)) {
+        const existingPid = parseInt(fs.readFileSync(pidFile, 'utf-8').trim(), 10);
+        try {
+          process.kill(existingPid, 0); // signal 0 = existence check
+          console.log(`  ⚠  Server already running (PID ${existingPid}). Stop it first with: code-intel stop`);
+          process.exit(0);
+        } catch {
+          // Process not running — stale PID file, continue
+          fs.unlinkSync(pidFile);
+        }
+      }
+
+      // Build args for re-spawned process (same as current invocation minus --detach/-d)
+      const selfArgs = ['serve', targetPath, '--port', options.port];
+      if (options.force) selfArgs.push('--force');
+
+      const logDir = path.join(os.homedir(), '.code-intel', 'logs');
+      fs.mkdirSync(logDir, { recursive: true });
+      const logFile = path.join(logDir, `serve-${Date.now()}.log`);
+      const logFd = fs.openSync(logFile, 'a');
+
+      const child = spawn(process.execPath, [process.argv[1]!, ...selfArgs], {
+        detached: true,
+        stdio: ['ignore', logFd, logFd],
+        env: process.env,
+      });
+      child.unref();
+
+      fs.mkdirSync(pidDir, { recursive: true });
+      fs.writeFileSync(pidFile, String(child.pid), 'utf-8');
+
+      console.log(`  ✅  Server started in background`);
+      console.log(`      PID      : ${child.pid}`);
+      console.log(`      Port     : ${options.port}`);
+      console.log(`      URL      : http://localhost:${options.port}`);
+      console.log(`      Log      : ${logFile}`);
+      console.log(`      PID file : ${pidFile}`);
+      console.log(`\n  Stop with: code-intel stop`);
+      process.exit(0);
     }
 
     const existingIndex = !options.force && fs.existsSync(dbPath) && loadMetadata(workspaceRoot) !== null;
@@ -1170,14 +1908,104 @@ program
         await startHttpServer(lazyGraph, repoName, parseInt(options.port, 10), workspaceRoot);
       }
     } else {
-      // No index: prompt user to run analyze first
-      Logger.warn(`  [serve] No index found for: ${workspaceRoot}`);
-      Logger.warn(`  [serve] Run \`code-intel analyze\` first, then re-run \`code-intel serve\`.`);
-      process.exit(1);
+      // No index for this path — try to fall back to a known indexed repo from registry.
+      // This handles the common case: `cd ~/new-project && code-intel serve`
+      // where the user wants the UI running against a previously analyzed repo.
+      console.log(`  ℹ  No index found for: ${workspaceRoot}`);
+
+      const registry = loadRegistry();
+      // Filter to repos whose DB file still exists, then sort by most recently indexed
+      const available = registry
+        .filter((r) => fs.existsSync(getDbPath(r.path)) && loadMetadata(r.path) !== null)
+        .sort((a, b) => new Date(b.indexedAt).getTime() - new Date(a.indexedAt).getTime());
+
+      if (available.length > 0) {
+        const fallback = available[0];
+        console.log(`  ◈  Falling back to most recently indexed repo: ${fallback.path}`);
+        console.log(`     (${fallback.stats.nodes} nodes · ${fallback.stats.edges} edges · indexed ${fallback.indexedAt})`);
+        console.log(`  ℹ  To index this folder run: code-intel analyze\n`);
+
+        const fallbackMeta = loadMetadata(fallback.path)!;
+        const fallbackDbPath = getDbPath(fallback.path);
+
+        if (fallbackMeta.parser === 'regex' || fallbackMeta.parser === undefined) {
+          // Fallback repo has old index — start with empty graph but still serve UI
+          console.log(`  ⚠  Fallback index was built with regex parser. Starting with empty graph.`);
+          const emptyGraph = createKnowledgeGraph();
+          await startHttpServer(emptyGraph, fallback.name, parseInt(options.port, 10), fallback.path);
+        } else {
+          const lazyGraph = new LazyKnowledgeGraph();
+          const db = new DbManager(fallbackDbPath, true);
+          await db.init();
+          await lazyGraph.init(db, fallbackMeta.stats.nodes, fallbackMeta.stats.edges);
+          setImmediate(() => lazyGraph.warmTopNodes(500).catch(() => {}));
+          await startHttpServer(lazyGraph, fallback.name, parseInt(options.port, 10), fallback.path);
+        }
+
+        if (available.length > 1) {
+          console.log(`\n  Other indexed repos available (switch via web UI or re-run serve with path):`);
+          for (const r of available.slice(1)) {
+            console.log(`    code-intel serve ${r.path}`);
+          }
+        }
+      } else {
+        // No indexed repos at all — start server with empty graph so UI is still accessible
+        console.log(`  ℹ  No indexed repositories found. Starting server with empty graph.`);
+        console.log(`     Run \`code-intel analyze\` to index a repository, then reload the UI.\n`);
+        const emptyGraph = createKnowledgeGraph();
+        await startHttpServer(emptyGraph, repoName, parseInt(options.port, 10), workspaceRoot);
+      }
     }
   });
 
 // ─── 4b. watch ───────────────────────────────────────────────────────────────
+program
+  .command('stop')
+  .description('Stop a background server started with `code-intel serve --detach`')
+  .argument('[path]', 'Project path whose server to stop (default: current directory)', '.')
+  .addHelpText('after', `
+  Reads the PID from <path>/.code-intel/serve.pid and sends SIGTERM.
+  The PID file is removed automatically after a successful stop.
+
+  Examples:
+    $ code-intel stop
+    $ code-intel stop ./my-project
+`)
+  .action((targetPath: string) => {
+    const workspaceRoot = path.resolve(targetPath);
+    const pidFile = path.join(workspaceRoot, '.code-intel', 'serve.pid');
+
+    if (!fs.existsSync(pidFile)) {
+      console.log(`  ℹ  No background server found for: ${workspaceRoot}`);
+      console.log(`     (PID file not present: ${pidFile})`);
+      process.exit(0);
+    }
+
+    const pid = parseInt(fs.readFileSync(pidFile, 'utf-8').trim(), 10);
+    if (isNaN(pid)) {
+      console.error(`  ✗  Invalid PID file: ${pidFile}`);
+      fs.unlinkSync(pidFile);
+      process.exit(1);
+    }
+
+    try {
+      process.kill(pid, 'SIGTERM');
+      fs.unlinkSync(pidFile);
+      console.log(`  ✅  Stopped server (PID ${pid})`);
+    } catch (err: unknown) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'ESRCH') {
+        // Process already gone — clean up stale PID file
+        fs.unlinkSync(pidFile);
+        console.log(`  ℹ  Server (PID ${pid}) was not running. Stale PID file removed.`);
+      } else {
+        console.error(`  ✗  Failed to stop server (PID ${pid}): ${(err as Error).message}`);
+        process.exit(1);
+      }
+    }
+  });
+
+// ─── 4c. watch ───────────────────────────────────────────────────────────────
 program
   .command('watch')
   .description('Start HTTP server + file watcher (auto-reindex on file changes)')
@@ -3885,5 +4713,45 @@ program
       console.log('');
     }
   });
+
+// ─── rewrite (internal — used by hook scripts and for debugging) ─────────────
+{
+  const rewriteCmd = new Command('rewrite')
+    .description('Rewrite a shell command to its code-intel equivalent (used by hooks)')
+    .argument('<cmd>', 'Raw shell command to check')
+    .addHelpText('after', `
+  Exit codes:
+    0  Rewrite found — rewritten command printed to stdout
+    1  No code-intel equivalent — pass through unchanged
+
+  Examples:
+    $ code-intel rewrite 'grep "AuthService" src/'
+    code-intel search "AuthService"
+
+    $ code-intel rewrite 'git status'
+    (no output, exit 1)
+`)
+    .action((cmd: string) => {
+      runRewrite(cmd);
+    });
+  program.addCommand(rewriteCmd, { hidden: true });
+}
+
+// ─── hook (internal — installed in ~/.claude/settings.json) ──────────────────
+{
+  const hookCmd = new Command('hook')
+    .description('Run as a PreToolUse hook for an AI agent (reads/writes JSON on stdin/stdout)')
+    .argument('<agent>', 'Agent type: claude')
+    .action((agent: string) => {
+      if (agent === 'claude') {
+        runClaudeHook();
+      } else {
+        // Unknown agent — exit 0 (non-blocking guarantee)
+        process.stderr.write(`[code-intel] Unknown hook agent: ${agent}\n`);
+        process.exit(0);
+      }
+    });
+  program.addCommand(hookCmd, { hidden: true });
+}
 
 program.parse();

@@ -59,6 +59,22 @@ export function writeContextFiles(
   const kiroDir = path.join(workspaceRoot, '.kiro', 'steering');
   if (!fs.existsSync(kiroDir)) fs.mkdirSync(kiroDir, { recursive: true });
   upsertFile(path.join(kiroDir, 'code-intel.md'), block, 'code-intel.md');
+
+  // Cline / Roo Code → .clinerules
+  upsertFile(path.join(workspaceRoot, '.clinerules'), block, '.clinerules');
+
+  // Windsurf → .windsurfrules
+  upsertFile(path.join(workspaceRoot, '.windsurfrules'), block, '.windsurfrules');
+
+  // Kilo Code → .kilocode/rules/code-intel-rules.md
+  const kilocodeDir = path.join(workspaceRoot, '.kilocode', 'rules');
+  if (!fs.existsSync(kilocodeDir)) fs.mkdirSync(kilocodeDir, { recursive: true });
+  upsertFile(path.join(kilocodeDir, 'code-intel-rules.md'), block, 'code-intel-rules.md');
+
+  // Google Antigravity → .agents/rules/code-intel-rules.md
+  const agentsDir = path.join(workspaceRoot, '.agents', 'rules');
+  if (!fs.existsSync(agentsDir)) fs.mkdirSync(agentsDir, { recursive: true });
+  upsertFile(path.join(agentsDir, 'code-intel-rules.md'), block, 'code-intel-rules.md');
 }
 
 // ─── Block content ────────────────────────────────────────────────────────────

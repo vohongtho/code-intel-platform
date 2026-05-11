@@ -1,11 +1,11 @@
 ---
 name: cli
-description: "Covers the **cli** subsystem of code-intel-platform. 88 symbols across 8 files. Key symbols: `expandEnvRefs`, `parse`. Internal call density: 0.7 calls/symbol."
+description: "Covers the **cli** subsystem of code-intel-platform. 112 symbols across 9 files. Key symbols: `expandEnvRefs`, `parse`. Internal call density: 0.7 calls/symbol."
 ---
 
 # cli
 
-> **88 symbols** | **8 files** | path: `code-intel/core/src/cli/` | call density: 0.7/sym
+> **112 symbols** | **9 files** | path: `code-intel/core/src/cli/` | call density: 0.7/sym
 
 ## When to Use
 
@@ -19,10 +19,11 @@ Load this skill when:
 
 | File | Symbols | Notes |
 |------|---------|-------|
+| `code-intel/core/src/cli/main.ts` | `ensureGitignore`, `analyzeWorkspace`, `renderBar`, `clearBar` +(25) | internal |
 | `code-intel/core/src/cli/config-manager.ts` | `isSensitiveKey`, `maskValue`, `maskConfig`, `getByPath` +(12) | 14 exported |
-| `code-intel/core/src/cli/main.ts` | `ensureGitignore`, `analyzeWorkspace`, `renderBar`, `clearBar` +(11) | internal |
 | `code-intel/core/src/cli/init-wizard.ts` | `CodeIntelConfig`, `configExists`, `loadConfig`, `saveConfig` +(9) | 7 exported |
 | `code-intel/core/src/cli/sarif-builder.ts` | `SARIFRegion`, `SARIFArtifactLocation`, `SARIFPhysicalLocation`, `SARIFLocation` +(9) | 13 exported |
+| `code-intel/core/src/cli/hook-rewriter.ts` | `isSymbolLike`, `isSourceFile`, `fileStem`, `extractGrepSymbol` +(6) | 6 exported |
 | `code-intel/core/src/cli/update-checker.ts` | `UpdateMeta`, `loadMeta`, `saveMeta`, `isNewer` +(6) | 4 exported |
 | `code-intel/core/src/cli/completion.ts` | `loadRepoPaths`, `loadGroupNames`, `bashCompletion`, `zshCompletion` +(4) | 2 exported |
 | `code-intel/core/src/cli/skill-writer.ts` | `SkillSummary`, `AreaInfo`, `writeSkillFiles`, `buildAreaMap` +(4) | 2 exported |
@@ -41,7 +42,8 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `runInitWizard` | function | 1 | 14 | `cli/init-wizard.ts` |
+| `runInitWizard` | function | 1 | 16 | `cli/init-wizard.ts` |
+| `rewriteCommand` | function | 5 | 6 | `cli/hook-rewriter.ts` |
 | `analyzeWorkspace` | function | 2 | 8 | `cli/main.ts` |
 | `startWatcher` | function | 1 | 9 | `cli/main.ts` |
 | `loadOrAnalyzeWorkspace` | function | 1 | 9 | `cli/main.ts` |
@@ -52,7 +54,6 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | `configGet` | function | 1 | 7 | `cli/config-manager.ts` |
 | `renderSkill` | function | 1 | 7 | `cli/skill-writer.ts` |
 | `loadConfig` | function | 5 | 2 | `cli/init-wizard.ts` |
-| `fishCompletion` | function | 2 | 4 | `cli/completion.ts` |
 
 ## Impact Guidance
 

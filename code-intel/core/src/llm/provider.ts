@@ -19,10 +19,23 @@ export interface LLMProvider {
 
 export interface LLMConfig {
   /** Which provider to use. Default: 'ollama'. */
-  provider?: 'openai' | 'anthropic' | 'ollama';
+  provider?: 'openai' | 'anthropic' | 'ollama' | 'custom';
 
   /** Model name / ID passed to the provider. Each provider has its own default. */
   model?: string;
+
+  /**
+   * For 'custom' provider: the base URL of the OpenAI-compatible API.
+   * e.g. 'http://localhost:1234/v1' (LM Studio), 'https://api.groq.com/openai/v1', etc.
+   */
+  baseUrl?: string;
+
+  /**
+   * API key / token for the provider.
+   * For 'custom': passed as Bearer token. For 'openai': falls back to $OPENAI_API_KEY.
+   * For 'ollama': not needed.
+   */
+  apiKey?: string;
 
   /** Max concurrent LLM calls per batch. Default: 20. */
   batchSize?: number;

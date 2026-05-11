@@ -1,11 +1,11 @@
 ---
 name: api
-description: "Covers the **api** subsystem of code-intel-platform. 34 symbols across 1 files. Key symbols: `constructor`, `login`, `logout`. Internal call density: 0.3 calls/symbol. Participates in 1 execution flow(s)."
+description: "Covers the **api** subsystem of code-intel-platform. 39 symbols across 1 files. Key symbols: `constructor`, `login`, `logout`. Internal call density: 0.4 calls/symbol. Participates in 1 execution flow(s)."
 ---
 
 # api
 
-> **34 symbols** | **1 files** | path: `code-intel/web/src/api/` | call density: 0.3/sym
+> **39 symbols** | **1 files** | path: `code-intel/web/src/api/` | call density: 0.4/sym
 
 ## When to Use
 
@@ -19,7 +19,7 @@ Load this skill when:
 
 | File | Symbols | Notes |
 |------|---------|-------|
-| `code-intel/web/src/api/client.ts` | `CountGroup`, `GQLResult`, `AuthStatus`, `NodeInspectInfo` +(30) | 34 exported |
+| `code-intel/web/src/api/client.ts` | `CountGroup`, `GQLResult`, `AuthStatus`, `NodeInspectInfo` +(35) | 39 exported |
 
 ## Entry Points
 
@@ -39,17 +39,17 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
 | `ApiClient` | class | 20 | 0 | `api/client.ts` |
-| `getCsrfToken` | method | 11 | 1 | `api/client.ts` |
+| `getCsrfToken` | method | 16 | 1 | `api/client.ts` |
 | `search` | method | 10 | 2 | `api/client.ts` |
 | `listGroups` | method | 7 | 1 | `api/client.ts` |
-| `syncGroup` | method | 4 | 2 | `api/client.ts` |
+| `syncGroup` | method | 5 | 2 | `api/client.ts` |
+| `deleteGroup` | method | 4 | 2 | `api/client.ts` |
 | `vectorSearch` | method | 2 | 2 | `api/client.ts` |
 | `vectorStatus` | method | 3 | 1 | `api/client.ts` |
 | `blastRadius` | method | 2 | 2 | `api/client.ts` |
+| `getGroup` | method | 3 | 1 | `api/client.ts` |
+| `createGroup` | method | 2 | 2 | `api/client.ts` |
 | `bootstrap` | method | 1 | 2 | `api/client.ts` |
-| `inspectNode` | method | 2 | 1 | `api/client.ts` |
-| `getGroup` | method | 2 | 1 | `api/client.ts` |
-| `sourcePreview` | method | 1 | 2 | `api/client.ts` |
 
 ## Execution Flows
 

@@ -86,9 +86,10 @@ export interface SchemaField {
 }
 
 export const CONFIG_SCHEMA: Record<string, SchemaField> = {
-  'llm.provider':           { type: 'string', enum: ['openai', 'anthropic', 'ollama', 'none'], default: 'ollama', description: 'LLM provider for AI summaries' },
+  'llm.provider':           { type: 'string', enum: ['openai', 'anthropic', 'ollama', 'custom', 'none'], default: 'ollama', description: 'LLM provider for AI summaries' },
   'llm.model':              { type: 'string', default: 'llama3', description: 'LLM model name' },
   'llm.apiKey':             { type: 'string', default: '', description: 'API key — use $ENV_VAR syntax, e.g. $OPENAI_API_KEY' },
+  'llm.baseUrl':            { type: 'string', default: '', description: 'Base URL for custom OpenAI-compatible API (e.g. http://localhost:1234/v1)' },
   'llm.batchSize':          { type: 'number', minimum: 1, maximum: 100, default: 20, description: 'Concurrent LLM calls per batch' },
   'llm.maxTokensPerSummary':{ type: 'number', minimum: 10, maximum: 2000, default: 100, description: 'Max tokens per AI summary' },
   'embeddings.model':       { type: 'string', default: 'all-MiniLM-L6-v2', description: 'Embedding model name' },

@@ -12,6 +12,7 @@ export const ErrorCodes = {
   RATE_LIMIT_EXCEEDED:   'CI-1100',
   PAYLOAD_TOO_LARGE:     'CI-1101',
   INVALID_REQUEST:       'CI-1200',
+  CONFLICT:              'CI-1409',
   // Config (CI-2xxx)
   CONFIG_INVALID:        'CI-2000',
   CONFIG_NOT_FOUND:      'CI-2001',
