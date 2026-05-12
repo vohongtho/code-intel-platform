@@ -10,11 +10,11 @@ export async function createLLMProvider(config: LLMConfig = {}): Promise<LLMProv
   switch (provider) {
     case 'openai': {
       const { OpenAIProvider } = await import('./providers/openai.js');
-      return new OpenAIProvider(model);
+      return new OpenAIProvider(model, baseUrl, apiKey);
     }
     case 'anthropic': {
       const { AnthropicProvider } = await import('./providers/anthropic.js');
-      return new AnthropicProvider(model);
+      return new AnthropicProvider(model, baseUrl, apiKey);
     }
     case 'custom': {
       const { CustomProvider } = await import('./providers/custom.js');
@@ -26,7 +26,7 @@ export async function createLLMProvider(config: LLMConfig = {}): Promise<LLMProv
     case 'ollama':
     default: {
       const { OllamaProvider } = await import('./providers/ollama.js');
-      return new OllamaProvider(model);
+      return new OllamaProvider(model, baseUrl);
     }
   }
 }

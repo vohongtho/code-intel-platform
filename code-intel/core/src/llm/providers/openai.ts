@@ -1,22 +1,29 @@
 /**
  * OpenAI provider — uses the `openai` npm package (optional peer dep).
  * Model defaults to gpt-4o-mini; configurable via LLMConfig.model.
- * API key read from $OPENAI_API_KEY.
+ * API key: constructor arg → $OPENAI_API_KEY env var.
  */
 import type { LLMProvider, SummarizeResult } from '../provider.js';
 
 export class OpenAIProvider implements LLMProvider {
   readonly modelName: string;
-  readonly endpoint = 'https://api.openai.com/v1';
+  readonly endpoint: string;
+  private readonly apiKey: string;
 
-  constructor(model?: string) {
+  constructor(model?: string, baseUrl?: string, apiKey?: string) {
     this.modelName = model ?? 'gpt-4o-mini';
+    this.endpoint  = (baseUrl ?? 'https://api.openai.com/v1').replace(/\/$/, '');
+    this.apiKey    = apiKey ?? '';
+  }
+
+  private resolvedKey(): string {
+    return this.apiKey || process.env['OPENAI_API_KEY'] || '';
   }
 
   async getContextWindow(): Promise<number | undefined> {
     try {
       const res = await fetch(`${this.endpoint}/models/${encodeURIComponent(this.modelName)}`, {
-        headers: { 'Authorization': `Bearer ${process.env['OPENAI_API_KEY'] ?? ''}` },
+        headers: { 'Authorization': `Bearer ${this.resolvedKey()}` },
         signal: AbortSignal.timeout(5000),
       });
       if (!res.ok) return undefined;
@@ -30,11 +37,11 @@ export class OpenAIProvider implements LLMProvider {
     // @ts-ignore — openai is an optional peer dependency; not in devDeps
     const { default: OpenAI } = await import('openai');
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const client = new OpenAI({ apiKey: process.env['OPENAI_API_KEY'] }) as any;
+    const client = new OpenAI({ apiKey: this.resolvedKey(), baseURL: this.endpoint }) as any;
     const res = await client.chat.completions.create({
       model: this.modelName,
       messages: [{ role: 'user', content: prompt }],
-      max_tokens: 200,
+      max_tokens: 500,
     });
     return {
       text:             res.choices?.[0]?.message?.content?.trim() ?? '',

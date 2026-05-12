@@ -303,32 +303,84 @@ export async function runInitWizard(opts: { reset?: boolean; yes?: boolean } = {
     cfg.llm.provider = llmProvider;
 
     if (llmProvider === 'openai') {
-      cfg.llm.model = 'gpt-4o-mini';
-      cfg.llm.apiKey = '$OPENAI_API_KEY';
-      console.log('  API key will be read from $OPENAI_API_KEY environment variable.');
+      console.log('');
+      const OPENAI_DEFAULT_ENDPOINT = 'https://api.openai.com/v1';
+      const OPENAI_DEFAULT_MODEL    = 'gpt-4o-mini';
+      const OPENAI_DEFAULT_KEY      = '$OPENAI_API_KEY';
+
+      const endpointIn = (await prompt(rl, `  Endpoint [${OPENAI_DEFAULT_ENDPOINT}]: `)).trim();
+      cfg.llm.baseUrl  = endpointIn || OPENAI_DEFAULT_ENDPOINT;
+
+      const modelIn    = (await prompt(rl, `  Model    [${OPENAI_DEFAULT_MODEL}]: `)).trim();
+      cfg.llm.model    = modelIn || OPENAI_DEFAULT_MODEL;
+
+      const keyIn      = (await prompt(rl, `  API Key  [${OPENAI_DEFAULT_KEY}]: `)).trim();
+      cfg.llm.apiKey   = keyIn || OPENAI_DEFAULT_KEY;
+
+      console.log(`\n  ✅  OpenAI configured:`);
+      console.log(`     Endpoint : ${cfg.llm.baseUrl}`);
+      console.log(`     Model    : ${cfg.llm.model}`);
+      console.log(`     API Key  : ${cfg.llm.apiKey.startsWith('$') ? cfg.llm.apiKey : '(set)'}`);
+
     } else if (llmProvider === 'anthropic') {
-      cfg.llm.model = 'claude-haiku-4-5';
-      cfg.llm.apiKey = '$ANTHROPIC_API_KEY';
-      console.log('  API key will be read from $ANTHROPIC_API_KEY environment variable.');
+      console.log('');
+      const ANTHROPIC_DEFAULT_ENDPOINT = 'https://api.anthropic.com/v1';
+      const ANTHROPIC_DEFAULT_MODEL    = 'claude-haiku-4-5';
+      const ANTHROPIC_DEFAULT_KEY      = '$ANTHROPIC_API_KEY';
+
+      const endpointIn = (await prompt(rl, `  Endpoint [${ANTHROPIC_DEFAULT_ENDPOINT}]: `)).trim();
+      cfg.llm.baseUrl  = endpointIn || ANTHROPIC_DEFAULT_ENDPOINT;
+
+      const modelIn    = (await prompt(rl, `  Model    [${ANTHROPIC_DEFAULT_MODEL}]: `)).trim();
+      cfg.llm.model    = modelIn || ANTHROPIC_DEFAULT_MODEL;
+
+      const keyIn      = (await prompt(rl, `  API Key  [${ANTHROPIC_DEFAULT_KEY}]: `)).trim();
+      cfg.llm.apiKey   = keyIn || ANTHROPIC_DEFAULT_KEY;
+
+      console.log(`\n  ✅  Anthropic configured:`);
+      console.log(`     Endpoint : ${cfg.llm.baseUrl}`);
+      console.log(`     Model    : ${cfg.llm.model}`);
+      console.log(`     API Key  : ${cfg.llm.apiKey.startsWith('$') ? cfg.llm.apiKey : '(set)'}`);
+
     } else if (llmProvider === 'ollama') {
-      cfg.llm.model = 'llama3';
-      cfg.llm.apiKey = '';
-      console.log('  Make sure Ollama is running: https://ollama.com');
+      console.log('');
+      const OLLAMA_DEFAULT_ENDPOINT = 'http://localhost:11434';
+      const OLLAMA_DEFAULT_MODEL    = 'llama3';
+
+      const endpointIn = (await prompt(rl, `  Endpoint [${OLLAMA_DEFAULT_ENDPOINT}]: `)).trim();
+      cfg.llm.baseUrl  = endpointIn || OLLAMA_DEFAULT_ENDPOINT;
+
+      const modelIn    = (await prompt(rl, `  Model    [${OLLAMA_DEFAULT_MODEL}]: `)).trim();
+      cfg.llm.model    = modelIn || OLLAMA_DEFAULT_MODEL;
+
+      cfg.llm.apiKey   = '';
+
+      console.log(`\n  ✅  Ollama configured:`);
+      console.log(`     Endpoint : ${cfg.llm.baseUrl}`);
+      console.log(`     Model    : ${cfg.llm.model}`);
+      console.log(`     API Key  : (not required)`);
+      console.log(`\n  Make sure Ollama is running: https://ollama.com`);
+      console.log(`  Pull model with: ollama pull ${cfg.llm.model}`);
+
     } else if (llmProvider === 'custom') {
-      console.log('  Configure your OpenAI-compatible provider (e.g. LM Studio, vLLM, Together, Groq, Azure).\n');
-      const baseUrl = (await prompt(rl, '  API Base URL (e.g. http://localhost:1234/v1): ')).trim();
-      cfg.llm.baseUrl = baseUrl || 'http://localhost:1234/v1';
+      console.log('\n  Configure your OpenAI-compatible provider (e.g. LM Studio, vLLM, DeepSeek, Groq, Together, Azure).\n');
+      const CUSTOM_DEFAULT_ENDPOINT = 'http://localhost:1234/v1';
+      const CUSTOM_DEFAULT_MODEL    = 'default';
 
-      const apiKey = (await prompt(rl, '  API Token/Key (leave blank if not required): ')).trim();
-      cfg.llm.apiKey = apiKey || '';
+      const endpointIn = (await prompt(rl, `  Endpoint [${CUSTOM_DEFAULT_ENDPOINT}]: `)).trim();
+      cfg.llm.baseUrl  = endpointIn || CUSTOM_DEFAULT_ENDPOINT;
 
-      const model = (await prompt(rl, '  Model name (e.g. mistral-7b-instruct): ')).trim();
-      cfg.llm.model = model || 'default';
+      const modelIn    = (await prompt(rl, `  Model    [${CUSTOM_DEFAULT_MODEL}]: `)).trim();
+      cfg.llm.model    = modelIn || CUSTOM_DEFAULT_MODEL;
+
+      const keyIn      = (await prompt(rl, `  API Key  (leave blank if not required): `)).trim();
+      cfg.llm.apiKey   = keyIn || '';
 
       console.log(`\n  ✅  Custom provider configured:`);
-      console.log(`     URL:   ${cfg.llm.baseUrl}`);
-      console.log(`     Model: ${cfg.llm.model}`);
-      console.log(`     Token: ${cfg.llm.apiKey ? '(set)' : '(none)'}`);
+      console.log(`     Endpoint : ${cfg.llm.baseUrl}`);
+      console.log(`     Model    : ${cfg.llm.model}`);
+      console.log(`     API Key  : ${cfg.llm.apiKey ? '(set)' : '(none)'}`);
+
     } else {
       cfg.llm.apiKey = '';
       console.log('  Skipped. Run `code-intel config set llm.provider openai` later.');
