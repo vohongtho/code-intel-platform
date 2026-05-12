@@ -4,27 +4,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-// We need to use a temp GLOBAL dir to avoid touching the real ~/.code-intel
-// The module reads from os.homedir() so we patch process.env.HOME temporarily.
-
-const realHome = os.homedir();
-
-function withTempHome(tmpHome: string, fn: () => void): void {
-  const origHome = process.env['HOME'];
-  process.env['HOME'] = tmpHome;
-  try {
-    fn();
-  } finally {
-    process.env['HOME'] = origHome;
-  }
-}
-
-// Because the module uses os.homedir() at module load time, we need to
-// re-import it dynamically each time or use a fixed temp home for the suite.
-// We'll use a single tmpHome for all tests in this file.
+// Redirect all repo-registry reads/writes to a temporary directory via
+// CODE_INTEL_HOME so the real ~/.code-intel/repos.json is never touched.
 
 let tmpHome: string;
-let loadRegistry: (repoPath?: string) => ReturnType<typeof import('../../../src/storage/repo-registry.js')['loadRegistry']>;
+let loadRegistry: typeof import('../../../src/storage/repo-registry.js')['loadRegistry'];
 let saveRegistry: typeof import('../../../src/storage/repo-registry.js')['saveRegistry'];
 let upsertRepo: typeof import('../../../src/storage/repo-registry.js')['upsertRepo'];
 let removeRepo: typeof import('../../../src/storage/repo-registry.js')['removeRepo'];
@@ -34,45 +18,29 @@ describe('repo-registry', () => {
     tmpHome = path.join(os.tmpdir(), `repo-reg-test-${Date.now()}`);
     fs.mkdirSync(path.join(tmpHome, '.code-intel'), { recursive: true });
 
-    // Import module - it uses os.homedir() at module evaluation time,
-    // so we just work with the real home but use a throwaway repos.json
+    // Point the registry at our temp home so no real data is touched.
+    process.env['CODE_INTEL_HOME'] = tmpHome;
+
     const mod = await import('../../../src/storage/repo-registry.js');
     loadRegistry = mod.loadRegistry;
     saveRegistry = mod.saveRegistry;
     upsertRepo = mod.upsertRepo;
     removeRepo = mod.removeRepo;
-
-    // Override REPOS_FILE by saving directly to a temp location
-    // Since we can't easily override the module constant, we'll test
-    // the pure logic by saving/loading in the actual location.
-    // Instead, just test the behaviour with real calls.
   });
 
   after(() => {
+    delete process.env['CODE_INTEL_HOME'];
     try { fs.rmSync(tmpHome, { recursive: true, force: true }); } catch { /* ignore */ }
   });
 
   it('loadRegistry — returns empty array when no registry exists', () => {
-    // Use an unused path by deleting any existing repos.json first
-    const globalDir = path.join(os.homedir(), '.code-intel');
-    const reposFile = path.join(globalDir, 'repos.json');
-    const backup = (() => {
-      try { return fs.readFileSync(reposFile, 'utf-8'); } catch { return null; }
-    })();
+    // The temp dir has no repos.json yet — should return []
+    const reposFile = path.join(tmpHome, '.code-intel', 'repos.json');
+    try { fs.unlinkSync(reposFile); } catch { /* already absent */ }
 
-    // Temporarily remove
-    try { fs.unlinkSync(reposFile); } catch { /* ignore */ }
-
-    try {
-      const result = loadRegistry();
-      assert.ok(Array.isArray(result));
-    } finally {
-      // Restore backup
-      if (backup !== null) {
-        fs.mkdirSync(globalDir, { recursive: true });
-        fs.writeFileSync(reposFile, backup);
-      }
-    }
+    const result = loadRegistry();
+    assert.ok(Array.isArray(result));
+    assert.equal(result.length, 0);
   });
 
   it('saveRegistry + loadRegistry — round-trip', () => {

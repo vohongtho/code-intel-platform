@@ -5,8 +5,29 @@
  * Circuit breaker: after 5 consecutive failures, open for 60 s then half-open.
  */
 
-const CIRCUIT_THRESHOLD = 5;
-const CIRCUIT_OPEN_MS   = 60_000;
+const CIRCUIT_THRESHOLD = 20;
+const CIRCUIT_OPEN_MS   = 30_000;
+
+/**
+ * Pure network connectivity failures (server unreachable, DNS, etc.).
+ * These should NOT trip the circuit breaker — they indicate the LLM server
+ * is simply down, not overloaded.
+ */
+function isNetworkConnectivityError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message.toLowerCase();
+  return (
+    msg.includes('fetch failed') ||
+    msg.includes('econnrefused') ||
+    msg.includes('enotfound') ||
+    msg.includes('etimedout') ||
+    msg.includes('econnreset') ||
+    msg.includes('socket hang up') ||
+    msg.includes('connect econnrefused') ||
+    msg.includes('network request failed') ||
+    msg.includes('failed to fetch')
+  );
+}
 
 // ─── Circuit Breaker ──────────────────────────────────────────────────────────
 
@@ -36,9 +57,14 @@ export class CircuitBreaker {
       this.failures = 0; // reset streak on success
       return result;
     } catch (err) {
-      this.failures++;
-      if (this.failures >= CIRCUIT_THRESHOLD) {
-        this.openedAt = Date.now();
+      // Network/connectivity errors (server unreachable) do NOT count toward the
+      // circuit threshold — the breaker is only for overloaded or rate-limited
+      // services, not for "server is simply down" scenarios.
+      if (!isNetworkConnectivityError(err)) {
+        this.failures++;
+        if (this.failures >= CIRCUIT_THRESHOLD) {
+          this.openedAt = Date.now();
+        }
       }
       throw err;
     }
@@ -64,6 +90,35 @@ export function isRateLimitError(err: unknown): boolean {
   );
 }
 
+/**
+ * Returns true for transient errors that are worth retrying:
+ * - Rate limit (429)
+ * - Network/fetch errors (connection refused, DNS, timeout, etc.)
+ * - 5xx server errors
+ */
+export function isRetryableError(err: unknown): boolean {
+  if (isRateLimitError(err)) return true;
+  if (!(err instanceof Error)) return false;
+  const msg = err.message.toLowerCase();
+  return (
+    msg.includes('fetch failed') ||
+    msg.includes('econnrefused') ||
+    msg.includes('enotfound') ||
+    msg.includes('etimedout') ||
+    msg.includes('econnreset') ||
+    msg.includes('network error') ||
+    msg.includes('network request failed') ||
+    msg.includes('failed to fetch') ||
+    msg.includes('socket hang up') ||
+    msg.includes('connect econnrefused') ||
+    // 5xx server-side errors
+    msg.includes('500') ||
+    msg.includes('502') ||
+    msg.includes('503') ||
+    msg.includes('504')
+  );
+}
+
 // ─── Retry with exponential backoff ──────────────────────────────────────────
 
 export interface RetryOptions {
@@ -86,7 +141,7 @@ export async function withRetry<T>(
       return await fn();
     } catch (err) {
       const isLast = attempt === maxAttempts;
-      if (!isRateLimitError(err) || isLast) throw err;
+      if (!isRetryableError(err) || isLast) throw err;
 
       // Exponential backoff + small jitter
       const backoff = Math.min(baseDelayMs * 2 ** (attempt - 1), maxDelayMs);

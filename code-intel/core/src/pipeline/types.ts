@@ -17,6 +17,8 @@ export interface PipelineContext {
   workspaceRoot: string;
   graph: KnowledgeGraph;
   filePaths: string[];
+  /** Path to the KùzuDB database for this workspace (used by summarize phase to load prior summaries). */
+  dbPath?: string;
   /** Shared file content cache — populated by parse phase, reused by resolve phase (eliminates double I/O) */
   fileCache?: Map<string, string>;
   /** Per-file sorted symbol index for O(1) enclosing-function lookup — built by parse phase */

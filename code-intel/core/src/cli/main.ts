@@ -293,8 +293,11 @@ async function analyzeWorkspace(targetPath: string, options?: {
   llmModel?: string;
   llmBatchSize?: number;
   llmMaxNodes?: number;
+  llmContextWindow?: number;
   llmBaseUrl?: string;
   llmApiKey?: string;
+  /** v1.0.1: 'per-node' = 1 request/symbol (default), 'batch' = 1 request/batch (saves premium calls) */
+  llmRequestMode?: 'per-node' | 'batch';
   /** v0.7.0: skip automatic group sync after analysis */
   noGroupSync?: boolean;
   /** v1.0.0: max memory (MB) before spilling node content */
@@ -388,17 +391,27 @@ async function analyzeWorkspace(targetPath: string, options?: {
     workspaceRoot,
     graph: activeGraph,
     filePaths: [],
+    dbPath: getDbPath(workspaceRoot),
     verbose: options?.verbose,
     summarize: options?.summarize,
     profile: options?.profile,
-    llmConfig: options?.summarize ? {
-      provider: options.llmProvider ?? 'ollama',
-      model:    options.llmModel,
-      batchSize: options.llmBatchSize,
-      maxNodesPerRun: options.llmMaxNodes,
-      baseUrl: options.llmBaseUrl,
-      apiKey: options.llmApiKey,
-    } : undefined,
+    llmConfig: options?.summarize ? (() => {
+      // Load ~/.code-intel/config.json as base, then CLI flags override
+      const fileCfg = loadConfig()?.llm;
+      return {
+        provider: (options.llmProvider as 'openai' | 'anthropic' | 'ollama' | 'custom' | undefined)
+          ?? (fileCfg?.provider !== 'none' ? fileCfg?.provider : undefined)
+          ?? 'ollama',
+        model:    options.llmModel    ?? fileCfg?.model,
+        batchSize: options.llmBatchSize ?? fileCfg?.batchSize,
+        maxNodesPerRun: options.llmMaxNodes,
+        contextWindow: options.llmContextWindow ?? fileCfg?.contextWindow,
+        baseUrl: options.llmBaseUrl   ?? fileCfg?.baseUrl,
+        apiKey:  options.llmApiKey    ?? fileCfg?.apiKey,
+        requestMode: options.llmRequestMode
+          ?? (fileCfg?.provider === 'custom' ? 'batch' : 'per-node'),
+      };
+    })() : undefined,
     onProgress: options?.silent ? undefined : (phase, msg) => {
       if (!options?.silent) {
         if (currentPhase) clearBar();
@@ -1650,12 +1663,14 @@ program
   .option('--skip-git',                'Allow indexing directories that are not Git repositories')
   .option('--verbose',                 'Log every file skipped due to missing parser support')
   .option('--summarize',               'Generate AI summaries for function/class/method/interface nodes (opt-in)')
-  .option('--llm-provider <provider>', 'LLM provider for --summarize: openai | anthropic | ollama | custom (default: ollama)')
+  .option('--llm-provider <provider>', 'LLM provider for --summarize: openai | anthropic | ollama | custom (default: from config or ollama)')
   .option('--llm-model <model>',       'LLM model name (e.g. gpt-4o-mini, claude-haiku-4-5, llama3, mistral)')
   .option('--llm-base-url <url>',      'Base URL for custom OpenAI-compatible API (e.g. http://localhost:1234/v1)')
   .option('--llm-api-key <key>',       'API key/token for the LLM provider (custom or override)')
-  .option('--llm-batch-size <n>',      'Concurrent LLM calls per batch (default: 20)', '20')
+  .option('--llm-batch-size <n>',      'Number of symbols per batch (default: 50 in batch mode, 5 in per-node mode)')
   .option('--llm-max-nodes <n>',       'Max nodes to summarize per run (cost guard)')
+  .option('--llm-context-window <n>',  'Model context window size in tokens (default: 8192). Used to auto-pack symbols into batches.')
+  .option('--llm-request-mode <mode>', 'per-node (1 request/symbol) or batch (1 request/batch, saves premium calls). Default: batch when provider=custom')
   .option('--no-group-sync',           'Skip automatic group sync after analysis')
   .option('--dry-run',                 'Preview files that would be scanned + estimated time; no DB write')
   .option('--max-memory <MB>',         'Limit graph memory (MB); spill node content to free RAM when exceeded')
@@ -1698,8 +1713,10 @@ program
     llmModel?: string;
     llmBatchSize?: string;
     llmMaxNodes?: string;
+    llmContextWindow?: string;
     llmBaseUrl?: string;
     llmApiKey?: string;
+    llmRequestMode?: string;
     groupSync?: boolean;
     dryRun?: boolean;
     maxMemory?: string;
@@ -1743,8 +1760,10 @@ program
       llmModel: opts.llmModel,
       llmBatchSize: (() => { const v = parseInt(opts.llmBatchSize ?? '', 10); return Number.isFinite(v) && v >= 1 ? v : undefined; })(),
       llmMaxNodes:  (() => { const v = parseInt(opts.llmMaxNodes  ?? '', 10); return Number.isFinite(v) && v >= 1 ? v : undefined; })(),
+      llmContextWindow: (() => { const v = parseInt(opts.llmContextWindow ?? '', 10); return Number.isFinite(v) && v >= 1 ? v : undefined; })(),
       llmBaseUrl: opts.llmBaseUrl,
       llmApiKey: opts.llmApiKey,
+      llmRequestMode: opts.llmRequestMode as 'per-node' | 'batch' | undefined,
       maxMemoryMB:  (() => { const v = parseInt(opts.maxMemory    ?? '', 10); return Number.isFinite(v) && v >= 1 ? v : undefined; })(),
       profile: opts.profile,
     });
@@ -4609,7 +4628,7 @@ program
 
     // ── network ───────────────────────────────────────────────────────────
     try {
-      const resp = await fetch('https://registry.npmjs.org/code-intel/latest', {
+      const resp = await fetch('https://registry.npmjs.org/@vohongtho.infotech%2Fcode-intel/latest', {
         signal: AbortSignal.timeout(5000),
       });
       if (resp.ok) {

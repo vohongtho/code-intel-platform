@@ -9,12 +9,22 @@ export interface RepoEntry {
   stats: { nodes: number; edges: number; files: number };
 }
 
-const GLOBAL_DIR = path.join(os.homedir(), '.code-intel');
-const REPOS_FILE = path.join(GLOBAL_DIR, 'repos.json');
+/**
+ * Returns the global data directory at call time.
+ * Respects the CODE_INTEL_HOME env var so tests can redirect to a temp dir
+ * without touching the real ~/.code-intel/repos.json.
+ */
+function getGlobalDir(): string {
+  return path.join(process.env['CODE_INTEL_HOME'] ?? os.homedir(), '.code-intel');
+}
+
+function getReposFile(): string {
+  return path.join(getGlobalDir(), 'repos.json');
+}
 
 export function loadRegistry(): RepoEntry[] {
   try {
-    const data = fs.readFileSync(REPOS_FILE, 'utf-8');
+    const data = fs.readFileSync(getReposFile(), 'utf-8');
     return JSON.parse(data);
   } catch {
     return [];
@@ -22,8 +32,9 @@ export function loadRegistry(): RepoEntry[] {
 }
 
 export function saveRegistry(entries: RepoEntry[]): void {
-  fs.mkdirSync(GLOBAL_DIR, { recursive: true });
-  fs.writeFileSync(REPOS_FILE, JSON.stringify(entries, null, 2));
+  const globalDir = getGlobalDir();
+  fs.mkdirSync(globalDir, { recursive: true });
+  fs.writeFileSync(getReposFile(), JSON.stringify(entries, null, 2));
 }
 
 export function upsertRepo(entry: RepoEntry): void {

@@ -14,8 +14,10 @@ import path from 'node:path';
 
 const GLOBAL_DIR = path.join(os.homedir(), '.code-intel');
 const META_PATH = path.join(GLOBAL_DIR, 'update-meta.json');
-const PACKAGE_NAME = 'code-intel';
-const NPM_REGISTRY_URL = `https://registry.npmjs.org/${PACKAGE_NAME}/latest`;
+const PACKAGE_NAME = '@vohongtho.infotech/code-intel';
+// Scoped packages require the '/' between scope and name to be percent-encoded
+// e.g. https://registry.npmjs.org/@vohongtho.infotech%2Fcode-intel/latest
+const NPM_REGISTRY_URL = `https://registry.npmjs.org/${PACKAGE_NAME.replace('/', '%2F')}/latest`;
 
 // ── Meta persistence ──────────────────────────────────────────────────────────
 

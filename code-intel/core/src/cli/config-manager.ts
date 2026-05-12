@@ -91,6 +91,7 @@ export const CONFIG_SCHEMA: Record<string, SchemaField> = {
   'llm.apiKey':             { type: 'string', default: '', description: 'API key — use $ENV_VAR syntax, e.g. $OPENAI_API_KEY' },
   'llm.baseUrl':            { type: 'string', default: '', description: 'Base URL for custom OpenAI-compatible API (e.g. http://localhost:1234/v1)' },
   'llm.batchSize':          { type: 'number', minimum: 1, maximum: 100, default: 20, description: 'Concurrent LLM calls per batch' },
+  'llm.contextWindow':      { type: 'number', minimum: 512, maximum: 1000000, default: 8192, description: 'Model context window size in tokens (used to auto-pack symbols into batches)' },
   'llm.maxTokensPerSummary':{ type: 'number', minimum: 10, maximum: 2000, default: 100, description: 'Max tokens per AI summary' },
   'embeddings.model':       { type: 'string', default: 'all-MiniLM-L6-v2', description: 'Embedding model name' },
   'embeddings.enabled':     { type: 'boolean', default: false, description: 'Enable vector search' },

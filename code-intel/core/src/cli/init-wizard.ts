@@ -30,6 +30,7 @@ export interface CodeIntelConfig {
     apiKey: string;
     baseUrl?: string;
     batchSize: number;
+    contextWindow?: number;
     maxTokensPerSummary: number;
   };
   embeddings: {
