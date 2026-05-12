@@ -365,21 +365,30 @@ export async function runInitWizard(opts: { reset?: boolean; yes?: boolean } = {
     } else if (llmProvider === 'custom') {
       console.log('\n  Configure your OpenAI-compatible provider (e.g. LM Studio, vLLM, DeepSeek, Groq, Together, Azure).\n');
       const CUSTOM_DEFAULT_ENDPOINT = 'http://localhost:1234/v1';
-      const CUSTOM_DEFAULT_MODEL    = 'default';
 
       const endpointIn = (await prompt(rl, `  Endpoint [${CUSTOM_DEFAULT_ENDPOINT}]: `)).trim();
       cfg.llm.baseUrl  = endpointIn || CUSTOM_DEFAULT_ENDPOINT;
 
-      const modelIn    = (await prompt(rl, `  Model    [${CUSTOM_DEFAULT_MODEL}]: `)).trim();
-      cfg.llm.model    = modelIn || CUSTOM_DEFAULT_MODEL;
+      // Model is required
+      let modelIn = '';
+      while (!modelIn) {
+        modelIn = (await prompt(rl, `  Model    (required, e.g. deepseek-v4-flash): `)).trim();
+        if (!modelIn) console.log('  ⚠  Model name is required.');
+      }
+      cfg.llm.model = modelIn;
 
-      const keyIn      = (await prompt(rl, `  API Key  (leave blank if not required): `)).trim();
-      cfg.llm.apiKey   = keyIn || '';
+      // API Key is required
+      let keyIn = '';
+      while (!keyIn) {
+        keyIn = (await prompt(rl, `  API Key  (required): `)).trim();
+        if (!keyIn) console.log('  ⚠  API key is required.');
+      }
+      cfg.llm.apiKey = keyIn;
 
       console.log(`\n  ✅  Custom provider configured:`);
       console.log(`     Endpoint : ${cfg.llm.baseUrl}`);
       console.log(`     Model    : ${cfg.llm.model}`);
-      console.log(`     API Key  : ${cfg.llm.apiKey ? '(set)' : '(none)'}`);
+      console.log(`     API Key  : (set)`);
 
     } else {
       cfg.llm.apiKey = '';
