@@ -4,6 +4,44 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.0.3] — 2026-07-18 — Per-Symbol Summarization & Provider Init Improvements
+
+> **Theme:** Strict one-API-call-per-symbol summarization, full provider configuration during `init`, and security vulnerability fixes
+
+### 🔁 Summarize Phase — One API Call Per Symbol
+
+- **`summarize-phase.ts`** completely rewritten: removed `buildMultiPrompt` / `parseSummaryArray` / token-budget grouping
+- Each symbol now gets exactly **1 API call** via `buildSinglePrompt` — no batching, no grouping, no JSON array parsing
+- Context window is still fetched from provider API (for informational logging only) but **not used to group symbols**
+- Per-call log line shows: duration, prompt tokens, completion tokens, tok/s, and summary preview
+- All existing features preserved: DB load of prior summaries, hash-based skip (incremental), SIGINT flush, checkpoint flush every 10 successes, token totals summary
+
+### 🧙 `init` Wizard — Configure All Providers
+
+- **All four providers** now prompt for endpoint, model, and API key during `code-intel init`
+- **Ollama** — endpoint `[http://localhost:11434]`, model `[llama3]`, no key required; shows `ollama pull <model>` hint
+- **OpenAI** — endpoint `[https://api.openai.com/v1]`, model `[gpt-4o-mini]`, key `[$OPENAI_API_KEY]`
+- **Anthropic** — endpoint `[https://api.anthropic.com/v1]`, model `[claude-haiku-4-5]`, key `[$ANTHROPIC_API_KEY]`
+- **Custom** — endpoint `[http://localhost:1234/v1]`, model **(required, loops until provided)**, API key **(required, loops until provided)**
+- All providers show a formatted confirmation summary after configuration
+
+### 🔌 Provider Constructors — Endpoint & Key Passthrough
+
+- **`OpenAIProvider`** — accepts `(model?, baseUrl?, apiKey?)` ; uses `baseURL` in the OpenAI SDK client; key falls back to `$OPENAI_API_KEY`
+- **`AnthropicProvider`** — accepts `(model?, baseUrl?, apiKey?)`; passes `baseURL` to Anthropic SDK client; key falls back to `$ANTHROPIC_API_KEY`
+- **`OllamaProvider`** — factory now passes `baseUrl` from config
+- **`factory.ts`** — all four providers receive `model`, `baseUrl`, `apiKey` from config
+
+### 🔒 Security — Dependency Vulnerabilities Fixed
+
+- Bumped `@opentelemetry/auto-instrumentations-node` `^0.73.0` → `^0.75.0`
+- Bumped `@opentelemetry/sdk-node` `^0.215.0` → `^0.217.0`
+- Bumped `@opentelemetry/exporter-trace-otlp-http` `^0.215.0` → `^0.217.0`
+- Added `"protobufjs": "8.2.0"` override in both `code-intel/core/package.json` and root `package.json` (with scoped `@opentelemetry/otlp-transformer` override)
+- Full reinstall after stale lockfile removal → **0 vulnerabilities** (`npm audit`)
+
+---
+
 ## [1.0.2] — 2026-05-10 — Agent Hook System
 
 > **Theme:** Automatic command interception across every major AI coding agent — grep/cat/rg silently rewritten to `code-intel search/inspect` before the LLM ever sees the output
