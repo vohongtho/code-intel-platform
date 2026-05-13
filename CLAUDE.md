@@ -35,7 +35,7 @@ REQUIRED BEFORE ANY CODE ACTION:
   3. code-intel impact <symbol>       ← replaces manual caller tracing
 <!-- /TOOL POLICY -->
 
-Indexed: **6,254 nodes** | **11,376 edges** | **333 files** | analyzed in 1.8s
+Indexed: **6,321 nodes** | **11,489 edges** | **333 files** | analyzed in 2.5s
 
 > Index stale? Re-run: `code-intel analyze`
 
@@ -156,13 +156,13 @@ Each skill gives you symbol maps, key entry points, and safe-change guidance for
 - Working in **query**? → Load `.claude/skills/code-intel/query/SKILL.md`
 - Working in **panels**? → Load `.claude/skills/code-intel/panels/SKILL.md`
 - Working in **search**? → Load `.claude/skills/code-intel/search/SKILL.md`
+- Working in **phases**? → Load `.claude/skills/code-intel/phases/SKILL.md`
 - Working in **multi-repo**? → Load `.claude/skills/code-intel/multi-repo/SKILL.md`
 - Working in **modules**? → Load `.claude/skills/code-intel/modules/SKILL.md`
 - Working in **api**? → Load `.claude/skills/code-intel/api/SKILL.md`
-- Working in **phases**? → Load `.claude/skills/code-intel/phases/SKILL.md`
 - Working in **backup**? → Load `.claude/skills/code-intel/backup/SKILL.md`
-- Working in **workers**? → Load `.claude/skills/code-intel/workers/SKILL.md`
 - Working in **storage**? → Load `.claude/skills/code-intel/storage/SKILL.md`
+- Working in **workers**? → Load `.claude/skills/code-intel/workers/SKILL.md`
 - Working in **shared**? → Load `.claude/skills/code-intel/shared/SKILL.md`
 - Working in **pipeline**? → Load `.claude/skills/code-intel/pipeline/SKILL.md`
 - Working in **eval**? → Load `.claude/skills/code-intel/eval/SKILL.md`
@@ -182,13 +182,13 @@ Each skill gives you symbol maps, key entry points, and safe-change guidance for
 | Work in `query` (65 symbols) | `.claude/skills/code-intel/query/SKILL.md` |
 | Work in `panels` (47 symbols) | `.claude/skills/code-intel/panels/SKILL.md` |
 | Work in `search` (43 symbols) | `.claude/skills/code-intel/search/SKILL.md` |
+| Work in `phases` (42 symbols) | `.claude/skills/code-intel/phases/SKILL.md` |
 | Work in `multi-repo` (41 symbols) | `.claude/skills/code-intel/multi-repo/SKILL.md` |
 | Work in `modules` (40 symbols) | `.claude/skills/code-intel/modules/SKILL.md` |
 | Work in `api` (39 symbols) | `.claude/skills/code-intel/api/SKILL.md` |
-| Work in `phases` (38 symbols) | `.claude/skills/code-intel/phases/SKILL.md` |
 | Work in `backup` (37 symbols) | `.claude/skills/code-intel/backup/SKILL.md` |
+| Work in `storage` (35 symbols) | `.claude/skills/code-intel/storage/SKILL.md` |
 | Work in `workers` (34 symbols) | `.claude/skills/code-intel/workers/SKILL.md` |
-| Work in `storage` (33 symbols) | `.claude/skills/code-intel/storage/SKILL.md` |
 | Work in `shared` (31 symbols) | `.claude/skills/code-intel/shared/SKILL.md` |
 | Work in `pipeline` (30 symbols) | `.claude/skills/code-intel/pipeline/SKILL.md` |
 | Work in `eval` (29 symbols) | `.claude/skills/code-intel/eval/SKILL.md` |

@@ -43,9 +43,9 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | `createBackup` | method | 4 | 5 | `backup/backup-service.ts` |
 | `restoreBackup` | method | 3 | 5 | `backup/backup-service.ts` |
 | `start` | method | 1 | 6 | `backup/backup-scheduler.ts` |
-| `_runBackups` | method | 1 | 5 | `backup/backup-scheduler.ts` |
 | `applyRetention` | method | 2 | 4 | `backup/backup-service.ts` |
 | `_loadIndex` | method | 4 | 2 | `backup/backup-service.ts` |
+| `_runBackups` | method | 1 | 4 | `backup/backup-scheduler.ts` |
 | `BackupService` | class | 4 | 0 | `backup/backup-service.ts` |
 | `listBackups` | method | 3 | 1 | `backup/backup-service.ts` |
 | `hmac` | function | 2 | 1 | `backup/backup-service.ts` |

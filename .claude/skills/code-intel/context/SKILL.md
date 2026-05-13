@@ -1,11 +1,11 @@
 ---
 name: context
-description: "Covers the **context** subsystem of code-intel-platform. 27 symbols across 2 files. Key symbols: `build`. Internal call density: 0.9 calls/symbol."
+description: "Covers the **context** subsystem of code-intel-platform. 27 symbols across 2 files. Key symbols: `build`. Internal call density: 0.8 calls/symbol."
 ---
 
 # context
 
-> **27 symbols** | **2 files** | path: `code-intel/core/src/context/` | call density: 0.9/sym
+> **27 symbols** | **2 files** | path: `code-intel/core/src/context/` | call density: 0.8/sym
 
 ## When to Use
 
@@ -41,11 +41,11 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | `buildRelationBlock` | function | 1 | 4 | `context/builder.ts` |
 | `measureBlocks` | function | 4 | 1 | `context/token-counter.ts` |
 | `detectQueryIntent` | function | 3 | 1 | `context/builder.ts` |
-| `estimateTokens` | function | 4 | 0 | `context/token-counter.ts` |
 | `last2Segments` | function | 3 | 0 | `context/builder.ts` |
 | `getCluster` | function | 1 | 2 | `context/builder.ts` |
 | `formatSymbol` | method | 1 | 2 | `context/builder.ts` |
 | `meaningfulLines` | function | 2 | 0 | `context/builder.ts` |
+| `adaptiveSnippet` | function | 1 | 1 | `context/builder.ts` |
 
 ## Impact Guidance
 

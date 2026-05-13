@@ -1,11 +1,11 @@
 ---
 name: storage
-description: "Covers the **storage** subsystem of code-intel-platform. 33 symbols across 6 files. Key symbols: `constructor`, `init`, `execute`. Internal call density: 0.7 calls/symbol."
+description: "Covers the **storage** subsystem of code-intel-platform. 35 symbols across 6 files. Key symbols: `constructor`, `init`, `execute`. Internal call density: 0.8 calls/symbol."
 ---
 
 # storage
 
-> **33 symbols** | **6 files** | path: `code-intel/core/src/storage/` | call density: 0.7/sym
+> **35 symbols** | **6 files** | path: `code-intel/core/src/storage/` | call density: 0.8/sym
 
 ## When to Use
 
@@ -21,9 +21,9 @@ Load this skill when:
 |------|---------|-------|
 | `code-intel/core/src/storage/graph-loader.ts` | `loadGraphToDB`, `loadTableFallback`, `loadEdgeGroupFallback`, `upsertNode` +(5) | 5 exported |
 | `code-intel/core/src/storage/db-manager.ts` | `DbManager`, `constructor`, `init`, `query` +(3) | 7 exported |
+| `code-intel/core/src/storage/repo-registry.ts` | `RepoEntry`, `getGlobalDir`, `getReposFile`, `loadRegistry` +(3) | 5 exported |
 | `code-intel/core/src/storage/csv-writer.ts` | `writeNodeCSVs`, `EdgeCSVGroup`, `writeEdgeCSV`, `csvRow` +(1) | 3 exported |
 | `code-intel/core/src/storage/metadata.ts` | `IndexMetadata`, `saveMetadata`, `loadMetadata`, `getDbPath` +(1) | 5 exported |
-| `code-intel/core/src/storage/repo-registry.ts` | `RepoEntry`, `loadRegistry`, `saveRegistry`, `upsertRepo` +(1) | 5 exported |
 | `code-intel/core/src/storage/schema.ts` | `getCreateNodeTableDDL`, `getCreateEdgeTableDDL` | 2 exported |
 
 ## Entry Points
@@ -42,10 +42,10 @@ Sorted by call graph degree (changing these has the highest blast radius):
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
 | `loadGraphToDB` | function | 1 | 12 | `storage/graph-loader.ts` |
-| `loadRegistry` | function | 10 | 1 | `storage/repo-registry.ts` |
+| `loadRegistry` | function | 10 | 2 | `storage/repo-registry.ts` |
+| `DbManager` | class | 10 | 0 | `storage/db-manager.ts` |
 | `writeEdgeCSV` | function | 2 | 7 | `storage/csv-writer.ts` |
 | `writeNodeCSVs` | function | 2 | 6 | `storage/csv-writer.ts` |
-| `DbManager` | class | 8 | 0 | `storage/db-manager.ts` |
 | `loadMetadata` | function | 5 | 1 | `storage/metadata.ts` |
 | `getVectorDbPath` | function | 6 | 0 | `storage/metadata.ts` |
 | `loadEdgeGroupFallback` | function | 1 | 4 | `storage/graph-loader.ts` |

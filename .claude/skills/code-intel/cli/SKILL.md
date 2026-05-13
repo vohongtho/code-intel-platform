@@ -33,8 +33,8 @@ Load this skill when:
 
 Start exploration here — exported symbols with no external callers:
 
-- **`expandEnvRefs`** `(function)` → `code-intel/core/src/cli/config-manager.ts:191`
-- **`parse`** `(function)` → `code-intel/core/src/cli/update-checker.ts:44`
+- **`expandEnvRefs`** `(function)` → `code-intel/core/src/cli/config-manager.ts:193`
+- **`parse`** `(function)` → `code-intel/core/src/cli/update-checker.ts:46`
 
 ## Hot Symbols
 
@@ -42,9 +42,9 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `runInitWizard` | function | 1 | 16 | `cli/init-wizard.ts` |
+| `runInitWizard` | function | 1 | 15 | `cli/init-wizard.ts` |
+| `analyzeWorkspace` | function | 2 | 10 | `cli/main.ts` |
 | `rewriteCommand` | function | 5 | 6 | `cli/hook-rewriter.ts` |
-| `analyzeWorkspace` | function | 2 | 8 | `cli/main.ts` |
 | `startWatcher` | function | 1 | 9 | `cli/main.ts` |
 | `loadOrAnalyzeWorkspace` | function | 1 | 9 | `cli/main.ts` |
 | `configSet` | function | 1 | 8 | `cli/config-manager.ts` |
