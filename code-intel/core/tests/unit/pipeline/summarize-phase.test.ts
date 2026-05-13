@@ -23,9 +23,10 @@ function makeFakeProvider(
 ): LLMProvider {
   return {
     modelName,
+    endpoint: 'http://fake-provider',
     summarize: async (_prompt: string) => {
-      if (typeof response === 'function') return response();
-      return response;
+      const text = typeof response === 'function' ? await response() : response;
+      return { text, promptTokens: 10, completionTokens: 5 };
     },
   };
 }

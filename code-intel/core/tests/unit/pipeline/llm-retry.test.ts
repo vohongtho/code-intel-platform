@@ -50,16 +50,16 @@ describe('CircuitBreaker', () => {
 
   it('counts consecutive failures', async () => {
     const cb = new CircuitBreaker();
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 19; i++) {
       try { await cb.call(async () => { throw new Error('fail'); }); } catch { /* expected */ }
     }
-    assert.equal(cb.failureCount, 4);
-    assert.equal(cb.isOpen, false); // 4 < 5 threshold
+    assert.equal(cb.failureCount, 19);
+    assert.equal(cb.isOpen, false); // 19 < 20 threshold
   });
 
-  it('opens after 5 consecutive failures', async () => {
+  it('opens after 20 consecutive failures', async () => {
     const cb = new CircuitBreaker();
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 20; i++) {
       try { await cb.call(async () => { throw new Error('fail'); }); } catch { /* expected */ }
     }
     assert.equal(cb.isOpen, true);
@@ -67,7 +67,7 @@ describe('CircuitBreaker', () => {
 
   it('rejects calls when open', async () => {
     const cb = new CircuitBreaker();
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 20; i++) {
       try { await cb.call(async () => { throw new Error('fail'); }); } catch { /* expected */ }
     }
     await assert.rejects(

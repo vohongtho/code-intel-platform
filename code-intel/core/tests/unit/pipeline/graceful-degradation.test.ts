@@ -167,7 +167,8 @@ describe('Epic 6 — LLM outage: summarize phase skips gracefully', () => {
     // Create a phase whose factory throws (simulating LLM API unavailable)
     const throwingProvider = {
       modelName: 'test-throw',
-      async summarize(_prompt: string): Promise<string> {
+      endpoint: 'http://fake-provider',
+      async summarize(_prompt: string): Promise<import('../../../src/llm/provider.js').SummarizeResult> {
         throw new Error('Connection refused: LLM API offline');
       },
     };
