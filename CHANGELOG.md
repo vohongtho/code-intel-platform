@@ -4,6 +4,46 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.0.4] — 2026-05-15 — Disambiguation, Source Reading & BM25 Class-Name Boosting
+
+> **Theme:** Eliminate silent wrong-class resolution in `inspect` — both CLI and MCP now warn on ambiguous symbols, surface all candidates, and let the caller pick the correct one. New `read`/`get_source` commands give direct file access without loading everything at once.
+
+### 🔍 Inspect — Disambiguation (CLI & MCP)
+
+- **CLI `inspect`** — when a symbol name exists in multiple files (e.g. `login` in API and CMS, `requestAccessToken` in JWT and Token), now prints a **multi-match warning** listing every candidate with file path, line number, and a source preview instead of silently returning the first-indexed match
+- **CLI `inspect --file <pattern>`** — new flag to select the correct implementation (e.g. `--file CMS`, `--file Token`); loops through matches using partial path filter
+- **CLI `inspect`** — source preview now shown inline (up to 1 500 chars / 30 lines) with truncation hint pointing to the `read` command for the full source
+- **MCP `inspect`** — when multiple nodes share the same name and no `file_path` is given, returns a `disambiguation` JSON object listing all candidates instead of silently picking one
+- **MCP `inspect`** — new `file_path` parameter to select the correct implementation when disambiguation is needed
+- **MCP `inspect`** — content preview expanded from 500 → 1 500 chars; truncation note added when source is cut off
+- **MCP `inspect` description** — updated to warn that bare `inspect` on shared method names (login, logout, verify, revoke, requestAccessToken) may resolve the wrong class; recommends `search("ClassName method context")` as the safe alternative
+
+### 📄 New: Source Reading Commands
+
+- **CLI `code-intel read <file>`** — new command to read raw source lines from any indexed file using partial path matching (e.g. `"Token"`, `"configuration"`, `"CMS/AuthController"`); supports `--start` and `--end` line flags (max 300 lines per call); shows line numbers, total line count, and continuation hint
+- **MCP `get_source`** — new tool to read raw source lines from any indexed file; accepts partial `file_path`, `start_line`, `end_line` (max 300 lines); returns numbered source with `hasMore` flag; useful for reading config files (e.g. `configuration.php`) that have no indexable symbols
+
+### 🔎 Search — Class-Name Boosting
+
+- **BM25 `nodeToDoc`** — file basename (class name without extension) now repeated twice in the document for stronger BM25 weight; queries like `"Token requestAccessToken"` now rank `Token` methods above `JWT` methods
+- **BM25 content window** — expanded from 1 000 → 1 500 chars per node for richer term coverage
+- **`textSearch`** — added class-basename scoring: exact filename-stem match scores +8, prefix match +5 (previously only full path match at +2); query `"token method"` now reliably surfaces `Token` class methods before same-named methods in other classes
+
+### 🔁 GQL Executor — Best-Match Heuristic
+
+- **`TRAVERSE` / `PATH` statements** — when multiple nodes share the same name, now selects the node with the most call/import edges (most-connected = most likely real implementation) instead of the first-indexed node; reduces wrong-module resolution in `TRAVERSE CALLS FROM "login"` queries
+
+### ⬆️ CLI `impact` — Disambiguation
+
+- **`code-intel impact --file <pattern>`** — new flag mirrors `inspect --file`; when `impact` is called on an ambiguous symbol, shows all candidates and uses the filtered one; warns if no `--file` is given and multiple matches exist
+
+### 📝 Tool Descriptions Updated
+
+- **MCP `search` description** — added tip: include class name in query for ambiguous methods (e.g. `search("Token requestAccessToken redis save")`)
+- **CLI help banners** — updated Quick Start and All Commands sections to document `read`, `inspect --file`, and `impact --file`
+
+---
+
 ## [1.0.3] — 2026-07-18 — Per-Symbol Summarization & Provider Init Improvements
 
 > **Theme:** Strict one-API-call-per-symbol summarization, full provider configuration during `init`, and security vulnerability fixes
