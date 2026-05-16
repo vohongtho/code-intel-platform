@@ -177,7 +177,8 @@ program
   │  code-intel analyze                Index current directory               │
   │  code-intel serve                  Start web UI at http://localhost:4747  │
   │  code-intel search "query"         Search the knowledge graph            │
-  │  code-intel inspect <symbol>       Inspect a symbol's connections        │
+  │  code-intel inspect <symbol>       Inspect a symbol (with disambiguation) │
+  │  code-intel read <file>            Read raw source lines from a file      │
   │  code-intel impact <symbol>        Show blast radius for a symbol        │
   │                                                                          │
   └──────────────────────────────────────────────────────────────────────────┘
@@ -222,7 +223,11 @@ program
   │  exploration                                                                                                       │
   │    code-intel search <query>                Execute a BM25 keyword search across all indexed symbols              │
   │    code-intel inspect <symbol>              Show callers, callees, import edges, and source location              │
+  │    code-intel inspect <symbol> --file <p>   Disambiguate when the same name exists in multiple files              │
+  │    code-intel read <file>                   Read raw source lines from a file (partial path OK)                   │
+  │    code-intel read <file> --start N --end N Read specific line range (max 300 lines per call)                    │
   │    code-intel impact <symbol>               Compute the transitive blast radius of a change to a symbol           │
+  │    code-intel impact <symbol> --file <p>    Disambiguate when the same name exists in multiple files              │
   │                                                                                                                    │
   │  groups  (multi-repo / monorepo service tracking)                                                                  │
   │    code-intel group create <name>           Create a named group to track multiple repositories together          │
@@ -2423,59 +2428,110 @@ program
 // ─── 9. inspect ──────────────────────────────────────────────────────────────
 program
   .command('inspect')
-  .description('Inspect a symbol — show callers, callees, file location, and export status')
+  .description('Inspect a symbol — show callers, callees, file location, and source preview')
   .argument('<symbol>', 'Exact symbol name to inspect')
   .option('-p, --path <path>', 'Path to the repository (default: current directory)', '.')
+  .option('-f, --file <pattern>', 'Filter by file path pattern when multiple definitions exist (e.g. "CMS" or "Token.php")')
   .addHelpText('after', `
   Finds the symbol in the knowledge graph and prints its full connection
   profile: where it lives, who calls it, and what it calls.
+
+  When the same symbol name exists in multiple files (e.g. login in API and CMS
+  modules, or requestAccessToken in JWT.php and Token.php), a disambiguation
+  list is shown. Use --file to select the correct implementation.
 
   Use this before renaming a symbol to understand its blast radius.
 
   Examples:
     $ code-intel inspect runPipeline
+    $ code-intel inspect login --file CMS
+    $ code-intel inspect requestAccessToken --file Token.php
     $ code-intel inspect ApiClient --path ./frontend
 `)
-  .action(async (symbol: string, options: { path: string }) => {
+  .action(async (symbol: string, options: { path: string; file?: string }) => {
     const { graph } = await loadOrAnalyzeWorkspace(options.path);
 
-    let found = false;
+    // Collect ALL nodes with this name
+    const allMatches: import('../shared/index.js').CodeNode[] = [];
     for (const node of graph.allNodes()) {
-      if (node.name === symbol) {
-        found = true;
-        console.log(`\n  ◆  ${node.kind}: ${node.name}`);
-        console.log(`     File     : ${node.filePath}:${node.startLine ?? '?'}`);
-        console.log(`     Exported : ${node.exported ?? 'unknown'}`);
+      if (node.name === symbol) allMatches.push(node);
+    }
 
-        const incoming = [...graph.findEdgesTo(node.id)];
-        const outgoing = [...graph.findEdgesFrom(node.id)];
-        const callers = incoming.filter((e) => e.kind === 'calls');
-        const callees = outgoing.filter((e) => e.kind === 'calls');
+    if (allMatches.length === 0) {
+      console.log(`\n  Symbol "${symbol}" not found.`);
+      console.log(`  Try: code-intel search "${symbol}"\n`);
+      return;
+    }
 
-        if (callers.length > 0) {
-          console.log(`\n     Callers (${callers.length}):`);
-          for (const c of callers.slice(0, 10)) {
-            const n = graph.getNode(c.source);
-            console.log(`       ←  ${n?.name ?? c.source}  (${n?.filePath})`);
+    // If multiple matches, apply --file filter or show disambiguation
+    let targets = allMatches;
+    if (allMatches.length > 1) {
+      if (options.file) {
+        targets = allMatches.filter((n) => n.filePath.includes(options.file!));
+        if (targets.length === 0) {
+          console.log(`\n  No definition of "${symbol}" matching --file "${options.file}".\n`);
+          console.log(`  Available definitions:\n`);
+          for (const n of allMatches) {
+            console.log(`    ${n.kind.padEnd(12)} ${n.filePath}:${n.startLine ?? '?'}`);
           }
-          if (callers.length > 10) console.log(`       … and ${callers.length - 10} more`);
+          console.log(`\n  Re-run with --file <pattern> from the list above.\n`);
+          return;
         }
-        if (callees.length > 0) {
-          console.log(`\n     Callees (${callees.length}):`);
-          for (const c of callees.slice(0, 10)) {
-            const n = graph.getNode(c.target);
-            console.log(`       →  ${n?.name ?? c.target}  (${n?.filePath})`);
+      } else {
+        console.log(`\n  ⚠  Multiple definitions of "${symbol}" found — use --file to select one:\n`);
+        for (const n of allMatches) {
+          console.log(`    ${n.kind.padEnd(12)} ${n.filePath}:${n.startLine ?? '?'}`);
+          if (n.content) {
+            const preview = n.content.slice(0, 100).replace(/\n/g, ' ');
+            console.log(`                 ${preview}`);
           }
-          if (callees.length > 10) console.log(`       … and ${callees.length - 10} more`);
         }
-        console.log('');
-        break;
+        console.log(`\n  Example: code-intel inspect "${symbol}" --file CMS\n`);
+        console.log(`  Tip: Use 'code-intel search "${symbol}"' to find the right file first.\n`);
+        return;
       }
     }
 
-    if (!found) {
-      console.log(`\n  Symbol "${symbol}" not found.`);
-      console.log(`  Try: code-intel search "${symbol}"\n`);
+    for (const node of targets) {
+      console.log(`\n  ◆  ${node.kind}: ${node.name}`);
+      console.log(`     File     : ${node.filePath}:${node.startLine ?? '?'}`);
+      console.log(`     Exported : ${node.exported ?? 'unknown'}`);
+
+      const incoming = [...graph.findEdgesTo(node.id)];
+      const outgoing = [...graph.findEdgesFrom(node.id)];
+      const callers = incoming.filter((e) => e.kind === 'calls');
+      const callees = outgoing.filter((e) => e.kind === 'calls');
+
+      if (callers.length > 0) {
+        console.log(`\n     Callers (${callers.length}):`);
+        for (const c of callers.slice(0, 10)) {
+          const n = graph.getNode(c.source);
+          console.log(`       ←  ${n?.name ?? c.source}  (${n?.filePath})`);
+        }
+        if (callers.length > 10) console.log(`       … and ${callers.length - 10} more`);
+      }
+      if (callees.length > 0) {
+        console.log(`\n     Callees (${callees.length}):`);
+        for (const c of callees.slice(0, 10)) {
+          const n = graph.getNode(c.target);
+          console.log(`       →  ${n?.name ?? c.target}  (${n?.filePath})`);
+        }
+        if (callees.length > 10) console.log(`       … and ${callees.length - 10} more`);
+      }
+
+      // Source preview (up to 1500 chars)
+      if (node.content) {
+        const preview = node.content.slice(0, 1500);
+        console.log(`\n     Source preview:`);
+        const lines = preview.split('\n');
+        for (const line of lines.slice(0, 30)) {
+          console.log(`       ${line}`);
+        }
+        if (node.content.length > 1500 || lines.length > 30) {
+          console.log(`       … (truncated — use 'code-intel read "${node.filePath}" --start ${node.startLine}' for full source)`);
+        }
+      }
+      console.log('');
     }
   });
 
@@ -2485,6 +2541,7 @@ program
   .description('Show the blast radius — all symbols that break if this one changes')
   .argument('<symbol>', 'Symbol name to analyse')
   .option('-p, --path <path>', 'Path to the repository (default: current directory)', '.')
+  .option('-f, --file <pattern>', 'Filter by file path when multiple definitions exist (e.g. "CMS" or "Token.php")')
   .option('-d, --depth <n>', 'Maximum traversal depth (hops)', '5')
   .addHelpText('after', `
   Traverses the call graph upward from the target symbol, collecting every
@@ -2497,18 +2554,41 @@ program
     $ code-intel impact ApiClient --depth 3
     $ code-intel impact UserService --path ./backend
 `)
-  .action(async (symbol: string, options: { path: string; depth: string }) => {
+  .action(async (symbol: string, options: { path: string; depth: string; file?: string }) => {
     const { graph } = await loadOrAnalyzeWorkspace(options.path);
     const maxHops = parseInt(options.depth, 10);
 
-    let targetNode = null;
+    // Collect ALL nodes with this name
+    const allMatches: import('../shared/index.js').CodeNode[] = [];
     for (const node of graph.allNodes()) {
-      if (node.name === symbol) { targetNode = node; break; }
+      if (node.name === symbol) allMatches.push(node);
     }
-    if (!targetNode) {
+
+    if (allMatches.length === 0) {
       console.log(`\n  Symbol "${symbol}" not found.`);
       console.log(`  Try: code-intel search "${symbol}"\n`);
       return;
+    }
+
+    let targetNode = allMatches[0];
+    if (allMatches.length > 1) {
+      if (options.file) {
+        const filtered = allMatches.filter((n) => n.filePath.includes(options.file!));
+        if (filtered.length === 0) {
+          console.log(`\n  No definition of "${symbol}" matching --file "${options.file}".\n`);
+          for (const n of allMatches) {
+            console.log(`    ${n.kind.padEnd(12)} ${n.filePath}:${n.startLine ?? '?'}`);
+          }
+          return;
+        }
+        targetNode = filtered[0];
+      } else {
+        console.log(`\n  ⚠  Multiple definitions of "${symbol}" found — using first. Use --file to select:\n`);
+        for (const n of allMatches) {
+          console.log(`    ${n.kind.padEnd(12)} ${n.filePath}:${n.startLine ?? '?'}`);
+        }
+        console.log('');
+      }
     }
 
     const affected = new Set<string>();
@@ -2538,7 +2618,97 @@ program
     console.log('');
   });
 
-// ─── 10b. deprecated ─────────────────────────────────────────────────────────
+// ─── 10b. read ───────────────────────────────────────────────────────────────
+program
+  .command('read')
+  .description('Read raw source lines from a file — use partial path matching (e.g. "Token.php")')
+  .argument('<file>', 'File path or partial path to read (e.g. "Token.php" or "src/Modules/CMS/AuthController.php")')
+  .option('-p, --path <path>', 'Path to the repository (default: current directory)', '.')
+  .option('--start <n>', 'First line to return (1-indexed, default: 1)', '1')
+  .option('--end <n>', 'Last line to return inclusive (default: start + 99, max 300 lines per call)')
+  .addHelpText('after', `
+  Reads actual source lines from any indexed file. Supports partial path
+  matching — useful when you know the filename but not the full path.
+
+  Use this to verify the exact implementation of a symbol after inspect()
+  shows it may be truncated, or to check config files (which have no indexable
+  symbols and cannot be read via inspect).
+
+  Examples:
+    $ code-intel read "Token.php"
+    $ code-intel read "Token.php" --start 30 --end 80
+    $ code-intel read "configuration.php" --start 135 --end 160
+    $ code-intel read "src/Modules/CMS/Controller/AuthController.php" --start 50 --end 150
+`)
+  .action(async (fileQuery: string, options: { path: string; start: string; end?: string }) => {
+    const { graph, workspaceRoot } = await loadOrAnalyzeWorkspace(options.path);
+    const startLine = Math.max(1, parseInt(options.start, 10) || 1);
+    const maxLines = 300;
+    const endLine = options.end
+      ? Math.min(parseInt(options.end, 10), startLine + maxLines - 1)
+      : startLine + 99;
+
+    // Collect matching file paths from the graph
+    const matchedFiles = new Set<string>();
+    for (const node of graph.allNodes()) {
+      if (node.filePath && node.filePath.includes(fileQuery)) {
+        matchedFiles.add(node.filePath);
+      }
+    }
+
+    // Also attempt direct filesystem lookup relative to workspaceRoot
+    if (matchedFiles.size === 0) {
+      const direct = path.resolve(workspaceRoot, fileQuery);
+      if (fs.existsSync(direct)) {
+        matchedFiles.add(direct);
+      }
+    }
+
+    if (matchedFiles.size === 0) {
+      console.log(`\n  No indexed file matching "${fileQuery}".`);
+      console.log(`  Tip: use 'code-intel search "${path.basename(fileQuery)}"' to find the right path.\n`);
+      return;
+    }
+
+    if (matchedFiles.size > 1) {
+      console.log(`\n  ⚠  Multiple files match "${fileQuery}" — be more specific:\n`);
+      for (const f of matchedFiles) {
+        console.log(`    ${f}`);
+      }
+      console.log('');
+      return;
+    }
+
+    const [resolvedPath] = [...matchedFiles];
+    let fileContent: string;
+    try {
+      fileContent = fs.readFileSync(resolvedPath!, 'utf-8');
+    } catch {
+      console.log(`\n  Could not read file: ${resolvedPath}\n`);
+      return;
+    }
+
+    const lines = fileContent.split('\n');
+    const totalLines = lines.length;
+    const sliceStart = startLine - 1;
+    const sliceEnd = Math.min(endLine, totalLines);
+
+    console.log(`\n  ◈  ${resolvedPath}`);
+    console.log(`     Lines ${startLine}–${sliceEnd} of ${totalLines}\n`);
+
+    for (let i = sliceStart; i < sliceEnd; i++) {
+      const lineNum = String(i + 1).padStart(4);
+      console.log(`  ${lineNum}  ${lines[i]}`);
+    }
+
+    if (sliceEnd < totalLines) {
+      console.log(`\n  … ${totalLines - sliceEnd} more lines — use --start ${sliceEnd + 1} to continue.\n`);
+    } else {
+      console.log('');
+    }
+  });
+
+// ─── 10c. deprecated ─────────────────────────────────────────────────────────
 program
   .command('deprecated')
   .description('Find usages of deprecated APIs in the codebase')

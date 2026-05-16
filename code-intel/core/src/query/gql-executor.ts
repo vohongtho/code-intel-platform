@@ -132,6 +132,25 @@ function executeFIND(stmt: FindStatement, graph: KnowledgeGraph): GQLResult {
   };
 }
 
+// ─── Shared helper: find the best matching node for a name ───────────────────
+// For TRAVERSE/PATH: if multiple nodes share a name, pick the one whose
+// filePath is least likely to be a framework stub (prefer source files).
+function findBestNode(graph: KnowledgeGraph, name: string): CodeNode | undefined {
+  const matches: CodeNode[] = [];
+  for (const node of graph.allNodes()) {
+    if (node.name === name) matches.push(node);
+  }
+  if (matches.length === 0) return undefined;
+  if (matches.length === 1) return matches[0];
+  // Prefer nodes with more connections (callers+callees) — they're more likely
+  // to be the "real" implementation rather than a stub or alternate class.
+  return matches.sort((a, b) => {
+    const aEdges = [...graph.findEdgesFrom(a.id)].length + [...graph.findEdgesTo(a.id)].length;
+    const bEdges = [...graph.findEdgesFrom(b.id)].length + [...graph.findEdgesTo(b.id)].length;
+    return bEdges - aEdges;
+  })[0];
+}
+
 // ── TRAVERSE executor ─────────────────────────────────────────────────────────
 
 function executeTRAVERSE(stmt: TraverseStatement, graph: KnowledgeGraph): GQLResult {
@@ -141,11 +160,8 @@ function executeTRAVERSE(stmt: TraverseStatement, graph: KnowledgeGraph): GQLRes
   const direction = stmt.direction ?? 'OUTGOING';
   const deadline = start + EXECUTION_TIMEOUT_MS;
 
-  // Find starting node by name
-  let startNode: CodeNode | undefined;
-  for (const node of graph.allNodes()) {
-    if (node.name === stmt.from) { startNode = node; break; }
-  }
+  // Find starting node by name — use best-match heuristic when ambiguous
+  const startNode = findBestNode(graph, stmt.from);
 
   if (!startNode) {
     return {
@@ -223,15 +239,9 @@ function executePATH(stmt: PathStatement, graph: KnowledgeGraph): GQLResult {
   const start = Date.now();
   const deadline = start + EXECUTION_TIMEOUT_MS;
 
-  // Find start and end nodes
-  let startNode: CodeNode | undefined;
-  let endNode: CodeNode | undefined;
-
-  for (const node of graph.allNodes()) {
-    if (node.name === stmt.from) startNode = node;
-    if (node.name === stmt.to) endNode = node;
-    if (startNode && endNode) break;
-  }
+  // Find start and end nodes — use best-match heuristic when ambiguous
+  const startNode = findBestNode(graph, stmt.from);
+  const endNode = findBestNode(graph, stmt.to);
 
   if (!startNode || !endNode) {
     return {

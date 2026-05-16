@@ -40,11 +40,17 @@ function tokenize(text: string): string[] {
 }
 
 function nodeToDoc(node: CodeNode): string {
+  // Repeat the filename stem (class name without extension) to boost its BM25 weight
+  // so queries like "Token requestAccessToken" rank Token.php over JWT.php.
+  const fileBaseName = node.filePath.split(/[/\\]/).pop()?.replace(/\.[^.]+$/, '') ?? '';
   return [
     node.name,
+    node.name, // repeat name to boost exact-name matches
     node.kind,
     node.filePath,
-    (node.content ?? '').slice(0, 1000),
+    fileBaseName, // filename stem (class name) — extra weight
+    fileBaseName, // repeat again for stronger class-name boosting
+    (node.content ?? '').slice(0, 1500), // increased from 1000
   ].join(' ');
 }
 

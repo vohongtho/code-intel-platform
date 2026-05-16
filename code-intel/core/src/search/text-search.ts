@@ -29,13 +29,23 @@ export function textSearch(
     let score = 0;
     const nameLC = node.name.toLowerCase();
     const pathLC = node.filePath.toLowerCase();
+    // File basename (class name without extension) for prefix matching
+    const fileBaseName = (node.filePath.split(/[/\\]/).pop()?.replace(/\.[^.]+$/, '') ?? '').toLowerCase();
+    const contentLC = node.content?.toLowerCase() ?? '';
 
     for (const term of terms) {
+      // Name scoring
       if (nameLC === term) score += 10;
       else if (nameLC.startsWith(term)) score += 7;
       else if (nameLC.includes(term)) score += 5;
-      if (pathLC.includes(term)) score += 2;
-      if (node.content?.toLowerCase().includes(term)) score += 3;
+
+      // File-path scoring — boost file basename (class name) matches strongly
+      if (fileBaseName === term) score += 8;       // e.g. query "token" → Token.php
+      else if (fileBaseName.startsWith(term)) score += 5;
+      else if (pathLC.includes(term)) score += 2;
+
+      // Content scoring
+      if (contentLC.includes(term)) score += 3;
     }
 
     // Boost source files over compiled/test files

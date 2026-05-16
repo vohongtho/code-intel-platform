@@ -90,7 +90,7 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
       // ── Search & inspect ─────────────────────────────────────────────────
       {
         name: 'search',
-        description: 'BM25 keyword search across all indexed symbols — functions, classes, files, routes, etc. Optionally scope to a specific repo or group.',
+        description: 'BM25 keyword search across all indexed symbols — functions, classes, files, routes, etc. Optionally scope to a specific repo or group. TIP: To find a method in a specific class when multiple classes have the same method name, include the class/file name in the query (e.g. search("Token requestAccessToken redis save") to find Token.php\'s version vs JWT.php\'s). This is the preferred alternative to bare inspect() for ambiguous method names.',
         inputSchema: {
           type: 'object' as const,
           properties: {
@@ -106,14 +106,29 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
       },
       {
         name: 'inspect',
-        description: '360° view of a symbol: definition location, callers, callees, heritage (extends/implements), members, cluster, and source preview (first 500 chars)',
+        description: '360° view of a symbol: definition location, callers, callees, heritage (extends/implements), members, cluster, and source preview. When multiple files define the same symbol name, returns a disambiguation list — re-call with file_path to select the correct implementation. IMPORTANT: When you expect a symbol to be in a specific class (e.g. Token vs JWT, or CMS vs API module), always pass file_path to avoid silently resolving the wrong class. For methods that exist in multiple classes (requestAccessToken, verify, revoke, login, logout), prefer search("ClassName methodName unique-context") over bare inspect to guarantee the right class.',
         inputSchema: {
           type: 'object' as const,
           properties: {
             symbol_name: { type: 'string', description: 'Exact symbol name to inspect' },
+            file_path: { type: 'string', description: 'Optional partial file path to disambiguate when multiple symbols share the same name (e.g. "Token.php" or "src/Modules/CMS"). Required when inspect returns a disambiguation list or when you know the target class.' },
             ..._tokenProp,
           },
           required: ['symbol_name'],
+        },
+      },
+      {
+        name: 'get_source',
+        description: 'Read raw source lines from any file in the workspace. Use this to verify exact implementation details that inspect\'s content preview may not fully show. Supports partial file path matching (e.g. "Token.php"). Returns numbered lines.',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            file_path: { type: 'string', description: 'File path to read (partial match supported, e.g. "Token.php" or "src/Modules/CMS/AuthController.php")' },
+            start_line: { type: 'number', description: 'First line to return (1-indexed, default: 1)' },
+            end_line: { type: 'number', description: 'Last line to return inclusive (default: start_line + 99). Max 300 lines per call.' },
+            ..._tokenProp,
+          },
+          required: ['file_path'],
         },
       },
       {
@@ -713,8 +728,46 @@ async function dispatchTool(
       // ── inspect ────────────────────────────────────────────────────────────
       case 'inspect': {
         const symbolName = a.symbol_name as string;
-        const node = findNodeByName(graph, symbolName);
-        if (!node) return { content: [{ type: 'text', text: `Symbol "${symbolName}" not found. Try search first.` }] };
+        const filePathHint = a.file_path as string | undefined;
+
+        // Collect ALL nodes with this name
+        const allMatchingNodes = findNodesByName(graph, symbolName);
+        if (allMatchingNodes.length === 0) {
+          return { content: [{ type: 'text', text: `Symbol "${symbolName}" not found. Try search first.` }] };
+        }
+
+        // If multiple matches, filter by file_path hint if provided
+        let node = allMatchingNodes[0];
+        if (allMatchingNodes.length > 1) {
+          if (filePathHint) {
+            const filtered = allMatchingNodes.filter((n) => n.filePath.includes(filePathHint));
+            if (filtered.length === 0) {
+              return {
+                content: [{
+                  type: 'text',
+                  text: compact({
+                    disambiguation: true,
+                    message: `No match for file_path "${filePathHint}". Available definitions of "${symbolName}":`,
+                    candidates: allMatchingNodes.map((n) => ({ filePath: n.filePath, kind: n.kind, startLine: n.startLine })),
+                  }),
+                }],
+              };
+            }
+            node = filtered[0];
+          } else {
+            // Return disambiguation list — do NOT silently pick one
+            return {
+              content: [{
+                type: 'text',
+                text: compact({
+                  disambiguation: true,
+                  message: `Multiple definitions of "${symbolName}" found. Re-call inspect with file_path to select one.`,
+                  candidates: allMatchingNodes.map((n) => ({ filePath: n.filePath, kind: n.kind, startLine: n.startLine, content: n.content?.slice(0, 120) })),
+                }),
+              }],
+            };
+          }
+        }
 
         const incoming = [...graph.findEdgesTo(node.id)];
         const outgoing = [...graph.findEdgesFrom(node.id)];
@@ -764,8 +817,78 @@ async function dispatchTool(
                 name: graph.getNode(e.target)?.name, kind: graph.getNode(e.target)?.kind,
               })),
               cluster,
-              content: node.content?.slice(0, 500),
+              content: node.content?.slice(0, 1500),
+              contentNote: node.content && node.content.length > 1500
+                ? `(truncated — use get_source with file_path="${node.filePath}" start_line=${node.startLine} end_line=${node.endLine} for full source)`
+                : undefined,
               ...(suggestEnabled ? { suggested_next_tools: suggestNextTools } : {}),
+            }),
+          }],
+        };
+      }
+
+      // ── get_source ─────────────────────────────────────────────────────────
+      case 'get_source': {
+        const filePathQuery = a.file_path as string;
+        const startLine = Math.max(1, (a.start_line as number) ?? 1);
+        const maxLines = 300;
+        const endLine = Math.min((a.end_line as number) ?? startLine + 99, startLine + maxLines - 1);
+
+        if (!workspaceRoot) {
+          return { content: [{ type: 'text', text: 'workspaceRoot not set — cannot read files.' }] };
+        }
+
+        // Find matching file by walking graph nodes
+        const matchedFiles = new Set<string>();
+        for (const node of graph.allNodes()) {
+          if (node.filePath && node.filePath.includes(filePathQuery)) {
+            matchedFiles.add(node.filePath);
+          }
+        }
+
+        // Also try direct filesystem resolve if query looks like a path segment
+        if (matchedFiles.size === 0) {
+          return { content: [{ type: 'text', text: `No indexed file matching "${filePathQuery}". Try a different partial path or use file_symbols to browse.` }] };
+        }
+
+        if (matchedFiles.size > 1) {
+          return {
+            content: [{
+              type: 'text',
+              text: compact({
+                disambiguation: true,
+                message: `Multiple files match "${filePathQuery}". Re-call with a more specific file_path.`,
+                candidates: [...matchedFiles],
+              }),
+            }],
+          };
+        }
+
+        const [resolvedPath] = [...matchedFiles];
+        let fileContent: string;
+        try {
+          fileContent = fs.readFileSync(resolvedPath, 'utf-8');
+        } catch {
+          return { content: [{ type: 'text', text: `Could not read file: ${resolvedPath}` }] };
+        }
+
+        const lines = fileContent.split('\n');
+        const totalLines = lines.length;
+        const sliceStart = startLine - 1;
+        const sliceEnd = Math.min(endLine, totalLines);
+        const selectedLines = lines.slice(sliceStart, sliceEnd);
+        const numbered = selectedLines.map((l, i) => `${sliceStart + i + 1}: ${l}`).join('\n');
+
+        return {
+          content: [{
+            type: 'text',
+            text: compact({
+              filePath: resolvedPath,
+              startLine,
+              endLine: sliceEnd,
+              totalLines,
+              hasMore: sliceEnd < totalLines,
+              source: numbered,
             }),
           }],
         };
@@ -1504,6 +1627,15 @@ function findNodeByName(graph: KnowledgeGraph, name: string) {
     if (node.name === name) return node;
   }
   return undefined;
+}
+
+/** Return ALL nodes matching the given name (may be >1 if multiple files define the same symbol). */
+function findNodesByName(graph: KnowledgeGraph, name: string): import('../shared/index.js').CodeNode[] {
+  const results: import('../shared/index.js').CodeNode[] = [];
+  for (const node of graph.allNodes()) {
+    if (node.name === name) results.push(node);
+  }
+  return results;
 }
 
 /**
