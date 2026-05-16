@@ -84,6 +84,7 @@ import {
   wipeConfig,
   DEFAULT_CONFIG,
   detectEditors,
+  detectAgents,
 } from './init-wizard.js';
 import {
   configGet,
@@ -1444,13 +1445,15 @@ function installGeminiHook(): HookInstallResult {
 // ─── 1. setup ────────────────────────────────────────────────────────────────
 program
   .command('setup')
-  .description('Configure MCP server for your editors (one-time setup)')
+  .description('Detect AI agents and configure MCP server + hooks (one-time setup)')
   .option('--completion', 'Auto-install shell completion for the detected shell')
   .addHelpText('after', `
-  Configure the code-intel MCP server for Claude Desktop, VS Code, or any
-  editor that supports the Model Context Protocol.
+  Detects installed AI agents (Amp, Claude Code, Cursor, VS Code, Windsurf,
+  Gemini CLI, Codex, Zed) and automatically registers the code-intel MCP
+  server in each one's config file.
 
-  Auto-writes to ~/.config/claude/claude_desktop_config.json when available.
+  Also installs PreToolUse hooks for Claude Code, Cursor, and Gemini CLI
+  to intercept grep/cat/rg commands.
 
   Examples:
     $ code-intel setup
@@ -1462,131 +1465,90 @@ program
       return;
     }
 
-    const configDir = process.env.HOME ? `${process.env.HOME}/.config/claude` : null;
+    console.log('\n  ◈  Code Intelligence — Agent Detection & MCP Setup\n');
 
-    console.log('\n  ◈  Code Intelligence — MCP Setup\n');
-    console.log('  Add the following to your editor MCP configuration:\n');
-
-    const mcpConfig = {
-      mcpServers: {
-        'code-intel': {
-          command: 'npx',
-          args: ['code-intel', 'mcp', '.'],
-        },
-      },
-    };
-
-    console.log('  Claude Desktop / Claude Code  (~/.config/claude/claude_desktop_config.json)');
-    console.log('  ' + JSON.stringify(mcpConfig, null, 2).split('\n').join('\n  '));
-
-    if (configDir) {
-      const configFile = `${configDir}/claude_desktop_config.json`;
-      try {
-        let existing: Record<string, unknown> = {};
-        if (fs.existsSync(configFile)) {
-          existing = JSON.parse(fs.readFileSync(configFile, 'utf-8')) as Record<string, unknown>;
+    // ── 1. Detect and register MCP for all agents ─────────────────────────
+    const agents = detectAgents();
+    if (agents.length > 0) {
+      console.log(`  Detected agents: ${agents.map((a) => a.name).join(', ')}\n`);
+      const cwd = process.cwd();
+      for (const agent of agents) {
+        const result = agent.installMcp(cwd);
+        if (result.ok) {
+          console.log(`  ✅  MCP registered for ${agent.name} → ${result.message}`);
+        } else {
+          console.log(`  ⚠   ${agent.name} MCP: ${result.message}`);
         }
-        const merged = {
-          ...existing,
-          mcpServers: {
-            ...(existing.mcpServers as Record<string, unknown> ?? {}),
-            ...mcpConfig.mcpServers,
-          },
-        };
-        fs.mkdirSync(configDir, { recursive: true });
-        fs.writeFileSync(configFile, JSON.stringify(merged, null, 2) + '\n', 'utf-8');
-        console.log(`\n  ✅  Written to ${configFile}`);
-      } catch (err) {
-        Logger.warn(`\n  ⚠   Could not auto-write config: ${err instanceof Error ? err.message : err}`);
-        console.log('  Please add the config above manually.');
       }
+    } else {
+      console.log('  No AI agents detected.\n');
+      console.log('  Manual MCP config — add to your agent\'s settings:\n');
+      const mcpConfig = { mcpServers: { 'code-intel': { command: 'npx', args: ['code-intel', 'mcp', '.'] } } };
+      console.log('  ' + JSON.stringify(mcpConfig, null, 2).split('\n').join('\n  '));
     }
 
-    console.log('\n  VS Code / Cursor — add to .vscode/mcp.json in your project:');
-    console.log('  ' + JSON.stringify({ servers: { 'code-intel': { type: 'stdio', command: 'npx', args: ['code-intel', 'mcp', '.'] } } }, null, 2).split('\n').join('\n  '));
-    console.log('\n  To verify in VS Code: open Command Palette → "MCP: List Servers" and confirm code-intel is Running.');
     console.log('\n  Next: run `code-intel analyze` inside your project to build the knowledge graph.\n');
 
-    // ── Install Claude Code PreToolUse hook ────────────────────────────────
+    // ── 2. Install PreToolUse hooks (Claude Code, Cursor, Gemini CLI) ─────
+    console.log('  ─── PreToolUse Hooks ───────────────────────────────────────────────');
+
     const hookResult = installClaudeHook();
     if (hookResult.result === 'installed') {
-      const backupPath = path.join(os.homedir(), '.claude', 'settings.json.bak');
       console.log('\n  ✅  Claude Code hook installed');
       console.log('     grep/rg/cat on source files → code-intel search/inspect');
-      if (fs.existsSync(backupPath)) {
-        console.log(`     Backup: ${backupPath}`);
-      }
       console.log('\n  ↺  Restart Claude Code for the hook to take effect.');
     } else if (hookResult.result === 'already-present') {
       console.log('\n  ✅  Claude Code hook already installed');
     } else {
-      Logger.warn(`\n  ⚠   Claude Code hook skipped: ${hookResult.reason}`);
-      console.log('\n  Add manually to ~/.claude/settings.json under hooks.PreToolUse[]:');
-      console.log('  (insert as the FIRST entry so it runs before any existing hooks)\n');
-      console.log('  ' + JSON.stringify({
-        matcher: 'Bash',
-        hooks: [{ type: 'command', command: CODE_INTEL_HOOK_CMD }],
-      }, null, 2).split('\n').join('\n  '));
+      console.log(`\n  ℹ   Claude Code hook skipped: ${hookResult.reason}`);
     }
 
-    // ── Install Cursor hook ─────────────────────────────────────────────────
     const cursorResult = installCursorHook();
     if (cursorResult.result === 'installed') {
       console.log('\n  ✅  Cursor hook installed');
-      console.log('     grep/rg/cat on source files → code-intel search/inspect');
     } else if (cursorResult.result === 'already-present') {
       console.log('\n  ✅  Cursor hook already installed');
     } else {
       console.log(`\n  ℹ   Cursor hook skipped: ${cursorResult.reason}`);
     }
 
-    // ── Install Gemini CLI hook ─────────────────────────────────────────────
     const geminiResult = installGeminiHook();
     if (geminiResult.result === 'installed') {
       console.log('\n  ✅  Gemini CLI hook installed');
-      console.log('     grep/rg/cat on source files → code-intel search/inspect');
     } else if (geminiResult.result === 'already-present') {
       console.log('\n  ✅  Gemini CLI hook already installed');
     } else {
       console.log(`\n  ℹ   Gemini CLI hook skipped: ${geminiResult.reason}`);
     }
 
-    // ── Install GitHub Copilot hook (project-scoped) ────────────────────────
     const copilotResult = installCopilotHook(process.cwd());
     if (copilotResult.result === 'installed') {
       console.log('\n  ✅  GitHub Copilot hook installed (.github/hooks/code-intel-rewrite.json)');
-      console.log('     grep/rg/cat on source files → code-intel search/inspect');
     } else if (copilotResult.result === 'already-present') {
       console.log('\n  ✅  GitHub Copilot hook already installed');
     } else {
       console.log(`\n  ℹ   GitHub Copilot hook skipped: ${copilotResult.reason}`);
     }
 
-    // ── Install OpenCode plugin ─────────────────────────────────────────────
     const openCodeResult = installOpenCodePlugin();
     if (openCodeResult.result === 'installed') {
-      console.log('\n  ✅  OpenCode plugin installed (~/.config/opencode/plugins/code-intel.ts)');
-      console.log('     grep/rg/cat on source files → code-intel search/inspect');
+      console.log('\n  ✅  OpenCode plugin installed');
     } else if (openCodeResult.result === 'already-present') {
       console.log('\n  ✅  OpenCode plugin already installed');
     } else {
       console.log(`\n  ℹ   OpenCode plugin skipped: ${openCodeResult.reason}`);
     }
 
-    // ── Install OpenClaw plugin ─────────────────────────────────────────────
     const openClawResult = installOpenClawPlugin();
     if (openClawResult.result === 'installed') {
-      console.log('\n  ✅  OpenClaw plugin installed (~/.openclaw/extensions/code-intel/)');
-      console.log('     grep/rg/cat on source files → code-intel search/inspect');
+      console.log('\n  ✅  OpenClaw plugin installed');
     } else if (openClawResult.result === 'already-present') {
       console.log('\n  ✅  OpenClaw plugin already installed');
     } else {
       console.log(`\n  ℹ   OpenClaw plugin skipped: ${openClawResult.reason}`);
     }
 
-    // ── Prompt-level rules files (project-scoped) ───────────────────────────
-    // These agents don't have programmatic hook APIs — we write rules files
-    // to well-known locations that the agents auto-load.
+    // ── 3. Prompt-level rules files ───────────────────────────────────────
     console.log('\n  ─── Prompt-level agents (rules files) ─────────────────────────────────');
 
     const cwd = process.cwd();

@@ -120,7 +120,172 @@ export function wipeConfig(): void {
   if (fs.existsSync(CONFIG_PATH)) fs.unlinkSync(CONFIG_PATH);
 }
 
-// ── Editor detection ──────────────────────────────────────────────────────────
+// ── Agent / Editor detection ──────────────────────────────────────────────────
+
+export interface DetectedAgent {
+  name: string;
+  /** How to install MCP for this agent */
+  installMcp: (cwd: string) => { ok: boolean; message: string };
+}
+
+function commandExists(bin: string): boolean {
+  try {
+    execSync(`which ${bin} 2>/dev/null || where ${bin} 2>nul`, { stdio: 'pipe' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function dirExists(p: string): boolean {
+  try { return fs.statSync(p).isDirectory(); } catch { return false; }
+}
+
+/** Merge `entry` into `root[key]` (object merge) and write atomically. */
+function mergeJsonFile(filePath: string, key: string | null, entry: Record<string, unknown>): { ok: boolean; message: string } {
+  try {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    let root: Record<string, unknown> = {};
+    if (fs.existsSync(filePath)) {
+      try { root = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as Record<string, unknown>; } catch { /* overwrite */ }
+    }
+    if (key) {
+      root[key] = { ...((root[key] as Record<string, unknown>) ?? {}), ...entry };
+    } else {
+      root = { ...root, ...entry };
+    }
+    const tmp = `${filePath}.tmp.${Date.now()}`;
+    fs.writeFileSync(tmp, JSON.stringify(root, null, 2) + '\n', 'utf-8');
+    fs.renameSync(tmp, filePath);
+    return { ok: true, message: filePath };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+const MCP_ENTRY = {
+  'code-intel': { command: 'npx', args: ['code-intel', 'mcp', '.'] },
+};
+
+const MCP_ENTRY_AMP = {
+  'code-intel': { command: 'code-intel', args: ['mcp', '.'] },
+};
+
+/** All known AI agents — detection + MCP install logic */
+const ALL_AGENTS: DetectedAgent[] = [
+  // ── Amp ──────────────────────────────────────────────────────────────────
+  {
+    name: 'Amp',
+    installMcp: () => {
+      const cfgPath = path.join(os.homedir(), '.config', 'amp', 'settings.json');
+      return mergeJsonFile(cfgPath, 'amp.mcpServers', MCP_ENTRY_AMP);
+    },
+  },
+  // ── Claude Code ───────────────────────────────────────────────────────────
+  {
+    name: 'Claude Code',
+    installMcp: () => {
+      const cfgPath = path.join(os.homedir(), '.config', 'claude', 'claude_desktop_config.json');
+      return mergeJsonFile(cfgPath, 'mcpServers', MCP_ENTRY);
+    },
+  },
+  // ── Cursor ───────────────────────────────────────────────────────────────
+  {
+    name: 'Cursor',
+    installMcp: (cwd) => {
+      const cfgPath = path.join(cwd, '.cursor', 'mcp.json');
+      return mergeJsonFile(cfgPath, 'mcpServers', MCP_ENTRY);
+    },
+  },
+  // ── VS Code ───────────────────────────────────────────────────────────────
+  {
+    name: 'VS Code',
+    installMcp: (cwd) => {
+      const cfgPath = path.join(cwd, '.vscode', 'mcp.json');
+      return mergeJsonFile(cfgPath, 'servers', MCP_ENTRY);
+    },
+  },
+  // ── Windsurf ─────────────────────────────────────────────────────────────
+  {
+    name: 'Windsurf',
+    installMcp: (cwd) => {
+      const cfgPath = path.join(cwd, '.windsurf', 'mcp.json');
+      return mergeJsonFile(cfgPath, 'mcpServers', MCP_ENTRY);
+    },
+  },
+  // ── Gemini CLI ────────────────────────────────────────────────────────────
+  {
+    name: 'Gemini CLI',
+    installMcp: () => {
+      const cfgPath = path.join(os.homedir(), '.gemini', 'settings.json');
+      return mergeJsonFile(cfgPath, 'mcpServers', MCP_ENTRY);
+    },
+  },
+  // ── Codex (OpenAI) ────────────────────────────────────────────────────────
+  {
+    name: 'Codex',
+    installMcp: () => {
+      // Codex reads AGENTS.md for tool instructions — no MCP config file
+      return { ok: true, message: 'rules written to AGENTS.md' };
+    },
+  },
+  // ── Zed ──────────────────────────────────────────────────────────────────
+  {
+    name: 'Zed',
+    installMcp: () => {
+      const cfgPath = path.join(os.homedir(), '.config', 'zed', 'settings.json');
+      // Zed uses context_servers key
+      return mergeJsonFile(cfgPath, 'context_servers', {
+        'code-intel': { command: { path: 'npx', args: ['code-intel', 'mcp', '.'] } },
+      });
+    },
+  },
+];
+
+/** Detect which agents are installed on this machine. */
+export function detectAgents(): DetectedAgent[] {
+  const home = os.homedir();
+  const detected: DetectedAgent[] = [];
+
+  for (const agent of ALL_AGENTS) {
+    let found = false;
+    switch (agent.name) {
+      case 'Amp':
+        found = commandExists('amp') || dirExists(path.join(home, '.amp')) || fs.existsSync(path.join(home, '.config', 'amp', 'settings.json'));
+        break;
+      case 'Claude Code':
+        found = commandExists('claude') || dirExists(path.join(home, '.claude'));
+        break;
+      case 'Cursor':
+        found = commandExists('cursor') || dirExists(path.join(home, '.cursor'));
+        break;
+      case 'VS Code':
+        found = commandExists('code');
+        break;
+      case 'Windsurf':
+        found = commandExists('windsurf');
+        break;
+      case 'Gemini CLI':
+        found = commandExists('gemini') || dirExists(path.join(home, '.gemini'));
+        break;
+      case 'Codex':
+        found = commandExists('codex') || dirExists(path.join(home, '.codex'));
+        break;
+      case 'Zed':
+        found = commandExists('zed');
+        break;
+    }
+    if (found) detected.push(agent);
+  }
+  return detected;
+}
+
+/** Legacy: returns editor names for backward compat */
+export function detectEditors(): string[] {
+  return detectAgents().map((a) => a.name);
+}
+
+// ── Editor list (legacy, used by setup command) ───────────────────────────────
 interface Editor {
   name: string;
   binaries: string[];
@@ -167,21 +332,6 @@ const EDITORS: Editor[] = [
     mcpConfigKey: '.zed/mcp.json',
   },
 ];
-
-function commandExists(bin: string): boolean {
-  try {
-    execSync(`which ${bin} 2>/dev/null || where ${bin} 2>nul`, { stdio: 'pipe' });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export function detectEditors(): string[] {
-  return EDITORS
-    .filter((e) => e.binaries.some(commandExists))
-    .map((e) => e.name);
-}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function prompt(rl: ReturnType<typeof createInterface>, question: string): Promise<string> {
@@ -239,7 +389,20 @@ export async function runInitWizard(opts: { reset?: boolean; yes?: boolean } = {
   const cfg: CodeIntelConfig = JSON.parse(JSON.stringify(DEFAULT_CONFIG)) as CodeIntelConfig;
 
   if (yes) {
-    // Non-interactive: write defaults
+    // Non-interactive: detect agents and auto-register MCP, then write defaults
+    const detectedAgents = detectAgents();
+    if (detectedAgents.length > 0) {
+      console.log(`  Detected agents: ${detectedAgents.map((a) => a.name).join(', ')}`);
+      const cwd = process.cwd();
+      for (const agent of detectedAgents) {
+        const result = agent.installMcp(cwd);
+        if (result.ok) {
+          console.log(`  ✅  MCP registered for ${agent.name} → ${result.message}`);
+        } else {
+          console.log(`  ⚠   ${agent.name}: ${result.message}`);
+        }
+      }
+    }
     saveConfig(cfg);
     console.log(`  ✅  Config written to ${CONFIG_PATH} (all defaults)\n`);
     printNextSteps();
@@ -249,44 +412,26 @@ export async function runInitWizard(opts: { reset?: boolean; yes?: boolean } = {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
 
   try {
-    // ── Step 1: Editor detection + MCP registration ───────────────────────
-    console.log('  ── Step 1/5: Editor Detection ──────────────────────────────────\n');
-    const found = detectEditors();
-    if (found.length > 0) {
-      console.log(`  Detected editors: ${found.join(', ')}`);
-      const registerMcp = await confirm(rl, 'Register code-intel MCP server in detected editors?');
+    // ── Step 1: Agent detection + MCP registration ───────────────────────
+    console.log('  ── Step 1/5: AI Agent Detection ────────────────────────────────\n');
+    const detectedAgents = detectAgents();
+    if (detectedAgents.length > 0) {
+      console.log(`  Detected agents: ${detectedAgents.map((a) => a.name).join(', ')}\n`);
+      const registerMcp = await confirm(rl, 'Auto-register code-intel MCP server in detected agents?');
       if (registerMcp) {
-        for (const name of found) {
-          const editor = EDITORS.find((e) => e.name === name)!;
-          const mcpConfig = {
-            servers: {
-              'code-intel': { type: 'stdio', command: 'npx', args: ['code-intel', 'mcp', '.'] },
-            },
-          };
-          const mcpFile = path.resolve(editor.mcpConfigKey);
-          try {
-            let existing: Record<string, unknown> = {};
-            if (fs.existsSync(mcpFile)) {
-              existing = JSON.parse(fs.readFileSync(mcpFile, 'utf-8')) as Record<string, unknown>;
-            }
-            const merged = {
-              ...existing,
-              servers: {
-                ...((existing.servers as Record<string, unknown>) ?? {}),
-                ...mcpConfig.servers,
-              },
-            };
-            fs.mkdirSync(path.dirname(mcpFile), { recursive: true });
-            fs.writeFileSync(mcpFile, JSON.stringify(merged, null, 2) + '\n', 'utf-8');
-            console.log(`  ✅  MCP registered for ${name} → ${editor.mcpConfigKey}`);
-          } catch {
-            console.log(`  ⚠   Could not write MCP config for ${name} — do it manually.`);
+        const cwd = process.cwd();
+        for (const agent of detectedAgents) {
+          const result = agent.installMcp(cwd);
+          if (result.ok) {
+            console.log(`  ✅  MCP registered for ${agent.name} → ${result.message}`);
+          } else {
+            console.log(`  ⚠   ${agent.name}: ${result.message}`);
           }
         }
       }
     } else {
-      console.log('  No supported editors detected (VS Code, Cursor, Windsurf, Zed).');
-      console.log('  Run `code-intel setup` later to configure MCP manually.');
+      console.log('  No supported AI agents detected (Amp, Claude Code, Cursor, VS Code, Windsurf, Gemini CLI, Codex, Zed).');
+      console.log('  Run `code-intel setup` later to configure MCP manually.\n');
     }
 
     // ── Step 2: LLM provider ──────────────────────────────────────────────
