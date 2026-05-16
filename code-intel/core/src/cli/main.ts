@@ -99,7 +99,7 @@ import {
 } from '../errors/codes.js';
 import { generateCompletion, autoInstallCompletion } from './completion.js';
 import { backgroundVersionCheck, runUpdate } from './update-checker.js';
-import { runRewrite, runClaudeHook } from './hook-rewriter.js';
+import { runRewrite, runClaudeHook, runCursorHook, runGeminiHook, runCopilotHook } from './hook-rewriter.js';
 
 // ── Hook mode detection ───────────────────────────────────────────────────────
 // When called as `code-intel hook <agent>`, the process runs on EVERY Bash
@@ -980,20 +980,45 @@ function insertHookEntry(root: SettingsJson): SettingsJson {
     ? existingHooks.PreToolUse
     : [];
 
-  const newEntry: SettingsPreToolUseEntry = {
+  const preToolUseEntry: SettingsPreToolUseEntry = {
     matcher: 'Bash',
     hooks: [{ type: 'command', command: CODE_INTEL_HOOK_CMD }],
   };
 
-  // PREPEND so code-intel runs before RTK — prevents RTK from rewriting
+  // PostToolUse: stale-index detection after git mutations
+  const existingPostToolUse: SettingsPreToolUseEntry[] = Array.isArray(
+    existingHooks.PostToolUse,
+  )
+    ? existingHooks.PostToolUse as SettingsPreToolUseEntry[]
+    : [];
+
+  const postToolUseEntry: SettingsPreToolUseEntry = {
+    matcher: 'Bash',
+    hooks: [{ type: 'command', command: CODE_INTEL_HOOK_CMD }],
+  };
+
+  // PREPEND PreToolUse so code-intel runs before RTK — prevents RTK from rewriting
   // `grep X src/` to `rtk grep X src/` before code-intel gets a chance.
   return {
     ...root,
     hooks: {
       ...existingHooks,
-      PreToolUse: [newEntry, ...existingPreToolUse],
+      PreToolUse: [preToolUseEntry, ...existingPreToolUse],
+      PostToolUse: [postToolUseEntry, ...existingPostToolUse],
     },
   };
+}
+
+function postHookAlreadyPresent(root: SettingsJson): boolean {
+  const entries = root?.hooks?.PostToolUse as SettingsPreToolUseEntry[] | undefined;
+  if (!Array.isArray(entries)) return false;
+  return entries.some(
+    (entry) =>
+      Array.isArray(entry?.hooks) &&
+      entry.hooks.some(
+        (h) => typeof h?.command === 'string' && (h.command.includes('code-intel-hook') || h.command.includes('code-intel hook')),
+      ),
+  );
 }
 
 type HookInstallResult =
@@ -1018,8 +1043,8 @@ function installClaudeHook(): HookInstallResult {
     }
   }
 
-  // 2. Idempotency: skip if already installed
-  if (hookAlreadyPresent(root)) {
+  // 2. Idempotency: skip if both hooks are already installed
+  if (hookAlreadyPresent(root) && postHookAlreadyPresent(root)) {
     return { result: 'already-present' };
   }
 
@@ -1489,18 +1514,19 @@ program
 
     console.log('\n  Next: run `code-intel analyze` inside your project to build the knowledge graph.\n');
 
-    // ── 2. Install PreToolUse hooks (Claude Code, Cursor, Gemini CLI) ─────
-    console.log('  ─── PreToolUse Hooks ───────────────────────────────────────────────');
+    // ── 2. Install PreToolUse + PostToolUse hooks (Claude Code, Cursor, Gemini CLI) ─────
+    console.log('  ─── Agent Hooks (PreToolUse + PostToolUse) ─────────────────────────');
 
     const hookResult = installClaudeHook();
     if (hookResult.result === 'installed') {
-      console.log('\n  ✅  Claude Code hook installed');
-      console.log('     grep/rg/cat on source files → code-intel search/inspect');
-      console.log('\n  ↺  Restart Claude Code for the hook to take effect.');
+      console.log('\n  ✅  Claude Code hooks installed (PreToolUse + PostToolUse)');
+      console.log('     PreToolUse:  grep/rg/cat on source files → code-intel search/inspect');
+      console.log('     PostToolUse: stale-index notification after git commit/merge/pull');
+      console.log('\n  ↺  Restart Claude Code for the hooks to take effect.');
     } else if (hookResult.result === 'already-present') {
-      console.log('\n  ✅  Claude Code hook already installed');
+      console.log('\n  ✅  Claude Code hooks already installed');
     } else {
-      console.log(`\n  ℹ   Claude Code hook skipped: ${hookResult.reason}`);
+      console.log(`\n  ℹ   Claude Code hooks skipped: ${hookResult.reason}`);
     }
 
     const cursorResult = installCursorHook();
@@ -4865,6 +4891,48 @@ program
     }
   });
 
+// ─── augment (internal — called by hook scripts to inject graph context) ──────
+// Searches the graph for <pattern> and writes a compact context block to stdout.
+// Used by hooks to enrich agent context before grep/rg/cat commands.
+// Non-interactive: exits 0 with empty output when no index or no results.
+{
+  const augmentCmd = new Command('augment')
+    .description('Output compact graph context for a symbol pattern (used by hook scripts)')
+    .argument('[--]', 'Separator (ignored)')
+    .argument('<pattern>', 'Symbol name or search pattern')
+    .option('-p, --path <path>', 'Path to the repository (default: current directory)', '.')
+    .option('-l, --limit <n>', 'Maximum results (default: 5)', '5')
+    .action(async (_sep: string, pattern: string | undefined, options: { path: string; limit: string }) => {
+      // Support both `augment <pattern>` and `augment -- <pattern>`
+      const term = pattern ?? _sep;
+      if (!term || term === '--') { process.exit(0); }
+      try {
+        const { graph } = await loadOrAnalyzeWorkspace(options.path);
+        const results = textSearch(graph, term, parseInt(options.limit, 10));
+        if (results.length === 0) { process.exit(0); }
+
+        // Build compact context block (mirrors GitNexus augment output format)
+        const lines: string[] = [`[code-intel context for "${term}"]`];
+        // Materialise call edges once outside the loop (findEdgesByKind returns Iterable)
+        const callEdges = [...graph.findEdgesByKind('calls')];
+        for (const r of results) {
+          const callers = callEdges.filter((e) => e.target === r.nodeId).length;
+          const callees = callEdges.filter((e) => e.source === r.nodeId).length;
+          lines.push(`  ${r.kind.padEnd(12)} ${r.name}  (${r.filePath})  in:${callers} out:${callees}`);
+          if (r.snippet) {
+            lines.push(`  → ${r.snippet.slice(0, 150).replace(/\n/g, ' ')}`);
+          }
+        }
+        lines.push(`\nUse \`code-intel inspect ${term}\` for full call graph.`);
+        process.stdout.write(lines.join('\n') + '\n');
+        process.exit(0);
+      } catch {
+        process.exit(0); // never block the calling hook
+      }
+    });
+  program.addCommand(augmentCmd, { hidden: true });
+}
+
 // ─── rewrite (internal — used by hook scripts and for debugging) ─────────────
 {
   const rewriteCmd = new Command('rewrite')
@@ -4889,17 +4957,32 @@ program
 }
 
 // ─── hook (internal — installed in ~/.claude/settings.json) ──────────────────
+// Handles both PreToolUse (command rewrite + graph augment) and
+// PostToolUse (stale-index detection after git mutations).
 {
   const hookCmd = new Command('hook')
-    .description('Run as a PreToolUse hook for an AI agent (reads/writes JSON on stdin/stdout)')
-    .argument('<agent>', 'Agent type: claude')
+    .description('Run as a PreToolUse/PostToolUse hook for an AI agent (reads/writes JSON on stdin/stdout)')
+    .argument('<agent>', 'Agent type: claude | cursor | gemini | copilot')
+    .addHelpText('after', `
+  Reads a hook event JSON payload from stdin and writes a response to stdout.
+  Always exits 0 — a non-zero exit would block the agent's command.
+
+  PreToolUse:  rewrites grep/rg/cat → code-intel search/inspect; injects graph context.
+  PostToolUse: notifies agent when knowledge graph is stale after git commit/merge/pull.
+
+  Examples (these are called by the agent automatically after \`code-intel setup\`):
+    $ echo '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"grep AuthService src/"}}' | code-intel hook claude
+    $ echo '{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"git commit -m ..."}}' | code-intel hook claude
+`)
     .action((agent: string) => {
-      if (agent === 'claude') {
-        runClaudeHook();
-      } else {
-        // Unknown agent — exit 0 (non-blocking guarantee)
-        process.stderr.write(`[code-intel] Unknown hook agent: ${agent}\n`);
-        process.exit(0);
+      switch (agent) {
+        case 'claude':   runClaudeHook();                                        break;
+        case 'cursor':   runCursorHook();                                        break;
+        case 'gemini':   runGeminiHook();                                        break;
+        case 'copilot':  runCopilotHook();                                       break;
+        default:
+          process.stderr.write(`[code-intel] Unknown hook agent: ${agent}\n`);
+          process.exit(0);
       }
     });
   program.addCommand(hookCmd, { hidden: true });

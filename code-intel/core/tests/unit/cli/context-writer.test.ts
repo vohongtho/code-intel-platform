@@ -138,33 +138,112 @@ describe('writeContextFiles — skill rows in block', () => {
   });
 });
 
-describe('writeContextFiles — creates agent-specific context files', () => {
+describe('writeContextFiles — does NOT create agent files when agent is absent', () => {
   let dir: string;
 
+  // Use () => false to simulate no agent binaries on PATH — deterministic regardless
+  // of what is actually installed in the test environment.
   before(() => { dir = tmpDir(); });
   after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
 
-  it('creates .github/copilot-instructions.md for GitHub Copilot', () => {
-    writeContextFiles(dir, 'MyProject', stats, []);
+  it('does NOT create .cursor/rules/code-intel.mdc when cursor is not installed', () => {
+    writeContextFiles(dir, 'MyProject', stats, [], () => false);
+    assert.ok(!fs.existsSync(path.join(dir, '.cursor', 'rules', 'code-intel.mdc')));
+  });
+
+  it('does NOT create .github/copilot-instructions.md when code is not installed', () => {
+    writeContextFiles(dir, 'MyProject', stats, [], () => false);
+    assert.ok(!fs.existsSync(path.join(dir, '.github', 'copilot-instructions.md')));
+  });
+
+  it('does NOT create .windsurfrules when windsurf is not installed', () => {
+    writeContextFiles(dir, 'MyProject', stats, [], () => false);
+    assert.ok(!fs.existsSync(path.join(dir, '.windsurfrules')));
+  });
+
+  it('does NOT create .clinerules (analyze never writes this — setup only)', () => {
+    writeContextFiles(dir, 'MyProject', stats, [], () => false);
+    assert.ok(!fs.existsSync(path.join(dir, '.clinerules')));
+  });
+
+  it('does NOT create .kiro/steering/code-intel.md (analyze never writes this — setup only)', () => {
+    writeContextFiles(dir, 'MyProject', stats, [], () => false);
+    assert.ok(!fs.existsSync(path.join(dir, '.kiro', 'steering', 'code-intel.md')));
+  });
+
+  it('does NOT create .kilocode/rules/code-intel-rules.md (analyze never writes this — setup only)', () => {
+    writeContextFiles(dir, 'MyProject', stats, [], () => false);
+    assert.ok(!fs.existsSync(path.join(dir, '.kilocode', 'rules', 'code-intel-rules.md')));
+  });
+
+  it('does NOT create .agents/rules/code-intel-rules.md (analyze never writes this — setup only)', () => {
+    writeContextFiles(dir, 'MyProject', stats, [], () => false);
+    assert.ok(!fs.existsSync(path.join(dir, '.agents', 'rules', 'code-intel-rules.md')));
+  });
+
+  it('always creates AGENTS.md regardless', () => {
+    writeContextFiles(dir, 'MyProject', stats, [], () => false);
+    assert.ok(fs.existsSync(path.join(dir, 'AGENTS.md')));
+  });
+
+  it('always creates CLAUDE.md regardless', () => {
+    writeContextFiles(dir, 'MyProject', stats, [], () => false);
+    assert.ok(fs.existsSync(path.join(dir, 'CLAUDE.md')));
+  });
+
+  it('does NOT update pre-existing agent files that lack a binary', () => {
+    // Even if files with our markers were previously written (e.g. by `setup`),
+    // analyze must NOT touch them when the binary is absent.
+    const seedBlock = `<!-- code-intel:start -->\nOldContent\n<!-- code-intel:end -->\n`;
+    fs.mkdirSync(path.join(dir, '.cursor', 'rules'), { recursive: true });
+    fs.writeFileSync(path.join(dir, '.cursor', 'rules', 'code-intel.mdc'), seedBlock, 'utf-8');
+
+    writeContextFiles(dir, 'MyProject', stats, [], () => false);
+
+    const content = fs.readFileSync(path.join(dir, '.cursor', 'rules', 'code-intel.mdc'), 'utf-8');
+    assert.ok(content.includes('OldContent'), 'pre-existing file should be left untouched');
+  });
+});
+
+describe('writeContextFiles — creates agent files when binary is present', () => {
+  let dir: string;
+
+  // Use () => true to simulate all agent binaries on PATH — deterministic regardless
+  // of what is actually installed in the test environment.
+  before(() => { dir = tmpDir(); });
+  after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+  it('creates .github/copilot-instructions.md when code binary is present', () => {
+    writeContextFiles(dir, 'MyProject', stats, [], () => true);
     assert.ok(fs.existsSync(path.join(dir, '.github', 'copilot-instructions.md')));
   });
 
-  it('creates .cursor/rules/code-intel.mdc for Cursor IDE', () => {
-    writeContextFiles(dir, 'MyProject', stats, []);
+  it('creates .cursor/rules/code-intel.mdc when cursor binary is present', () => {
+    writeContextFiles(dir, 'MyProject', stats, [], () => true);
     assert.ok(fs.existsSync(path.join(dir, '.cursor', 'rules', 'code-intel.mdc')));
   });
 
-  it('creates .kiro/steering/code-intel.md for Kiro IDE', () => {
-    writeContextFiles(dir, 'MyProject', stats, []);
-    assert.ok(fs.existsSync(path.join(dir, '.kiro', 'steering', 'code-intel.md')));
+  it('creates .windsurfrules when windsurf binary is present', () => {
+    writeContextFiles(dir, 'MyProject', stats, [], () => true);
+    assert.ok(fs.existsSync(path.join(dir, '.windsurfrules')));
   });
 
-  it('all agent files contain the mandatory rules section', () => {
-    writeContextFiles(dir, 'MyProject', stats, []);
+  it('does NOT create .kiro/steering/code-intel.md even when all binaries present (setup only)', () => {
+    writeContextFiles(dir, 'MyProject', stats, [], () => true);
+    assert.ok(!fs.existsSync(path.join(dir, '.kiro', 'steering', 'code-intel.md')));
+  });
+
+  it('does NOT create .clinerules even when all binaries present (setup only)', () => {
+    writeContextFiles(dir, 'MyProject', stats, [], () => true);
+    assert.ok(!fs.existsSync(path.join(dir, '.clinerules')));
+  });
+
+  it('all created agent files contain the mandatory rules section', () => {
+    writeContextFiles(dir, 'MyProject', stats, [], () => true);
     const files = [
       path.join(dir, '.github', 'copilot-instructions.md'),
       path.join(dir, '.cursor', 'rules', 'code-intel.mdc'),
-      path.join(dir, '.kiro', 'steering', 'code-intel.md'),
+      path.join(dir, '.windsurfrules'),
     ];
     for (const f of files) {
       const content = fs.readFileSync(f, 'utf-8');
@@ -176,7 +255,7 @@ describe('writeContextFiles — creates agent-specific context files', () => {
   });
 
   it('block content mentions key agent names', () => {
-    writeContextFiles(dir, 'MyProject', stats, []);
+    writeContextFiles(dir, 'MyProject', stats, [], () => true);
     const content = fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf-8');
     assert.ok(content.includes('Cursor'), 'should mention Cursor');
     assert.ok(content.includes('Copilot'), 'should mention Copilot');
@@ -186,7 +265,7 @@ describe('writeContextFiles — creates agent-specific context files', () => {
   });
 
   it('block content includes pr-impact command', () => {
-    writeContextFiles(dir, 'MyProject', stats, []);
+    writeContextFiles(dir, 'MyProject', stats, [], () => true);
     const content = fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf-8');
     assert.ok(content.includes('pr-impact'), 'should include pr-impact command');
   });

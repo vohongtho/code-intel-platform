@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "code-intel": {
+      "command": "npx",
+      "args": [
+        "code-intel",
+        "mcp",
+        "."
+      ]
+    }
+  }
+}

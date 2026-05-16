@@ -1,11 +1,11 @@
 ---
 name: query
-description: "Covers the **query** subsystem of code-intel-platform. 65 symbols across 9 files. Key symbols: `parse`, `summarizeCluster`, `computePRImpact`. Internal call density: 1.1 calls/symbol. Participates in 4 execution flow(s)."
+description: "Covers the **query** subsystem of code-intel-platform. 66 symbols across 9 files. Key symbols: `parse`, `summarizeCluster`, `computePRImpact`. Internal call density: 1.1 calls/symbol. Participates in 4 execution flow(s)."
 ---
 
 # query
 
-> **65 symbols** | **9 files** | path: `code-intel/core/src/query/` | call density: 1.1/sym
+> **66 symbols** | **9 files** | path: `code-intel/core/src/query/` | call density: 1.1/sym
 
 ## When to Use
 
@@ -20,7 +20,7 @@ Load this skill when:
 | File | Symbols | Notes |
 |------|---------|-------|
 | `code-intel/core/src/query/gql-parser.ts` | `Token`, `WhereExpr`, `WhereClause`, `FindStatement` +(24) | 10 exported |
-| `code-intel/core/src/query/gql-executor.ts` | `CountGroup`, `GQLResult`, `withTimeout`, `getNodeProperty` +(7) | 3 exported |
+| `code-intel/core/src/query/gql-executor.ts` | `CountGroup`, `GQLResult`, `withTimeout`, `getNodeProperty` +(8) | 3 exported |
 | `code-intel/core/src/query/saved-queries.ts` | `SavedQueryInfo`, `getQueriesDir`, `ensureQueriesDir`, `saveQuery` +(4) | 6 exported |
 | `code-intel/core/src/query/health-report.ts` | `HealthReportResult`, `computeHealthReport`, `inScope`, `dfs` | 4 exported |
 | `code-intel/core/src/query/cluster-summary.ts` | `ClusterSummaryResult`, `getPathPrefix`, `summarizeCluster` | 2 exported |
@@ -35,7 +35,7 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `parse` | method | 64 | 6 | `query/gql-parser.ts` |
+| `parse` | method | 68 | 6 | `query/gql-parser.ts` |
 | `summarizeCluster` | function | 2 | 10 | `query/cluster-summary.ts` |
 | `computePRImpact` | function | 4 | 8 | `query/pr-impact.ts` |
 | `executePATH` | function | 1 | 10 | `query/gql-executor.ts` |

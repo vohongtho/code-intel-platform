@@ -42,7 +42,7 @@ REQUIRED BEFORE ANY CODE ACTION:
   3. code-intel impact <symbol>       ← replaces manual caller tracing
 <!-- /TOOL POLICY -->
 
-Indexed: **6,321 nodes** | **11,489 edges** | **333 files** | analyzed in 2.5s
+Indexed: **6,442 nodes** | **11,698 edges** | **334 files** | analyzed in 1.6s
 
 > Index stale? Re-run: `code-intel analyze`
 
@@ -182,11 +182,11 @@ Each skill gives you symbol maps, key entry points, and safe-change guidance for
 | Understand architecture / "How does X work?" | Load `code-intel-exploring` skill |
 | Blast radius / "What breaks if I change X?" | Load `code-intel-impact` skill |
 | Debugging / "Why is X failing?" | Load `code-intel-debugging` skill |
-| Work in `cli` (112 symbols) | `.claude/skills/code-intel/cli/SKILL.md` |
+| Work in `cli` (132 symbols) | `.claude/skills/code-intel/cli/SKILL.md` |
 | Work in `auth` (85 symbols) | `.claude/skills/code-intel/auth/SKILL.md` |
 | Work in `graph` (81 symbols) | `.claude/skills/code-intel/graph/SKILL.md` |
 | Work in `fixtures` (75 symbols) | `.claude/skills/code-intel/fixtures/SKILL.md` |
-| Work in `query` (65 symbols) | `.claude/skills/code-intel/query/SKILL.md` |
+| Work in `query` (66 symbols) | `.claude/skills/code-intel/query/SKILL.md` |
 | Work in `panels` (47 symbols) | `.claude/skills/code-intel/panels/SKILL.md` |
 | Work in `search` (43 symbols) | `.claude/skills/code-intel/search/SKILL.md` |
 | Work in `phases` (42 symbols) | `.claude/skills/code-intel/phases/SKILL.md` |

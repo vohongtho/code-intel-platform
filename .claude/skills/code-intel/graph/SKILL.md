@@ -44,10 +44,10 @@ Sorted by call graph degree (changing these has the highest blast radius):
 |--------|------|-----:|------:|------|
 | `createKnowledgeGraph` | function | 59 | 0 | `graph/knowledge-graph.ts` |
 | `getNode` | method | 43 | 1 | `graph/lazy-knowledge-graph.ts` |
-| `findEdgesFrom` | method | 23 | 1 | `graph/lazy-knowledge-graph.ts` |
-| `findEdgesTo` | method | 23 | 1 | `graph/lazy-knowledge-graph.ts` |
+| `findEdgesFrom` | method | 24 | 1 | `graph/lazy-knowledge-graph.ts` |
+| `findEdgesTo` | method | 24 | 1 | `graph/lazy-knowledge-graph.ts` |
+| `findEdgesByKind` | method | 14 | 1 | `graph/lazy-knowledge-graph.ts` |
 | `generateEdgeId` | function | 14 | 0 | `graph/id-generator.ts` |
-| `findEdgesByKind` | method | 13 | 1 | `graph/lazy-knowledge-graph.ts` |
 | `generateNodeId` | function | 13 | 0 | `graph/id-generator.ts` |
 | `get` | method | 11 | 2 | `graph/lazy-knowledge-graph.ts` |
 | `set` | method | 9 | 4 | `graph/lazy-knowledge-graph.ts` |

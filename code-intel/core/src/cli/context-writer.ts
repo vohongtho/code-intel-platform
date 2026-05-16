@@ -17,10 +17,21 @@
  *     → append the block at the end (never overwrite existing content).
  *
  * The `--skip-agents-md` flag prevents this function from being called at all.
+ *
+ * Agent-specific rules files (.cursor/rules, .windsurfrules, etc.) are ONLY
+ * written when the corresponding agent binary is detected on PATH.
+ * No binary = no file. Period.  Files left over from a previous unconditional
+ * run are NOT updated unless the binary is present.
+ *
+ * `code-intel setup` (user-initiated) is the ONLY command that writes files
+ * for agents without a detectable binary (Kiro, Kilo Code, Antigravity, Cline).
+ *
+ * AGENTS.md and CLAUDE.md are universal and always written.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import type { SkillSummary } from './skill-writer.js';
 
 const BLOCK_START = '<!-- code-intel:start -->';
@@ -33,48 +44,81 @@ export interface ContextStats {
   duration: number;
 }
 
+// ─── Agent presence helpers ───────────────────────────────────────────────────
+//
+// `analyze` ONLY writes agent-specific files when the agent binary is on PATH.
+// No binary = no file. Period.
+//
+// This means:
+//   - Files left over from the old unconditional behavior are NOT updated unless
+//     the binary is present.
+//   - `code-intel setup` (user-initiated) is the ONLY command that writes files
+//     for agents without a binary (Kiro, Kilo Code, Antigravity, Cline).
+//
+// AGENTS.md and CLAUDE.md are universal and always written.
+
+/** Run `which <bin>` / `where <bin>` silently; true = binary found on PATH. */
+function binaryOnPath(bin: string): boolean {
+  try {
+    if (process.platform === 'win32') {
+      execFileSync('where', [bin], { stdio: 'ignore' });
+    } else {
+      execFileSync('which', [bin], { stdio: 'ignore' });
+    }
+    return true;
+  } catch { return false; }
+}
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
+/**
+ * @param _binaryCheck  Override binary detection — for testing only.
+ *                      Pass `() => false` to simulate no agents installed,
+ *                      or `() => true` to simulate all agents installed.
+ */
 export function writeContextFiles(
   workspaceRoot: string,
   projectName: string,
   stats: ContextStats,
   skills: SkillSummary[],
+  _binaryCheck?: (bin: string) => boolean,
 ): void {
+  const hasBinary = _binaryCheck ?? binaryOnPath;
   const block = buildBlock(projectName, stats, skills);
+
+  // ── Always write: universal agent files ──────────────────────────────────
   upsertFile(path.join(workspaceRoot, 'AGENTS.md'), block, 'AGENTS.md');
   upsertFile(path.join(workspaceRoot, 'CLAUDE.md'),  block, 'CLAUDE.md');
 
+  // ── Agent-gated: only write when binary is on PATH ───────────────────────
+  // No binary = no file. Pre-existing files from old runs are NOT updated.
+
   // GitHub Copilot (VS Code Copilot Chat, GitHub Copilot CLI)
-  const githubDir = path.join(workspaceRoot, '.github');
-  if (!fs.existsSync(githubDir)) fs.mkdirSync(githubDir, { recursive: true });
-  upsertFile(path.join(githubDir, 'copilot-instructions.md'), block, 'copilot-instructions.md');
+  if (hasBinary('code')) {
+    const copilotFile = path.join(workspaceRoot, '.github', 'copilot-instructions.md');
+    const githubDir = path.join(workspaceRoot, '.github');
+    if (!fs.existsSync(githubDir)) fs.mkdirSync(githubDir, { recursive: true });
+    upsertFile(copilotFile, block, 'copilot-instructions.md');
+  }
 
   // Cursor IDE
-  const cursorDir = path.join(workspaceRoot, '.cursor', 'rules');
-  if (!fs.existsSync(cursorDir)) fs.mkdirSync(cursorDir, { recursive: true });
-  upsertFile(path.join(cursorDir, 'code-intel.mdc'), block, 'code-intel.mdc');
+  if (hasBinary('cursor')) {
+    const cursorFile = path.join(workspaceRoot, '.cursor', 'rules', 'code-intel.mdc');
+    const cursorDir = path.join(workspaceRoot, '.cursor', 'rules');
+    if (!fs.existsSync(cursorDir)) fs.mkdirSync(cursorDir, { recursive: true });
+    upsertFile(cursorFile, block, 'code-intel.mdc');
+  }
 
-  // Kiro IDE/CLI
-  const kiroDir = path.join(workspaceRoot, '.kiro', 'steering');
-  if (!fs.existsSync(kiroDir)) fs.mkdirSync(kiroDir, { recursive: true });
-  upsertFile(path.join(kiroDir, 'code-intel.md'), block, 'code-intel.md');
+  // Windsurf
+  if (hasBinary('windsurf')) {
+    const windsurfFile = path.join(workspaceRoot, '.windsurfrules');
+    upsertFile(windsurfFile, block, '.windsurfrules');
+  }
 
-  // Cline / Roo Code → .clinerules
-  upsertFile(path.join(workspaceRoot, '.clinerules'), block, '.clinerules');
-
-  // Windsurf → .windsurfrules
-  upsertFile(path.join(workspaceRoot, '.windsurfrules'), block, '.windsurfrules');
-
-  // Kilo Code → .kilocode/rules/code-intel-rules.md
-  const kilocodeDir = path.join(workspaceRoot, '.kilocode', 'rules');
-  if (!fs.existsSync(kilocodeDir)) fs.mkdirSync(kilocodeDir, { recursive: true });
-  upsertFile(path.join(kilocodeDir, 'code-intel-rules.md'), block, 'code-intel-rules.md');
-
-  // Google Antigravity → .agents/rules/code-intel-rules.md
-  const agentsDir = path.join(workspaceRoot, '.agents', 'rules');
-  if (!fs.existsSync(agentsDir)) fs.mkdirSync(agentsDir, { recursive: true });
-  upsertFile(path.join(agentsDir, 'code-intel-rules.md'), block, 'code-intel-rules.md');
+  // Kiro IDE/CLI — no binary, never written by analyze (setup only)
+  // Cline / Roo Code — no binary, never written by analyze (setup only)
+  // Kilo Code — no binary, never written by analyze (setup only)
+  // Google Antigravity — no binary, never written by analyze (setup only)
 }
 
 // ─── Block content ────────────────────────────────────────────────────────────

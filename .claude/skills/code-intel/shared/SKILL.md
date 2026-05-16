@@ -40,7 +40,7 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `resolve` | function | 52 | 2 | `shared/config-validator.ts` |
+| `resolve` | function | 51 | 2 | `shared/config-validator.ts` |
 | `warn` | method | 31 | 1 | `shared/logger.ts` |
 | `error` | method | 16 | 1 | `shared/logger.ts` |
 | `getLogger` | method | 5 | 2 | `shared/logger.ts` |

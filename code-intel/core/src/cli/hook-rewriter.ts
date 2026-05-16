@@ -1,18 +1,142 @@
 /**
  * hook-rewriter.ts
  *
- * Single source of truth for all command rewrite rules.
- * Equivalent to RTK's src/discover/rules.rs + src/discover/registry.rs.
+ * Single source of truth for all command rewrite rules and agent hook handlers.
  *
  * Called by:
- *   - `code-intel rewrite <cmd>` → exit 0 (match) | exit 1 (no match)
- *   - `code-intel hook claude`   → reads stdin PreToolUse JSON, writes response JSON
+ *   - `code-intel rewrite <cmd>`  → exit 0 (match) | exit 1 (no match)
+ *   - `code-intel hook claude`    → reads stdin PreToolUse/PostToolUse JSON, writes response JSON
+ *   - `code-intel hook cursor`    → same, Cursor format
+ *   - `code-intel hook gemini`    → same, Gemini format
+ *   - `code-intel hook copilot`   → same, Copilot format
  *
  * ZERO heavy imports — this module must load in <50ms.
- * No DB, no graph, no pipeline, no config, no filesystem access.
+ * Filesystem access and spawnSync are allowed only in hook handlers (not in rewriteCommand).
+ *
+ * Hook behaviour (inspired by GitNexus plugin pattern):
+ *   PreToolUse  — rewrites grep/rg/cat to code-intel equivalents; optionally injects
+ *                 graph context as `additionalContext` via `code-intel augment`.
+ *   PostToolUse — detects stale knowledge graph after git mutations (commit/merge/rebase/
+ *                 cherry-pick/pull) by comparing `git rev-parse HEAD` against the
+ *                 commitHash stored in `.code-intel/meta.json`. Notifies the agent to
+ *                 re-run `code-intel analyze` when the index is behind.
  */
 
 import process from 'node:process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+
+// ─── Stale-index detection helpers ───────────────────────────────────────────
+
+/**
+ * Walk up the directory tree from startDir looking for a `.code-intel/` directory.
+ * Returns the path to `.code-intel/` or null if not found (up to 8 levels).
+ */
+function findCodeIntelDir(startDir: string): string | null {
+  let dir = startDir;
+  for (let i = 0; i < 8; i++) {
+    const candidate = path.join(dir, '.code-intel');
+    try { if (fs.statSync(candidate).isDirectory()) return candidate; } catch { /* continue */ }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
+/** Read the `commitHash` stored in `.code-intel/meta.json` (empty string if absent). */
+function loadIndexedCommit(codeIntelDir: string): string {
+  try {
+    const meta = JSON.parse(fs.readFileSync(path.join(codeIntelDir, 'meta.json'), 'utf-8')) as Record<string, unknown>;
+    return (meta.commitHash as string) ?? '';
+  } catch { return ''; }
+}
+
+/** Run `git rev-parse HEAD` synchronously (empty string on error). */
+function getHeadCommit(cwd: string): string {
+  try {
+    const r = spawnSync('git', ['rev-parse', 'HEAD'], {
+      encoding: 'utf-8', timeout: 3000, cwd,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    return (r.stdout ?? '').trim();
+  } catch { return ''; }
+}
+
+// ─── Augment helper ───────────────────────────────────────────────────────────
+
+/**
+ * Spawn `code-intel augment -- <pattern>` synchronously and return its stdout.
+ * Falls back to npx if the binary is not on PATH.
+ * Returns empty string on any error — this must never block the agent.
+ *
+ * SECURITY: args are passed as array elements, never through shell interpolation.
+ */
+function runCodeIntelAugment(pattern: string, cwd: string): string {
+  const isWin = process.platform === 'win32';
+  const bin   = isWin ? 'code-intel.cmd' : 'code-intel';
+  const npxBin = isWin ? 'npx.cmd' : 'npx';
+
+  let r = spawnSync(bin, ['augment', '--', pattern], {
+    encoding: 'utf-8', timeout: 6000, cwd,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  if (r.error || r.status !== 0) {
+    r = spawnSync(npxBin, ['code-intel', 'augment', '--', pattern], {
+      encoding: 'utf-8', timeout: 10000, cwd,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+  }
+  return (!r.error && r.status === 0) ? (r.stdout ?? '').trim() : '';
+}
+
+// ─── PostToolUse handler ──────────────────────────────────────────────────────
+
+/**
+ * PostToolUse: after git mutations, check whether the knowledge graph is stale.
+ *
+ * Instead of running a full `code-intel analyze` synchronously (which would block
+ * the agent for up to 120s), we do a lightweight check: compare `git rev-parse HEAD`
+ * against the `commitHash` stored in `.code-intel/meta.json`. When they differ, we
+ * notify the agent via `additionalContext` so it can decide when to reindex.
+ *
+ * Writes the response JSON to stdout (empty string → no output / pass through).
+ */
+function handlePostToolUse(input: Record<string, unknown>): void {
+  const toolName = (input.tool_name as string | undefined) ?? '';
+  if (toolName !== 'Bash') return;
+
+  const command = ((input.tool_input as Record<string, unknown> | undefined)?.command as string | undefined) ?? '';
+  // Only care about git operations that advance HEAD
+  if (!/\bgit\s+(commit|merge|rebase|cherry-pick|pull)(\s|$)/.test(command)) return;
+
+  // Ignore failed commands
+  const exitCode = (input.tool_output as Record<string, unknown> | undefined)?.exit_code;
+  if (exitCode !== undefined && exitCode !== 0) return;
+
+  const cwd = (input.cwd as string | undefined) ?? process.cwd();
+  if (!path.isAbsolute(cwd)) return;
+
+  const codeIntelDir = findCodeIntelDir(cwd);
+  if (!codeIntelDir) return;  // no index for this repo → nothing to check
+
+  const head = getHeadCommit(cwd);
+  if (!head) return;
+
+  const indexed = loadIndexedCommit(codeIntelDir);
+  if (head && head === indexed) return;  // index is current → nothing to notify
+
+  const since   = indexed ? indexed.slice(0, 7) : 'never';
+  const current = head.slice(0, 7);
+  const msg =
+    `code-intel index is stale (last indexed: ${since}, current HEAD: ${current}). ` +
+    `Run \`code-intel analyze\` to update the knowledge graph.`;
+
+  process.stdout.write(
+    JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: msg } }),
+  );
+}
 
 // ─── Source file extensions ───────────────────────────────────────────────────
 // Only these are worth inspecting via code-intel inspect.
@@ -442,42 +566,61 @@ export function runClaudeHook(): void {
 
   process.stdin.on('end', () => {
     try {
-      if (!input.trim()) {
+      if (!input.trim()) { process.exit(0); }
+
+      const parsed = JSON.parse(input) as Record<string, unknown>;
+      const hookEvent = (parsed.hook_event_name as string | undefined) ?? 'PreToolUse';
+
+      // ── PostToolUse: stale-index notification after git mutations ──────────
+      if (hookEvent === 'PostToolUse') {
+        handlePostToolUse(parsed);
         process.exit(0);
       }
 
-      // Parse the PreToolUse JSON payload
-      const parsed = JSON.parse(input) as {
-        tool_input?: { command?: string; [key: string]: unknown };
-        [key: string]: unknown;
-      };
-
-      const cmd = parsed?.tool_input?.command;
-      if (typeof cmd !== 'string' || !cmd.trim()) {
-        process.exit(0);
-      }
+      // ── PreToolUse: command rewrite + optional graph context augment ───────
+      const toolInput = parsed.tool_input as Record<string, unknown> | undefined;
+      const cmd = toolInput?.command;
+      if (typeof cmd !== 'string' || !cmd.trim()) { process.exit(0); }
 
       const rewritten = rewriteCommand(cmd);
+      const cwd = (parsed.cwd as string | undefined) ?? process.cwd();
 
-      // No match or identical → pass through (empty stdout + exit 0)
-      if (rewritten === null || rewritten === cmd) {
-        process.exit(0);
-      }
+      // Try to augment with graph context (non-blocking — any error → skip)
+      let additionalContext: string | undefined;
+      try {
+        if (path.isAbsolute(cwd) && findCodeIntelDir(cwd)) {
+          const pattern = extractGrepSymbol(cmd) ?? (rewritten ? undefined : undefined);
+          if (pattern) {
+            const ctx = runCodeIntelAugment(pattern, cwd);
+            if (ctx) additionalContext = ctx;
+          }
+        }
+      } catch { /* ignore augment errors */ }
 
-      // Build the Claude Code PreToolUse response
-      const response = {
-        hookSpecificOutput: {
-          hookEventName: 'PreToolUse',
-          permissionDecision: 'allow',
-          permissionDecisionReason: 'code-intel: semantic search replaces grep/cat',
-          updatedInput: {
-            ...parsed.tool_input,
-            command: rewritten,
+      if (rewritten !== null && rewritten !== cmd) {
+        // Rewrite found — update input command and optionally add context
+        const response: Record<string, unknown> = {
+          hookSpecificOutput: {
+            hookEventName: 'PreToolUse',
+            permissionDecision: 'allow',
+            permissionDecisionReason: 'code-intel: semantic search replaces grep/cat',
+            updatedInput: { ...toolInput, command: rewritten },
+            ...(additionalContext ? { additionalContext } : {}),
           },
-        },
-      };
+        };
+        process.stdout.write(JSON.stringify(response));
+      } else if (additionalContext) {
+        // No rewrite but we have graph context to inject
+        const response = {
+          hookSpecificOutput: {
+            hookEventName: 'PreToolUse',
+            additionalContext,
+          },
+        };
+        process.stdout.write(JSON.stringify(response));
+      }
+      // else: no rewrite, no context → empty stdout = pass through
 
-      process.stdout.write(JSON.stringify(response));
       process.exit(0);
     } catch {
       // JSON parse error, unexpected payload shape, or anything else.
@@ -486,7 +629,5 @@ export function runClaudeHook(): void {
     }
   });
 
-  process.stdin.on('error', () => {
-    process.exit(0); // stdin read error → pass through
-  });
+  process.stdin.on('error', () => { process.exit(0); });
 }

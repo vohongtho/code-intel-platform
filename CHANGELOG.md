@@ -4,9 +4,105 @@ All notable changes to this project are documented in this file.
 
 ---
 
-## [1.0.3] — 2026-05-15 — Per-Symbol Summarization, Provider Init, Disambiguation & Source Reading
+## [1.0.3-patch] — 2026-05-16 — Agent Config Safety: Amp Data-Loss Fix, Binary-Only Gate, Kiro/OpenCode MCP Support
 
-> **Theme:** Strict one-API-call-per-symbol summarization, full provider configuration during `init`, security vulnerability fixes, and accurate symbol resolution — `inspect` now warns on ambiguous names, new `read`/`get_source` commands give direct file access, and BM25 ranking prefers the correct class when method names are shared.
+> **Theme:** Never destroy existing agent settings. `analyze` now uses a strict binary-only gate for agent rules files (no "Tier 2" file-exists loophole). `setup`/`init` MCP merging is now safe for every agent — Amp flat-key format fixed, idempotency checks added, `.bak` backups before every write, Kiro and OpenCode added as first-class agents.
+
+### 🔴 Critical Fix — Amp Settings Data Loss
+
+- **Root cause:** `mergeJsonFile()` was called with `['amp', 'mcpServers']` as `keyPath` for Amp, causing it to write a nested `{ "amp": { "mcpServers": {...} } }` object that **shadowed and destroyed all existing flat `"amp.*"` settings** (`amp.url`, `amp.network.timeout`, `amp.tools.stopTimeout`, `amp.apiKey`, `amp.tools.disable`, and all other MCP servers like Snyk, context7, linear, playwright, ref-tools, semgrep, sonarqube).
+- **Fix:** Amp `installMcp()` now uses root-level merge (`keyPath=null`) with a flat key `"amp.mcpServers"`, matching Amp's actual settings format. **No other `"amp.*"` key is touched.**
+- **Idempotency added:** Each agent's `installMcp()` now checks whether `code-intel` is already registered before writing — skips with `already-present` if so, preventing any unnecessary file mutation.
+- **`.bak` backup before every write:** `mergeJsonFile()` now copies the original file to `<file>.bak` before any write, enabling manual recovery if anything goes wrong.
+- **Regression tests added** (`init-wizard-merge.test.ts`): proves Amp flat-key preservation, proves nested-merge would destroy keys (documents the wrong approach), proves OpenCode array-command format, proves Kiro nested format, proves idempotency.
+
+### 🔒 `analyze` — Strict Binary-Only Gate for Agent Rules Files
+
+- **`writeContextFiles()` Tier 2 logic removed entirely** — the old "if file already has our marker, update it" rule perpetuated files from old unconditional runs forever, even when the agent was not installed.
+- **New rule: no binary = no write. Period.** Files left over from previous runs are NOT updated unless the agent binary is on PATH.
+  - `AGENTS.md`, `CLAUDE.md` — always written (universal)
+  - `.github/copilot-instructions.md` — only if `code` binary on PATH
+  - `.cursor/rules/code-intel.mdc` — only if `cursor` binary on PATH
+  - `.windsurfrules` — only if `windsurf` binary on PATH
+  - `.kiro/`, `.clinerules`, `.kilocode/`, `.agents/` — **never written by `analyze`** (setup-only)
+- **`_binaryCheck` parameter added** to `writeContextFiles()` for deterministic testing — tests pass `() => false` or `() => true` instead of depending on what is actually installed in the CI environment.
+- **Tests updated** (`context-writer.test.ts`): old `"updates agent files when previously set up"` describe block replaced with two new deterministic blocks: `"does NOT create agent files when agent is absent"` (uses `() => false`) and `"creates agent files when binary is present"` (uses `() => true`); added test proving pre-existing files with markers are NOT updated when binary is absent.
+
+### 🆕 New Agents — Kiro IDE & OpenCode
+
+- **Kiro IDE** added as a first-class `setup` agent:
+  - Global MCP config: `~/.kiro/settings/mcp.json` (nested `mcpServers` format, per official Kiro docs)
+  - Detection: `kiro` binary on PATH **or** `~/.kiro` directory exists
+- **OpenCode** added as a first-class `setup` agent:
+  - Global MCP config: `~/.config/opencode/opencode.json` (uses `"mcp"` key, NOT `"mcpServers"`; `"command"` is an **array**, NOT a string — distinct OpenCode format)
+  - Entry: `{ "type": "local", "command": ["npx", "code-intel", "mcp", "."], "enabled": true }`
+  - Detection: `opencode` binary on PATH **or** `~/.config/opencode` directory exists
+
+### 🛡 Safe Merge — All Agents Now Idempotency-Checked
+
+All agent `installMcp()` handlers now follow the pattern:
+1. Read existing config with `readJsonSafe()` (returns `{}` if missing or corrupt — never throws)
+2. Check with `mcpAlreadyPresent()` — skip if `code-intel` already registered (no write at all)
+3. Merge only the new entry into the correct key — all other keys untouched
+4. Backup original → atomic temp-file write → rename
+
+Summary of config formats protected:
+
+| Agent | Config file | Key | Command format |
+|-------|------------|-----|----------------|
+| Amp | `~/.config/amp/settings.json` | `amp.mcpServers` (flat root key) | `{ command, args }` |
+| Claude Code | `~/.claude.json` | `mcpServers` (nested) | `{ command, args }` |
+| Cursor | `.cursor/mcp.json` | `mcpServers` (nested) | `{ command, args }` |
+| VS Code | `.vscode/mcp.json` | `servers` (nested) | `{ command, args }` |
+| Windsurf | `.windsurf/mcp.json` | `mcpServers` (nested) | `{ command, args }` |
+| Gemini CLI | `~/.gemini/settings.json` | `mcpServers` (nested) | `{ command, args }` |
+| Zed | `~/.config/zed/settings.json` | `context_servers` (nested) | `{ command: { path, args } }` |
+| Kiro IDE | `~/.kiro/settings/mcp.json` | `mcpServers` (nested) | `{ command, args }` |
+| OpenCode | `~/.config/opencode/opencode.json` | `mcp` (nested) | `{ type, command: [array], enabled }` |
+
+---
+
+## [1.0.3] — 2026-05-15 — Per-Symbol Summarization, Provider Init, Disambiguation, Source Reading & Cross-OS Agent Detection
+
+> **Theme:** Strict one-API-call-per-symbol summarization, full provider configuration during `init`, security vulnerability fixes, accurate symbol resolution, and robust cross-platform agent detection — `inspect` now warns on ambiguous names, new `read`/`get_source` commands give direct file access, BM25 ranking prefers the correct class when method names are shared, and `init`/`setup` agent detection + MCP registration now works correctly on Ubuntu, macOS, and Windows.
+
+### 🔌 Claude Code Plugin — PostToolUse Stale-Index Detection & Augment Context Injection
+
+- **`code-intel hook claude`** now handles **both** `PreToolUse` and `PostToolUse` events (input JSON `hook_event_name` field dispatches the handler)
+- **PostToolUse stale-index check** — after any `git commit`, `git merge`, `git rebase`, `git cherry-pick`, or `git pull` command, the hook compares `git rev-parse HEAD` against the `commitHash` stored in `.code-intel/meta.json`; if they differ, it notifies the agent via `additionalContext`: *"code-intel index is stale (last indexed: abc1234, current HEAD: def5678). Run `code-intel analyze`"* — same pattern as the GitNexus PostToolUse hook
+- **PreToolUse graph context augment** — before grep/rg/cat commands, the hook now calls `code-intel augment -- <pattern>` to inject compact graph context (`in:N out:N` call counts, file path, snippet) as `additionalContext` alongside the command rewrite; if no index is present, augment is silently skipped
+- **`code-intel augment -- <pattern>`** — new hidden CLI command; searches the knowledge graph and outputs a compact context block (symbol kind, name, file, caller/callee counts, snippet preview); used by hook scripts to enrich agent context; always exits 0 on error
+- **`runCodeIntelAugment()`** — new helper in `hook-rewriter.ts`; spawns `code-intel augment` via direct binary first, falls back to `npx`; uses `spawnSync` with array args (no shell interpolation); cross-OS aware (`code-intel.cmd` / `npx.cmd` on Windows); times out at 6s to keep PreToolUse latency acceptable
+- **`findCodeIntelDir()`** / **`loadIndexedCommit()`** / **`getHeadCommit()`** — new helpers that walk up the directory tree to find `.code-intel/`, read `meta.json.commitHash`, and run `git rev-parse HEAD` synchronously; no heavy imports, fast path
+- **`installClaudeHook()`** — now installs **both** `PreToolUse` and `PostToolUse` entries in `~/.claude/settings.json`; idempotency check updated to require both before skipping
+- **`code-intel hook <agent>`** — updated to support `claude | cursor | gemini | copilot` (was `claude` only); `cursor`, `gemini`, `copilot` were already implemented in `hook-rewriter.ts` but not wired to the `hook` subcommand dispatch
+- **`setup` command output** — updated to say "PreToolUse + PostToolUse hooks" installed
+
+### 🧹 `analyze` — Agent-Gated Rules File Generation
+
+- **`writeContextFiles()`** no longer unconditionally writes every agent-specific file on every `analyze` run; files are now written only when the corresponding agent is genuinely in use:
+  - `AGENTS.md`, `CLAUDE.md` — **always** written (universal, every project)
+  - `.cursor/rules/code-intel.mdc` — only when `cursor` binary is on PATH **or** `.cursor/rules/` already exists in the project
+  - `.github/copilot-instructions.md` — only when `code` binary is on PATH **or** the file already exists
+  - `.windsurfrules` — only when `windsurf` binary is on PATH **or** `.windsurfrules` already exists
+  - `.clinerules` — only when `.clinerules` already exists (no reliable Cline binary)
+  - `.kiro/steering/code-intel.md` — only when `.kiro/` already exists (Kiro is workspace-scoped)
+  - `.kilocode/rules/code-intel-rules.md` — only when `.kilocode/` already exists
+  - `.agents/rules/code-intel-rules.md` — only when `.agents/` already exists
+- Residual global dirs like `~/.cursor` or `~/.vscode` no longer trigger file creation — previously these caused every project to receive `.cursor/rules/code-intel.mdc` and `.github/copilot-instructions.md` even when those agents were not configured for that project
+- Agent-specific setup remains the job of `code-intel setup` (user-initiated, one-time)
+- Tests updated: `context-writer.test.ts` now pre-creates the correct signal files/dirs before asserting that agent files are written
+
+### 🌐 Cross-OS Agent Detection & MCP Registration
+
+- **`commandExists()`** — replaced the shell-composed `which … || where … 2>nul` string with `execFileSync('which', …)` / `execFileSync('where', …)` selected by `process.platform`; the old form created a stray `./nul` file on Linux/macOS (because `2>nul` is not a Unix null device) and used an invalid redirect under `cmd.exe` on Windows
+- **OS-aware config path helpers** — added `xdgConfigHome()`, `roamingAppData()`, `localAppData()`, `getAmpSettingsPath()`, `getClaudeCodeConfigPath()`, `getZedSettingsPath()`; each resolves the correct directory per platform: Linux/macOS `~/.config`, Windows `%APPDATA%` / `%LOCALAPPDATA%` (with env-var override support)
+- **Amp config path corrected** — was hardcoded to `~/.config/amp/settings.json`; now `%APPDATA%\amp\settings.json` on Windows and `~/.config/amp/settings.json` everywhere else; detection also checks the settings file and its parent directory in addition to the binary and `~/.amp`
+- **Claude Code config path corrected** — was the wrong `~/.config/claude/claude_desktop_config.json` (Claude Desktop path); now correctly targets `~/.claude.json`, the user-level MCP config file used by Claude Code on all platforms
+- **Zed config path corrected** — was hardcoded to `~/.config/zed/settings.json`; now `%LOCALAPPDATA%\Zed\settings.json` on Windows; detection expanded to check the settings file and its parent directory, not just the `zed` binary (which is optional)
+- **`mergeJsonFile()` nested key path** — signature changed from a flat string key (e.g. `'amp.mcpServers'`) to a segment array (e.g. `['amp', 'mcpServers']`); the old form wrote a literal `"amp.mcpServers"` top-level key instead of the correct nested `{ "amp": { "mcpServers": { … } } }` structure
+- **`renameWithRetry()`** — new helper retries atomic rename up to 5× on Windows `EPERM`/`EBUSY`/`EACCES` with exponential back-off (antivirus / sync-tool file locks); temp file is cleaned up on failure on all platforms
+- **`MCP_ENTRY_AMP` removed** — Amp now uses the same `npx`-based `MCP_ENTRY` as all other agents; avoids bare `code-intel` binary resolution failures under Windows where npm installs a `code-intel.cmd` shim rather than a bare executable
 
 ### 🔁 Summarize Phase — One API Call Per Symbol
 

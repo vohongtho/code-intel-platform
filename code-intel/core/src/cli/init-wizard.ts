@@ -15,7 +15,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createInterface } from 'node:readline/promises';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 
 // ── Paths ────────────────────────────────────────────────────────────────────
 const GLOBAL_DIR = path.join(os.homedir(), '.code-intel');
@@ -128,9 +128,52 @@ export interface DetectedAgent {
   installMcp: (cwd: string) => { ok: boolean; message: string };
 }
 
+// ── OS-aware path helpers ─────────────────────────────────────────────────────
+
+/** Returns the platform's XDG_CONFIG_HOME equivalent (Linux/macOS: ~/.config). */
+function xdgConfigHome(): string {
+  return process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), '.config');
+}
+
+/** Returns %APPDATA% (Windows: C:\Users\<user>\AppData\Roaming). */
+function roamingAppData(): string {
+  return process.env.APPDATA ?? path.join(os.homedir(), 'AppData', 'Roaming');
+}
+
+/** Returns %LOCALAPPDATA% (Windows: C:\Users\<user>\AppData\Local). */
+function localAppData(): string {
+  return process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local');
+}
+
+/** Amp settings.json — ~/.config/amp/settings.json on Linux/macOS, %APPDATA%\amp\settings.json on Windows. */
+function getAmpSettingsPath(): string {
+  if (process.platform === 'win32') return path.join(roamingAppData(), 'amp', 'settings.json');
+  return path.join(xdgConfigHome(), 'amp', 'settings.json');
+}
+
+/**
+ * Claude Code user-level MCP config — ~/.claude.json on all platforms.
+ * (Not to be confused with Claude Desktop's claude_desktop_config.json.)
+ */
+function getClaudeCodeConfigPath(): string {
+  return path.join(os.homedir(), '.claude.json');
+}
+
+/** Zed settings.json — ~/.config/zed/settings.json on Linux/macOS, %LOCALAPPDATA%\Zed\settings.json on Windows. */
+function getZedSettingsPath(): string {
+  if (process.platform === 'win32') return path.join(localAppData(), 'Zed', 'settings.json');
+  return path.join(xdgConfigHome(), 'zed', 'settings.json');
+}
+
+// ── Binary detection ──────────────────────────────────────────────────────────
+
 function commandExists(bin: string): boolean {
   try {
-    execSync(`which ${bin} 2>/dev/null || where ${bin} 2>nul`, { stdio: 'pipe' });
+    if (process.platform === 'win32') {
+      execFileSync('where', [bin], { stdio: 'ignore' });
+    } else {
+      execFileSync('which', [bin], { stdio: 'ignore' });
+    }
     return true;
   } catch {
     return false;
@@ -141,35 +184,119 @@ function dirExists(p: string): boolean {
   try { return fs.statSync(p).isDirectory(); } catch { return false; }
 }
 
-/** Merge `entry` into `root[key]` (object merge) and write atomically. */
-function mergeJsonFile(filePath: string, key: string | null, entry: Record<string, unknown>): { ok: boolean; message: string } {
+// ── Atomic file write (cross-OS) ──────────────────────────────────────────────
+
+/**
+ * Rename tmp → dest.  On Windows the file lock window is wider (antivirus,
+ * sync tools) so retry up to 5× on transient EPERM / EBUSY / EACCES.
+ */
+function renameWithRetry(tmp: string, dest: string): void {
+  const maxAttempts = process.platform === 'win32' ? 5 : 1;
+  let lastErr: unknown;
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      fs.renameSync(tmp, dest);
+      return;
+    } catch (err) {
+      lastErr = err;
+      const code = (err as NodeJS.ErrnoException).code ?? '';
+      if (!['EPERM', 'EBUSY', 'EACCES'].includes(code)) break;
+      // Brief pause before retry (synchronous — acceptable in a one-shot CLI)
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50 * (i + 1));
+    }
+  }
+  throw lastErr;
+}
+
+/**
+ * Safely merge `entry` into a JSON config file without losing existing keys.
+ *
+ * @param filePath   Target JSON file (created if absent).
+ * @param keyPath    Dot-path segments for NESTED merge, e.g. `['mcpServers']`.
+ *                   Pass `null` to merge at the root level (flat keys).
+ * @param entry      Object to shallow-merge at the leaf.
+ *
+ * IMPORTANT: Amp uses flat dot-notation keys ("amp.mcpServers", "amp.url", …).
+ * Do NOT pass ['amp', 'mcpServers'] for Amp — that creates a nested {"amp":{…}}
+ * object which shadows and destroys all existing flat "amp.*" settings.
+ * Use null + a flat key like "amp.mcpServers" for Amp instead.
+ *
+ * SAFETY: Always creates a .bak backup before any write so the original can be
+ * restored if something goes wrong.
+ */
+function mergeJsonFile(
+  filePath: string,
+  keyPath: string[] | null,
+  entry: Record<string, unknown>,
+): { ok: boolean; message: string } {
+  let tmp: string | undefined;
   try {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     let root: Record<string, unknown> = {};
-    if (fs.existsSync(filePath)) {
-      try { root = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as Record<string, unknown>; } catch { /* overwrite */ }
+    const fileExists = fs.existsSync(filePath);
+    if (fileExists) {
+      try { root = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as Record<string, unknown>; } catch { /* overwrite corrupt file */ }
     }
-    if (key) {
-      root[key] = { ...((root[key] as Record<string, unknown>) ?? {}), ...entry };
+
+    if (keyPath && keyPath.length > 0) {
+      // Walk/create nested objects — only use for agents that store nested JSON
+      // (Claude Code, Cursor, VS Code, Windsurf, Gemini, Zed, Kiro).
+      // Do NOT use for Amp (flat dot-notation keys).
+      let cursor: Record<string, unknown> = root;
+      for (let i = 0; i < keyPath.length - 1; i++) {
+        const k = keyPath[i]!;
+        if (typeof cursor[k] !== 'object' || cursor[k] === null) cursor[k] = {};
+        cursor = cursor[k] as Record<string, unknown>;
+      }
+      const leaf = keyPath[keyPath.length - 1]!;
+      cursor[leaf] = { ...((cursor[leaf] as Record<string, unknown>) ?? {}), ...entry };
     } else {
+      // Root-level merge — preserves ALL existing keys (used for Amp flat format).
       root = { ...root, ...entry };
     }
-    const tmp = `${filePath}.tmp.${Date.now()}`;
+
+    // Backup the original file BEFORE any write (allows manual recovery)
+    if (fileExists) {
+      try { fs.copyFileSync(filePath, `${filePath}.bak`); } catch { /* non-fatal */ }
+    }
+
+    tmp = `${filePath}.tmp.${Date.now()}`;
     fs.writeFileSync(tmp, JSON.stringify(root, null, 2) + '\n', 'utf-8');
-    fs.renameSync(tmp, filePath);
+    renameWithRetry(tmp, filePath);
     return { ok: true, message: filePath };
   } catch (err) {
+    // Clean up temp file so it doesn't litter the config directory
+    if (tmp) { try { fs.unlinkSync(tmp); } catch { /* ignore */ } }
     return { ok: false, message: err instanceof Error ? err.message : String(err) };
   }
 }
 
+// Single MCP entry reused by all agents — npx is the most cross-OS-portable launcher.
 const MCP_ENTRY = {
   'code-intel': { command: 'npx', args: ['code-intel', 'mcp', '.'] },
 };
 
-const MCP_ENTRY_AMP = {
-  'code-intel': { command: 'code-intel', args: ['mcp', '.'] },
-};
+/**
+ * Read a JSON file safely. Returns {} if missing or corrupt.
+ */
+function readJsonSafe(filePath: string): Record<string, unknown> {
+  if (!fs.existsSync(filePath)) return {};
+  try { return JSON.parse(fs.readFileSync(filePath, 'utf-8')) as Record<string, unknown>; }
+  catch { return {}; }
+}
+
+/**
+ * Check whether code-intel MCP is already registered under a nested key.
+ * Prevents double-writes and preserves all existing config.
+ */
+function mcpAlreadyPresent(root: Record<string, unknown>, keyPath: string[]): boolean {
+  let cursor: Record<string, unknown> = root;
+  for (const k of keyPath) {
+    if (typeof cursor[k] !== 'object' || cursor[k] === null) return false;
+    cursor = cursor[k] as Record<string, unknown>;
+  }
+  return 'code-intel' in cursor;
+}
 
 /** All known AI agents — detection + MCP install logic */
 const ALL_AGENTS: DetectedAgent[] = [
@@ -177,55 +304,91 @@ const ALL_AGENTS: DetectedAgent[] = [
   {
     name: 'Amp',
     installMcp: () => {
-      const cfgPath = path.join(os.homedir(), '.config', 'amp', 'settings.json');
-      return mergeJsonFile(cfgPath, 'amp.mcpServers', MCP_ENTRY_AMP);
+      // Amp uses FLAT dot-notation keys: "amp.mcpServers", "amp.url", etc.
+      // We must merge at root level (keyPath=null) so we only add/update the
+      // "amp.mcpServers" key without touching any other "amp.*" settings.
+      const ampSettingsPath = getAmpSettingsPath();
+      const root = readJsonSafe(ampSettingsPath);
+      // Idempotency: skip if code-intel already registered
+      const existing = root['amp.mcpServers'] as Record<string, unknown> | undefined;
+      if (existing?.['code-intel']) {
+        return { ok: true, message: `${ampSettingsPath} (already present)` };
+      }
+      // Merge only the new entry into amp.mcpServers, preserving all other servers
+      const merged = { ...(existing ?? {}), ...MCP_ENTRY };
+      return mergeJsonFile(ampSettingsPath, null, { 'amp.mcpServers': merged });
     },
   },
   // ── Claude Code ───────────────────────────────────────────────────────────
   {
     name: 'Claude Code',
     installMcp: () => {
-      const cfgPath = path.join(os.homedir(), '.config', 'claude', 'claude_desktop_config.json');
-      return mergeJsonFile(cfgPath, 'mcpServers', MCP_ENTRY);
+      // Claude Code stores user-level MCP servers in ~/.claude.json (nested mcpServers).
+      const cfgPath = getClaudeCodeConfigPath();
+      const root = readJsonSafe(cfgPath);
+      if (mcpAlreadyPresent(root, ['mcpServers'])) {
+        return { ok: true, message: `${cfgPath} (already present)` };
+      }
+      return mergeJsonFile(cfgPath, ['mcpServers'], MCP_ENTRY);
     },
   },
   // ── Cursor ───────────────────────────────────────────────────────────────
   {
     name: 'Cursor',
     installMcp: (cwd) => {
+      // Cursor uses .cursor/mcp.json with nested mcpServers.
       const cfgPath = path.join(cwd, '.cursor', 'mcp.json');
-      return mergeJsonFile(cfgPath, 'mcpServers', MCP_ENTRY);
+      const root = readJsonSafe(cfgPath);
+      if (mcpAlreadyPresent(root, ['mcpServers'])) {
+        return { ok: true, message: `${cfgPath} (already present)` };
+      }
+      return mergeJsonFile(cfgPath, ['mcpServers'], MCP_ENTRY);
     },
   },
   // ── VS Code ───────────────────────────────────────────────────────────────
   {
     name: 'VS Code',
     installMcp: (cwd) => {
+      // VS Code uses .vscode/mcp.json with nested servers.
       const cfgPath = path.join(cwd, '.vscode', 'mcp.json');
-      return mergeJsonFile(cfgPath, 'servers', MCP_ENTRY);
+      const root = readJsonSafe(cfgPath);
+      if (mcpAlreadyPresent(root, ['servers'])) {
+        return { ok: true, message: `${cfgPath} (already present)` };
+      }
+      return mergeJsonFile(cfgPath, ['servers'], MCP_ENTRY);
     },
   },
   // ── Windsurf ─────────────────────────────────────────────────────────────
   {
     name: 'Windsurf',
     installMcp: (cwd) => {
+      // Windsurf uses .windsurf/mcp.json with nested mcpServers.
       const cfgPath = path.join(cwd, '.windsurf', 'mcp.json');
-      return mergeJsonFile(cfgPath, 'mcpServers', MCP_ENTRY);
+      const root = readJsonSafe(cfgPath);
+      if (mcpAlreadyPresent(root, ['mcpServers'])) {
+        return { ok: true, message: `${cfgPath} (already present)` };
+      }
+      return mergeJsonFile(cfgPath, ['mcpServers'], MCP_ENTRY);
     },
   },
   // ── Gemini CLI ────────────────────────────────────────────────────────────
   {
     name: 'Gemini CLI',
     installMcp: () => {
+      // ~/.gemini/settings.json with nested mcpServers.
       const cfgPath = path.join(os.homedir(), '.gemini', 'settings.json');
-      return mergeJsonFile(cfgPath, 'mcpServers', MCP_ENTRY);
+      const root = readJsonSafe(cfgPath);
+      if (mcpAlreadyPresent(root, ['mcpServers'])) {
+        return { ok: true, message: `${cfgPath} (already present)` };
+      }
+      return mergeJsonFile(cfgPath, ['mcpServers'], MCP_ENTRY);
     },
   },
   // ── Codex (OpenAI) ────────────────────────────────────────────────────────
   {
     name: 'Codex',
     installMcp: () => {
-      // Codex reads AGENTS.md for tool instructions — no MCP config file
+      // Codex reads AGENTS.md for tool instructions — no MCP config file.
       return { ok: true, message: 'rules written to AGENTS.md' };
     },
   },
@@ -233,11 +396,50 @@ const ALL_AGENTS: DetectedAgent[] = [
   {
     name: 'Zed',
     installMcp: () => {
-      const cfgPath = path.join(os.homedir(), '.config', 'zed', 'settings.json');
-      // Zed uses context_servers key
-      return mergeJsonFile(cfgPath, 'context_servers', {
+      // Zed uses context_servers (not mcpServers). Path is OS-aware via getZedSettingsPath().
+      const cfgPath = getZedSettingsPath();
+      const root = readJsonSafe(cfgPath);
+      if (mcpAlreadyPresent(root, ['context_servers'])) {
+        return { ok: true, message: `${cfgPath} (already present)` };
+      }
+      return mergeJsonFile(cfgPath, ['context_servers'], {
         'code-intel': { command: { path: 'npx', args: ['code-intel', 'mcp', '.'] } },
       });
+    },
+  },
+  // ── Kiro IDE ──────────────────────────────────────────────────────────────
+  {
+    name: 'Kiro',
+    installMcp: () => {
+      // Kiro global MCP config: ~/.kiro/settings/mcp.json
+      // Format: standard nested mcpServers.
+      // Docs: https://kiro.dev/docs/mcp/configuration/
+      const cfgPath = path.join(os.homedir(), '.kiro', 'settings', 'mcp.json');
+      const root = readJsonSafe(cfgPath);
+      if (mcpAlreadyPresent(root, ['mcpServers'])) {
+        return { ok: true, message: `${cfgPath} (already present)` };
+      }
+      return mergeJsonFile(cfgPath, ['mcpServers'], MCP_ENTRY);
+    },
+  },
+  // ── OpenCode (anomalyco/opencode) ─────────────────────────────────────────
+  {
+    name: 'OpenCode',
+    installMcp: () => {
+      // OpenCode global config: ~/.config/opencode/opencode.json
+      // IMPORTANT: OpenCode uses "mcp" key (NOT "mcpServers") and
+      // "command" is an ARRAY (not a string). Different from Claude/Cursor format.
+      // Format: { "mcp": { "server": { "type": "local", "command": ["npx",...] } } }
+      // Docs: https://opencode.ai/docs/config/
+      const cfgPath = path.join(os.homedir(), '.config', 'opencode', 'opencode.json');
+      const root = readJsonSafe(cfgPath);
+      if (mcpAlreadyPresent(root, ['mcp'])) {
+        return { ok: true, message: `${cfgPath} (already present)` };
+      }
+      const OPENCODE_MCP_ENTRY = {
+        'code-intel': { type: 'local', command: ['npx', 'code-intel', 'mcp', '.'], enabled: true },
+      };
+      return mergeJsonFile(cfgPath, ['mcp'], OPENCODE_MCP_ENTRY);
     },
   },
 ];
@@ -250,16 +452,24 @@ export function detectAgents(): DetectedAgent[] {
   for (const agent of ALL_AGENTS) {
     let found = false;
     switch (agent.name) {
-      case 'Amp':
-        found = commandExists('amp') || dirExists(path.join(home, '.amp')) || fs.existsSync(path.join(home, '.config', 'amp', 'settings.json'));
+      case 'Amp': {
+        // Check binary, ~/.amp dir, or the OS-specific settings file/dir
+        const ampCfg = getAmpSettingsPath();
+        found = commandExists('amp')
+          || dirExists(path.join(home, '.amp'))
+          || fs.existsSync(ampCfg)
+          || dirExists(path.dirname(ampCfg));
         break;
+      }
       case 'Claude Code':
+        // Check binary or the ~/.claude directory (where Claude Code stores its state)
         found = commandExists('claude') || dirExists(path.join(home, '.claude'));
         break;
       case 'Cursor':
         found = commandExists('cursor') || dirExists(path.join(home, '.cursor'));
         break;
       case 'VS Code':
+        // VS Code installs as `code` on all platforms
         found = commandExists('code');
         break;
       case 'Windsurf':
@@ -271,8 +481,21 @@ export function detectAgents(): DetectedAgent[] {
       case 'Codex':
         found = commandExists('codex') || dirExists(path.join(home, '.codex'));
         break;
-      case 'Zed':
-        found = commandExists('zed');
+      case 'Zed': {
+        // Zed CLI (`zed`) is optional; also check for the OS-specific settings dir
+        const zedCfg = getZedSettingsPath();
+        found = commandExists('zed')
+          || fs.existsSync(zedCfg)
+          || dirExists(path.dirname(zedCfg));
+        break;
+      }
+      case 'Kiro':
+        // Check binary or the ~/.kiro settings directory
+        found = commandExists('kiro') || dirExists(path.join(home, '.kiro'));
+        break;
+      case 'OpenCode':
+        // Check binary or global config dir ~/.config/opencode
+        found = commandExists('opencode') || dirExists(path.join(home, '.config', 'opencode'));
         break;
     }
     if (found) detected.push(agent);

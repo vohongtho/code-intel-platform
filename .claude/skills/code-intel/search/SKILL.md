@@ -29,9 +29,9 @@ Load this skill when:
 
 Start exploration here — exported symbols with no external callers:
 
-- **`constructor`** `(method)` → `code-intel/core/src/search/bm25-index.ts:110`
-- **`isLoaded`** `(method)` → `code-intel/core/src/search/bm25-index.ts:112`
-- **`search`** `(method)` → `code-intel/core/src/search/bm25-index.ts:254`
+- **`constructor`** `(method)` → `code-intel/core/src/search/bm25-index.ts:116`
+- **`isLoaded`** `(method)` → `code-intel/core/src/search/bm25-index.ts:118`
+- **`search`** `(method)` → `code-intel/core/src/search/bm25-index.ts:260`
 - **`hybridSearch`** `(function)` → `code-intel/core/src/search/hybrid-search.ts:26`
 - **`isTestPath`** `(function)` → `code-intel/core/src/search/text-search.ts:21`
 - **`isDistPath`** `(function)` → `code-intel/core/src/search/text-search.ts:23`
