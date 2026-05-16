@@ -1,6 +1,6 @@
 # Code Intelligence Platform
 
-[![npm version](https://img.shields.io/badge/npm-v1.0.4-blue)](https://www.npmjs.com/package/@vohongtho.infotech/code-intel)
+[![npm version](https://img.shields.io/badge/npm-v1.0.3-blue)](https://www.npmjs.com/package/@vohongtho.infotech/code-intel)
 
 A static code analysis platform that builds a **Knowledge Graph** from your source code and makes it explorable through a Web UI, HTTP API, CLI, and MCP server.
 
@@ -55,11 +55,11 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 - **Token-Efficient MCP** _(v1.0.1)_ — compact JSON responses (null/undefined stripped); MCP tool defaults tuned for LLM sessions: `search`/`file_symbols`/`list_exports` default 10 results (was 50), `blast_radius`/`pr_impact` default 2 hops (was 5); `suggested_next_tools` opt-in via `CODE_INTEL_SUGGEST_NEXT_TOOLS=true`; ~63% fewer tokens per typical 5-tool session
 - **Context Builder** _(v1.0.1)_ — `src/context/builder.ts` builds structured `[SUMMARY]` / `[LOGIC]` / `[RELATION]` / `[FOCUS CODE]` documents from seed symbols in ≤50% of v1.0.0 token cost; query-intent presets (`code`, `callers`, `architecture`, `auto`); adaptive snippets; cross-block dedup; `code-intel context <symbols...> --show-context`
 - **Enforced Tool Policy in AI Context Files** _(v1.0.1)_ — `AGENTS.md`/`CLAUDE.md`/`copilot-instructions.md`/`.cursor/rules`/`.kiro/steering` now include a `TOOL POLICY: ENFORCED` block forbidding raw `grep`/`find`/`cat` in favour of `code-intel search` → `inspect` → `impact`; saves ~3,000 tokens per cold-file lookup
-- **Inspect Disambiguation** _(v1.0.4)_ — `inspect` now detects when a symbol name exists in multiple files; CLI shows a multi-match warning listing all candidates with source previews and suggests `--file`; MCP returns a `disambiguation` JSON object instead of silently resolving the wrong class
-- **`--file` flag for CLI** _(v1.0.4)_ — `inspect <symbol> --file <pattern>` and `impact <symbol> --file <pattern>` select the correct implementation when the same name exists across multiple modules (e.g. `login` in API vs CMS, `requestAccessToken` in JWT vs Token)
-- **`code-intel read <file>`** _(v1.0.4)_ — new CLI command reads raw source lines from any indexed file using partial path matching; supports `--start`/`--end` line range (max 300 lines per call); essential for reading config files with no indexable symbols
-- **MCP `get_source` tool** _(v1.0.4)_ — MCP equivalent of `read`; reads raw numbered source lines from any indexed file by partial path; accepts `start_line`/`end_line`; returns `hasMore` flag for pagination
-- **BM25 Class-Name Boosting** _(v1.0.4)_ — file basename (class name) now weighted strongly in BM25 documents; queries like `"Token requestAccessToken"` rank the Token class above JWT for same-named methods; content window expanded 1 000 → 1 500 chars
+- **Inspect Disambiguation** _(v1.0.3)_ — `inspect` now detects when a symbol name exists in multiple files; CLI shows a multi-match warning listing all candidates with source previews and suggests `--file`; MCP returns a `disambiguation` JSON object instead of silently resolving the wrong class
+- **`--file` flag for CLI** _(v1.0.3)_ — `inspect <symbol> --file <pattern>` and `impact <symbol> --file <pattern>` select the correct implementation when the same name exists across multiple modules (e.g. `login` in API vs CMS, `requestAccessToken` in JWT vs Token)
+- **`code-intel read <file>`** _(v1.0.3)_ — new CLI command reads raw source lines from any indexed file using partial path matching; supports `--start`/`--end` line range (max 300 lines per call); essential for reading config files with no indexable symbols
+- **MCP `get_source` tool** _(v1.0.3)_ — MCP equivalent of `read`; reads raw numbered source lines from any indexed file by partial path; accepts `start_line`/`end_line`; returns `hasMore` flag for pagination
+- **BM25 Class-Name Boosting** _(v1.0.3)_ — file basename (class name) now weighted strongly in BM25 documents; queries like `"Token requestAccessToken"` rank the Token class above JWT for same-named methods; content window expanded 1 000 → 1 500 chars
 
 ---
 
