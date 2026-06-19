@@ -1,7 +1,7 @@
-// Prepend #!/usr/bin/env node shebang to dist/cli/main.js and dist/cli/hook.js after tsup build
+// Prepend #!/usr/bin/env node shebang to CLI entry points after tsup build
 import fs from 'node:fs';
 
-for (const f of ['dist/cli/main.js', 'dist/cli/hook.js']) {
+for (const f of ['dist/cli/router.js', 'dist/cli/search.js', 'dist/cli/main.js', 'dist/cli/hook.js']) {
   if (!fs.existsSync(f)) continue;
   const content = fs.readFileSync(f, 'utf-8');
   if (!content.startsWith('#!')) {

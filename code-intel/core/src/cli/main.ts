@@ -1801,8 +1801,11 @@ program
       db.close();
       await startMcpStdio(graph, repoName, workspaceRoot);
     } else {
-      const { graph, repoName: name, workspaceRoot: root } = await analyzeWorkspace(targetPath, { silent: true });
-      await startMcpStdio(graph, name, root);
+      // No index yet — start MCP with an empty graph.
+      // Never auto-analyze on MCP startup: the user must run `code-intel analyze` first.
+      // Auto-analyze blocks the MCP handshake for up to 2 min on large repos.
+      const emptyGraph = createKnowledgeGraph();
+      await startMcpStdio(emptyGraph, repoName, workspaceRoot);
     }
   });
 
@@ -2390,23 +2393,66 @@ program
   .argument('<query>', 'Search query (name, kind, or partial match)')
   .option('-l, --limit <n>', 'Maximum number of results', '20')
   .option('-p, --path <path>', 'Path to the repository (default: current directory)', '.')
+  .option('--no-rerank', 'Disable post-retrieval re-ranking (show raw BM25 order)')
   .addHelpText('after', `
   Runs BM25 text search across all indexed symbols — functions, classes,
-  files, routes, interfaces, and more.
+  files, routes, interfaces, and more.  Results are re-ranked by default
+  using name-affinity, snippet coverage, symbol kind, and path quality.
 
   Examples:
     $ code-intel search "handleRequest"
     $ code-intel search "auth" --limit 10
     $ code-intel search "UserService" --path ./backend
+    $ code-intel search "auth" --no-rerank   # raw BM25 order for comparison
 `)
-  .action(async (query: string, options: { limit: string; path: string }) => {
+  .action(async (query: string, options: { limit: string; path: string; rerank: boolean }) => {
+    const limitN = parseInt(options.limit, 10);
+    const workspaceRoot = path.resolve(options.path);
+    const rerankDisabled = options.rerank === false;
+
+    // ── Fast path: BM25 index on disk → skip full graph load ─────────────
+    // The BM25 index stores name/kind/filePath/snippet in bm25_nodemeta, so
+    // we do not need the full in-memory graph just for a text search.
+    const { Bm25Index: BIdx, getBm25DbPath: getBm25 } = await import('../search/bm25-index.js');
+    const bm25DbPath = getBm25(workspaceRoot);
+
+    if (fs.existsSync(bm25DbPath)) {
+      const idx = new BIdx(bm25DbPath);
+      idx.load();
+      if (idx.isLoaded) {
+        // Fetch more candidates than limit so re-ranker has room to reorder
+        const candidates = idx.search(query, limitN * 3);
+        const { rerank: doRerank } = await import('../search/reranker.js');
+        const results = rerankDisabled ? candidates.slice(0, limitN) : doRerank(query, candidates).slice(0, limitN);
+
+        if (results.length === 0) {
+          console.log(`\n  No results found for "${query}".\n`);
+          return;
+        }
+        const label = rerankDisabled ? 'bm25 (re-ranking off)' : 'bm25 (re-ranked)';
+        console.log(`\n  ${results.length} result(s) for "${query}" [${label}]:\n`);
+        for (const r of results) {
+          console.log(`  ${r.kind.padEnd(14)} ${r.name.padEnd(32)} ${r.filePath}`);
+        }
+        console.log('');
+        return;
+      }
+    }
+
+    // ── Slow path: no pre-built BM25 index → load graph and run textSearch ─
     const { graph } = await loadOrAnalyzeWorkspace(options.path);
-    const results = textSearch(graph, query, parseInt(options.limit, 10));
+    const { textSearch: tSearch } = await import('../search/text-search.js');
+    const { rerank: doRerank } = await import('../search/reranker.js');
+
+    const candidates = tSearch(graph, query, limitN * 3);
+    const results = rerankDisabled ? candidates.slice(0, limitN) : doRerank(query, candidates).slice(0, limitN);
+
     if (results.length === 0) {
       console.log(`\n  No results found for "${query}".\n`);
       return;
     }
-    console.log(`\n  ${results.length} result(s) for "${query}":\n`);
+    const label = rerankDisabled ? 'text (re-ranking off)' : 'text (re-ranked)';
+    console.log(`\n  ${results.length} result(s) for "${query}" [${label}]:\n`);
     for (const r of results) {
       console.log(`  ${r.kind.padEnd(14)} ${r.name.padEnd(32)} ${r.filePath}`);
     }
@@ -4907,7 +4953,20 @@ program
       const term = pattern ?? _sep;
       if (!term || term === '--') { process.exit(0); }
       try {
-        const { graph } = await loadOrAnalyzeWorkspace(options.path);
+        const workspaceRoot = path.resolve(options.path);
+        const dbPath = getDbPath(workspaceRoot);
+
+        // augment is READ-ONLY: never trigger a full analysis.
+        // If no index exists yet, exit 0 silently — don't block the agent.
+        const existingIndex = fs.existsSync(dbPath) && loadMetadata(workspaceRoot) !== null;
+        if (!existingIndex) { process.exit(0); }
+
+        const graph = createKnowledgeGraph();
+        const db = new DbManager(dbPath, true);
+        await db.init();
+        await loadGraphFromDB(graph, db);
+        db.close();
+
         const results = textSearch(graph, term, parseInt(options.limit, 10));
         if (results.length === 0) { process.exit(0); }
 

@@ -4,6 +4,69 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.0.3-patch.2] — 2026-05-18 — Search Re-ranking
+
+> **Theme:** Post-retrieval re-ranking applied to all BM25/hybrid search results. Test and dist/build files are now hard-suppressed from appearing at the top of results. The `search` CLI command skips the full graph load when a pre-built BM25 index is available, making it ~3× faster for indexed workspaces.
+
+### 🔍 Feature — Feature-Based Search Re-ranker (`src/search/reranker.ts`)
+
+A new lightweight re-ranking pass is applied **after** BM25/vector/hybrid retrieval on the top-K candidate set. It uses four signals:
+
+1. **Name-query affinity** — exact match → full bonus; prefix match (`hash` → `hashPassword`) → 75%; camelCase/snake_case token overlap (`user service` → `UserService`) → proportional bonus.
+2. **Snippet term coverage** — additive bonus proportional to how many query terms appear in the stored snippet.
+3. **Kind preference** — multiplicative weight per symbol kind (class ×1.20 → function ×1.10 → method ×1.08 → … → variable ×0.90 → file ×0.85). Custom weights can be passed per-call.
+4. **Path quality (hard multiplier)** — test/spec paths: ×0.40; dist/build/`.d.ts` paths: ×0.25. This is a hard factor, not an additive penalty — test files **cannot** outrank source files regardless of BM25 score.
+
+**Final score formula:** `score × (1 + nameSnippetBonus) × kindWeight × pathMultiplier`
+
+The re-ranker is generic: `rerank<T extends RerankableResult>(query, results, options?)` — works on any `{ name, kind, filePath, score, snippet? }` shape, so it composes with BM25, vector, and hybrid results.
+
+### ⚡️ `hybridSearch()` — Re-ranking integrated by default
+
+`hybridSearch()` now applies re-ranking as the final step on all three paths (BM25-only, BM25 fallback, hybrid RRF). Opt out with `{ rerank: { enabled: false } }`.
+
+```ts
+// Default — re-ranking on
+const { results } = await hybridSearch(graph, 'auth', 20);
+
+// Disable re-ranking
+const { results } = await hybridSearch(graph, 'auth', 20, { rerank: { enabled: false } });
+
+// Custom weights
+const { results } = await hybridSearch(graph, 'auth', 20, {
+  rerank: { nameWeight: 0.5, kindWeights: { class: 1.5 } },
+});
+```
+
+### ⚡️ `code-intel search` — Fast path + `--no-rerank` flag
+
+- **Fast path:** The `search` CLI command now uses the pre-built BM25 SQLite index directly when available (`.code-intel/bm25.db`), skipping the full in-memory graph load. This avoids ~2–4 s of DB deserialization for simple searches on already-indexed workspaces.
+- **`--no-rerank` flag:** Pass `--no-rerank` to see raw BM25 order — useful for diagnosing re-ranking behaviour or comparing before/after.
+- **Header updated:** Output now shows the search mode and re-ranking status: `[bm25 (re-ranked)]` / `[bm25 (re-ranking off)]`.
+
+```bash
+code-intel search "auth"             # BM25 + re-ranked (default)
+code-intel search "auth" --no-rerank # raw BM25 order
+```
+
+### 🧪 Tests — `tests/unit/search/reranker.test.ts` (38 new tests)
+
+Full coverage across:
+- `tokenizeForRerank`: camelCase, PascalCase, ALL_CAPS acronyms, snake_case, mixed separators
+- `rerank` edge cases: empty input, single result, no-tokenizable query, immutability of input
+- Signal 1 (name affinity): exact, prefix, camelCase token overlap
+- Signal 2 (snippet coverage): presence and frequency of query terms
+- Signal 3 (kind preference): class > variable, function > file, custom weight overrides
+- Signal 4 (path quality): test path suppression, dist/build suppression, `.d.ts` suppression
+- Combined signals: source beats test, ordering invariants
+- `hybridSearch` integration: re-ranking on/off, class > variable, source > test path, custom weights, score sort order
+
+### 📦 Exports
+
+`rerank`, `tokenizeForRerank`, `DEFAULT_KIND_WEIGHTS`, `RerankOptions`, `RerankableResult` are all exported from `src/search/index.ts`.
+
+---
+
 ## [1.0.3-patch] — 2026-05-16 — Agent Config Safety: Amp Data-Loss Fix, Binary-Only Gate, Kiro/OpenCode MCP Support
 
 > **Theme:** Never destroy existing agent settings. `analyze` now uses a strict binary-only gate for agent rules files (no "Tier 2" file-exists loophole). `setup`/`init` MCP merging is now safe for every agent — Amp flat-key format fixed, idempotency checks added, `.bak` backups before every write, Kiro and OpenCode added as first-class agents.

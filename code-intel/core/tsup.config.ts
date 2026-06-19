@@ -49,6 +49,38 @@ export default defineConfig([
     treeshake: true,
     splitting: false,
   },
+  // Search slim entry — dist/cli/search.js (~60 KB, fast startup ~300 ms)
+  // Bundles ONLY: commander, better-sqlite3, bm25-index, reranker, text-search.
+  // No graph, no pipeline, no HTTP, no auth, no OTel.
+  // Requires a pre-built BM25 index (.code-intel/bm25.db). Run `code-intel analyze` first.
+  {
+    entry: { 'cli/search': 'src/cli/search.ts' },
+    format: ['esm'],
+    outDir: 'dist',
+    dts: false,
+    sourcemap: true,
+    clean: false,
+    external: [
+      /^node:/,
+      'commander',
+      'better-sqlite3',
+    ],
+    treeshake: true,
+    splitting: false,
+  },
+  // Router entry — dist/cli/router.js (tiny ~1 KB dispatcher, <50 ms parse)
+  // Dispatches `search` to the slim search.js; all other commands to main.js.
+  {
+    entry: { 'cli/router': 'src/cli/router.ts' },
+    format: ['esm'],
+    outDir: 'dist',
+    dts: false,
+    sourcemap: true,
+    clean: false,
+    external: [/^node:/],
+    treeshake: true,
+    splitting: false,
+  },
   // CLI entry — dist/cli/main.js (bundled single file, no types needed)
   {
     entry: { 'cli/main': 'src/cli/main.ts' },

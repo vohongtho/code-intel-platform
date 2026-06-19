@@ -4,6 +4,8 @@ import { textSearch, reciprocalRankFusion } from './text-search.js';
 import type { SearchResult } from './text-search.js';
 import { VectorIndex } from './vector-index.js';
 import { getEmbedder } from './embedder.js';
+import { rerank } from './reranker.js';
+import type { RerankOptions } from './reranker.js';
 
 export interface HybridSearchOptions {
   vectorDbPath?: string; // path to vector.db; if absent → BM25 only
@@ -11,6 +13,12 @@ export interface HybridSearchOptions {
   vectorLimit?: number;  // results to fetch from vector before RRF (default: 50)
   /** Pre-computed BM25 results (from Bm25Index). If supplied, skips linear textSearch. */
   bm25Results?: SearchResult[];
+  /**
+   * Re-ranking options.
+   * Pass `{ enabled: false }` to disable re-ranking entirely.
+   * Defaults: enabled=true with standard weights.
+   */
+  rerank?: { enabled: false } | ({ enabled?: true } & RerankOptions);
 }
 
 export interface HybridSearchResult {
@@ -31,6 +39,12 @@ export async function hybridSearch(
 ): Promise<{ results: HybridSearchResult[]; searchMode: 'bm25' | 'vector' | 'hybrid' }> {
   const { vectorDbPath, bm25Limit = 50, vectorLimit = 50, bm25Results: precomputedBm25 } = options;
 
+  // ── Re-rank configuration ────────────────────────────────────────────────────
+  const rerankEnabled = options.rerank?.enabled !== false;
+  const rerankOptions: RerankOptions = rerankEnabled && options.rerank && options.rerank.enabled !== false
+    ? (options.rerank as RerankOptions)
+    : {};
+
   // Use pre-computed BM25 results if supplied; otherwise fall back to linear textSearch
   const bm25Promise = precomputedBm25
     ? Promise.resolve(precomputedBm25)
@@ -42,10 +56,9 @@ export async function hybridSearch(
   if (!hasVectorDb) {
     // BM25-only path
     const bm25Results = await bm25Promise;
-    return {
-      results: bm25Results.slice(0, limit).map((r) => ({ ...r, searchMode: 'bm25' as const })),
-      searchMode: 'bm25',
-    };
+    const candidates = bm25Results.slice(0, limit).map((r) => ({ ...r, searchMode: 'bm25' as const }));
+    const final = rerankEnabled ? rerank(query, candidates, rerankOptions) : candidates;
+    return { results: final, searchMode: 'bm25' };
   }
 
   // Run BM25 + vector search in parallel
@@ -54,10 +67,9 @@ export async function hybridSearch(
 
   if (vectorResults === null || vectorResults.length === 0) {
     // Vector search failed or returned nothing — fall back to BM25
-    return {
-      results: bm25Results.slice(0, limit).map((r) => ({ ...r, searchMode: 'bm25' as const })),
-      searchMode: 'bm25',
-    };
+    const candidates = bm25Results.slice(0, limit).map((r) => ({ ...r, searchMode: 'bm25' as const }));
+    const final = rerankEnabled ? rerank(query, candidates, rerankOptions) : candidates;
+    return { results: final, searchMode: 'bm25' };
   }
 
   // Convert vector hits to SearchResult format for RRF
@@ -72,11 +84,9 @@ export async function hybridSearch(
 
   // Merge with Reciprocal Rank Fusion
   const merged = reciprocalRankFusion(bm25Results, vectorAsSearchResults);
-
-  return {
-    results: merged.slice(0, limit).map((r) => ({ ...r, searchMode: 'hybrid' as const })),
-    searchMode: 'hybrid',
-  };
+  const candidates = merged.slice(0, limit).map((r) => ({ ...r, searchMode: 'hybrid' as const }));
+  const final = rerankEnabled ? rerank(query, candidates, rerankOptions) : candidates;
+  return { results: final, searchMode: 'hybrid' };
 }
 
 /**

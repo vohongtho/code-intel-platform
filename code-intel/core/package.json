@@ -7,7 +7,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "code-intel": "dist/cli/main.js",
+    "code-intel": "dist/cli/router.js",
     "code-intel-hook": "dist/cli/hook.js"
   },
   "exports": {
