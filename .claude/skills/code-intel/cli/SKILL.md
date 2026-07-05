@@ -33,7 +33,7 @@ Load this skill when:
 
 Start exploration here — exported symbols with no external callers:
 
-- **`expandEnvRefs`** `(function)` → `code-intel/core/src/cli/config-manager.ts:191`
+- **`expandEnvRefs`** `(function)` → `code-intel/core/src/cli/config-manager.ts:192`
 - **`parse`** `(function)` → `code-intel/core/src/cli/update-checker.ts:44`
 
 ## Hot Symbols

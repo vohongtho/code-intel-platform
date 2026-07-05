@@ -1,11 +1,11 @@
 ---
 name: search
-description: "Covers the **search** subsystem of code-intel-platform. 43 symbols across 5 files. Key symbols: `constructor`, `isLoaded`, `search`. Internal call density: 0.5 calls/symbol."
+description: "Covers the **search** subsystem of code-intel-platform. 45 symbols across 5 files. Key symbols: `constructor`, `isLoaded`, `search`. Internal call density: 0.6 calls/symbol."
 ---
 
 # search
 
-> **43 symbols** | **5 files** | path: `code-intel/core/src/search/` | call density: 0.5/sym
+> **45 symbols** | **5 files** | path: `code-intel/core/src/search/` | call density: 0.6/sym
 
 ## When to Use
 
@@ -19,7 +19,7 @@ Load this skill when:
 
 | File | Symbols | Notes |
 |------|---------|-------|
-| `code-intel/core/src/search/bm25-index.ts` | `PostingEntry`, `NodeMeta`, `tokenize`, `nodeToDoc` +(11) | 8 exported |
+| `code-intel/core/src/search/bm25-index.ts` | `PostingEntry`, `NodeMeta`, `tokenize`, `nodeToDoc` +(13) | 10 exported |
 | `code-intel/core/src/search/vector-index.ts` | `CachedRow`, `VectorIndex`, `constructor`, `init` +(11) | 9 exported |
 | `code-intel/core/src/search/text-search.ts` | `SearchResult`, `textSearch`, `isTestPath`, `isDistPath` +(1) | 5 exported |
 | `code-intel/core/src/search/embedder.ts` | `EmbeddedNode`, `getEmbedder`, `embedNodes`, `buildText` | 4 exported |
@@ -29,9 +29,9 @@ Load this skill when:
 
 Start exploration here — exported symbols with no external callers:
 
-- **`constructor`** `(method)` → `code-intel/core/src/search/bm25-index.ts:110`
-- **`isLoaded`** `(method)` → `code-intel/core/src/search/bm25-index.ts:112`
-- **`search`** `(method)` → `code-intel/core/src/search/bm25-index.ts:254`
+- **`constructor`** `(method)` → `code-intel/core/src/search/bm25-index.ts:128`
+- **`isLoaded`** `(method)` → `code-intel/core/src/search/bm25-index.ts:130`
+- **`search`** `(method)` → `code-intel/core/src/search/bm25-index.ts:275`
 - **`hybridSearch`** `(function)` → `code-intel/core/src/search/hybrid-search.ts:26`
 - **`isTestPath`** `(function)` → `code-intel/core/src/search/text-search.ts:21`
 - **`isDistPath`** `(function)` → `code-intel/core/src/search/text-search.ts:23`
@@ -42,18 +42,18 @@ Sorted by call graph degree (changing these has the highest blast radius):
 
 | Symbol | Kind | In ← | → Out | File |
 |--------|------|-----:|------:|------|
-| `build` | method | 5 | 10 | `search/bm25-index.ts` |
+| `build` | method | 5 | 11 | `search/bm25-index.ts` |
+| `updateNodes` | method | 2 | 14 | `search/bm25-index.ts` |
 | `load` | method | 6 | 9 | `search/bm25-index.ts` |
-| `updateNodes` | method | 2 | 13 | `search/bm25-index.ts` |
 | `embedNodes` | function | 2 | 7 | `search/embedder.ts` |
 | `runVectorSearch` | function | 1 | 8 | `search/hybrid-search.ts` |
 | `reciprocalRankFusion` | function | 5 | 3 | `search/text-search.ts` |
+| `search` | method | 0 | 7 | `search/bm25-index.ts` |
 | `textSearch` | function | 7 | 0 | `search/text-search.ts` |
 | `Bm25Index` | class | 6 | 0 | `search/bm25-index.ts` |
+| `setCached` | method | 1 | 5 | `search/bm25-index.ts` |
 | `hybridSearch` | function | 0 | 6 | `search/hybrid-search.ts` |
 | `buildIndex` | method | 3 | 3 | `search/vector-index.ts` |
-| `search` | method | 0 | 5 | `search/bm25-index.ts` |
-| `getBm25DbPath` | function | 5 | 0 | `search/bm25-index.ts` |
 
 ## Impact Guidance
 

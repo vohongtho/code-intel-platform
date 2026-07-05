@@ -35,7 +35,7 @@ REQUIRED BEFORE ANY CODE ACTION:
   3. code-intel impact <symbol>       ← replaces manual caller tracing
 <!-- /TOOL POLICY -->
 
-Indexed: **6,254 nodes** | **11,376 edges** | **333 files** | analyzed in 1.8s
+Indexed: **6,278 nodes** | **11,417 edges** | **333 files** | analyzed in 1.3s
 
 > Index stale? Re-run: `code-intel analyze`
 
@@ -181,7 +181,7 @@ Each skill gives you symbol maps, key entry points, and safe-change guidance for
 | Work in `fixtures` (75 symbols) | `.claude/skills/code-intel/fixtures/SKILL.md` |
 | Work in `query` (65 symbols) | `.claude/skills/code-intel/query/SKILL.md` |
 | Work in `panels` (47 symbols) | `.claude/skills/code-intel/panels/SKILL.md` |
-| Work in `search` (43 symbols) | `.claude/skills/code-intel/search/SKILL.md` |
+| Work in `search` (45 symbols) | `.claude/skills/code-intel/search/SKILL.md` |
 | Work in `multi-repo` (41 symbols) | `.claude/skills/code-intel/multi-repo/SKILL.md` |
 | Work in `modules` (40 symbols) | `.claude/skills/code-intel/modules/SKILL.md` |
 | Work in `api` (39 symbols) | `.claude/skills/code-intel/api/SKILL.md` |
