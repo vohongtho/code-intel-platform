@@ -124,6 +124,8 @@ All notable changes to this project are documented in this file.
 - **On-startup load** — BM25 index loaded into memory on `serve` startup
 - **Incremental updates** — only terms for changed nodes are rewritten on re-index
 - **LIMIT pushdown** — applies limit before full score sort
+- **LRU query cache** — repeated normalized BM25 queries served from a 128-entry LRU cache; clears on build/load/incremental update
+- **TypeScript 6 DTS compatibility** — `ignoreDeprecations: '6.0'` scoped to `tsup` DTS build so TS 5.9 test builds keep working
 - **Throughput** — 2,000+ queries/s on 1k-node graphs (target: 1,000 q/s ✅)
 
 ### 🧠 Epic 3 — Memory-Efficient Graph Representation

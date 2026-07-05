@@ -25,6 +25,7 @@ import Logger from '../shared/logger.js';
 // ── BM25 hyperparameters ──────────────────────────────────────────────────────
 const K1 = 1.2;
 const B = 0.75;
+const SEARCH_CACHE_MAX = 128;
 
 // ── Internal types ────────────────────────────────────────────────────────────
 interface PostingEntry { nodeId: string; tf: number }
@@ -103,9 +104,26 @@ export class Bm25Index {
   private readonly invertedIndex = new Map<string, PostingEntry[]>();
   private readonly docLengths = new Map<string, number>();
   private readonly nodeMeta = new Map<string, NodeMeta>();
+  private readonly searchCache = new Map<string, SearchResult[]>();
   private avgdl = 1;
   private docCount = 0;
   private _loaded = false;
+
+  private getCached(cacheKey: string): SearchResult[] | undefined {
+    const cached = this.searchCache.get(cacheKey);
+    if (!cached) return undefined;
+    this.searchCache.delete(cacheKey);
+    this.searchCache.set(cacheKey, cached);
+    return cached;
+  }
+
+  private setCached(cacheKey: string, results: SearchResult[]): void {
+    if (this.searchCache.has(cacheKey)) this.searchCache.delete(cacheKey);
+    this.searchCache.set(cacheKey, results);
+    if (this.searchCache.size <= SEARCH_CACHE_MAX) return;
+    const oldestKey = this.searchCache.keys().next().value;
+    if (oldestKey !== undefined) this.searchCache.delete(oldestKey);
+  }
 
   constructor(private readonly dbPath: string) {}
 
@@ -118,6 +136,8 @@ export class Bm25Index {
    * Called once at analysis time after the main pipeline completes.
    */
   build(graph: KnowledgeGraph): void {
+    this.searchCache.clear();
+
     const nodeTermFreqs = new Map<string, Map<string, number>>();
     const docLengths = new Map<string, number>();
     const nodeMeta = new Map<string, NodeMeta>();
@@ -198,6 +218,7 @@ export class Bm25Index {
   load(): void {
     if (!fs.existsSync(this.dbPath)) return;
 
+    this.searchCache.clear();
     const db = new Database(this.dbPath, { readonly: true });
     try {
       // Meta
@@ -257,6 +278,10 @@ export class Bm25Index {
     const queryTerms = [...new Set(tokenize(query))];
     if (queryTerms.length === 0) return [];
 
+    const cacheKey = `${limit}:${queryTerms.join('\u0000')}`;
+    const cached = this.getCached(cacheKey);
+    if (cached) return cached;
+
     const scores = new Map<string, number>();
     const N = this.docCount;
     const avgdl = this.avgdl;
@@ -287,7 +312,7 @@ export class Bm25Index {
     // Min-heap top-K: O(n log k) — far cheaper than full sort for small k
     const topEntries = heapTopK(scores, limit);
 
-    return topEntries.map(([nodeId, score]) => {
+    const results = topEntries.map(([nodeId, score]) => {
       const meta = this.nodeMeta.get(nodeId);
       return {
         nodeId,
@@ -298,6 +323,9 @@ export class Bm25Index {
         snippet: meta?.snippet,
       };
     });
+
+    this.setCached(cacheKey, results);
+    return results;
   }
 
   // ── Incremental update ──────────────────────────────────────────────────────
@@ -310,6 +338,8 @@ export class Bm25Index {
   updateNodes(nodes: CodeNode[]): void {
     if (!fs.existsSync(this.dbPath)) return;
     if (nodes.length === 0) return;
+
+    this.searchCache.clear();
 
     const changedIds = new Set(nodes.map((n) => n.id));
 
