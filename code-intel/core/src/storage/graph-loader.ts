@@ -176,7 +176,11 @@ export async function upsertNodes(nodes: CodeNode[], dbManager: DbManager): Prom
   const BATCH = 100;
   for (let i = 0; i < nodes.length; i += BATCH) {
     const batch = nodes.slice(i, i + BATCH);
-    await Promise.all(batch.map((n) => upsertNode(n, dbManager)));
+    // ponytail: LadybugDB is single-writer per connection; keep writes serialized here.
+    // Upgrade path: replace with one real bulk upsert/transaction when DB supports it safely.
+    for (const node of batch) {
+      await upsertNode(node, dbManager);
+    }
     count += batch.length;
   }
   return count;

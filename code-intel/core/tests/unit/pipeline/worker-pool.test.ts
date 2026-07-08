@@ -22,7 +22,12 @@ let crashWorkerPath: string;
 const ECHO_WORKER_SRC = `
 const { parentPort } = require('node:worker_threads');
 parentPort.on('message', (msg) => {
-  parentPort.postMessage({ taskId: msg.taskId, value: msg.value });
+  const send = () => parentPort.postMessage({ taskId: msg.taskId, value: msg.value });
+  if (typeof msg.delayMs === 'number' && msg.delayMs > 0) {
+    setTimeout(send, msg.delayMs);
+    return;
+  }
+  send();
 });
 `;
 
@@ -129,6 +134,34 @@ describe('WorkerPool', () => {
     // crash task should be rejected
     assert.equal(result[0].status, 'rejected');
     await pool.close();
+  });
+
+  it('worker timeout → task rejected after max retries exhausted', async () => {
+    const pool = new WorkerPool({ workerScript: echoWorkerPath, workerCount: 1, maxTaskRetries: 0, taskTimeoutMs: 50 });
+    await pool.init();
+    try {
+      const result = await Promise.allSettled([
+        pool.run({ taskId: 'timeout', value: 1, delayMs: 200 } as any),
+      ]);
+      assert.equal(result[0].status, 'rejected');
+    } finally {
+      await pool.close();
+    }
+  });
+
+  it('worker timeout self-heals and replacement worker can process next task', async () => {
+    const pool = new WorkerPool({ workerScript: echoWorkerPath, workerCount: 1, maxTaskRetries: 0, taskTimeoutMs: 50 });
+    await pool.init();
+    try {
+      const hung = await Promise.allSettled([
+        pool.run({ taskId: 'timeout-2', value: 1, delayMs: 200 } as any),
+      ]);
+      assert.equal(hung[0].status, 'rejected');
+      const next = await pool.run({ taskId: 'ok-after-timeout', value: 42 } as any);
+      assert.equal((next as any).value, 42);
+    } finally {
+      await pool.close();
+    }
   });
 
   it('close() terminates all workers', async () => {

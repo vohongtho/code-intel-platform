@@ -81,6 +81,37 @@ describe('upsertNodes', () => {
     assert.equal(db.executed.length, 10);
   });
 
+  it('serializes writes on one DB connection', async () => {
+    const { upsertNodes } = await import('../../../src/storage/graph-loader.js');
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const executed: string[] = [];
+    const db = {
+      executed,
+      execute: async (cypher: string) => {
+        executed.push(cypher);
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight--;
+      },
+      close: () => {},
+      isOpen: true,
+    } as unknown as import('../../../src/storage/db-manager.js').DbManager & { executed: string[] };
+
+    const nodes: CodeNode[] = Array.from({ length: 4 }, (_, i) => ({
+      id: `fn-serial-${i}`,
+      kind: 'function' as const,
+      name: `fnSerial${i}`,
+      filePath: 'src/serial.ts',
+    }));
+
+    const count = await upsertNodes(nodes, db);
+    assert.equal(count, 4);
+    assert.equal(maxInFlight, 1, 'writes should stay serialized on one DB connection');
+    assert.equal(executed.length, 8, 'each node should still perform DELETE + CREATE');
+  });
+
   it('processes nodes in batches of 100', async () => {
     const { upsertNodes } = await import('../../../src/storage/graph-loader.js');
     const db = makeMockDb();
