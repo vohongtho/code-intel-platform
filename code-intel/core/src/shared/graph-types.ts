@@ -36,6 +36,31 @@ export type EdgeKind =
  | 'deprecated_use'
  | 'tested_by';
 
+export type SecuritySignalType =
+  | 'SQL_INJECTION'
+  | 'XSS'
+  | 'SSRF'
+  | 'PATH_TRAVERSAL'
+  | 'COMMAND_INJECTION';
+
+export interface SecuritySignal {
+  type: SecuritySignalType;
+  sink: string;
+  line: number;
+  expression: string;
+  source: string;
+  language?: string;
+  confidence?: number;
+  flags: {
+    hasUserInput: boolean;
+    isDynamic: boolean;
+    hasStringConcat: boolean;
+    hasTemplateInterpolation: boolean;
+    isParameterized: boolean;
+    hasSanitizer: boolean;
+  };
+}
+
 export interface CodeNode {
   id: string;
   kind: NodeKind;
@@ -45,7 +70,9 @@ export interface CodeNode {
   endLine?: number;
   exported?: boolean;
   content?: string;
-  metadata?: Record<string, unknown>;
+  metadata?: Record<string, unknown> & {
+    securitySignals?: SecuritySignal[];
+  };
 }
 
 export interface CodeEdge {

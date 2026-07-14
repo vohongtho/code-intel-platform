@@ -4,6 +4,58 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.0.4] — 2026-07-14 — MCP Freshness, Agent Targeting & Security Scan Expansion
+
+### 🔄 MCP graph freshness
+
+- `code-intel analyze` now publishes `meta.json` only after graph, BM25, and vector index writes complete, preventing MCP reloads from seeing half-written indexes.
+- `meta.json` now includes `schemaVersion` and a computed `indexVersion` derived from published index files.
+- Metadata writes now use temp-file plus atomic rename.
+- MCP graph-backed tools now resolve repo state through a per-repo lazy cache and reload when `meta.json#indexVersion` changes.
+- MCP `search(repo: ...)` now uses the selected repo graph, BM25 index, and vector path instead of the startup repo stores.
+
+### 🎯 Agent-targeted context generation
+
+- `code-intel analyze` can persist repo-local coding-agent targets in `.code-intel/agent-targets.json`.
+- Interactive first analyze run now uses an OpenSpec-style searchable multi-select for coding agents (`type to filter`, `↑↓`, `Space`, `Enter`).
+- Non-interactive runs skip prompts and, when no repo-local selection exists yet, skip agent-targeted context generation.
+- `writeContextFiles()` now writes only selected agent outputs and supports custom repo-relative targets.
+- JSON target files are supported via a managed `code-intel` key.
+- Added builtin target mapping for verified agent files plus custom path/format follow-up prompts for unknown agents.
+
+### 🛡️ Vulnerability scan coverage
+
+- Added language-aware security signal extraction during parsing/resolution for SQL injection, XSS, SSRF, path traversal, and command injection.
+- Vulnerability findings now include signal evidence, language, confidence, and severity upgrades for user-controlled flows.
+- Added expanded SAST tests, including integration coverage for vulnerability scan behavior.
+
+### ⚙️ Reliability and performance
+
+- `WorkerPool` now supports per-task timeouts, worker termination, replacement, and retry for hung tasks.
+- BM25 search now has an in-memory LRU query cache and clears it on rebuild/load/incremental updates.
+- LadybugDB node upserts are serialized per connection to avoid single-writer races.
+- Added grammar validation coverage and npm package bin target coverage.
+
+### 📦 Dependencies and build
+
+- Bumped package version to `1.0.4`.
+- Updated TypeScript, ESLint, Prettier, Vite, LadybugDB, OpenTelemetry, `ws`, and transitive security overrides.
+- Added TypeScript 6 DTS compatibility via `ignoreDeprecations: '6.0'` in the core build.
+
+---
+
+## [1.0.3] — 2026-07-13 — Security Dependency Updates
+
+### 🔒 Dependency security fixes
+
+- Resolved 32 npm security vulnerabilities via dependency and lockfile updates.
+- Bumped root package dependencies for `@vohongtho.infotech/code-intel` from `^1.0.0` to `^1.0.2`.
+- Updated dev tooling patch versions: `@typescript-eslint/*`, Prettier, and Vite.
+- Added security overrides for `protobufjs` and OpenTelemetry OTLP transformer protobuf usage.
+- Updated `package-lock.json` to capture the remediated dependency tree.
+
+---
+
 ## [1.0.2] — 2026-05-10 — Agent Hook System
 
 > **Theme:** Automatic command interception across every major AI coding agent — grep/cat/rg silently rewritten to `code-intel search/inspect` before the LLM ever sees the output

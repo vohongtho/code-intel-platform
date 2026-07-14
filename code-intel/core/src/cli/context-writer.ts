@@ -1,7 +1,7 @@
 /**
  * context-writer.ts
  *
- * Writes/updates AGENTS.md and CLAUDE.md at the workspace root.
+ * Writes/updates selected agent instruction files at the workspace root.
  *
  * Rules:
  *  1. File does NOT exist  → create a new file with a standard template that
@@ -16,15 +16,21 @@
  *  3. File ALREADY exists but has NO markers yet
  *     → append the block at the end (never overwrite existing content).
  *
+ *  4. JSON targets keep any existing keys and update only the managed
+ *     `code-intel` property.
+ *
  * The `--skip-agents-md` flag prevents this function from being called at all.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 import type { SkillSummary } from './skill-writer.js';
+import type { AgentTargetConfig } from '../storage/metadata.js';
+import { LEGACY_CONTEXT_TARGETS } from './agent-targets.js';
 
 const BLOCK_START = '<!-- code-intel:start -->';
 const BLOCK_END   = '<!-- code-intel:end -->';
+const JSON_KEY = 'code-intel';
 
 export interface ContextStats {
   nodes: number;
@@ -40,41 +46,23 @@ export function writeContextFiles(
   projectName: string,
   stats: ContextStats,
   skills: SkillSummary[],
+  targets: AgentTargetConfig[] = LEGACY_CONTEXT_TARGETS,
 ): void {
   const block = buildBlock(projectName, stats, skills);
-  upsertFile(path.join(workspaceRoot, 'AGENTS.md'), block, 'AGENTS.md');
-  upsertFile(path.join(workspaceRoot, 'CLAUDE.md'),  block, 'CLAUDE.md');
+  const dedupedTargets = new Map<string, AgentTargetConfig>();
+  for (const target of targets) {
+    dedupedTargets.set(target.path, target);
+  }
 
-  // GitHub Copilot (VS Code Copilot Chat, GitHub Copilot CLI)
-  const githubDir = path.join(workspaceRoot, '.github');
-  if (!fs.existsSync(githubDir)) fs.mkdirSync(githubDir, { recursive: true });
-  upsertFile(path.join(githubDir, 'copilot-instructions.md'), block, 'copilot-instructions.md');
-
-  // Cursor IDE
-  const cursorDir = path.join(workspaceRoot, '.cursor', 'rules');
-  if (!fs.existsSync(cursorDir)) fs.mkdirSync(cursorDir, { recursive: true });
-  upsertFile(path.join(cursorDir, 'code-intel.mdc'), block, 'code-intel.mdc');
-
-  // Kiro IDE/CLI
-  const kiroDir = path.join(workspaceRoot, '.kiro', 'steering');
-  if (!fs.existsSync(kiroDir)) fs.mkdirSync(kiroDir, { recursive: true });
-  upsertFile(path.join(kiroDir, 'code-intel.md'), block, 'code-intel.md');
-
-  // Cline / Roo Code → .clinerules
-  upsertFile(path.join(workspaceRoot, '.clinerules'), block, '.clinerules');
-
-  // Windsurf → .windsurfrules
-  upsertFile(path.join(workspaceRoot, '.windsurfrules'), block, '.windsurfrules');
-
-  // Kilo Code → .kilocode/rules/code-intel-rules.md
-  const kilocodeDir = path.join(workspaceRoot, '.kilocode', 'rules');
-  if (!fs.existsSync(kilocodeDir)) fs.mkdirSync(kilocodeDir, { recursive: true });
-  upsertFile(path.join(kilocodeDir, 'code-intel-rules.md'), block, 'code-intel-rules.md');
-
-  // Google Antigravity → .agents/rules/code-intel-rules.md
-  const agentsDir = path.join(workspaceRoot, '.agents', 'rules');
-  if (!fs.existsSync(agentsDir)) fs.mkdirSync(agentsDir, { recursive: true });
-  upsertFile(path.join(agentsDir, 'code-intel-rules.md'), block, 'code-intel-rules.md');
+  for (const target of dedupedTargets.values()) {
+    const filePath = path.join(workspaceRoot, target.path);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    if (target.format === 'json') {
+      upsertJsonFile(filePath, block);
+      continue;
+    }
+    upsertFile(filePath, block, path.basename(target.path) || target.path);
+  }
 }
 
 // ─── Block content ────────────────────────────────────────────────────────────
@@ -273,6 +261,22 @@ function upsertFile(filePath: string, block: string, fileName: string): void {
     '',
   ].join('\n');
   fs.writeFileSync(filePath, appended, 'utf-8');
+}
+
+function upsertJsonFile(filePath: string, block: string): void {
+  let existing: Record<string, unknown> = {};
+  if (fs.existsSync(filePath)) {
+    try {
+      existing = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as Record<string, unknown>;
+    } catch {
+      existing = {};
+    }
+  }
+  const updated = {
+    ...existing,
+    [JSON_KEY]: block,
+  };
+  fs.writeFileSync(filePath, JSON.stringify(updated, null, 2) + '\n', 'utf-8');
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

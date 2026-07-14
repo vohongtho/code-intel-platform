@@ -11,10 +11,33 @@ import os from 'node:os';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { detectLanguage } from '../../shared/index.js';
+import type { SecuritySignal } from '../../shared/index.js';
 import type { Phase, PhaseResult, PipelineContext } from '../types.js';
 import { generateNodeId, generateEdgeId } from '../../graph/id-generator.js';
 import Logger from '../../shared/logger.js';
 import type { ResolveSnapshot, ResolveTask, ResolveResult } from './resolve-worker.js';
+
+function attachSecuritySignals(
+  graph: PipelineContext['graph'],
+  grouped: Record<string, SecuritySignal[]>,
+): void {
+  for (const [nodeId, signals] of Object.entries(grouped)) {
+    const node = graph.getNode(nodeId);
+    if (!node || signals.length === 0) continue;
+    const metadata = (node.metadata ?? {}) as Record<string, unknown> & { securitySignals?: SecuritySignal[] };
+    const existing = metadata.securitySignals ?? [];
+    const merged = [...existing];
+    for (const signal of signals) {
+      const key = `${signal.type}:${signal.sink}:${signal.line}:${signal.source}`;
+      const seen = merged.some((item) => `${item.type}:${item.sink}:${item.line}:${item.source}` === key);
+      if (!seen) merged.push(signal);
+    }
+    node.metadata = {
+      ...metadata,
+      securitySignals: merged,
+    };
+  }
+}
 
 function workerScriptPath(): string {
   const thisFile = fileURLToPath(import.meta.url);
@@ -129,6 +152,7 @@ export const resolvePhaseParallel: Phase = {
           else if (edge.kind === 'calls') callEdges++;
           else heritageEdges++;
         }
+        if (res.securitySignals) attachSecuritySignals(graph, res.securitySignals);
         fileDone++;
         context.onPhaseProgress?.('resolve', fileDone, tasks.length);
       }

@@ -10,7 +10,7 @@ import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
 import { textSearch } from '../search/text-search.js';
 import { hybridSearch } from '../search/hybrid-search.js';
 import { Bm25Index, getBm25DbPath } from '../search/bm25-index.js';
-import { getVectorDbPath } from '../storage/index.js';
+import { getVectorDbPath, getDbPath } from '../storage/index.js';
 import { loadRegistry } from '../storage/repo-registry.js';
 import { loadMetadata } from '../storage/metadata.js';
 import {
@@ -33,6 +33,10 @@ import { findSimilarSymbols } from '../query/similar-symbols.js';
 import { computeHealthReport } from '../query/health-report.js';
 import { suggestTests } from '../query/suggest-tests.js';
 import { summarizeCluster } from '../query/cluster-summary.js';
+import { DbManager } from '../storage/db-manager.js';
+import { loadGraphFromDB } from '../multi-repo/graph-from-db.js';
+import { createKnowledgeGraph } from '../graph/knowledge-graph.js';
+import { CURRENT_SCHEMA_VERSION } from '../migrations/migration-runner.js';
 
 /** Strip null/undefined fields and serialize compactly — saves ~10–15% tokens on sparse graph nodes */
 function compact(obj: unknown): string {
@@ -562,6 +566,99 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
 
 type ToolResult = { content: { type: string; text: string }[]; isError?: boolean };
 
+type LoadedRepoGraph = {
+  repo: string;
+  path: string;
+  indexVersion: string;
+  schemaVersion: number;
+  graph: KnowledgeGraph;
+  bm25Index: Bm25Index | null;
+};
+
+const repoGraphCache = new Map<string, LoadedRepoGraph>();
+const repoReloads = new Map<string, Promise<LoadedRepoGraph>>();
+
+function repoCacheKey(repo: string, repoPath: string): string {
+  return `${repo}:${path.resolve(repoPath)}`;
+}
+
+function resolveRepo(repo: string | undefined, defaultRepo: string, defaultPath: string | undefined): { name: string; path: string } | null {
+  const registry = loadRegistry();
+  if (repo) {
+    const entry = registry.find((r) => r.name === repo || r.path === repo);
+    return entry ? { name: entry.name, path: entry.path } : null;
+  }
+  const entry = registry.find((r) => r.name === defaultRepo || (defaultPath && r.path === defaultPath));
+  if (entry) return { name: entry.name, path: entry.path };
+  return defaultPath ? { name: defaultRepo, path: defaultPath } : null;
+}
+
+async function loadRepoGraph(resolved: { name: string; path: string }, indexVersion: string, schemaVersion: number): Promise<LoadedRepoGraph> {
+  const dbPath = getDbPath(resolved.path);
+  if (!fs.existsSync(dbPath)) throw new Error(`Graph DB not found for repo "${resolved.name}" at ${dbPath}`);
+  const db = new DbManager(dbPath, true);
+  await db.init();
+  const graph = createKnowledgeGraph();
+  try {
+    await loadGraphFromDB(graph, db);
+  } finally {
+    db.close();
+  }
+
+  let bm25Index: Bm25Index | null = null;
+  try {
+    const idx = new Bm25Index(getBm25DbPath(resolved.path));
+    idx.load();
+    bm25Index = idx;
+  } catch {
+    bm25Index = null;
+  }
+
+  return { repo: resolved.name, path: resolved.path, indexVersion, schemaVersion, graph, bm25Index };
+}
+
+async function ensureRepoLoaded(repo: string | undefined, defaultRepo: string, defaultPath: string | undefined, fallbackGraph: KnowledgeGraph): Promise<LoadedRepoGraph> {
+  const resolved = resolveRepo(repo, defaultRepo, defaultPath);
+  if (!resolved) {
+    return { repo: repo ?? defaultRepo, path: defaultPath ?? '', indexVersion: 'memory', schemaVersion: CURRENT_SCHEMA_VERSION, graph: fallbackGraph, bm25Index: null };
+  }
+
+  const meta = loadMetadata(resolved.path);
+  if (!meta?.indexVersion) {
+    return { repo: resolved.name, path: resolved.path, indexVersion: 'memory', schemaVersion: meta?.schemaVersion ?? CURRENT_SCHEMA_VERSION, graph: fallbackGraph, bm25Index: null };
+  }
+  const schemaVersion = meta.schemaVersion ?? CURRENT_SCHEMA_VERSION;
+  if (schemaVersion > CURRENT_SCHEMA_VERSION) {
+    throw new Error(`Unsupported schemaVersion ${schemaVersion} for repo "${resolved.name}". Re-run code-intel analyze or upgrade the MCP server.`);
+  }
+
+  const key = repoCacheKey(resolved.name, resolved.path);
+  const cached = repoGraphCache.get(key);
+  if (cached?.indexVersion === meta.indexVersion && cached.schemaVersion === schemaVersion && cached.path === resolved.path) return cached;
+
+  const existing = repoReloads.get(key);
+  if (existing) return existing;
+
+  const loading = loadRepoGraph(resolved, meta.indexVersion, schemaVersion)
+    .then((loaded) => {
+      repoGraphCache.set(key, loaded);
+      return loaded;
+    })
+    .finally(() => repoReloads.delete(key));
+  repoReloads.set(key, loading);
+  return loading;
+}
+
+async function graphContext(a: Record<string, unknown>, repoName: string, workspaceRoot: string | undefined, graph: KnowledgeGraph): Promise<LoadedRepoGraph> {
+  return ensureRepoLoaded(a.repo as string | undefined, repoName, workspaceRoot, graph);
+}
+
+const GRAPH_BACKED_TOOLS = new Set([
+  'overview', 'inspect', 'blast_radius', 'file_symbols', 'find_path', 'list_exports', 'routes', 'clusters', 'flows',
+  'detect_changes', 'query', 'raw_query', 'explain_relationship', 'pr_impact', 'similar_symbols', 'health_report',
+  'suggest_tests', 'cluster_summary', 'deprecated_usage', 'complexity_hotspots', 'coverage_gaps', 'secrets', 'vulnerability_scan',
+]);
+
 async function dispatchTool(
   name: string,
   a: Record<string, unknown>,
@@ -570,6 +667,17 @@ async function dispatchTool(
   workspaceRoot: string | undefined,
   bm25Resolver?: () => Bm25Index | null,
 ): Promise<ToolResult> {
+  let activeRepoName = repoName;
+  let activeWorkspaceRoot = workspaceRoot;
+  let activeBm25: Bm25Index | null | undefined;
+  if (GRAPH_BACKED_TOOLS.has(name) || name === 'search') {
+    const ctx = await graphContext(a, repoName, workspaceRoot, graph);
+    graph = ctx.graph;
+    activeRepoName = ctx.repo;
+    activeWorkspaceRoot = ctx.path || workspaceRoot;
+    activeBm25 = ctx.bm25Index;
+  }
+
   switch (name) {
 
       // ── repos ──────────────────────────────────────────────────────────────
@@ -612,7 +720,7 @@ async function dispatchTool(
           content: [{
             type: 'text',
             text: compact({
-              repo: repoName,
+              repo: activeRepoName,
               stats: graph.size,
               nodeCounts: kindCounts,
               edgeCounts,
@@ -654,26 +762,10 @@ async function dispatchTool(
         }
 
         // ── Single-repo search ──────────────────────────────────────────────
-        const repoGraph = a.repo ? (await (async () => {
-          const registry = loadRegistry();
-          const entry = registry.find((r) => r.name === (a.repo as string) || r.path === (a.repo as string));
-          if (!entry) return graph;
-          const { DbManager: DbMgr } = await import('../storage/db-manager.js');
-          const { loadGraphFromDB: loadG } = await import('../multi-repo/graph-from-db.js');
-          const { createKnowledgeGraph: createG } = await import('../graph/knowledge-graph.js');
-          const dbPath = path.join(entry.path, '.code-intel', 'graph.db');
-          if (!fs.existsSync(dbPath)) return graph;
-          const db = new DbMgr(dbPath, true);
-          await db.init();
-          const g = createG();
-          await loadG(g, db);
-          db.close();
-          return g;
-        })()) : graph;
-
-        const vdbPath = workspaceRoot ? getVectorDbPath(workspaceRoot) : undefined;
+        const repoGraph = graph;
+        const vdbPath = activeWorkspaceRoot ? getVectorDbPath(activeWorkspaceRoot) : undefined;
         const fetchLimit = Math.min(offset + effectiveLimit, 500);
-        const bm25 = (!a.repo || a.repo === repoName) ? (bm25Resolver ? bm25Resolver() : null) : null;
+        const bm25 = activeBm25 ?? ((!a.repo || a.repo === repoName) ? (bm25Resolver ? bm25Resolver() : null) : null);
         const bm25Results = bm25 ? bm25.search(query, fetchLimit * 3) : undefined;
         const { results: allResults, searchMode } = await hybridSearch(repoGraph, query, fetchLimit, {
           vectorDbPath: vdbPath,
@@ -699,7 +791,7 @@ async function dispatchTool(
             text: compact({
               results,
               searchMode,
-              repo: a.repo ?? repoName,
+              repo: activeRepoName,
               total,
               offset,
               limit: effectiveLimit,
@@ -1027,7 +1119,7 @@ async function dispatchTool(
         const diffTextInput = a.diff_text as string | undefined;
 
         let diffText: string;
-        const repoRoot = workspaceRoot ?? process.cwd();
+        const repoRoot = activeWorkspaceRoot ?? process.cwd();
 
         if (diffTextInput) {
           diffText = diffTextInput;
@@ -1432,8 +1524,11 @@ async function dispatchTool(
         const scope = a.scope as string | undefined;
         const types = a.types as VT[] | undefined;
         const minSev = ((a.severity as string | undefined) ?? 'LOW').toUpperCase();
-        const sevRank: Record<string, number> = { HIGH: 3, MEDIUM: 2, LOW: 1 };
-        const minRank = sevRank[minSev] ?? 1;
+        const sevRank: Record<string, number> = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1 };
+        if (!(minSev in sevRank)) {
+          return { content: [{ type: 'text', text: compact({ error: `Invalid severity: ${minSev}. Use CRITICAL, HIGH, MEDIUM, or LOW.` }) }], isError: true };
+        }
+        const minRank = sevRank[minSev];
         let findings = detector.detect(graph, { scope, types });
         findings = findings.filter((f) => (sevRank[f.severity] ?? 1) >= minRank);
         return { content: [{ type: 'text', text: compact({ findings, total: findings.length }) }] };

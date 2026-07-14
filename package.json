@@ -35,7 +35,7 @@
   },
   "dependencies": {
     "@ladybugdb/core": "^0.18.0",
-    "@vohongtho.infotech/code-intel": "^1.0.3"
+    "@vohongtho.infotech/code-intel": "^1.0.4"
   },
   "overrides": {
     "sharp": "^0.33.0",

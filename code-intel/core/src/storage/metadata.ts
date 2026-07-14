@@ -1,8 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
+
+const META_DIRNAME = '.code-intel';
+const META_FILE = 'meta.json';
+const AGENT_TARGETS_FILE = 'agent-targets.json';
 
 export interface IndexMetadata {
   indexedAt: string;
+  schemaVersion?: number;
   indexVersion?: string;   // UUID, bumped on every successful analysis
   commitHash?: string;
   /** Parser used during analysis: 'tree-sitter' | 'regex' */
@@ -17,15 +23,37 @@ export interface IndexMetadata {
   };
 }
 
+export type AgentTargetFormat = 'markdown' | 'text' | 'json';
+
+export interface AgentTargetConfig {
+  agentId: string;
+  label: string;
+  path: string;
+  format: AgentTargetFormat;
+  builtin?: boolean;
+}
+
+export interface AgentTargetSelection {
+  selectedAgents: string[];
+  targets: Record<string, AgentTargetConfig>;
+}
+
+function getMetaDir(repoDir: string): string {
+  return path.join(repoDir, META_DIRNAME);
+}
+
 export function saveMetadata(repoDir: string, metadata: IndexMetadata): void {
-  const metaDir = path.join(repoDir, '.code-intel');
+  const metaDir = getMetaDir(repoDir);
   fs.mkdirSync(metaDir, { recursive: true });
-  fs.writeFileSync(path.join(metaDir, 'meta.json'), JSON.stringify(metadata, null, 2));
+  const target = path.join(metaDir, META_FILE);
+  const tmp = `${target}.tmp-${process.pid}-${Date.now()}`;
+  fs.writeFileSync(tmp, JSON.stringify(metadata, null, 2));
+  fs.renameSync(tmp, target);
 }
 
 export function loadMetadata(repoDir: string): IndexMetadata | null {
   try {
-    const data = fs.readFileSync(path.join(repoDir, '.code-intel', 'meta.json'), 'utf-8');
+    const data = fs.readFileSync(path.join(getMetaDir(repoDir), META_FILE), 'utf-8');
     return JSON.parse(data);
   } catch {
     return null;
@@ -33,9 +61,43 @@ export function loadMetadata(repoDir: string): IndexMetadata | null {
 }
 
 export function getDbPath(repoDir: string): string {
-  return path.join(repoDir, '.code-intel', 'graph.db');
+  return path.join(getMetaDir(repoDir), 'graph.db');
 }
 
 export function getVectorDbPath(repoDir: string): string {
-  return path.join(repoDir, '.code-intel', 'vector.db');
+  return path.join(getMetaDir(repoDir), 'vector.db');
+}
+
+function statToken(filePath: string): string {
+  try {
+    const stat = fs.statSync(filePath);
+    return `${filePath}:${stat.size}:${stat.mtimeMs}`;
+  } catch {
+    return `${filePath}:missing`;
+  }
+}
+
+export function computeIndexVersion(repoDir: string, schemaVersion: number, indexedAt: string): string {
+  const root = getMetaDir(repoDir);
+  const files = ['graph.db', 'bm25.db', 'vector.db'].map((name) => statToken(path.join(root, name)));
+  return crypto.createHash('sha256').update(JSON.stringify({ schemaVersion, indexedAt, files })).digest('hex');
+}
+
+export function getAgentTargetsPath(repoDir: string): string {
+  return path.join(getMetaDir(repoDir), AGENT_TARGETS_FILE);
+}
+
+export function loadAgentTargets(repoDir: string): AgentTargetSelection | null {
+  try {
+    const data = fs.readFileSync(getAgentTargetsPath(repoDir), 'utf-8');
+    return JSON.parse(data) as AgentTargetSelection;
+  } catch {
+    return null;
+  }
+}
+
+export function saveAgentTargets(repoDir: string, selection: AgentTargetSelection): void {
+  const metaDir = getMetaDir(repoDir);
+  fs.mkdirSync(metaDir, { recursive: true });
+  fs.writeFileSync(getAgentTargetsPath(repoDir), JSON.stringify(selection, null, 2) + '\n', 'utf-8');
 }
