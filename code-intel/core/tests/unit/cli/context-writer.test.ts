@@ -33,39 +33,21 @@ describe('writeContextFiles — creates new files when none exist', () => {
   after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
 
   it('creates AGENTS.md', () => {
-    writeContextFiles(dir, 'MyProject', stats, [], defaultTargets);
+    writeContextFiles(dir, 'MyProject', stats, defaultTargets);
     assert.ok(fs.existsSync(path.join(dir, 'AGENTS.md')));
   });
 
   it('creates CLAUDE.md', () => {
-    writeContextFiles(dir, 'MyProject', stats, [], defaultTargets);
+    writeContextFiles(dir, 'MyProject', stats, defaultTargets);
     assert.ok(fs.existsSync(path.join(dir, 'CLAUDE.md')));
   });
 
-  it('AGENTS.md contains project name', () => {
-    writeContextFiles(dir, 'MyProject', stats, [], defaultTargets);
-    const content = fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf-8');
-    assert.ok(content.includes('MyProject'));
-  });
-
-  it('AGENTS.md contains code-intel:start marker', () => {
-    writeContextFiles(dir, 'MyProject', stats, [], defaultTargets);
+  it('managed block contains markers and project name', () => {
+    writeContextFiles(dir, 'MyProject', stats, defaultTargets);
     const content = fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf-8');
     assert.ok(content.includes('<!-- code-intel:start -->'));
-  });
-
-  it('AGENTS.md contains code-intel:end marker', () => {
-    writeContextFiles(dir, 'MyProject', stats, [], defaultTargets);
-    const content = fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf-8');
     assert.ok(content.includes('<!-- code-intel:end -->'));
-  });
-
-  it('AGENTS.md includes node/edge/file stats', () => {
-    writeContextFiles(dir, 'MyProject', stats, [], defaultTargets);
-    const content = fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf-8');
-    assert.ok(content.includes('42'));
-    assert.ok(content.includes('100'));
-    assert.ok(content.includes('10 files'));
+    assert.ok(content.includes('# Code Intelligence — MyProject'));
   });
 });
 
@@ -81,7 +63,7 @@ describe('writeContextFiles — updates existing file with markers', () => {
   after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
 
   it('replaces managed block without touching user notes', () => {
-    writeContextFiles(dir, 'Updated', stats, [], defaultTargets);
+    writeContextFiles(dir, 'Updated', stats, defaultTargets);
     const content = fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf-8');
     assert.ok(!content.includes('OLD CONTENT'));
     assert.ok(content.includes('Updated'));
@@ -100,53 +82,48 @@ describe('writeContextFiles — appends to existing file without markers', () =>
   });
   after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
 
-  it('preserves original content', () => {
-    writeContextFiles(dir, 'AppendTest', stats, [], defaultTargets);
+  it('preserves original content and appends managed block', () => {
+    writeContextFiles(dir, 'AppendTest', stats, defaultTargets);
     const content = fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf-8');
     assert.ok(content.includes('Some existing notes'));
-  });
-
-  it('appends new block at end', () => {
-    writeContextFiles(dir, 'AppendTest', stats, [], defaultTargets);
-    const content = fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf-8');
     assert.ok(content.includes('<!-- code-intel:start -->'));
     assert.ok(content.includes('AppendTest'));
   });
 });
 
-describe('writeContextFiles — skill rows in block', () => {
+describe('writeContextFiles — concise block', () => {
   let dir: string;
 
   before(() => { dir = tmpDir(); });
   after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
 
-  it('includes skill label in table when skills provided', () => {
-    writeContextFiles(dir, 'SkilledProject', stats, [
-      { name: 'auth-module', label: 'Auth Module', symbolCount: 15, fileCount: 3 },
-    ], defaultTargets);
+  it('includes requested block shape', () => {
+    writeContextFiles(dir, 'MyProject', stats, defaultTargets);
     const content = fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf-8');
-    assert.ok(content.includes('Auth Module'));
-    assert.ok(content.includes('auth-module'));
+    assert.ok(content.includes('# Code Intelligence — MyProject'));
+    assert.match(content, /Auto-managed by `code-intel analyze` \(v[^)]+\)/);
+    assert.ok(content.includes('**complements** reading files'));
+    assert.ok(content.includes('## Reach for it when you need'));
+    assert.ok(content.includes('## CLI reference'));
+    assert.ok(content.includes('Also available: `complexity`, `coverage`, `secrets`, `scan`, `deprecated`, `status`, `clean`.'));
   });
 
-  it('includes "When to Load a Skill" section with skill name when skills provided', () => {
-    writeContextFiles(dir, 'SkilledProject', stats, [
-      { name: 'auth-module', label: 'Auth Module', symbolCount: 15, fileCount: 3 },
-    ], defaultTargets);
+  it('includes expected command examples', () => {
+    writeContextFiles(dir, 'MyProject', stats, defaultTargets);
     const content = fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf-8');
-    assert.ok(content.includes('When to Load a Skill'), 'should include When to Load a Skill section');
-    assert.ok(content.includes('Working in **Auth Module**'), 'should include skill-specific load instruction');
+    assert.ok(content.includes('code-intel impact <symbol>'));
+    assert.ok(content.includes('code-intel pr-impact --base master --head HEAD'));
+    assert.ok(content.includes('code-intel query "TRAVERSE CALLS FROM \'<symbol>\' DEPTH 3"'));
   });
 
-  it('includes Development Workflow section', () => {
-    writeContextFiles(dir, 'SkilledProject', stats, [], defaultTargets);
+  it('does not include removed skill-heavy sections', () => {
+    writeContextFiles(dir, 'MyProject', stats, defaultTargets);
     const content = fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf-8');
-    assert.ok(content.includes('Development Workflow'), 'should include Development Workflow section');
-    assert.ok(content.includes('Implement a New Feature'), 'should include feature workflow');
-    assert.ok(content.includes('Fix a Bug'), 'should include bug fix workflow');
-    assert.ok(content.includes('Study / Understand Code'), 'should include study workflow');
-    assert.ok(content.includes('Code Review'), 'should include code review workflow');
-    assert.ok(content.includes('Maintain / Refactor'), 'should include maintenance workflow');
+    assert.ok(!content.includes('## Skills'));
+    assert.ok(!content.includes('When to Load a Skill'));
+    assert.ok(!content.includes('SKILL.md'));
+    assert.ok(!content.includes('Mandatory Rules'));
+    assert.ok(!content.includes('Development Workflow'));
   });
 });
 
@@ -156,23 +133,15 @@ describe('writeContextFiles — creates agent-specific context files', () => {
   before(() => { dir = tmpDir(); });
   after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
 
-  it('creates .github/copilot-instructions.md for GitHub Copilot', () => {
-    writeContextFiles(dir, 'MyProject', stats, [], defaultTargets);
+  it('creates selected agent files', () => {
+    writeContextFiles(dir, 'MyProject', stats, defaultTargets);
     assert.ok(fs.existsSync(path.join(dir, '.github', 'copilot-instructions.md')));
-  });
-
-  it('creates .cursor/rules/code-intel.mdc for Cursor IDE', () => {
-    writeContextFiles(dir, 'MyProject', stats, [], defaultTargets);
     assert.ok(fs.existsSync(path.join(dir, '.cursor', 'rules', 'code-intel.mdc')));
-  });
-
-  it('creates .kiro/steering/code-intel.md for Kiro IDE', () => {
-    writeContextFiles(dir, 'MyProject', stats, [], defaultTargets);
     assert.ok(fs.existsSync(path.join(dir, '.kiro', 'steering', 'code-intel.md')));
   });
 
-  it('all agent files contain the mandatory rules section', () => {
-    writeContextFiles(dir, 'MyProject', stats, [], defaultTargets);
+  it('all selected agent files contain the concise block', () => {
+    writeContextFiles(dir, 'MyProject', stats, defaultTargets);
     const files = [
       path.join(dir, '.github', 'copilot-instructions.md'),
       path.join(dir, '.cursor', 'rules', 'code-intel.mdc'),
@@ -180,33 +149,17 @@ describe('writeContextFiles — creates agent-specific context files', () => {
     ];
     for (const f of files) {
       const content = fs.readFileSync(f, 'utf-8');
-      assert.ok(content.includes('Mandatory Rules'), `${f} should contain Mandatory Rules`);
-      assert.ok(content.includes('code-intel search'), `${f} should reference code-intel search`);
-      assert.ok(content.includes('code-intel impact'), `${f} should reference code-intel impact`);
-      assert.ok(content.includes('code-intel inspect'), `${f} should reference code-intel inspect`);
+      assert.ok(content.includes('Code Intelligence — MyProject'));
+      assert.ok(content.includes('## Reach for it when you need'));
+      assert.ok(content.includes('## CLI reference'));
+      assert.ok(!content.includes('SKILL.md'));
     }
-  });
-
-  it('block content mentions key agent names', () => {
-    writeContextFiles(dir, 'MyProject', stats, [], defaultTargets);
-    const content = fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf-8');
-    assert.ok(content.includes('Cursor'), 'should mention Cursor');
-    assert.ok(content.includes('Copilot'), 'should mention Copilot');
-    assert.ok(content.includes('Kiro'), 'should mention Kiro');
-    assert.ok(content.includes('Aider'), 'should mention Aider');
-    assert.ok(content.includes('Amp'), 'should mention Amp');
-  });
-
-  it('block content includes pr-impact command', () => {
-    writeContextFiles(dir, 'MyProject', stats, [], defaultTargets);
-    const content = fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf-8');
-    assert.ok(content.includes('pr-impact'), 'should include pr-impact command');
   });
 
   it('writes only selected targets', () => {
     const isolatedDir = tmpDir();
     try {
-      writeContextFiles(isolatedDir, 'MyProject', stats, [], [
+      writeContextFiles(isolatedDir, 'MyProject', stats, [
         { agentId: 'cursor', label: 'Cursor', path: '.cursor/rules/code-intel.mdc', format: 'markdown', builtin: true },
       ]);
       assert.ok(fs.existsSync(path.join(isolatedDir, '.cursor', 'rules', 'code-intel.mdc')));
@@ -221,7 +174,7 @@ describe('writeContextFiles — creates agent-specific context files', () => {
   it('writes custom json targets', () => {
     const isolatedDir = tmpDir();
     try {
-      writeContextFiles(isolatedDir, 'MyProject', stats, [], [
+      writeContextFiles(isolatedDir, 'MyProject', stats, [
         { agentId: 'custom-json', label: 'Custom JSON', path: '.custom/agent.json', format: 'json', builtin: false },
       ]);
       const content = JSON.parse(fs.readFileSync(path.join(isolatedDir, '.custom', 'agent.json'), 'utf-8')) as Record<string, string>;

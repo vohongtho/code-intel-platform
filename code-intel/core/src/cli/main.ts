@@ -36,7 +36,6 @@ import { startMcpStdio } from '../mcp-server/server.js';
 import { textSearch } from '../search/text-search.js';
 import type { PipelineContext } from '../pipeline/types.js';
 import { saveMetadata, loadMetadata, getDbPath, loadAgentTargets, saveAgentTargets, computeIndexVersion, type AgentTargetConfig, type AgentTargetSelection, type AgentTargetFormat } from '../storage/metadata.js';
-import { writeSkillFiles } from './skill-writer.js';
 import { writeContextFiles } from './context-writer.js';
 import { AGENT_OPTIONS, isValidRepoRelativeTargetPath, resolveBuiltinTarget } from './agent-targets.js';
 import { upsertRepo, loadRegistry, removeRepo } from '../storage/repo-registry.js';
@@ -202,7 +201,6 @@ program
   │  analyze                                                                                                           │
   │    code-intel analyze [path]                Parse source code and build the knowledge graph                        │
   │    code-intel analyze --force               Discard the existing index and perform a full re-analysis             │
-  │    code-intel analyze --skills              Emit per-cluster SKILL.md files under .claude/skills/code-intel/      │
   │    code-intel analyze --embeddings          Build a vector index for semantic (natural-language) search           │
   │    code-intel analyze --skip-embeddings     Omit embedding generation for a significantly faster run             │
   │    code-intel analyze --skip-agents-md      Skip writing agent-targeted context files                           │
@@ -375,7 +373,6 @@ async function analyzeWorkspace(targetPath: string, options?: {
   force?: boolean;
   incremental?: boolean;
   parallel?: boolean;
-  skills?: boolean;
   skipEmbeddings?: boolean;
   skipAgentsMd?: boolean;
   skipGit?: boolean;
@@ -811,25 +808,6 @@ async function analyzeWorkspace(targetPath: string, options?: {
     });
   }
 
-  // Generate .claude/skills/code-intel/ skill files (always, unless --skills was set to false)
-  const doSkills = options?.skills !== false;
-  let skillSummaries: { name: string; label: string; symbolCount: number; fileCount: number }[] = [];
-  if (doSkills) {
-    startSpinner('Generating skill files');
-    try {
-      const { skills } = await writeSkillFiles(graph, workspaceRoot, repoName);
-      skillSummaries = skills;
-      stopSpinner();
-      Logger.info(`Skills generated: ${skills.length}`);
-      if (!options?.silent && skills.length > 0) {
-        console.log(`  ✓ Skills: ${skills.length} generated → .claude/skills/code-intel/`);
-      }
-    } catch (err) {
-      stopSpinner();
-      Logger.warn(`Skills generation failed: ${err instanceof Error ? err.message : err}`);
-    }
-  }
-
   // Write selected context files
   if (!options?.skipAgentsMd) {
     startSpinner('Writing context files');
@@ -840,7 +818,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
         edges: graph.size.edges,
         files: context.filePaths.length,
         duration: result.totalDuration,
-      }, skillSummaries, agentTargets);
+      }, agentTargets);
       stopSpinner();
       Logger.info(`Context files written: ${agentTargets.length} target(s)`);
       if (!options?.silent) {
@@ -1744,7 +1722,6 @@ program
   .option('--force',                   'Force full re-index, ignoring cached data')
   .option('--incremental',             'Only re-parse files changed since last analysis (git diff or mtime)')
   .option('--parallel',                'Use worker threads for parse + resolve phases (faster on multi-core)')
-  .option('--skills',                  'Generate .claude/skills/ SKILL.md files from detected clusters')
   .option('--embeddings',              'Build vector embeddings for semantic search (slower, recommended)')
   .option('--skip-embeddings',         'Skip embedding generation (faster, text-search only)')
   .option('--skip-agents-md',          'Skip writing agent-targeted context files')
@@ -1773,7 +1750,6 @@ program
     $ code-intel analyze --incremental          Only re-parse changed files (fast)
     $ code-intel analyze --parallel             Use worker threads for faster indexing
     $ code-intel analyze --embeddings           Enable semantic (vector) search
-    $ code-intel analyze --skills               Generate .claude/skills/ files
     $ code-intel analyze --skip-embeddings      Skip vectors for a faster run
     $ code-intel analyze --skip-agents-md       Skip writing agent-targeted context files
     $ code-intel analyze --skip-git             Index a non-Git folder
@@ -1788,7 +1764,6 @@ program
     force?: boolean;
     incremental?: boolean;
     parallel?: boolean;
-    skills?: boolean;
     skipEmbeddings?: boolean;
     skipAgentsMd?: boolean;
     skipGit?: boolean;
@@ -1833,7 +1808,6 @@ program
       force: opts.force,
       incremental: opts.incremental,
       parallel: opts.parallel,
-      skills: opts.skills,
       skipEmbeddings: opts.skipEmbeddings,
       skipAgentsMd: opts.skipAgentsMd,
       skipGit: opts.skipGit,

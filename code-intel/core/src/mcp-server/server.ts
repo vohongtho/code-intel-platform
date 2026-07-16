@@ -564,7 +564,7 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
 }
 // ─── Tool dispatch (extracted for testability + OTel wrapping) ───────────────
 
-type ToolResult = { content: { type: string; text: string }[]; isError?: boolean };
+export type ToolResult = { content: { type: string; text: string }[]; isError?: boolean };
 
 type LoadedRepoGraph = {
   repo: string;
@@ -577,6 +577,11 @@ type LoadedRepoGraph = {
 
 const repoGraphCache = new Map<string, LoadedRepoGraph>();
 const repoReloads = new Map<string, Promise<LoadedRepoGraph>>();
+
+export function resetRepoGraphCacheForTests(): void {
+  repoGraphCache.clear();
+  repoReloads.clear();
+}
 
 function repoCacheKey(repo: string, repoPath: string): string {
   return `${repo}:${path.resolve(repoPath)}`;
@@ -659,7 +664,7 @@ const GRAPH_BACKED_TOOLS = new Set([
   'suggest_tests', 'cluster_summary', 'deprecated_usage', 'complexity_hotspots', 'coverage_gaps', 'secrets', 'vulnerability_scan',
 ]);
 
-async function dispatchTool(
+export async function dispatchTool(
   name: string,
   a: Record<string, unknown>,
   graph: KnowledgeGraph,

@@ -2,7 +2,7 @@
 /**
  * Multi-language fixture eval — Go, Rust, Java
  *
- * Tests symbol detection, search, inspect, impact, skill files, context files
+ * Tests symbol detection, search, inspect, impact, and context files
  * across three additional languages.
  *
  * Usage:
@@ -90,8 +90,9 @@ for (const lang of LANGS) {
   const a = runCLI('analyze', lang.fixture);
   check(a.code === 0 ? pass(lang.name, 'analyze exits 0') : fail(lang.name, 'analyze exits 0', a.stderr.slice(0, 80)));
 
-  const nodes = parseInt(a.stdout.match(/Nodes:\s*(\d+)/)?.[1] ?? '0', 10);
-  const edges = parseInt(a.stdout.match(/Edges:\s*(\d+)/)?.[1] ?? '0', 10);
+  const st = runCLI('status', lang.fixture);
+  const nodes = parseInt(st.stdout.match(/Nodes\s*:\s*(\d+)/)?.[1] ?? '0', 10);
+  const edges = parseInt(st.stdout.match(/Edges\s*:\s*(\d+)/)?.[1] ?? '0', 10);
   check(nodes >= lang.minNodes ? pass(lang.name, `nodes ≥ ${lang.minNodes}`, `${nodes}`) : fail(lang.name, `nodes ≥ ${lang.minNodes}`, `${nodes}`));
   check(edges >= lang.minEdges ? pass(lang.name, `edges ≥ ${lang.minEdges}`, `${edges}`) : fail(lang.name, `edges ≥ ${lang.minEdges}`, `${edges}`));
 
@@ -105,14 +106,10 @@ for (const lang of LANGS) {
 
   // Impact
   const imp = runCLI('impact', lang.impact.symbol, '-p', lang.fixture);
-  const affected = parseInt(imp.stdout.match(/(\d+)\s+affected/i)?.[1] ?? '0', 10);
+  const affected = parseInt(imp.stdout.match(/Affected symbols\s*:\s*(\d+)/i)?.[1] ?? '0', 10);
   check(affected >= lang.impact.minAffected
     ? pass(lang.name, `impact: ${lang.impact.symbol} ≥ ${lang.impact.minAffected}`, `${affected}`)
     : fail(lang.name, `impact: ${lang.impact.symbol}`, `${affected} < ${lang.impact.minAffected}`));
-
-  // Skill files
-  const skillDir = path.join(lang.fixture, '.claude', 'skills', 'code-intel');
-  check(fs.existsSync(skillDir) ? pass(lang.name, 'skills dir created') : fail(lang.name, 'skills dir created'));
 
   // Context files
   for (const fname of ['AGENTS.md', 'CLAUDE.md']) {
@@ -124,6 +121,12 @@ for (const lang of LANGS) {
       check(c.includes('<!-- code-intel:start -->')
         ? pass(lang.name, `${fname} has code-intel block`)
         : fail(lang.name, `${fname} has code-intel block`));
+      check(c.includes('## Reach for it when you need')
+        ? pass(lang.name, `${fname} has concise guidance section`)
+        : fail(lang.name, `${fname} has concise guidance section`));
+      check(!c.includes('SKILL.md')
+        ? pass(lang.name, `${fname} omits skill links`)
+        : fail(lang.name, `${fname} omits skill links`));
     }
   }
 

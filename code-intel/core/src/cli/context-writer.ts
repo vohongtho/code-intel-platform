@@ -24,9 +24,13 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import type { SkillSummary } from './skill-writer.js';
+import { fileURLToPath } from 'node:url';
 import type { AgentTargetConfig } from '../storage/metadata.js';
 import { LEGACY_CONTEXT_TARGETS } from './agent-targets.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const PACKAGE_VERSION = readPackageVersion();
 
 const BLOCK_START = '<!-- code-intel:start -->';
 const BLOCK_END   = '<!-- code-intel:end -->';
@@ -45,10 +49,9 @@ export function writeContextFiles(
   workspaceRoot: string,
   projectName: string,
   stats: ContextStats,
-  skills: SkillSummary[],
   targets: AgentTargetConfig[] = LEGACY_CONTEXT_TARGETS,
 ): void {
-  const block = buildBlock(projectName, stats, skills);
+  const block = buildBlock(projectName, stats);
   const dedupedTargets = new Map<string, AgentTargetConfig>();
   for (const target of targets) {
     dedupedTargets.set(target.path, target);
@@ -70,150 +73,37 @@ export function writeContextFiles(
 function buildBlock(
   projectName: string,
   stats: ContextStats,
-  skills: SkillSummary[],
 ): string {
-  const skillTableRows = skills
-    .map(
-      (s) =>
-        `| Work in \`${s.label}\` (${s.symbolCount} symbols) | \`.claude/skills/code-intel/${s.name}/SKILL.md\` |`,
-    )
-    .join('\n');
-
-  const skillTable = `| Task | Skill file |
-|------|------------|
-| Understand architecture / "How does X work?" | Load \`code-intel-exploring\` skill |
-| Blast radius / "What breaks if I change X?" | Load \`code-intel-impact\` skill |
-| Debugging / "Why is X failing?" | Load \`code-intel-debugging\` skill |
-${skillTableRows ? skillTableRows + '\n' : ''}`;
-
-  const skillLoadInstructions = skills.length > 0
-    ? `\n## When to Load a Skill\n\nBefore working deeply in a subsystem, **load the matching skill file** listed above.\nEach skill gives you symbol maps, key entry points, and safe-change guidance for that area.\n\n${skills.map((s) => `- Working in **${s.label}**? → Load \`.claude/skills/code-intel/${s.name}/SKILL.md\``).join('\n')}\n`
-    : '';
+  const version = PACKAGE_VERSION || 'unknown';
 
   return `${BLOCK_START}
 # Code Intelligence — ${projectName}
 
-> ⚠ This section is auto-managed by \`code-intel analyze\`. Do **not** edit between the markers — your changes will be overwritten.
-> Add your own notes below the \`${BLOCK_END}\` marker.
+> Auto-managed by \`code-intel analyze\` (v${version}) — re-running it overwrites this block. Put durable notes below \`${BLOCK_END}\`.
 
-<!-- TOOL POLICY: ENFORCED -->
-FORBIDDEN: grep, rg, find, cat, sed, ls (for symbol/code discovery)
-REQUIRED BEFORE ANY CODE ACTION:
-  1. code-intel search "<concept>"    ← replaces grep/rg/find
-  2. code-intel inspect <symbol>      ← replaces cat + manual file reading
-  3. code-intel impact <symbol>       ← replaces manual caller tracing
-<!-- /TOOL POLICY -->
+\`code-intel\` keeps a symbol / call-graph index of this repo. It **complements** reading files, it doesn't replace it — on a repo this size, read files directly for most work and reach for code-intel when you need the call graph.
 
-Indexed: **${stats.nodes.toLocaleString()} nodes** | **${stats.edges.toLocaleString()} edges** | **${stats.files} files** | analyzed in ${(stats.duration / 1000).toFixed(1)}s
+## Reach for it when you need
+- **Blast radius before changing a shared symbol** — \`code-intel impact <symbol>\` (reverse call graph). Flag ≥ 5 direct callers to the user as higher-risk.
+- **PR review scope** — \`code-intel pr-impact --base master --head HEAD\`
+- **Callers / callees of a symbol** — \`code-intel inspect <symbol>\`
+- **Concept search across files** — \`code-intel search "<concept>"\`
+- **Tracing an execution path** — \`code-intel query "TRAVERSE CALLS FROM '<symbol>' DEPTH 3"\`
 
-> Index stale? Re-run: \`code-intel analyze\`
-
-## Mandatory Rules — ALL Agents (Amp, Claude Code, Codex, Copilot, Cursor, Aider, Gemini, Kiro, Trae, Hermes, Factory, OpenCode, Pi, Antigravity, OpenClaw, and others)
-
-These rules apply to **every coding agent or AI assistant** working in this repository.
-
-### Before Implementing Any Change
-1. Run \`code-intel search "<concept>"\` — find existing symbols related to the task.
-2. Run \`code-intel inspect <symbol>\` — understand callers, callees, and imports.
-3. Run \`code-intel impact <symbol>\` — check blast radius before touching anything.
-4. **If impact shows ≥ 5 direct callers → warn the user: HIGH risk.**
-
-### While Implementing / Fixing a Bug
-- NEVER open a file cold — always \`code-intel search\` first.
-- NEVER grep for symbols — use \`code-intel search\` instead.
-- NEVER rename symbols with find-and-replace — use \`code-intel inspect\` to find all usages first.
-- Use \`code-intel inspect <symbol>\` to understand a function's callers/callees before modifying it.
-- Use \`code-intel query "TRAVERSE CALLS FROM '<symbol>' DEPTH 3"\` to trace execution paths.
-
-### Before Committing / Code Review
-- Run \`code-intel impact <symbol>\` for every symbol you changed.
-- Run \`code-intel pr-impact --base main --head HEAD\` to see full PR blast radius.
-- Fail PR if HIGH risk symbols are changed without reviewer sign-off.
-
-### Studying the Codebase
-- Use \`code-intel search "<concept>"\` to explore unfamiliar areas.
-- Use \`code-intel inspect <symbol>\` to see a symbol's full context.
-- Use \`code-intel serve\` to open the interactive Web UI for graph exploration.
-- Use subsystem skills (see table below) for deep-dive on a specific area.
-
-## Never Do
-
-- NEVER ignore impact warnings — always report blast radius to the user.
-- **STOP** — do not call grep, rg, find, cat, sed, or read a file cold.
-  Always run \`code-intel search "<concept>"\` first.
-  Violating this wastes ~3,000 tokens per lookup and degrades session quality.
-- NEVER make changes to a symbol with ≥ 5 callers without running \`code-intel impact\` first.
-- NEVER use find-and-replace for symbol renames.
-
-## Development Workflow
-
-### 🔧 Implement a New Feature
-\`\`\`
-1. code-intel search "<feature concept>"      # find related existing symbols
-2. code-intel inspect <related-symbol>        # understand context & callers
-3. Load subsystem skill (see Skills table)    # deep-dive the area
-4. Implement changes
-5. code-intel impact <changed-symbol>         # verify blast radius
-6. code-intel pr-impact --base main           # full PR summary before commit
-\`\`\`
-
-### 🐛 Fix a Bug
-\`\`\`
-1. code-intel search "<buggy behavior>"                              # locate the symbol
-2. code-intel query "TRAVERSE CALLS FROM '<symbol>' DEPTH 3"        # trace execution path
-3. code-intel inspect <symbol>                                       # find all callers that may be affected
-4. Fix the bug
-5. code-intel impact <symbol>                                        # confirm no unexpected side effects
-\`\`\`
-
-### 🔬 Study / Understand Code
-\`\`\`
-1. code-intel search "<concept>"                                     # discover entry points
-2. code-intel inspect <symbol>                                       # full context: callers, callees, imports
-3. code-intel query "TRAVERSE CALLS FROM '<symbol>' DEPTH 3"        # execution call graph
-4. code-intel query "PATH FROM '<symbol>' TO '<target>'"            # path between two symbols
-5. Load subsystem skill                                              # structured deep-dive
-\`\`\`
-
-### 👀 Code Review
-\`\`\`
-1. code-intel pr-impact --base main --head HEAD   # blast radius of all PR changes
-2. code-intel impact <each-changed-symbol>         # per-symbol risk check
-3. Flag HIGH risk (≥ 5 callers) for reviewer sign-off
-\`\`\`
-
-### 🔄 Maintain / Refactor
-\`\`\`
-1. code-intel inspect <symbol>                # find ALL usages before touching
-2. code-intel impact <symbol>                 # blast radius — plan your changes
-3. Make changes incrementally
-4. code-intel pr-impact --base main           # validate scope hasn't exploded
-\`\`\`
-
-## CLI Quick Reference
+## CLI reference
 
 \`\`\`bash
-code-intel analyze [path]                                      # Build / refresh the knowledge graph
-code-intel serve [path]                                        # Start HTTP API + Web UI on :4747
-code-intel search <query>                                      # Find symbols by concept/name
-code-intel inspect <symbol>                                    # Callers, callees, imports, cluster
-code-intel impact <symbol>                                     # Blast radius (who breaks if this changes)
-code-intel query "TRAVERSE CALLS FROM '<symbol>' DEPTH 3"     # Trace execution call graph
-code-intel query "PATH FROM '<sym>' TO '<target>'"             # Find path between two symbols
-code-intel query "FIND function WHERE name CONTAINS '<x>'"    # GQL symbol search
-code-intel pr-impact --base main --head HEAD                   # Full PR blast radius report
-code-intel complexity [path] --top 10                         # Cyclomatic complexity hotspots
-code-intel coverage [path]                                     # Untested exported symbols by blast radius
-code-intel secrets [path]                                      # Scan for hardcoded secrets
-code-intel scan [path] --severity high                         # OWASP vulnerability scan
-code-intel deprecated [path]                                   # Find deprecated API usages
-code-intel status [path]                                       # Index freshness and stats
-code-intel clean [path]                                        # Remove index data
+code-intel search <query>            # find symbols by concept/name
+code-intel inspect <symbol>          # callers, callees, imports
+code-intel impact <symbol>           # blast radius (who breaks if this changes)
+code-intel pr-impact --base master   # full PR blast radius
+code-intel query "TRAVERSE CALLS FROM '<symbol>' DEPTH 3"
+code-intel query "PATH FROM '<sym>' TO '<target>'"
+code-intel analyze                   # rebuild the index (run when stale)
+code-intel serve                     # HTTP API + web UI on :4747
 \`\`\`
 
-## Skills
-${skillLoadInstructions}
-${skillTable}
+Also available: \`complexity\`, \`coverage\`, \`secrets\`, \`scan\`, \`deprecated\`, \`status\`, \`clean\`.
 ${BLOCK_END}`;
 }
 
@@ -277,6 +167,15 @@ function upsertJsonFile(filePath: string, block: string): void {
     [JSON_KEY]: block,
   };
   fs.writeFileSync(filePath, JSON.stringify(updated, null, 2) + '\n', 'utf-8');
+}
+
+function readPackageVersion(): string {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '../../package.json'), 'utf-8')) as { version?: string };
+    return pkg.version ?? 'unknown';
+  } catch {
+    return 'unknown';
+  }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

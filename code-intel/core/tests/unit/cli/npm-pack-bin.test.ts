@@ -16,8 +16,7 @@ function newestPackFile(dir: string): string {
 
 describe('npm pack artifact', () => {
   it('uses main CLI entry as published bin target', () => {
-    const repoRoot = path.resolve(import.meta.dirname, '../../../..');
-    const coreDir = path.join(repoRoot, 'code-intel', 'core');
+    const coreDir = path.resolve(import.meta.dirname, '../../..');
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'code-intel-pack-'));
 
     try {

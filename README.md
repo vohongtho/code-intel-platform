@@ -33,7 +33,6 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 - **Parallel Analysis** — `--parallel` flag runs parse + resolve phases on worker threads for large repos
 - **AI Context Files** — auto-generates `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `.cursor/rules/code-intel.mdc`, `.kiro/steering/code-intel.md`, `.clinerules`, `.windsurfrules`, `.kilocode/rules/code-intel-rules.md`, and `.agents/rules/code-intel-rules.md` after every analysis — supporting Amp, Claude Code, Codex, Copilot, Cursor, Aider, Gemini, Kiro, Trae, Hermes, Factory, OpenCode, Pi, Antigravity, OpenClaw, Cline, Windsurf, Kilo Code, and more
 - **Agent Hook System** _(v1.0.2)_ — `code-intel setup` installs PreToolUse hooks for all major AI agents; when an agent runs `grep MyClass src/`, the `code-intel-hook` binary (~10KB, ~50ms startup) silently rewrites it to `code-intel search "MyClass"` — saving ~3,000 tokens per lookup; supports Claude Code, Cursor, Gemini CLI, GitHub Copilot (VS Code + CLI), OpenCode, OpenClaw; rules files for Cline/Roo Code, Windsurf, Kilo Code, Antigravity, Codex CLI
-- **Skill Files** — generates `.claude/skills/code-intel/` with per-cluster SKILL.md files (hot symbols, entry points, impact guidance) for AI assistants
 - **Repository Groups** — multi-repo / monorepo service tracking with workspace auto-discovery (npm, pnpm, Nx, Turborepo), contract extraction (OpenAPI, GraphQL, Protobuf), type-aware similarity scoring, and cross-repo dependency detection
 - **`.codeintelignore`** — exclude directories from analysis (like `.gitignore` but for code-intel)
 - **Structured Logging** — winston-based logger with daily-rotating log files at `~/.code-intel/logs/`, sensitive-data masking, and configurable log levels
@@ -215,11 +214,10 @@ Then open **http://localhost:4747** in your browser — the Web UI auto-connects
 ### After analysis
 
 `code-intel analyze` automatically generates or updates:
-- **`AGENTS.md`** + **`CLAUDE.md`** — AI context files with stats, CLI reference, and skill links. These files are managed with **surgical precision**:
+- **`AGENTS.md`** + **`CLAUDE.md`** — AI context files with a concise `code-intel` guidance block. These files are managed with **surgical precision**:
   - **File does not exist** → created from a template with a managed block and a clearly marked section for your own notes
   - **File exists with markers** → only the `<!-- code-intel:start -->…<!-- code-intel:end -->` block is updated; all your custom content is preserved untouched
   - **File exists without markers** → the block is appended at the end; existing content is never overwritten
-- **`.claude/skills/code-intel/`** — per-cluster SKILL.md files with hot symbols, entry points, and impact guidance
 
 ### Exclude directories
 
@@ -353,7 +351,6 @@ code-intel-platform/
 │   │       ├── shared/            # Logger (winston, sensitive-data masking, ~/.code-intel/logs/)
 │   │       └── cli/               # Commander CLI (progress bars, spinners)
 │   │           ├── main.ts              # All CLI commands
-│   │           ├── skill-writer.ts      # Generates .claude/skills/code-intel/ SKILL.md files
 │   │           └── context-writer.ts    # Upserts AGENTS.md + CLAUDE.md blocks
 │   │
 │   └── web/                       # React + Sigma.js frontend
@@ -390,7 +387,7 @@ Each phase streams live progress to the CLI via animated `█░` progress bars:
   [parse    ] ████████████████░░░░░░░░░░░░░░  53% (80/151)
 ```
 
-Post-pipeline steps (DB persist, skill files, context files) show a braille spinner:
+Post-pipeline steps (DB persist, context files) show a braille spinner:
 
 ```
   ⠹ Persisting graph to DB…
@@ -428,7 +425,6 @@ code-intel setup                         # Register the MCP server in your edito
 ```bash
 code-intel analyze [path]                # Parse source code and build the knowledge graph
 code-intel analyze --force               # Discard existing index and perform a full re-analysis
-code-intel analyze --skills              # Emit per-cluster SKILL.md files under .claude/skills/code-intel/
 code-intel analyze --embeddings          # Build a vector index for semantic (natural-language) search
 code-intel analyze --skip-embeddings     # Omit embedding generation for a significantly faster run
 code-intel analyze --skip-agents-md      # Preserve any hand-edited content in AGENTS.md / CLAUDE.md
@@ -633,7 +629,7 @@ npm run test
 
 ## 📊 Benchmark / Eval
 
-Measure accuracy of the knowledge graph, skill files, MCP tools, and context file generation:
+Measure accuracy of the knowledge graph, MCP tools, and context file generation:
 
 ```bash
 # Single-language fixture (TypeScript)
@@ -657,7 +653,6 @@ Results are written to `eval/results/`. Each run scores:
 | Search | BM25 keyword search accuracy |
 | Inspect | Symbol detail retrieval |
 | Impact | Blast radius correctness |
-| Skill Files | SKILL.md generation, hot symbols, frontmatter |
 | Context Files | AGENTS.md / CLAUDE.md upsert + idempotency |
 | Status | Index freshness reporting |
 | Clean | Index removal |

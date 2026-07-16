@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Eval Case: Multi-language fixture (Python + TypeScript)
- * Tests cross-language symbol detection, impact, and skill coverage.
+ * Tests cross-language symbol detection, impact, and context-file coverage.
  *
  * Usage:
  *   node eval/run-eval-multi.mjs [--json]
@@ -37,8 +37,9 @@ console.log('══════════════════════�
 // ── Analyze ──────────────────────────────────────────────────────────────────
 console.log('▶ Analysis');
 const a = run('analyze', FIXTURE);
-const nodes = parseInt(a.stdout.match(/Nodes:\s*(\d+)/)?.[1] ?? '0', 10);
-const edges = parseInt(a.stdout.match(/Edges:\s*(\d+)/)?.[1] ?? '0', 10);
+const st = run('status', FIXTURE);
+const nodes = parseInt(st.stdout.match(/Nodes\s*:\s*(\d+)/)?.[1] ?? '0', 10);
+const edges = parseInt(st.stdout.match(/Edges\s*:\s*(\d+)/)?.[1] ?? '0', 10);
 
 a.code === 0 ? pass('analyze exits 0') : fail('analyze exits 0', a.stderr.slice(0, 100));
 nodes >= 8 ? pass('multi-lang nodes', `${nodes}`) : fail('multi-lang nodes', `${nodes} < 8`);
@@ -65,7 +66,7 @@ sHandle.stdout.includes('handle') ? pass('TS: handle method found') : fail('TS: 
 // ── Impact ────────────────────────────────────────────────────────────────────
 console.log('\n▶ Impact Analysis');
 const impactAuth = run('impact', 'AuthService', '-p', FIXTURE);
-const affected = parseInt(impactAuth.stdout.match(/(\d+)\s+affected/i)?.[1] ?? '0', 10);
+const affected = parseInt(impactAuth.stdout.match(/Affected symbols\s*:\s*(\d+)/i)?.[1] ?? '0', 10);
 affected >= 1 ? pass('AuthService blast radius ≥ 1', `${affected} affected`) : fail('AuthService blast radius', `${affected}`);
 
 // ── Context files ─────────────────────────────────────────────────────────────
@@ -77,13 +78,10 @@ for (const fname of ['AGENTS.md', 'CLAUDE.md']) {
   if (exists) {
     const c = fs.readFileSync(fpath, 'utf-8');
     c.includes('<!-- code-intel:start -->') ? pass(`${fname} has code-intel block`) : fail(`${fname} has code-intel block`);
+    c.includes('## Reach for it when you need') ? pass(`${fname} has concise guidance section`) : fail(`${fname} has concise guidance section`);
+    !c.includes('SKILL.md') ? pass(`${fname} omits skill links`) : fail(`${fname} omits skill links`);
   }
 }
-
-// ── Skill files ───────────────────────────────────────────────────────────────
-console.log('\n▶ Skill Files');
-const skillDir = path.join(FIXTURE, '.claude', 'skills', 'code-intel');
-fs.existsSync(skillDir) ? pass('skills dir created') : fail('skills dir created');
 
 // ── Clean ─────────────────────────────────────────────────────────────────────
 console.log('\n▶ Clean');
