@@ -2,7 +2,7 @@
  * bm25-index.ts  — Epic 2: Pre-Built BM25 Inverted Index (v1.0.0)
  *
  * Strategy:
- *  - Built at analysis time (post-pipeline), stored in `.code-intel/bm25.db` (better-sqlite3).
+ *  - Built at analysis time (post-pipeline), stored in `.code-intel/bm25.db`.
  *  - Loaded into memory on `serve` startup: replaces linear O(n) scan.
  *  - Incremental updates: only changed nodes' terms are rewritten.
  *  - LIMIT pushdown: applies limit before sorting the full score list.
@@ -14,7 +14,7 @@
  *   bm25_meta(key TEXT PK, value TEXT)           — avgdl, docCount
  */
 
-import Database from 'better-sqlite3';
+import { Database } from '../shared/sqlite.js';
 import path from 'node:path';
 import fs from 'node:fs';
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';

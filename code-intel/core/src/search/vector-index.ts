@@ -1,5 +1,5 @@
 /**
- * VectorIndex — flat embedding store backed by better-sqlite3 with JS cosine similarity.
+ * VectorIndex — flat embedding store backed by SQLite with JS cosine similarity.
  *
  * Performance choices:
  *  - Embeddings are stored as raw BLOB (Float32Array binary) — 4× smaller than JSON TEXT
@@ -9,7 +9,7 @@
  *  - buildIndex() runs all inserts inside a single SQLite transaction.
  *  - Batch embedding in embedder.ts (batchSize=64) reduces HuggingFace pipeline calls.
  */
-import Database from 'better-sqlite3';
+import { Database, type SqliteDatabase } from '../shared/sqlite.js';
 import type { EmbeddedNode } from './embedder.js';
 
 const EMBED_TABLE = 'embed_nodes';
@@ -25,7 +25,7 @@ interface CachedRow {
 
 export class VectorIndex {
   private sqlitePath: string;
-  private db: Database.Database | null = null;
+  private db: SqliteDatabase | null = null;
   /** In-memory cache — populated after buildIndex() or first search() */
   private cache: CachedRow[] | null = null;
 
@@ -56,21 +56,21 @@ export class VectorIndex {
 
     const stmt = this.db.prepare(`
       INSERT INTO ${EMBED_TABLE} (id, name, kind, file_path, text, embedding)
-      VALUES (@id, @name, @kind, @filePath, @text, @embedding)
+      VALUES (?, ?, ?, ?, ?, ?)
     `);
 
     // Single transaction for all inserts — dramatically faster than auto-commit
     const insertMany = this.db.transaction((items: EmbeddedNode[]) => {
       for (const node of items) {
-        stmt.run({
-          id:        node.id,
-          name:      node.name,
-          kind:      node.kind,
-          filePath:  node.filePath,
-          text:      node.text,
+        stmt.run(
+          node.id,
+          node.name,
+          node.kind,
+          node.filePath,
+          node.text,
           // Store as packed Float32 bytes — 4× smaller than JSON, no parse overhead
-          embedding: Buffer.from(new Float32Array(node.embedding).buffer),
-        });
+          Buffer.from(new Float32Array(node.embedding).buffer),
+        );
       }
     });
     insertMany(nodes);

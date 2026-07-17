@@ -7,7 +7,7 @@
  * - Dead-letter queue for exhausted retries
  * - Idempotent job submission
  */
-import Database from 'better-sqlite3';
+import { Database, type SqliteDatabase } from '../shared/sqlite.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -36,7 +36,7 @@ const MAX_ATTEMPTS = 3;
 const STUCK_THRESHOLD_MINUTES = 30;
 
 export class JobsDB {
-  private db: Database.Database;
+  private db: SqliteDatabase;
 
   constructor(dbPath: string) {
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });

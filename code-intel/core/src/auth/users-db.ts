@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import { Database, type SqliteDatabase } from '../shared/sqlite.js';
 import bcrypt from 'bcrypt';
 import crypto from 'node:crypto';
 import os from 'node:os';
@@ -40,7 +40,7 @@ export interface OIDCIdentity {
 const BCRYPT_ROUNDS = 12;
 
 export class UsersDB {
-  private db: Database.Database;
+  private db: SqliteDatabase;
 
   constructor(dbPath: string) {
     const dir = path.dirname(dbPath);

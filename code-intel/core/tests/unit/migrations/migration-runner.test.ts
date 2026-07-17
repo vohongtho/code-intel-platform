@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import Database from 'better-sqlite3';
+import { Database } from '../../../src/shared/sqlite.js';
 import { MigrationRunner, CURRENT_SCHEMA_VERSION, migrations } from '../../../src/migrations/migration-runner.js';
 
-function tempDb(): { db: Database.Database; dbPath: string } {
+function tempDb(): { db: Database; dbPath: string } {
   const dbPath = path.join(os.tmpdir(), `migration-test-${Date.now()}.db`);
   const db = new Database(dbPath);
   db.pragma('journal_mode = WAL');

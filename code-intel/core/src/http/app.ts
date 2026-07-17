@@ -16,7 +16,7 @@ import { Bm25Index, getBm25DbPath } from '../search/bm25-index.js';
 import { DbManager, getDbPath, getVectorDbPath } from '../storage/index.js';
 import { loadMetadata } from '../storage/metadata.js';
 import { VectorIndex } from '../search/vector-index.js';
-// VectorIndex now uses better-sqlite3 directly (no DbManager needed)
+// VectorIndex uses the shared SQLite wrapper directly.
 import fs from 'node:fs';
 import { listGroups, loadGroup, saveGroup, deleteGroup, groupExists, addMember, removeMember, loadSyncResult, saveSyncResult } from '../multi-repo/group-registry.js';
 import { syncGroup } from '../multi-repo/group-sync.js';

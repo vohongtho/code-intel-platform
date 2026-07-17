@@ -61,7 +61,7 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 
 ### Requirements
 
-- **Node.js** 22+
+- **Node.js** 22.17+
 - **npm** 10+
 
 ---
@@ -72,7 +72,7 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 npm install -g @vohongtho.infotech/code-intel
 ```
 
-> **Note:** You may see `npm warn ERESOLVE overriding peer dependency` warnings about `tree-sitter`. These are **harmless** — they relate to native Node.js bindings that are not used; the CLI uses `web-tree-sitter` (WASM) exclusively. For a warning-free install, add `--legacy-peer-deps`.
+> **Default secret storage:** the CLI stores secrets in the encrypted `.code-intel/.secrets` file backend. No OS keychain package is required for the default install.
 
 Verify the installation:
 
@@ -96,7 +96,7 @@ cd code-intel-platform
 **2. Install all workspace dependencies**
 
 ```bash
-npm install --legacy-peer-deps
+npm install
 ```
 
 **3. Build all packages** (shared → core → web)
@@ -132,7 +132,7 @@ Use this approach in CI pipelines, Docker images, or any environment where you n
 ```bash
 git clone https://github.com/vohongtho/code-intel-platform.git
 cd code-intel-platform
-npm install --legacy-peer-deps
+npm install
 ```
 
 **2. Build all packages**
@@ -167,7 +167,7 @@ code-intel --version
 ```bash
 git clone https://github.com/vohongtho/code-intel-platform.git && \
   cd code-intel-platform && \
-  npm install --legacy-peer-deps && \
+  npm install && \
   npm run build && \
   npm pack --workspace=code-intel/core && \
   npm install -g vohongtho.infotech-code-intel-*.tgz
@@ -180,7 +180,7 @@ FROM node:22-bookworm-slim
 
 RUN git clone https://github.com/vohongtho/code-intel-platform.git /opt/code-intel && \
     cd /opt/code-intel && \
-    npm install --legacy-peer-deps && \
+    npm install && \
     npm run build && \
     npm pack --workspace=code-intel/core && \
     npm install -g vohongtho.infotech-code-intel-*.tgz && \
@@ -731,7 +731,7 @@ Tools tested: `repos`, `search`, `inspect`, `blast_radius`, `routes`, `raw_query
 
 | Workflow | Trigger | Steps |
 |----------|---------|-------|
-| **test.yml** | PRs | `npm ci --legacy-peer-deps` + `npm test` |
+| **test.yml** | PRs | `npm ci` + `npm test` |
 | **quality.yml** | PRs | Typecheck shared + core + web |
 | **publish.yml** | `v*.*.*` tags | Typecheck → Test → npm audit → License gate → Build core → Build web → `npm publish --provenance` → Build + push multi-arch Docker (linux/amd64 + linux/arm64) → Trivy CRITICAL CVE gate → cosign keyless sign → GitHub Release with CycloneDX SBOM → Discord notification |
 

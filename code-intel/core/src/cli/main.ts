@@ -64,7 +64,7 @@ import { getOrCreateUsersDB } from '../auth/users-db.js';
 import type { Role } from '../auth/users-db.js';
 import { BackupService } from '../backup/backup-service.js';
 import { MigrationRunner, CURRENT_SCHEMA_VERSION } from '../migrations/migration-runner.js';
-import Database from 'better-sqlite3';
+import { Database } from '../shared/sqlite.js';
 import {
   loadSecrets,
   saveSecrets,
@@ -759,7 +759,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
       const { getVectorDbPath } = await import('../storage/index.js');
       const { VectorIndex } = await import('../search/vector-index.js');
       const vdbPath = getVectorDbPath(workspaceRoot);
-      // Remove stale vector DB file before writing (better-sqlite3 uses a single file)
+      // Remove stale vector DB file before writing.
       const staleVdb = [vdbPath, `${vdbPath}-shm`, `${vdbPath}-wal`];
       for (const f of staleVdb) {
         try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* ignore */ }
@@ -3706,7 +3706,7 @@ secretsCmd
 
 secretsCmd
   .command('backend')
-  .description('Show which secret storage backend is active (keytar OS keychain or encrypted file)')
+  .description('Show which secret storage backend is active (encrypted file)')
   .action(async () => {
     const { backend } = await keychainBackend();
     console.log(`\n  Backend: ${backend}\n`);
@@ -4646,7 +4646,6 @@ program
       const dbPath = getDbPath(repo.path);
       let dbOk = false;
       try {
-        const Database = (await import('better-sqlite3')).default;
         const db = new Database(dbPath, { readonly: true, fileMustExist: true });
         db.prepare('SELECT COUNT(*) FROM nodes').get();
         db.close();
@@ -4665,8 +4664,7 @@ program
       const vdbPath = getVectorDbPath(repo.path);
       if (fs.existsSync(vdbPath)) {
         try {
-          const Database2 = (await import('better-sqlite3')).default;
-          const vdb = new Database2(vdbPath, { readonly: true, fileMustExist: true });
+          const vdb = new Database(vdbPath, { readonly: true, fileMustExist: true });
           vdb.prepare('SELECT COUNT(*) FROM vectors').get();
           vdb.close();
         } catch {

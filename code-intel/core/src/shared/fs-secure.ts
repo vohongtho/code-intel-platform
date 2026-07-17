@@ -57,7 +57,7 @@ export function secureWriteFile(file: string, data: string | Buffer): void {
 
 /**
  * Apply 0o600 to every `*.db` file inside `dir` (non-recursive). Used after
- * subsystems that wrap better-sqlite3 to seal the freshly-created DB files.
+ * subsystems that open SQLite files to seal the freshly-created DB files.
  */
 export function tightenDbFiles(dir: string): void {
   if (process.platform === 'win32') return;
