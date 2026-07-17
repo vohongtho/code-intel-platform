@@ -25,16 +25,15 @@
     "bench:mcp": "node eval/run-mcp-bench.mjs --json"
   },
   "devDependencies": {
-    "@typescript-eslint/eslint-plugin": "^8.62.1",
-    "@typescript-eslint/parser": "^8.62.1",
+    "@typescript-eslint/eslint-plugin": "^8.64.0",
+    "@typescript-eslint/parser": "^8.64.0",
     "esbuild": "^0.28.1",
-    "eslint": "^10.6.0",
-    "prettier": "^3.9.4",
+    "eslint": "^10.7.0",
+    "prettier": "^3.9.5",
     "typescript": "^6.0.3",
-    "vite": "^8.1.3"
+    "vite": "^8.1.5"
   },
   "dependencies": {
-    "@ladybugdb/core": "^0.18.0",
     "@vohongtho.infotech/code-intel": "^1.0.4"
   },
   "overrides": {
