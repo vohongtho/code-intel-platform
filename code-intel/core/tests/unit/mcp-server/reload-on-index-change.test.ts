@@ -132,4 +132,39 @@ describe('MCP graph reload on index change', () => {
       assert.doesNotMatch(row.filePath ?? '', /repo-b\.ts$/);
     }
   });
+
+  it('repo-scoped vulnerability_scan uses the requested repo graph', async () => {
+    const repoA = mkRepo('mcp-vuln-a');
+    const repoB = mkRepo('mcp-vuln-b');
+    saveRegistry([
+      { name: 'repo-a', path: repoA, indexedAt: new Date().toISOString(), stats: { nodes: 1, edges: 0, files: 1 } },
+      { name: 'repo-b', path: repoB, indexedAt: new Date().toISOString(), stats: { nodes: 1, edges: 0, files: 1 } },
+    ]);
+
+    await writeRepoIndex(repoA, {
+      indexVersion: 'a1',
+      nodes: [
+        { id: 'a-query', name: 'db.query', filePath: 'src/repo-a.ts' },
+        { id: 'a-caller', name: 'handler', filePath: 'src/repo-a.ts' },
+      ],
+      edges: [{ id: 'a-edge', source: 'a-caller', target: 'a-query', kind: 'calls' }],
+    });
+    await writeRepoIndex(repoB, {
+      indexVersion: 'b1',
+      nodes: [
+        { id: 'b-query', name: 'db.query', filePath: 'src/repo-b.ts' },
+        { id: 'b-caller', name: 'handler', filePath: 'src/repo-b.ts' },
+      ],
+      edges: [{ id: 'b-edge', source: 'b-caller', target: 'b-query', kind: 'calls' }],
+    });
+
+    const result = await dispatchTool('vulnerability_scan', { repo: 'repo-b' }, createKnowledgeGraph(), 'repo-a', repoA);
+    const payload = JSON.parse(result.content[0]?.text ?? '{}') as { findings?: Array<{ file?: string }> };
+    assert.ok(Array.isArray(payload.findings));
+    assert.ok(payload.findings!.length >= 1);
+    for (const finding of payload.findings!) {
+      assert.match(finding.file ?? '', /repo-b\.ts$/);
+      assert.doesNotMatch(finding.file ?? '', /repo-a\.ts$/);
+    }
+  });
 });
