@@ -9,6 +9,8 @@ const MAX_MULTILINE = 6;
 
 interface Stmt { text: string; line: number }
 
+type AliasMap = Map<string, string>;
+
 function isJsLike(lang: Language): boolean {
   return lang === Language.TypeScript || lang === Language.JavaScript;
 }
@@ -89,6 +91,24 @@ function isStaticExpression(expr: string): boolean {
   return /^(true|false|null|undefined|None|\d+(?:\.\d+)?)$/.test(trimmed);
 }
 
+function buildLiteralAliases(lines: string[]): AliasMap {
+  const aliases: AliasMap = new Map();
+  for (const s of statements(lines)) {
+    const match = s.text.match(/^(?:[\w<[\]>,:&*?]+\s+)*(?:const|let|var|final|val)?\s*([A-Za-z_]\w*)\s*(?::=|=)\s*(.+?);?$/);
+    if (!match) continue;
+    const [, name, rawExpr] = match;
+    const expr = rawExpr.trim();
+    if (isStaticExpression(expr)) aliases.set(name, expr);
+  }
+  return aliases;
+}
+
+function resolveAlias(expr: string, aliases: AliasMap): string {
+  const trimmed = expr.trim();
+  if (/^[A-Za-z_]\w*$/.test(trimmed)) return aliases.get(trimmed) ?? trimmed;
+  return trimmed;
+}
+
 function buildFlags(source: string, type: SecuritySignalType, argList: string[] = []): SecuritySignal['flags'] {
   const joined = [source, ...argList].filter(Boolean).join(', ');
   const firstArg = argList[0]?.trim() ?? source.trim();
@@ -137,46 +157,56 @@ function makeSignal(
   };
 }
 
-function pushCall(signals: SecuritySignal[], s: Stmt, lang: Language, type: SecuritySignalType, sink: string, argsText: string, sourceIndex = 0): void {
-  const args = splitTopLevelArgs(argsText);
-  const source = args[sourceIndex] ?? args[0] ?? argsText;
+function pushCall(signals: SecuritySignal[], s: Stmt, lang: Language, type: SecuritySignalType, sink: string, argsText: string, aliases: AliasMap, sourceIndex = 0): void {
+  const args = splitTopLevelArgs(argsText).map((arg) => resolveAlias(arg, aliases));
+  const source = args[sourceIndex] ?? args[0] ?? resolveAlias(argsText, aliases);
   signals.push(makeSignal(type, sink, s.line, s.text, source, args, lang));
 }
 
 function extractJsSecuritySignals(lines: string[], lang: Language): SecuritySignal[] {
   const signals: SecuritySignal[] = [];
+  const aliases = buildLiteralAliases(lines);
   for (const s of statements(lines)) {
     let match: RegExpMatchArray | null;
 
     match = s.text.match(/\b(fetch|got|axios(?:\.(?:get|post|put|delete|request))?|https?\.(?:request|get))\s*\((.+)\)/);
-    if (match) pushCall(signals, s, lang, 'SSRF', match[1], match[2]);
+    if (match) pushCall(signals, s, lang, 'SSRF', match[1], match[2], aliases);
 
     match = s.text.match(/\b((?:db|database|connection|pool|sequelize|prisma|knex)\.(?:query|execute|raw|\$queryRaw|\$executeRaw)|\w+\.query|\w+\.execute)\s*\((.+)\)/);
-    if (match) pushCall(signals, s, lang, 'SQL_INJECTION', match[1], match[2]);
+    if (match) pushCall(signals, s, lang, 'SQL_INJECTION', match[1], match[2], aliases);
 
     match = s.text.match(/\b(?:fs\.)?(readFile|writeFile|createReadStream|createWriteStream|readFileSync|writeFileSync|open)\s*\((.+)\)/);
-    if (match) pushCall(signals, s, lang, 'PATH_TRAVERSAL', match[1].startsWith('fs.') ? match[1] : `fs.${match[1]}`, match[2]);
+    if (match) pushCall(signals, s, lang, 'PATH_TRAVERSAL', match[1].startsWith('fs.') ? match[1] : `fs.${match[1]}`, match[2], aliases);
 
-    match = s.text.match(/\b(?:child_process\.)?(exec|execSync|execFile|execFileSync|spawn|spawnSync|eval)\s*\((.+)\)/);
+    match = s.text.match(/\bchild_process\.(exec|execSync|execFile|execFileSync|spawn|spawnSync|eval)\s*\((.+)\)/)
+      ?? s.text.match(/(?:^|[^\w$.])(exec|execSync|execFile|execFileSync|spawn|spawnSync|eval)\s*\((.+)\)/);
     if (match) {
-      const args = splitTopLevelArgs(match[2]);
-      const source = match[1].startsWith('spawn') || match[1].startsWith('execFile')
+      const sink = match[1];
+      const argsText = match[2];
+      const args = splitTopLevelArgs(argsText).map((arg) => resolveAlias(arg, aliases));
+      const source = sink.startsWith('spawn') || sink.startsWith('execFile')
         ? [args[0], args[1]].filter(Boolean).join(', ')
-        : (args[0] ?? match[2]);
-      signals.push(makeSignal('COMMAND_INJECTION', match[1], s.line, s.text, source, args, lang));
+        : (args[0] ?? resolveAlias(argsText, aliases));
+      signals.push(makeSignal('COMMAND_INJECTION', sink, s.line, s.text, source, args, lang));
     }
 
     match = s.text.match(/\.[ ]*(innerHTML|outerHTML)\s*=\s*(.+?);?$/) ?? s.text.match(/\.[ ]*(innerHTML|outerHTML)\s*=\s*$/);
-    if (match?.[2]) signals.push(makeSignal('XSS', match[1], s.line, s.text, match[2], [match[2]], lang));
+    if (match?.[2]) {
+      const source = resolveAlias(match[2], aliases);
+      signals.push(makeSignal('XSS', match[1], s.line, s.text, source, [source], lang));
+    }
 
     match = s.text.match(/\.(insertAdjacentHTML|html|append)\s*\((.+)\)/);
-    if (match) pushCall(signals, s, lang, 'XSS', match[1], match[2], 1);
+    if (match) pushCall(signals, s, lang, 'XSS', match[1], match[2], aliases, 1);
 
     match = s.text.match(/document\.write\s*\((.+)\)/);
-    if (match) pushCall(signals, s, lang, 'XSS', 'document.write', match[1]);
+    if (match) pushCall(signals, s, lang, 'XSS', 'document.write', match[1], aliases);
 
     match = s.text.match(/dangerouslySetInnerHTML\s*:\s*\{\s*__html\s*:\s*(.+?)\s*}\s*/);
-    if (match) signals.push(makeSignal('XSS', 'dangerouslySetInnerHTML', s.line, s.text, match[1], [match[1]], lang));
+    if (match) {
+      const source = resolveAlias(match[1], aliases);
+      signals.push(makeSignal('XSS', 'dangerouslySetInnerHTML', s.line, s.text, source, [source], lang));
+    }
   }
   return signals;
 }
@@ -184,23 +214,24 @@ function extractJsSecuritySignals(lines: string[], lang: Language): SecuritySign
 function extractPythonSecuritySignals(lines: string[]): SecuritySignal[] {
   const lang = Language.Python;
   const signals: SecuritySignal[] = [];
+  const aliases = buildLiteralAliases(lines);
   for (const s of statements(lines)) {
     let match: RegExpMatchArray | null;
 
     match = s.text.match(/\b(requests\.(?:get|post|put|delete|request)|urllib\.request\.urlopen|httpx\.(?:get|post|request))\s*\((.+)\)/);
-    if (match) pushCall(signals, s, lang, 'SSRF', match[1], match[2]);
+    if (match) pushCall(signals, s, lang, 'SSRF', match[1], match[2], aliases);
 
     match = s.text.match(/\b(\w+\.execute|\w+\.executemany|db\.session\.execute)\s*\((.+)\)/);
-    if (match) pushCall(signals, s, lang, 'SQL_INJECTION', match[1], match[2]);
+    if (match) pushCall(signals, s, lang, 'SQL_INJECTION', match[1], match[2], aliases);
 
     match = s.text.match(/\b(open|send_file|Path)\s*\((.+)\)/);
-    if (match) pushCall(signals, s, lang, 'PATH_TRAVERSAL', match[1], match[2]);
+    if (match) pushCall(signals, s, lang, 'PATH_TRAVERSAL', match[1], match[2], aliases);
 
     match = s.text.match(/\b(os\.system|os\.popen|subprocess\.(?:run|call|Popen|check_output))\s*\((.+)\)/);
-    if (match) pushCall(signals, s, lang, 'COMMAND_INJECTION', match[1], match[2]);
+    if (match) pushCall(signals, s, lang, 'COMMAND_INJECTION', match[1], match[2], aliases);
 
     match = s.text.match(/\b(render_template_string|Markup)\s*\((.+)\)/);
-    if (match) pushCall(signals, s, lang, 'XSS', match[1], match[2]);
+    if (match) pushCall(signals, s, lang, 'XSS', match[1], match[2], aliases);
   }
   return signals;
 }
@@ -208,23 +239,24 @@ function extractPythonSecuritySignals(lines: string[]): SecuritySignal[] {
 function extractGenericSecuritySignals(lines: string[], lang: Language): SecuritySignal[] {
   // ponytail: regex-backed fixture tier; upgrade to AST rules when false positives need per-language precision.
   const signals: SecuritySignal[] = [];
+  const aliases = buildLiteralAliases(lines);
   for (const s of statements(lines)) {
     let match: RegExpMatchArray | null;
 
     match = s.text.match(/\b([\w:$>.-]*(?:Get|Post|get|post|request|openConnection|dataTask|readText|file_get_contents|curl_exec|curl_easy_setopt|Client\.Do|URLSession|HttpClient)[\w:$>.-]*)\s*\((.+)\)/);
-    if (match) pushCall(signals, s, lang, 'SSRF', match[1], match[2]);
+    if (match) pushCall(signals, s, lang, 'SSRF', match[1], match[2], aliases);
 
     match = s.text.match(/\b([\w:$>.-]*(?:query|Query|execute|Execute|exec|Exec|prepare|rawQuery|executeQuery)[\w:$>.-]*)\s*\((.+)\)/);
-    if (match) pushCall(signals, s, lang, 'SQL_INJECTION', match[1], match[2]);
+    if (match) pushCall(signals, s, lang, 'SQL_INJECTION', match[1], match[2], aliases);
 
     match = s.text.match(/\b([\w:$>.-]*(?:open|Open|fopen|readFile|read_to_string|readAsString|Paths\.get|path\.Join|File\.read|File\.Open)[\w:$>.-]*)\s*\((.+)\)/);
-    if (match) pushCall(signals, s, lang, 'PATH_TRAVERSAL', match[1], match[2]);
+    if (match) pushCall(signals, s, lang, 'PATH_TRAVERSAL', match[1], match[2], aliases);
 
-    match = s.text.match(/\b([\w:$>.-]*(?:system|popen|exec|shell_exec|Command::new|ProcessBuilder|cmd\.Run|Runtime\.getRuntime\(\)\.exec|Process\.run)[\w:$>.-]*)\s*\((.+)\)/);
-    if (match) pushCall(signals, s, lang, 'COMMAND_INJECTION', match[1], match[2]);
+    match = s.text.match(/\b(exec\.Command(?:Context)?|system|popen|shell_exec|Command::new|ProcessBuilder|cmd\.Run|Runtime\.getRuntime\(\)\.exec|Process\.run)\s*\((.+)\)/);
+    if (match) pushCall(signals, s, lang, 'COMMAND_INJECTION', match[1], match[2], aliases);
 
     match = s.text.match(/\b([\w:$>.-]*(?:innerHTML|Html\.Raw|template\.HTML|html_safe|Response\.Write|respondText|echo|print|printf|write!|write)[\w:$>.-]*)\s*\(?(.+)\)?/);
-    if (match) pushCall(signals, s, lang, 'XSS', match[1], match[2]);
+    if (match) pushCall(signals, s, lang, 'XSS', match[1], match[2], aliases);
   }
   return signals;
 }

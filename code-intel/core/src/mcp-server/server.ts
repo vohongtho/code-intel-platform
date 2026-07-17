@@ -475,6 +475,7 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
           type: 'object' as const,
           properties: {
             scope: { type: 'string', description: 'Limit scan to files under this path prefix' },
+            repo: { type: 'string', description: 'Scope scan to a specific indexed repo name (optional; defaults to current repo)' },
             types: {
               type: 'array',
               items: { type: 'string', enum: ['SQL_INJECTION', 'XSS', 'SSRF', 'PATH_TRAVERSAL', 'COMMAND_INJECTION'] },
