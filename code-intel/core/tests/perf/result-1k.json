@@ -1,14 +1,14 @@
 {
   "label": "1k",
   "targetSize": 1000,
-  "analyzeMs": 328,
-  "serveMs": 1,
-  "heapMB": 58,
-  "bm25Qps": 5618,
-  "httpP95": 50,
+  "analyzeMs": 521,
+  "serveMs": 2,
+  "heapMB": 44,
+  "bm25Qps": 100000,
+  "httpP95": 108,
   "httpErrorRatePct": 0,
   "nodes": 7021,
   "edges": 11000,
   "files": 1000,
-  "measuredAt": "2026-07-04T15:18:03.931Z"
+  "measuredAt": "2026-07-18T10:16:45.221Z"
 }

@@ -94,7 +94,7 @@ function isStaticExpression(expr: string): boolean {
 function buildLiteralAliases(lines: string[]): AliasMap {
   const aliases: AliasMap = new Map();
   for (const s of statements(lines)) {
-    const match = s.text.match(/^(?:[\w<[\]>,:&*?]+\s+)*(?:const|let|var|final|val)?\s*([A-Za-z_]\w*)\s*(?::=|=)\s*(.+?);?$/);
+    const match = s.text.match(/^(?:[\w<[\]>,:&*?$]+\s+)*(?:const|let|var|final|val)?\s*(\$?[A-Za-z_]\w*)\s*(?::=|=)\s*(.+?);?$/);
     if (!match) continue;
     const [, name, rawExpr] = match;
     const expr = rawExpr.trim();
@@ -105,7 +105,7 @@ function buildLiteralAliases(lines: string[]): AliasMap {
 
 function resolveAlias(expr: string, aliases: AliasMap): string {
   const trimmed = expr.trim();
-  if (/^[A-Za-z_]\w*$/.test(trimmed)) return aliases.get(trimmed) ?? trimmed;
+  if (/^\$?[A-Za-z_]\w*$/.test(trimmed)) return aliases.get(trimmed) ?? trimmed;
   return trimmed;
 }
 
@@ -116,20 +116,23 @@ function buildFlags(source: string, type: SecuritySignalType, argList: string[] 
   const hasSanitizer = SANITIZER_RE.test(joined)
     || (type === 'SSRF' && URL_ALLOWLIST_RE.test(joined))
     || (type === 'PATH_TRAVERSAL' && PATH_SAFE_RE.test(joined));
+  const hasInterpolation = /\$\{|#\{|[fF]['"].*\{/.test(source);
   const isParameterized = type === 'SQL_INJECTION'
     && !/[fF]?['"`].*\{/.test(firstArg)
-    && !/\$\{/.test(firstArg)
+    && !/\$\{|#\{/.test(firstArg)
     && (/\?/.test(firstArg) || /\$\d+/.test(firstArg) || /%s/.test(firstArg))
     && secondArg.length > 0;
-  const isDynamic = !isStaticExpression(source)
-    && !argList.every(isStaticExpression)
-    || /\$\{|\+|[fF]['"].*\{|%\s/.test(source);
+  const isDynamic = (!isStaticExpression(source) && !argList.every(isStaticExpression))
+    || /\+|%\s/.test(source)
+    || hasInterpolation;
+
+  const hasTemplateInterpolation = hasInterpolation;
 
   return {
     hasUserInput: USER_INPUT_RE.test(joined),
     isDynamic,
     hasStringConcat: /\+/.test(source),
-    hasTemplateInterpolation: /\$\{|[fF]['"].*\{/.test(source),
+    hasTemplateInterpolation,
     isParameterized,
     hasSanitizer,
   };
@@ -243,11 +246,14 @@ function extractGenericSecuritySignals(lines: string[], lang: Language): Securit
   for (const s of statements(lines)) {
     let match: RegExpMatchArray | null;
 
-    match = s.text.match(/\b([\w:$>.-]*(?:Get|Post|get|post|request|openConnection|dataTask|readText|file_get_contents|curl_exec|curl_easy_setopt|Client\.Do|URLSession|HttpClient)[\w:$>.-]*)\s*\((.+)\)/);
+    match = s.text.match(/\b([\w:$>.-]*(?:Get|Post|get|post|request|openConnection|dataTask|readText|file_get_contents|curl_exec|curl_easy_setopt|Client\.Do|URLSession|HttpClient|Net::HTTP\.get)[\w:$>.-]*)\s*\((.+)\)/);
     if (match) pushCall(signals, s, lang, 'SSRF', match[1], match[2], aliases);
 
-    match = s.text.match(/\b([\w:$>.-]*(?:query|Query|execute|Execute|exec|Exec|prepare|rawQuery|executeQuery)[\w:$>.-]*)\s*\((.+)\)/);
-    if (match) pushCall(signals, s, lang, 'SQL_INJECTION', match[1], match[2], aliases);
+    match = s.text.match(/\b([\w:$>.-]*(?:query|Query|execute|Execute|exec|Exec|prepare|rawQuery|executeQuery)[\w:$>.-]*|\$?\w+->query|mysql_query)\s*\((.+)\)/);
+    if (match) {
+      const sourceIndex = match[1] === 'mysql_query' ? 1 : 0;
+      pushCall(signals, s, lang, 'SQL_INJECTION', match[1], match[2], aliases, sourceIndex);
+    }
 
     match = s.text.match(/\b([\w:$>.-]*(?:open|Open|fopen|readFile|read_to_string|readAsString|Paths\.get|path\.Join|File\.read|File\.Open)[\w:$>.-]*)\s*\((.+)\)/);
     if (match) pushCall(signals, s, lang, 'PATH_TRAVERSAL', match[1], match[2], aliases);
