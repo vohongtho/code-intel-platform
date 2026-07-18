@@ -8,8 +8,8 @@ COPY code-intel/shared/package.json ./code-intel/shared/
 COPY code-intel/core/package.json ./code-intel/core/
 COPY code-intel/web/package.json ./code-intel/web/
 
-# Install with legacy-peer-deps (matching CI)
-RUN npm install --legacy-peer-deps
+# Install workspace dependencies
+RUN npm install
 
 # Copy full source
 COPY . .

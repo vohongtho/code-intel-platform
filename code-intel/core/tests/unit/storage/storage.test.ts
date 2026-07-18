@@ -3,7 +3,16 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { saveMetadata, loadMetadata, getDbPath, getVectorDbPath } from '../../../src/storage/metadata.js';
+import {
+  saveMetadata,
+  loadMetadata,
+  getDbPath,
+  getVectorDbPath,
+  computeIndexVersion,
+  getAgentTargetsPath,
+  loadAgentTargets,
+  saveAgentTargets,
+} from '../../../src/storage/metadata.js';
 
 // ── Metadata ──────────────────────────────────────────────────────────────────
 
@@ -72,6 +81,56 @@ describe('Metadata', () => {
       fs.writeFileSync(path.join(codeIntelDir, 'meta.json'), 'INVALID JSON {{{');
       const result = loadMetadata(dir);
       assert.equal(result, null);
+    } finally {
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+  });
+
+  it('computeIndexVersion — changes when published index files change', () => {
+    const dir = path.join(os.tmpdir(), `meta-version-${Date.now()}`);
+    try {
+      const codeIntelDir = path.join(dir, '.code-intel');
+      fs.mkdirSync(codeIntelDir, { recursive: true });
+      fs.writeFileSync(path.join(codeIntelDir, 'graph.db'), 'a');
+      const first = computeIndexVersion(dir, 1, '2025-01-01T00:00:00.000Z');
+      fs.writeFileSync(path.join(codeIntelDir, 'graph.db'), 'ab');
+      const second = computeIndexVersion(dir, 1, '2025-01-01T00:00:00.000Z');
+      assert.notEqual(first, second);
+    } finally {
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+  });
+
+  it('getAgentTargetsPath — returns path inside .code-intel', () => {
+    const targetsPath = getAgentTargetsPath('/my/repo');
+    assert.ok(targetsPath.endsWith('agent-targets.json'));
+    assert.ok(targetsPath.includes('.code-intel'));
+    assert.ok(targetsPath.startsWith('/my/repo'));
+  });
+
+  it('saveAgentTargets + loadAgentTargets — round-trip', () => {
+    const selection = {
+      selectedAgents: ['cursor'],
+      targets: {
+        cursor: {
+          agentId: 'cursor',
+          label: 'Cursor',
+          path: '.cursor/rules/code-intel.mdc',
+          format: 'markdown' as const,
+          builtin: true,
+        },
+      },
+    };
+    saveAgentTargets(repoDir, selection);
+    const loaded = loadAgentTargets(repoDir);
+    assert.deepEqual(loaded, selection);
+  });
+
+  it('loadAgentTargets — returns null for missing file', () => {
+    const dir = path.join(os.tmpdir(), `agent-targets-missing-${Date.now()}`);
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      assert.equal(loadAgentTargets(dir), null);
     } finally {
       try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
     }

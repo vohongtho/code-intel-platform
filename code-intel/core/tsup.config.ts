@@ -13,6 +13,7 @@ export default defineConfig([
         declaration: true,
         declarationMap: true,
         incremental: false,
+        ignoreDeprecations: '6.0',
       },
     },
     sourcemap: true,

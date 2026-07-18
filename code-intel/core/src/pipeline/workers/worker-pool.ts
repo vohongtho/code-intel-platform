@@ -4,6 +4,7 @@
  * - N workers (default: os.cpus().length - 1; PARSE_WORKERS env override)
  * - Work queue with backpressure: pauses when queue > 200
  * - Worker crash → restart + re-queue pending work
+ * - Optional hung-task timeout → terminate worker + retry pending work
  * - Progress events forwarded to caller via onProgress callback
  */
 import { Worker } from 'node:worker_threads';
@@ -16,6 +17,7 @@ export interface WorkerPoolOptions {
   workerCount?: number;          // default: os.cpus().length - 1 (min 1)
   maxQueueSize?: number;         // backpressure threshold (default 200)
   maxTaskRetries?: number;       // max retries on worker crash (default 2)
+  taskTimeoutMs?: number;        // terminate + retry hung task after N ms (default: off)
 }
 
 interface PendingTask<I, O> {
@@ -29,6 +31,9 @@ interface PendingTask<I, O> {
 interface ActiveWorker<I, O> {
   worker: Worker;
   currentTask: PendingTask<I, O> | null;
+  timeoutHandle: ReturnType<typeof setTimeout> | null;
+  taskStartedAt: number | null;
+  failureReason: string | null;
 }
 
 export class WorkerPool<I extends { taskId: string }, O extends { taskId: string; error?: string }> extends EventEmitter {
@@ -38,6 +43,7 @@ export class WorkerPool<I extends { taskId: string }, O extends { taskId: string
   private readonly workerCount: number;
   private readonly maxQueueSize: number;
   private readonly maxTaskRetries: number;
+  private readonly taskTimeoutMs: number;
   private closed = false;
 
   constructor(opts: WorkerPoolOptions) {
@@ -46,6 +52,7 @@ export class WorkerPool<I extends { taskId: string }, O extends { taskId: string
     this.workerCount = opts.workerCount ?? Math.max(1, os.cpus().length - 1);
     this.maxQueueSize = opts.maxQueueSize ?? 200;
     this.maxTaskRetries = opts.maxTaskRetries ?? 2;
+    this.taskTimeoutMs = Math.max(0, opts.taskTimeoutMs ?? 0);
   }
 
   /** Spawn all workers. Must be called before run(). */
@@ -56,12 +63,16 @@ export class WorkerPool<I extends { taskId: string }, O extends { taskId: string
   }
 
   private spawnWorker(): void {
-    const aw: ActiveWorker<I, O> = { worker: null!, currentTask: null };
+    const aw: ActiveWorker<I, O> = {
+      worker: null!, currentTask: null, timeoutHandle: null, taskStartedAt: null, failureReason: null,
+    };
     const w = new Worker(this.workerScript);
 
     w.on('message', (result: O) => {
+      this.clearWorkerTimer(aw);
       const task = aw.currentTask;
       aw.currentTask = null;
+      aw.failureReason = null;
       if (task) {
         if (result.error) {
           task.reject(new Error(result.error));
@@ -74,38 +85,65 @@ export class WorkerPool<I extends { taskId: string }, O extends { taskId: string
     });
 
     w.on('error', (err) => {
-      Logger.warn(`[WorkerPool] worker error: ${err.message}`);
-      const task = aw.currentTask;
-      aw.currentTask = null;
-
-      // Re-spawn replacement worker
-      const idx = this.workers.indexOf(aw);
-      if (idx >= 0) this.workers.splice(idx, 1);
-      if (!this.closed) this.spawnWorker();
-
-      // Re-queue the task that was in flight (up to maxTaskRetries)
-      if (task) {
-        task.retries = (task.retries ?? 0) + 1;
-        if (task.retries <= this.maxTaskRetries) {
-          Logger.info(`[WorkerPool] re-queuing task ${task.id} after worker crash (retry ${task.retries})`);
-          this.queue.unshift(task);
-          this.drainQueue();
-        } else {
-          Logger.warn(`[WorkerPool] task ${task.id} exceeded max retries (${this.maxTaskRetries}), rejecting`);
-          task.reject(new Error(`Worker crashed after ${this.maxTaskRetries} retries`));
-        }
-      }
+      this.failWorker(aw, `worker error: ${err.message}`);
     });
 
     w.on('exit', (code) => {
-      if (code !== 0 && !this.closed) {
-        Logger.warn(`[WorkerPool] worker exited with code ${code}`);
+      this.clearWorkerTimer(aw);
+      if (this.closed) return;
+      if (aw.failureReason !== null) return;
+      if (code !== 0) {
+        this.failWorker(aw, `worker exited with code ${code}`);
       }
     });
 
     aw.worker = w;
     this.workers.push(aw);
     this.dequeue(aw);
+  }
+
+  private failWorker(aw: ActiveWorker<I, O>, reason: string): void {
+    if (this.closed) return;
+    if (aw.failureReason !== null) return;
+    this.clearWorkerTimer(aw);
+    aw.failureReason = reason;
+    Logger.warn(`[WorkerPool] ${reason}`);
+    const task = aw.currentTask;
+    aw.currentTask = null;
+
+    const idx = this.workers.indexOf(aw);
+    if (idx >= 0) this.workers.splice(idx, 1);
+    try { void aw.worker.terminate(); } catch { /* ignore */ }
+    if (!this.closed) this.spawnWorker();
+
+    if (task) this.requeueOrReject(task, reason);
+  }
+
+  private requeueOrReject(task: PendingTask<I, O>, reason: string): void {
+    task.retries = (task.retries ?? 0) + 1;
+    if (task.retries <= this.maxTaskRetries) {
+      Logger.info(`[WorkerPool] re-queuing task ${task.id} after ${reason} (retry ${task.retries})`);
+      this.queue.unshift(task);
+      this.drainQueue();
+      return;
+    }
+    Logger.warn(`[WorkerPool] task ${task.id} exceeded max retries (${this.maxTaskRetries}), rejecting`);
+    task.reject(new Error(`${reason} after ${this.maxTaskRetries} retries`));
+  }
+
+  private clearWorkerTimer(aw: ActiveWorker<I, O>): void {
+    if (aw.timeoutHandle) clearTimeout(aw.timeoutHandle);
+    aw.timeoutHandle = null;
+    aw.taskStartedAt = null;
+  }
+
+  private armWorkerTimer(aw: ActiveWorker<I, O>, task: PendingTask<I, O>): void {
+    if (this.taskTimeoutMs <= 0) return;
+    aw.taskStartedAt = Date.now();
+    aw.timeoutHandle = setTimeout(() => {
+      const elapsed = aw.taskStartedAt ? Date.now() - aw.taskStartedAt : this.taskTimeoutMs;
+      this.failWorker(aw, `worker task timeout after ${elapsed}ms (task ${task.id})`);
+    }, this.taskTimeoutMs);
   }
 
   /** Submit a task. Resolves with the worker result or rejects on error. */
@@ -135,6 +173,7 @@ export class WorkerPool<I extends { taskId: string }, O extends { taskId: string
     if (this.queue.length === 0 || aw.currentTask !== null) return;
     const task = this.queue.shift()!;
     aw.currentTask = task;
+    this.armWorkerTimer(aw, task);
     aw.worker.postMessage(task.input);
   }
 
@@ -144,6 +183,7 @@ export class WorkerPool<I extends { taskId: string }, O extends { taskId: string
   /** Terminate all workers gracefully. */
   async close(): Promise<void> {
     this.closed = true;
+    for (const aw of this.workers) this.clearWorkerTimer(aw);
     await Promise.all(this.workers.map((aw) => aw.worker.terminate()));
     this.workers = [];
   }

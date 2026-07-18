@@ -3,6 +3,8 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
+import { createInterface } from 'node:readline/promises';
+import { searchableMultiSelect } from './searchable-multi-select.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -33,9 +35,9 @@ import { startHttpServer } from '../http/app.js';
 import { startMcpStdio } from '../mcp-server/server.js';
 import { textSearch } from '../search/text-search.js';
 import type { PipelineContext } from '../pipeline/types.js';
-import { saveMetadata, loadMetadata, getDbPath } from '../storage/metadata.js';
-import { writeSkillFiles } from './skill-writer.js';
+import { saveMetadata, loadMetadata, getDbPath, loadAgentTargets, saveAgentTargets, computeIndexVersion, type AgentTargetConfig, type AgentTargetSelection, type AgentTargetFormat } from '../storage/metadata.js';
 import { writeContextFiles } from './context-writer.js';
+import { AGENT_OPTIONS, isValidRepoRelativeTargetPath, resolveBuiltinTarget } from './agent-targets.js';
 import { upsertRepo, loadRegistry, removeRepo } from '../storage/repo-registry.js';
 import { DbManager, loadGraphToDB, removeNodesForFile } from '../storage/index.js';
 import {
@@ -61,9 +63,8 @@ import { detectWorkspace } from '../multi-repo/workspace-detector.js';
 import { getOrCreateUsersDB } from '../auth/users-db.js';
 import type { Role } from '../auth/users-db.js';
 import { BackupService } from '../backup/backup-service.js';
-import { v4 as uuidv4 } from 'uuid';
 import { MigrationRunner, CURRENT_SCHEMA_VERSION } from '../migrations/migration-runner.js';
-import Database from 'better-sqlite3';
+import { Database } from '../shared/sqlite.js';
 import {
   loadSecrets,
   saveSecrets,
@@ -200,10 +201,9 @@ program
   │  analyze                                                                                                           │
   │    code-intel analyze [path]                Parse source code and build the knowledge graph                        │
   │    code-intel analyze --force               Discard the existing index and perform a full re-analysis             │
-  │    code-intel analyze --skills              Emit per-cluster SKILL.md files under .claude/skills/code-intel/      │
   │    code-intel analyze --embeddings          Build a vector index for semantic (natural-language) search           │
   │    code-intel analyze --skip-embeddings     Omit embedding generation for a significantly faster run             │
-  │    code-intel analyze --skip-agents-md      Preserve any hand-edited content in AGENTS.md / CLAUDE.md            │
+  │    code-intel analyze --skip-agents-md      Skip writing agent-targeted context files                           │
   │    code-intel analyze --skip-git            Allow analysis of directories that are not Git repositories           │
   │    code-intel analyze --verbose             Print every file skipped due to an unsupported parser                 │
   │                                                                                                                    │
@@ -258,22 +258,114 @@ function ensureGitignore(workspaceRoot: string, silent: boolean): void {
     }
 
     // Check if already present (with or without trailing slash)
-    const lines = existing.split('\n').map((l) => l.trim());
+    const lines = existing.split(/\r?\n/).map((l) => l.trim());
     if (lines.includes('.code-intel/') || lines.includes('.code-intel')) {
-      return; // already present — nothing to do
+      return;
     }
 
-    // Append entry (with a leading newline if the file doesn't end with one)
-    const suffix = existing.length > 0 && !existing.endsWith('\n') ? '\n' : '';
-    fs.appendFileSync(gitignorePath, `${suffix}${entry}\n`, 'utf-8');
+    const next = existing.trimEnd() === ''
+      ? `${entry}\n`
+      : `${existing.trimEnd()}\n${entry}\n`;
 
+    fs.writeFileSync(gitignorePath, next, 'utf-8');
     Logger.info('.gitignore updated: added .code-intel/');
     if (!silent) {
       console.log(`  ✓ .gitignore: added .code-intel/`);
     }
   } catch (err) {
-    Logger.warn(`.gitignore update failed: ${err instanceof Error ? err.message : err}`);
+    Logger.warn(`Failed to update .gitignore: ${err instanceof Error ? err.message : err}`);
   }
+}
+
+function isInteractiveSession(): boolean {
+  return Boolean(process.stdin.isTTY && process.stdout.isTTY && !('CI' in process.env));
+}
+
+function sanitizeRepoRelativePath(input: string): string {
+  return path.normalize(input.trim()).replace(/\\/g, '/');
+}
+
+async function promptForAgentTargets(workspaceRoot: string): Promise<AgentTargetSelection | null> {
+  if (!isInteractiveSession()) return null;
+
+  const selectedAgents = await searchableMultiSelect({
+    message: `Select coding agents for this repo (${AGENT_OPTIONS.length} available)`,
+    pageSize: 15,
+    choices: AGENT_OPTIONS.map((agent) => ({
+      name: agent.label,
+      value: agent.id,
+      description: agent.builtinTarget ? agent.builtinTarget.path : 'custom path required',
+    })),
+    validate: (selected: string[]) => selected.length > 0 || 'Select at least one agent',
+  });
+
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const targets: Record<string, AgentTargetConfig> = {};
+    for (const agentId of selectedAgents) {
+      const option = AGENT_OPTIONS.find((agent) => agent.id === agentId);
+      if (!option) continue;
+      const builtinTarget = resolveBuiltinTarget(option.id);
+      if (builtinTarget) {
+        targets[option.id] = builtinTarget;
+        continue;
+      }
+
+      let targetPath = '';
+      while (!isValidRepoRelativeTargetPath(targetPath)) {
+        targetPath = (await rl.question(`  Repo-relative instruction file path for ${option.label}: `)).trim();
+        if (!isValidRepoRelativeTargetPath(targetPath)) {
+          console.log('  Enter a repo-relative path inside this repository.');
+        }
+      }
+
+      let format: AgentTargetFormat | '' = '';
+      while (!format) {
+        const formatAnswer = (await rl.question(`  Format for ${option.label} [markdown/json/text] (default: markdown): `)).trim().toLowerCase();
+        if (formatAnswer === '' || formatAnswer === 'markdown') format = 'markdown';
+        else if (formatAnswer === 'json') format = 'json';
+        else if (formatAnswer === 'text') format = 'text';
+        else console.log('  Enter markdown, json, or text.');
+      }
+
+      targets[option.id] = {
+        agentId: option.id,
+        label: option.label,
+        path: sanitizeRepoRelativePath(targetPath),
+        format,
+        builtin: false,
+      };
+    }
+
+    return {
+      selectedAgents,
+      targets,
+    };
+  } finally {
+    rl.close();
+  }
+}
+
+async function getOrCreateAgentTargets(workspaceRoot: string, silent = false): Promise<AgentTargetConfig[]> {
+  const existing = loadAgentTargets(workspaceRoot);
+  if (existing) {
+    return existing.selectedAgents
+      .map((agentId) => existing.targets[agentId])
+      .filter((target): target is AgentTargetConfig => Boolean(target));
+  }
+
+  const created = await promptForAgentTargets(workspaceRoot);
+  if (created) {
+    saveAgentTargets(workspaceRoot, created);
+    if (!silent) {
+      console.log(`  ✓ Agent targets saved: ${path.relative(workspaceRoot, path.join(workspaceRoot, '.code-intel', 'agent-targets.json'))}`);
+    }
+    return created.selectedAgents
+      .map((agentId) => created.targets[agentId])
+      .filter((target): target is AgentTargetConfig => Boolean(target));
+  }
+
+  return [];
 }
 
 async function analyzeWorkspace(targetPath: string, options?: {
@@ -281,7 +373,6 @@ async function analyzeWorkspace(targetPath: string, options?: {
   force?: boolean;
   incremental?: boolean;
   parallel?: boolean;
-  skills?: boolean;
   skipEmbeddings?: boolean;
   skipAgentsMd?: boolean;
   skipGit?: boolean;
@@ -583,23 +674,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
 
   // Get current commit hash for git-based incremental on the next run
   const currentCommitHash = getCurrentCommitHash(workspaceRoot) ?? undefined;
-
-  // Save metadata (bump indexVersion on every successful analysis)
   const repoName = path.basename(workspaceRoot);
-  const indexVersion = uuidv4();
-  saveMetadata(workspaceRoot, {
-    indexedAt: new Date().toISOString(),
-    indexVersion,
-    commitHash: currentCommitHash,
-    lastAnalyzedMtimes: mergedMtimes,
-    parser: context.parserUsed ?? 'regex',
-    stats: {
-      nodes: graph.size.nodes,
-      edges: graph.size.edges,
-      files: context.filePaths.length,
-      duration: result.totalDuration,
-    },
-  });
 
   upsertRepo({
     name: repoName,
@@ -613,6 +688,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
   });
 
   // Persist graph to LadybugDB — atomic swap: write to graph.db.new then rename
+  let graphPersisted = false;
   startSpinner('Persisting graph to DB');
   try {
     const dbPath = getDbPath(workspaceRoot);
@@ -650,6 +726,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
     }
     // Rename main db (may be a file or a directory depending on LadybugDB version)
     fs.renameSync(dbPathNew, dbPath);
+    graphPersisted = true;
     stopSpinner();
     Logger.info(`DB persisted: ${nodeCount} nodes, ${edgeCount} edges`);
     if (!options?.silent) {
@@ -682,7 +759,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
       const { getVectorDbPath } = await import('../storage/index.js');
       const { VectorIndex } = await import('../search/vector-index.js');
       const vdbPath = getVectorDbPath(workspaceRoot);
-      // Remove stale vector DB file before writing (better-sqlite3 uses a single file)
+      // Remove stale vector DB file before writing.
       const staleVdb = [vdbPath, `${vdbPath}-shm`, `${vdbPath}-wal`];
       for (const f of staleVdb) {
         try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* ignore */ }
@@ -711,39 +788,41 @@ async function analyzeWorkspace(targetPath: string, options?: {
     console.log('  Embeddings: skipped (use --embeddings to enable)');
   }
 
-  // Generate .claude/skills/code-intel/ skill files (always, unless --skills was set to false)
-  const doSkills = options?.skills !== false;
-  let skillSummaries: { name: string; label: string; symbolCount: number; fileCount: number }[] = [];
-  if (doSkills) {
-    startSpinner('Generating skill files');
-    try {
-      const { skills } = await writeSkillFiles(graph, workspaceRoot, repoName);
-      skillSummaries = skills;
-      stopSpinner();
-      Logger.info(`Skills generated: ${skills.length}`);
-      if (!options?.silent && skills.length > 0) {
-        console.log(`  ✓ Skills: ${skills.length} generated → .claude/skills/code-intel/`);
-      }
-    } catch (err) {
-      stopSpinner();
-      Logger.warn(`Skills generation failed: ${err instanceof Error ? err.message : err}`);
-    }
+  // Publish metadata last so MCP never reloads a half-written index.
+  if (graphPersisted) {
+    const indexedAt = new Date().toISOString();
+    const schemaVersion = CURRENT_SCHEMA_VERSION;
+    saveMetadata(workspaceRoot, {
+      indexedAt,
+      schemaVersion,
+      indexVersion: computeIndexVersion(workspaceRoot, schemaVersion, indexedAt),
+      commitHash: currentCommitHash,
+      lastAnalyzedMtimes: mergedMtimes,
+      parser: context.parserUsed ?? 'regex',
+      stats: {
+        nodes: graph.size.nodes,
+        edges: graph.size.edges,
+        files: context.filePaths.length,
+        duration: result.totalDuration,
+      },
+    });
   }
 
-  // Write AGENTS.md + CLAUDE.md context blocks
+  // Write selected context files
   if (!options?.skipAgentsMd) {
     startSpinner('Writing context files');
     try {
+      const agentTargets = await getOrCreateAgentTargets(workspaceRoot, options?.silent ?? false);
       writeContextFiles(workspaceRoot, repoName, {
         nodes: graph.size.nodes,
         edges: graph.size.edges,
         files: context.filePaths.length,
         duration: result.totalDuration,
-      }, skillSummaries);
+      }, agentTargets);
       stopSpinner();
-      Logger.info('Context files written: AGENTS.md + CLAUDE.md');
+      Logger.info(`Context files written: ${agentTargets.length} target(s)`);
       if (!options?.silent) {
-        console.log(`  ✓ Context: AGENTS.md + CLAUDE.md updated`);
+        console.log(`  ✓ Context: ${agentTargets.length} selected target(s) updated`);
       }
     } catch (err) {
       stopSpinner();
@@ -1643,10 +1722,9 @@ program
   .option('--force',                   'Force full re-index, ignoring cached data')
   .option('--incremental',             'Only re-parse files changed since last analysis (git diff or mtime)')
   .option('--parallel',                'Use worker threads for parse + resolve phases (faster on multi-core)')
-  .option('--skills',                  'Generate .claude/skills/ SKILL.md files from detected clusters')
   .option('--embeddings',              'Build vector embeddings for semantic search (slower, recommended)')
   .option('--skip-embeddings',         'Skip embedding generation (faster, text-search only)')
-  .option('--skip-agents-md',          'Preserve any custom edits inside AGENTS.md / CLAUDE.md')
+  .option('--skip-agents-md',          'Skip writing agent-targeted context files')
   .option('--skip-git',                'Allow indexing directories that are not Git repositories')
   .option('--verbose',                 'Log every file skipped due to missing parser support')
   .option('--summarize',               'Generate AI summaries for function/class/method/interface nodes (opt-in)')
@@ -1663,7 +1741,7 @@ program
   .addHelpText('after', `
   Parses your source code with tree-sitter, builds a Knowledge Graph of
   symbols and their relationships, persists it to .code-intel/graph.db,
-  and auto-generates AGENTS.md + CLAUDE.md context blocks.
+  and auto-generates selected agent context blocks when this repo has saved agent targets.
 
   Examples:
     $ code-intel analyze                        Index current directory
@@ -1672,9 +1750,8 @@ program
     $ code-intel analyze --incremental          Only re-parse changed files (fast)
     $ code-intel analyze --parallel             Use worker threads for faster indexing
     $ code-intel analyze --embeddings           Enable semantic (vector) search
-    $ code-intel analyze --skills               Generate .claude/skills/ files
     $ code-intel analyze --skip-embeddings      Skip vectors for a faster run
-    $ code-intel analyze --skip-agents-md       Preserve your custom AGENTS.md edits
+    $ code-intel analyze --skip-agents-md       Skip writing agent-targeted context files
     $ code-intel analyze --skip-git             Index a non-Git folder
     $ code-intel analyze --verbose              Show files skipped by the parser
     $ code-intel analyze --summarize            Generate AI summaries (uses Ollama by default)
@@ -1687,7 +1764,6 @@ program
     force?: boolean;
     incremental?: boolean;
     parallel?: boolean;
-    skills?: boolean;
     skipEmbeddings?: boolean;
     skipAgentsMd?: boolean;
     skipGit?: boolean;
@@ -1732,7 +1808,6 @@ program
       force: opts.force,
       incremental: opts.incremental,
       parallel: opts.parallel,
-      skills: opts.skills,
       skipEmbeddings: opts.skipEmbeddings,
       skipAgentsMd: opts.skipAgentsMd,
       skipGit: opts.skipGit,
@@ -3631,7 +3706,7 @@ secretsCmd
 
 secretsCmd
   .command('backend')
-  .description('Show which secret storage backend is active (keytar OS keychain or encrypted file)')
+  .description('Show which secret storage backend is active (encrypted file)')
   .action(async () => {
     const { backend } = await keychainBackend();
     console.log(`\n  Backend: ${backend}\n`);
@@ -4571,7 +4646,6 @@ program
       const dbPath = getDbPath(repo.path);
       let dbOk = false;
       try {
-        const Database = (await import('better-sqlite3')).default;
         const db = new Database(dbPath, { readonly: true, fileMustExist: true });
         db.prepare('SELECT COUNT(*) FROM nodes').get();
         db.close();
@@ -4590,8 +4664,7 @@ program
       const vdbPath = getVectorDbPath(repo.path);
       if (fs.existsSync(vdbPath)) {
         try {
-          const Database2 = (await import('better-sqlite3')).default;
-          const vdb = new Database2(vdbPath, { readonly: true, fileMustExist: true });
+          const vdb = new Database(vdbPath, { readonly: true, fileMustExist: true });
           vdb.prepare('SELECT COUNT(*) FROM vectors').get();
           vdb.close();
         } catch {

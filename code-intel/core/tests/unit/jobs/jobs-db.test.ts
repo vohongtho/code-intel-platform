@@ -149,8 +149,8 @@ describe('JobsDB — durable job model', () => {
     // directly update the DB to set startedAt to 31 minutes ago
     const pastTime = new Date(Date.now() - 31 * 60 * 1000).toISOString();
     // Access the internal SQLite DB through a fresh connection
-    const Database2 = (await import('better-sqlite3')).default;
-    const raw = new Database2(dbPath);
+    const { Database } = await import('../../../src/shared/sqlite.js');
+    const raw = new Database(dbPath);
     raw.prepare(`UPDATE jobs SET startedAt = ? WHERE id = ?`).run(pastTime, job.id);
     raw.close();
 

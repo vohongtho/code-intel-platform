@@ -2,7 +2,7 @@
  * OpenTelemetry distributed tracing bootstrap.
  *
  * Call `initTracing()` once at process startup — before any imports that
- * you want auto-instrumented (HTTP, DB, etc.).
+ * you want instrumented.
  *
  * Configuration via environment variables:
  *   CODE_INTEL_OTEL_ENABLED     = "true"  (default: false — opt-in)
@@ -14,7 +14,8 @@
  */
 
 import { NodeSDK } from '@opentelemetry/sdk-node';
-import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
+import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
+import { ExpressInstrumentation } from '@opentelemetry/instrumentation-express';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { resourceFromAttributes } from '@opentelemetry/resources';
 import {
@@ -59,10 +60,8 @@ export function initTracing(): void {
     }),
     traceExporter: exporter,
     instrumentations: [
-      getNodeAutoInstrumentations({
-        // Disable noisy file-system instrumentation
-        '@opentelemetry/instrumentation-fs': { enabled: false },
-      }),
+      new HttpInstrumentation(),
+      new ExpressInstrumentation(),
     ],
   });
 

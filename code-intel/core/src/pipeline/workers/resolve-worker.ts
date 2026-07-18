@@ -8,8 +8,9 @@
 import { parentPort, workerData } from 'node:worker_threads';
 import path from 'node:path';
 import { detectLanguage } from '../../shared/index.js';
-import type { CodeEdge, EdgeKind } from '../../shared/index.js';
+import type { CodeEdge, EdgeKind, SecuritySignal } from '../../shared/index.js';
 import { generateEdgeId, generateNodeId } from '../../graph/id-generator.js';
+import { extractSecuritySignals } from '../security-signals.js';
 
 export interface ResolveSnapshot {
   /** filePath (relative) → nodeId, for all symbol nodes */
@@ -34,6 +35,7 @@ export interface ResolveTask {
 export interface ResolveResult {
   taskId: string;
   edges: CodeEdge[];
+  securitySignals?: Record<string, SecuritySignal[]>;
   error?: string;
 }
 
@@ -175,6 +177,7 @@ parentPort.on('message', (task: ResolveTask) => {
     const imports = extractImports(lines, isPython);
     const calls = extractCalls(lines);
     const heritages = extractHeritage(lines);
+    const securitySignals = extractSecuritySignals(lines, lang);
     const localSymbols = fileSymbolIndex[task.relativePath] ?? {};
 
     // Imports
@@ -198,6 +201,13 @@ parentPort.on('message', (task: ResolveTask) => {
         const edgeId = generateEdgeId(task.fileNodeId, targetFileId, 'imports');
         edges.push({ id: edgeId, source: task.fileNodeId, target: targetFileId, kind: 'imports', weight: 0.95, label: cleaned });
       }
+    }
+
+    const localSignals: Record<string, SecuritySignal[]> = {};
+    for (const signal of securitySignals) {
+      const ownerId = task.funcList.length > 0 ? findEnclosingFunction(task.funcList, signal.line) : null;
+      const bucketId = ownerId ?? task.fileNodeId;
+      (localSignals[bucketId] ??= []).push(signal);
     }
 
     // Calls
@@ -229,7 +239,7 @@ parentPort.on('message', (task: ResolveTask) => {
       }
     }
 
-    parentPort!.postMessage({ taskId: task.taskId, edges } as ResolveResult);
+    parentPort!.postMessage({ taskId: task.taskId, edges, securitySignals: localSignals } as ResolveResult);
   } catch (err) {
     parentPort!.postMessage({ taskId: task.taskId, edges: [], error: err instanceof Error ? err.message : String(err) } as ResolveResult);
   }

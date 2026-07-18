@@ -1,7 +1,9 @@
 import path from 'node:path';
 import { detectLanguage } from '../../shared/index.js';
+import type { SecuritySignal } from '../../shared/index.js';
 import type { Phase, PhaseResult, PipelineContext } from '../types.js';
 import { generateNodeId, generateEdgeId } from '../../graph/id-generator.js';
+import { extractSecuritySignals } from '../security-signals.js';
 
 interface ParsedImport {
   rawPath: string;
@@ -93,6 +95,7 @@ export const resolvePhase: Phase = {
       const imports = extractImports(lines, lang === 'python');
       const calls = extractCalls(lines);
       const heritages = extractHeritage(lines);
+      const securitySignals = extractSecuritySignals(lines, lang);
 
       // ── Imports → IMPORTS edges ───────────────────────────────────────────
       for (const imp of imports) {
@@ -147,6 +150,8 @@ export const resolvePhase: Phase = {
       // ── Calls → CALLS edges ───────────────────────────────────────────────
       const localSymbols = fileSymbolIndex.get(relativePath);
       const funcList = fileFunctionIndex.get(relativePath); // sorted by startLine
+
+      attachSecuritySignals(graph, fileNodeId, funcList, securitySignals);
 
       for (const call of calls) {
         // Tier 1: same-file symbol (high confidence)
@@ -382,6 +387,28 @@ function extractHeritage(lines: string[]): ParsedHeritage[] {
   }
 
   return heritages;
+}
+
+function attachSecuritySignals(
+  graph: PipelineContext['graph'],
+  fileNodeId: string,
+  funcs: { id: string; startLine: number; endLine: number | undefined }[] | undefined,
+  signals: SecuritySignal[],
+): void {
+  for (const signal of signals) {
+    const ownerId = funcs ? findEnclosingFunctionFast(funcs, signal.line) : null;
+    const node = graph.getNode(ownerId ?? fileNodeId);
+    if (!node) continue;
+    const metadata = (node.metadata ?? {}) as Record<string, unknown> & { securitySignals?: SecuritySignal[] };
+    const existing = metadata.securitySignals ?? [];
+    const key = `${signal.type}:${signal.sink}:${signal.line}:${signal.source}`;
+    const seen = existing.some((item) => `${item.type}:${item.sink}:${item.line}:${item.source}` === key);
+    if (seen) continue;
+    node.metadata = {
+      ...metadata,
+      securitySignals: [...existing, signal],
+    };
+  }
 }
 
 // ─── Enclosing function lookup (O(log n) binary search on sorted list) ────────

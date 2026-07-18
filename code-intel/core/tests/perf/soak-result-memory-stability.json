@@ -1,69 +1,69 @@
 {
   "scenario": "memory-stability",
-  "measuredAt": "2026-05-03T14:27:05.607Z",
+  "measuredAt": "2026-07-18T10:16:46.125Z",
   "passed": true,
-  "totalGrowth": 7.800000000000004,
-  "growthPerCycle": 0.7800000000000005,
+  "totalGrowth": 4.399999999999999,
+  "growthPerCycle": 0.43999999999999984,
   "heapSamples": [
     {
       "cycle": 0,
-      "before": "36.9",
-      "after": "40.1",
-      "growth": "3.2"
+      "before": "33.1",
+      "after": "32.4",
+      "growth": "-0.7"
     },
     {
       "cycle": 1,
-      "before": "40.1",
-      "after": "42.0",
-      "growth": "1.8"
+      "before": "32.4",
+      "after": "34.6",
+      "growth": "2.2"
     },
     {
       "cycle": 2,
-      "before": "42.0",
-      "after": "43.8",
-      "growth": "1.9"
+      "before": "34.6",
+      "after": "36.9",
+      "growth": "2.3"
     },
     {
       "cycle": 3,
-      "before": "43.8",
-      "after": "37.4",
-      "growth": "-6.4"
+      "before": "36.7",
+      "after": "38.8",
+      "growth": "2.1"
     },
     {
       "cycle": 4,
-      "before": "37.7",
-      "after": "35.8",
-      "growth": "-1.8"
+      "before": "39.0",
+      "after": "40.9",
+      "growth": "1.9"
     },
     {
       "cycle": 5,
-      "before": "35.8",
-      "after": "37.6",
-      "growth": "1.8"
+      "before": "40.9",
+      "after": "43.0",
+      "growth": "2.1"
     },
     {
       "cycle": 6,
-      "before": "37.6",
-      "after": "39.4",
-      "growth": "1.8"
+      "before": "43.0",
+      "after": "45.0",
+      "growth": "2.0"
     },
     {
       "cycle": 7,
-      "before": "39.4",
-      "after": "41.1",
-      "growth": "1.8"
+      "before": "45.0",
+      "after": "33.5",
+      "growth": "-11.5"
     },
     {
       "cycle": 8,
-      "before": "41.1",
-      "after": "42.9",
-      "growth": "1.8"
+      "before": "33.5",
+      "after": "35.5",
+      "growth": "2.0"
     },
     {
       "cycle": 9,
-      "before": "42.9",
-      "after": "44.7",
-      "growth": "1.8"
+      "before": "35.5",
+      "after": "37.5",
+      "growth": "2.0"
     }
   ]
 }

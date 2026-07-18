@@ -25,6 +25,24 @@ describe('OpenAPI parser', () => {
     assert.ok(contracts.some(c => c.name === 'POST /users'));
   });
 
+  it('keeps same-path multi-verb routes distinct via method + path names', async () => {
+    const spec = {
+      openapi: '3.0.0',
+      paths: {
+        '/items': {
+          get: { responses: { '200': {} } },
+          post: { responses: { '200': {} } },
+        },
+      },
+    };
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'openapi-multiverb-'));
+    fs.writeFileSync(path.join(dir, 'openapi.json'), JSON.stringify(spec));
+    const contracts = await parseOpenAPIContracts(dir);
+    assert.ok(contracts.some((c) => c.name === 'GET /items'));
+    assert.ok(contracts.some((c) => c.name === 'POST /items'));
+    assert.equal(contracts.filter((c) => c.path === '/items').length, 2);
+  });
+
   it('all endpoints extracted with correct method + path', async () => {
     const spec = { openapi: '3.0.0', paths: { '/items': { get: {}, post: {}, delete: {} } } };
     const dir = fs.mkdtempSync(path.join(tmpDir, 'openapi2-'));

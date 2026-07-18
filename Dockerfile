@@ -1,7 +1,7 @@
 FROM node:22-alpine AS base
 WORKDIR /app
 
-# Install build dependencies for native modules (better-sqlite3, bcrypt)
+# Install build dependencies for bcrypt
 RUN apk add --no-cache python3 make g++ libc6-compat
 
 # ── Dependencies stage ────────────────────────────────────────────────────────
@@ -10,7 +10,7 @@ COPY package.json package-lock.json ./
 COPY code-intel/shared/package.json ./code-intel/shared/
 COPY code-intel/core/package.json ./code-intel/core/
 COPY code-intel/web/package.json ./code-intel/web/
-RUN npm ci --legacy-peer-deps
+RUN npm ci
 
 # ── Build stage ───────────────────────────────────────────────────────────────
 FROM deps AS builder

@@ -1,0 +1,41 @@
+name: Release Validate
+
+on:
+  push:
+    branches:
+      - 'release/**'
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps --ignore-scripts --include=optional
+
+      - name: Rebuild native modules for tests
+        run: npm rebuild @ladybugdb/core better-sqlite3 @huggingface/transformers --legacy-peer-deps
+
+      - name: Typecheck (shared + core + web)
+        run: npx tsc -b code-intel/shared code-intel/core code-intel/web
+
+      - name: Unit tests
+        run: npm test --workspace=code-intel/core
+
+      - name: npm audit — 0 high/critical CVEs (production deps only)
+        run: npm audit --audit-level=high --omit=dev
+
+      - name: License audit — no GPL-incompatible deps
+        run: |
+          npx --yes license-checker \
+            --production \
+            --excludePrivatePackages \
+            --failOn "GPL-2.0;GPL-3.0;AGPL-1.0;AGPL-3.0;LGPL-2.0;LGPL-2.1;LGPL-3.0;CPAL-1.0" \
+          || (echo "❌ GPL-incompatible license detected — review output above." && exit 1)

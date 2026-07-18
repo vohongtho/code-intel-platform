@@ -6,7 +6,7 @@
  * - DB schema > code schema → refuse to start
  * - Auto-backup before every migration
  */
-import Database from 'better-sqlite3';
+import type { SqliteDatabase } from '../shared/sqlite.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -15,8 +15,8 @@ import crypto from 'node:crypto';
 export interface Migration {
   version: number;
   description: string;
-  up: (db: Database.Database) => void;
-  down: (db: Database.Database) => void;
+  up: (db: SqliteDatabase) => void;
+  down: (db: SqliteDatabase) => void;
 }
 
 export interface MigrationStatus {
@@ -92,9 +92,9 @@ export const CURRENT_SCHEMA_VERSION = migrations[migrations.length - 1]!.version
 // ── Migration runner ──────────────────────────────────────────────────────────
 
 export class MigrationRunner {
-  private db: Database.Database;
+  private db: SqliteDatabase;
 
-  constructor(db: Database.Database) {
+  constructor(db: SqliteDatabase) {
     this.db = db;
     // Ensure schema_versions table exists (bootstraps the migration system itself)
     this.db.exec(`
@@ -220,7 +220,7 @@ export class MigrationRunner {
 
 // ── Convenience function ──────────────────────────────────────────────────────
 
-export function runMigrationsOnDB(db: Database.Database, dryRun = false): number {
+export function runMigrationsOnDB(db: SqliteDatabase, dryRun = false): number {
   const runner = new MigrationRunner(db);
   runner.checkCompatibility();
   return runner.migrateUp(dryRun);

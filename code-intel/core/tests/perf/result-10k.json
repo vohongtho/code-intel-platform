@@ -1,0 +1,14 @@
+{
+  "label": "10k",
+  "targetSize": 10000,
+  "analyzeMs": 2342,
+  "serveMs": 21,
+  "heapMB": 177,
+  "bm25Qps": 12987,
+  "httpP95": 132,
+  "httpErrorRatePct": 0,
+  "nodes": 70201,
+  "edges": 110000,
+  "files": 10000,
+  "measuredAt": "2026-07-04T15:19:33.091Z"
+}

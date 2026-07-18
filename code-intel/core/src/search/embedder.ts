@@ -16,7 +16,13 @@ let pipelineInstance: ((text: string | string[], opts: Record<string, unknown>) 
 
 export async function getEmbedder() {
   if (!pipelineInstance) {
-    const { pipeline } = await import('@huggingface/transformers');
+    let pipeline: (typeof import('@huggingface/transformers'))['pipeline'];
+    try {
+      ({ pipeline } = await import('@huggingface/transformers'));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`Vector embeddings unavailable: install optional dependency @huggingface/transformers (${msg})`);
+    }
     // dtype:'q8' loads the int8-quantized ONNX weights — ~2-4× faster on CPU,
     // negligible quality difference for code-symbol embeddings.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

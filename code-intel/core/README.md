@@ -33,8 +33,8 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 - **Parallel Analysis** — `--parallel` flag runs parse + resolve phases on worker threads for large repos
 - **AI Context Files** — auto-generates `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `.cursor/rules/code-intel.mdc`, `.kiro/steering/code-intel.md`, `.clinerules`, `.windsurfrules`, `.kilocode/rules/code-intel-rules.md`, and `.agents/rules/code-intel-rules.md` after every analysis — supporting Amp, Claude Code, Codex, Copilot, Cursor, Aider, Gemini, Kiro, Trae, Hermes, Factory, OpenCode, Pi, Antigravity, OpenClaw, Cline, Windsurf, Kilo Code, and more
 - **Agent Hook System** _(v1.0.2)_ — `code-intel setup` installs PreToolUse hooks for all major AI agents; when an agent runs `grep MyClass src/`, the `code-intel-hook` binary (~10KB, ~50ms startup) silently rewrites it to `code-intel search "MyClass"` — saving ~3,000 tokens per lookup; supports Claude Code, Cursor, Gemini CLI, GitHub Copilot (VS Code + CLI), OpenCode, OpenClaw; rules files for Cline/Roo Code, Windsurf, Kilo Code, Antigravity, Codex CLI
-- **Skill Files** — generates `.claude/skills/code-intel/` with per-cluster SKILL.md files (hot symbols, entry points, impact guidance) for AI assistants
 - **Repository Groups** — multi-repo / monorepo service tracking with workspace auto-discovery (npm, pnpm, Nx, Turborepo), contract extraction (OpenAPI, GraphQL, Protobuf), type-aware similarity scoring, and cross-repo dependency detection
+  - **OpenAPI note:** contract extraction currently parses **JSON** OpenAPI/Swagger specs. YAML filenames are discovered, but YAML parsing is not implemented in `v1.0.4`.
 - **`.codeintelignore`** — exclude directories from analysis (like `.gitignore` but for code-intel)
 - **Structured Logging** — winston-based logger with daily-rotating log files at `~/.code-intel/logs/`, sensitive-data masking, and configurable log levels
 - **Performance** — parallel batch file I/O, shared file cache (zero double-reads), O(log n) binary-search enclosing-function lookup
@@ -52,6 +52,7 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 - **Pipeline Profiling** _(v1.0)_ — `analyze --profile` writes `.code-intel/profile.json`; per-phase heap memory captured; bottleneck warning if any phase >50% of total; verbose timing table
 - **Load & Soak Tests** _(v1.0)_ — nightly CI load tests (1k/10k fixture repos), weekly soak tests (memory stability, watcher throughput), regression gate: >20% regression fails CI; `tests/perf/baseline.json` committed to repo
 - **Graceful Degradation** _(v1.0)_ — `X-Stale`/`X-Stale-Since` headers on DB outage; LLM-unavailable summarize skip; MCP tool timeout → `{ truncated: true }`; watcher crash recovery; worker crash retry
+  - **Worker note for v1.0.4:** parallel analysis retries worker crashes, but `v1.0.4` does not introduce a new user-facing worker timeout control. Treat long/stalled analysis as runtime investigation, not documented timeout recovery behavior.
 - **Token-Efficient MCP** _(v1.0.1)_ — compact JSON responses (null/undefined stripped); MCP tool defaults tuned for LLM sessions: `search`/`file_symbols`/`list_exports` default 10 results (was 50), `blast_radius`/`pr_impact` default 2 hops (was 5); `suggested_next_tools` opt-in via `CODE_INTEL_SUGGEST_NEXT_TOOLS=true`; ~63% fewer tokens per typical 5-tool session
 - **Context Builder** _(v1.0.1)_ — `src/context/builder.ts` builds structured `[SUMMARY]` / `[LOGIC]` / `[RELATION]` / `[FOCUS CODE]` documents from seed symbols in ≤50% of v1.0.0 token cost; query-intent presets (`code`, `callers`, `architecture`, `auto`); adaptive snippets; cross-block dedup; `code-intel context <symbols...> --show-context`
 - **Enforced Tool Policy in AI Context Files** _(v1.0.1)_ — `AGENTS.md`/`CLAUDE.md`/`copilot-instructions.md`/`.cursor/rules`/`.kiro/steering` now include a `TOOL POLICY: ENFORCED` block forbidding raw `grep`/`find`/`cat` in favour of `code-intel search` → `inspect` → `impact`; saves ~3,000 tokens per cold-file lookup
@@ -62,7 +63,7 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 
 ### Requirements
 
-- **Node.js** 22+
+- **Node.js** 22.17+
 - **npm** 10+
 
 ---
@@ -73,7 +74,15 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 npm install -g @vohongtho.infotech/code-intel
 ```
 
-> **Note:** You may see `npm warn ERESOLVE overriding peer dependency` warnings about `tree-sitter`. These are **harmless** — they relate to native Node.js bindings that are not used; the CLI uses `web-tree-sitter` (WASM) exclusively. For a warning-free install, add `--legacy-peer-deps`.
+> **Default secret storage:** the CLI stores secrets in the encrypted `.code-intel/.secrets` file backend. No OS keychain package is required for the default install.
+>
+> **Upgrade note for v1.0.4:** After upgrading, re-build the local index before comparing results or using `serve`/`status` against old data:
+>
+> ```bash
+> code-intel analyze --force
+> ```
+>
+> This refreshes `.code-intel/graph.db` and `.code-intel/meta.json`. Comparing fresh CLI behavior against stale indexes can look like a regression when it is only old index state.
 
 Verify the installation:
 
@@ -97,7 +106,7 @@ cd code-intel-platform
 **2. Install all workspace dependencies**
 
 ```bash
-npm install --legacy-peer-deps
+npm install
 ```
 
 **3. Build all packages** (shared → core → web)
@@ -133,7 +142,7 @@ Use this approach in CI pipelines, Docker images, or any environment where you n
 ```bash
 git clone https://github.com/vohongtho/code-intel-platform.git
 cd code-intel-platform
-npm install --legacy-peer-deps
+npm install
 ```
 
 **2. Build all packages**
@@ -168,7 +177,7 @@ code-intel --version
 ```bash
 git clone https://github.com/vohongtho/code-intel-platform.git && \
   cd code-intel-platform && \
-  npm install --legacy-peer-deps && \
+  npm install && \
   npm run build && \
   npm pack --workspace=code-intel/core && \
   npm install -g vohongtho.infotech-code-intel-*.tgz
@@ -181,7 +190,7 @@ FROM node:22-bookworm-slim
 
 RUN git clone https://github.com/vohongtho/code-intel-platform.git /opt/code-intel && \
     cd /opt/code-intel && \
-    npm install --legacy-peer-deps && \
+    npm install && \
     npm run build && \
     npm pack --workspace=code-intel/core && \
     npm install -g vohongtho.infotech-code-intel-*.tgz && \
@@ -215,11 +224,10 @@ Then open **http://localhost:4747** in your browser — the Web UI auto-connects
 ### After analysis
 
 `code-intel analyze` automatically generates or updates:
-- **`AGENTS.md`** + **`CLAUDE.md`** — AI context files with stats, CLI reference, and skill links. These files are managed with **surgical precision**:
+- **`AGENTS.md`** + **`CLAUDE.md`** — AI context files with a concise `code-intel` guidance block. These files are managed with **surgical precision**:
   - **File does not exist** → created from a template with a managed block and a clearly marked section for your own notes
   - **File exists with markers** → only the `<!-- code-intel:start -->…<!-- code-intel:end -->` block is updated; all your custom content is preserved untouched
   - **File exists without markers** → the block is appended at the end; existing content is never overwritten
-- **`.claude/skills/code-intel/`** — per-cluster SKILL.md files with hot symbols, entry points, and impact guidance
 
 ### Exclude directories
 
@@ -353,7 +361,6 @@ code-intel-platform/
 │   │       ├── shared/            # Logger (winston, sensitive-data masking, ~/.code-intel/logs/)
 │   │       └── cli/               # Commander CLI (progress bars, spinners)
 │   │           ├── main.ts              # All CLI commands
-│   │           ├── skill-writer.ts      # Generates .claude/skills/code-intel/ SKILL.md files
 │   │           └── context-writer.ts    # Upserts AGENTS.md + CLAUDE.md blocks
 │   │
 │   └── web/                       # React + Sigma.js frontend
@@ -390,7 +397,7 @@ Each phase streams live progress to the CLI via animated `█░` progress bars:
   [parse    ] ████████████████░░░░░░░░░░░░░░  53% (80/151)
 ```
 
-Post-pipeline steps (DB persist, skill files, context files) show a braille spinner:
+Post-pipeline steps (DB persist, context files) show a braille spinner:
 
 ```
   ⠹ Persisting graph to DB…
@@ -428,7 +435,6 @@ code-intel setup                         # Register the MCP server in your edito
 ```bash
 code-intel analyze [path]                # Parse source code and build the knowledge graph
 code-intel analyze --force               # Discard existing index and perform a full re-analysis
-code-intel analyze --skills              # Emit per-cluster SKILL.md files under .claude/skills/code-intel/
 code-intel analyze --embeddings          # Build a vector index for semantic (natural-language) search
 code-intel analyze --skip-embeddings     # Omit embedding generation for a significantly faster run
 code-intel analyze --skip-agents-md      # Preserve any hand-edited content in AGENTS.md / CLAUDE.md
@@ -612,7 +618,7 @@ npm run test
 
 ## 📊 Benchmark / Eval
 
-Measure accuracy of the knowledge graph, skill files, MCP tools, and context file generation:
+Measure accuracy of the knowledge graph, MCP tools, and context file generation:
 
 ```bash
 # Single-language fixture (TypeScript)
@@ -636,7 +642,6 @@ Results are written to `eval/results/`. Each run scores:
 | Search | BM25 keyword search accuracy |
 | Inspect | Symbol detail retrieval |
 | Impact | Blast radius correctness |
-| Skill Files | SKILL.md generation, hot symbols, frontmatter |
 | Context Files | AGENTS.md / CLAUDE.md upsert + idempotency |
 | Status | Index freshness reporting |
 | Clean | Index removal |
@@ -715,7 +720,7 @@ Tools tested: `repos`, `search`, `inspect`, `blast_radius`, `routes`, `raw_query
 
 | Workflow | Trigger | Steps |
 |----------|---------|-------|
-| **test.yml** | PRs | `npm ci --legacy-peer-deps` + `npm test` |
+| **test.yml** | PRs | `npm ci` + `npm test` |
 | **quality.yml** | PRs | Typecheck shared + core + web |
 | **publish.yml** | `v*.*.*` tags | Typecheck → Test → npm audit → License gate → Build core → Build web → `npm publish --provenance` → Build + push multi-arch Docker (linux/amd64 + linux/arm64) → Trivy CRITICAL CVE gate → cosign keyless sign → GitHub Release with CycloneDX SBOM → Discord notification |
 

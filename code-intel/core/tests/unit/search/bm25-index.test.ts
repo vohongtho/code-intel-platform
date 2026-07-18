@@ -89,6 +89,52 @@ describe('Bm25Index', () => {
 
       fs.unlinkSync(dbPath);
     });
+
+    it('returns same cached array for repeated normalized query', () => {
+      const dbPath = tmpDbPath();
+      const graph = createKnowledgeGraph();
+      graph.addNode(makeNode('n1', 'FetchUser', 'function', 'fetch user by id'));
+      graph.addNode(makeNode('n2', 'FetchAccount', 'function', 'fetch account by id'));
+
+      const idx = new Bm25Index(dbPath);
+      idx.build(graph);
+      idx.load();
+
+      const first = idx.search('Fetch-User', 5);
+      const second = idx.search('fetch user', 5);
+      assert.equal(first, second, 'repeated normalized query should hit cache');
+      assert.ok(first.some((r) => r.nodeId === 'n1'));
+
+      fs.unlinkSync(dbPath);
+    });
+
+    it('evicts least recently used cached query when cap exceeded', () => {
+      const dbPath = tmpDbPath();
+      const graph = createKnowledgeGraph();
+      graph.addNode(makeNode('n1', 'FetchUser', 'function', 'fetch user by id'));
+      graph.addNode(makeNode('n2', 'FetchAccount', 'function', 'fetch account by id'));
+      graph.addNode(makeNode('n3', 'FetchOrder', 'function', 'fetch order by id'));
+      for (let i = 0; i < 140; i++) {
+        graph.addNode(makeNode(`u${i}`, `Unique${i}`, 'function', `uniqterm${i} payload`));
+      }
+
+      const idx = new Bm25Index(dbPath);
+      idx.build(graph);
+      idx.load();
+
+      const keep = idx.search('fetch user', 5);
+      const evictedBefore = idx.search('fetch account', 5);
+      for (let i = 0; i < 126; i++) idx.search(`uniqterm${i}`, 5);
+      idx.search('fetch user', 5); // refresh recency
+      idx.search('fetch order', 5); // exceed 128 unique keys total
+      const evictedAfter = idx.search('fetch account', 5);
+      const keptAfter = idx.search('fetch user', 5);
+
+      assert.notEqual(evictedBefore, evictedAfter, 'least recently used entry should be evicted');
+      assert.equal(keep, keptAfter, 'recently used entry should stay cached');
+
+      fs.unlinkSync(dbPath);
+    });
   });
 
   describe('incremental update', () => {
