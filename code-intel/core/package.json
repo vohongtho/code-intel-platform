@@ -1,6 +1,6 @@
 {
   "name": "@vohongtho.infotech/code-intel",
-  "version": "1.0.4.alpha.2",
+  "version": "1.0.4",
   "description": "Static code analysis platform — builds a Knowledge Graph from source code with Web UI, HTTP API, CLI, and MCP server",
   "license": "MIT",
   "type": "module",
@@ -116,7 +116,12 @@
     "tree-sitter-swift": "^0.7.1"
   },
   "overrides": {
-    "onnxruntime-node": "^1.25.1",
+    "onnxruntime-node": {
+      ".": "^1.25.1",
+      "adm-zip": "^0.6.0",
+      "global-agent": "^4.1.3"
+    },
+    "adm-zip": "^0.6.0",
     "node-domexception": "^2.0.2"
   }
 }
