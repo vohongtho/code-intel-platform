@@ -26,10 +26,10 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci --legacy-peer-deps --ignore-scripts
+        run: npm ci --legacy-peer-deps --ignore-scripts --include=optional
 
       - name: Rebuild native modules for tests
-        run: npm rebuild @ladybugdb/core better-sqlite3 --legacy-peer-deps
+        run: npm rebuild @ladybugdb/core better-sqlite3 @huggingface/transformers --legacy-peer-deps
 
       - name: Typecheck (shared + core + web)
         run: npx tsc -b code-intel/shared code-intel/core code-intel/web
