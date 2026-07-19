@@ -1,7 +1,7 @@
 /**
  * Auth module — path coverage tests (Epic 8)
  *
- * Pure unit tests — no DB creation, no bcrypt, no network.
+ * Pure unit tests — no DB creation, no password-hash native addon, no network.
  * Covers branches in middleware.ts and websocket-auth.ts
  * that are not exercised by existing tests.
  */

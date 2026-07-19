@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import crypto from 'node:crypto';
 import { v4 as uuidv4 } from 'uuid';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import type { Role } from './users-db.js';
 import { getOrCreateUsersDB } from './users-db.js';
 import { ErrorCodes } from '../errors/codes.js';

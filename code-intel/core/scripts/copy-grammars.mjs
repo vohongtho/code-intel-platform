@@ -1,8 +1,8 @@
 /**
  * copy-grammars.mjs
  *
- * Copies the dylink.0-format WASM grammars for Swift, Kotlin, and Dart into
- * dist/wasm/ so they are always present relative to the bundled output files.
+ * Copies language WASM grammars into dist/wasm/ so published installs do not
+ * depend on the grammar npm packages being present at runtime.
  *
  * Resolution from the bundled JS:
  *   dist/index.js         → import.meta.url dirname = dist/  → ./wasm/
@@ -21,9 +21,20 @@ const destDir = path.join(__dirname, '..', 'dist', 'wasm');
 const req = createRequire(import.meta.url);
 
 const grammars = [
-  { pkg: 'tree-sitter-swift/tree-sitter-swift.wasm',   dest: 'tree-sitter-swift.wasm' },
+  { pkg: 'tree-sitter-typescript/tree-sitter-typescript.wasm', dest: 'tree-sitter-typescript.wasm' },
+  { pkg: 'tree-sitter-javascript/tree-sitter-javascript.wasm', dest: 'tree-sitter-javascript.wasm' },
+  { pkg: 'tree-sitter-python/tree-sitter-python.wasm', dest: 'tree-sitter-python.wasm' },
+  { pkg: 'tree-sitter-java/tree-sitter-java.wasm', dest: 'tree-sitter-java.wasm' },
+  { pkg: 'tree-sitter-go/tree-sitter-go.wasm', dest: 'tree-sitter-go.wasm' },
+  { pkg: 'tree-sitter-c/tree-sitter-c.wasm', dest: 'tree-sitter-c.wasm' },
+  { pkg: 'tree-sitter-cpp/tree-sitter-cpp.wasm', dest: 'tree-sitter-cpp.wasm' },
+  { pkg: 'tree-sitter-c-sharp/tree-sitter-c_sharp.wasm', dest: 'tree-sitter-c_sharp.wasm' },
+  { pkg: 'tree-sitter-rust/tree-sitter-rust.wasm', dest: 'tree-sitter-rust.wasm' },
+  { pkg: 'tree-sitter-php/tree-sitter-php.wasm', dest: 'tree-sitter-php.wasm' },
+  { pkg: 'tree-sitter-ruby/tree-sitter-ruby.wasm', dest: 'tree-sitter-ruby.wasm' },
+  { pkg: 'tree-sitter-swift/tree-sitter-swift.wasm', dest: 'tree-sitter-swift.wasm' },
   { pkg: 'tree-sitter-kotlin/tree-sitter-kotlin.wasm', dest: 'tree-sitter-kotlin.wasm' },
-  { pkg: 'tree-sitter-dart/tree-sitter-dart.wasm',     dest: 'tree-sitter-dart.wasm' },
+  { pkg: 'tree-sitter-dart/tree-sitter-dart.wasm', dest: 'tree-sitter-dart.wasm' },
 ];
 
 fs.mkdirSync(destDir, { recursive: true });
@@ -55,7 +66,7 @@ for (const { pkg, dest } of grammars) {
 }
 
 if (copied === 0) {
-  console.warn('  ⚠ No grammar WASMs were copied. Swift/Kotlin/Dart will fall back to regex.');
+  console.warn('  ⚠ No grammar WASMs were copied. Tree-sitter parsing will be unavailable.');
 } else {
   console.log(`  ✓ ${copied}/${grammars.length} grammar WASMs ready in dist/wasm/`);
 }

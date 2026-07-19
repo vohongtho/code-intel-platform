@@ -1,5 +1,5 @@
 import { Database, type SqliteDatabase } from '../shared/sqlite.js';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
