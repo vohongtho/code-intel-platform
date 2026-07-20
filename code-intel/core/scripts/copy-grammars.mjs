@@ -35,6 +35,7 @@ const grammars = [
   { pkg: 'tree-sitter-swift/tree-sitter-swift.wasm', dest: 'tree-sitter-swift.wasm' },
   { pkg: 'tree-sitter-kotlin/tree-sitter-kotlin.wasm', dest: 'tree-sitter-kotlin.wasm' },
   { pkg: 'tree-sitter-dart/tree-sitter-dart.wasm', dest: 'tree-sitter-dart.wasm' },
+  { pkg: 'tree-sitter-html/tree-sitter-html.wasm', dest: 'tree-sitter-html.wasm' },
 ];
 
 fs.mkdirSync(destDir, { recursive: true });

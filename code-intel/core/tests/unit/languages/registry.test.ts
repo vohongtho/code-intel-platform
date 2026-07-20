@@ -14,9 +14,9 @@ describe('Language Registry', () => {
     }
   });
 
-  it('should have 14 modules', () => {
+  it('should have 15 modules', () => {
     const all = getAllLanguageModules();
-    assert.equal(all.length, 14);
+    assert.equal(all.length, 15);
   });
 
   it('should have correct import styles', () => {
@@ -24,6 +24,7 @@ describe('Language Registry', () => {
     assert.equal(getLanguageModule(Language.Python).importStyle, 'namespace');
     assert.equal(getLanguageModule(Language.Go).importStyle, 'wildcard');
     assert.equal(getLanguageModule(Language.C).importStyle, 'include');
+    assert.equal(getLanguageModule(Language.HTML).importStyle, 'include');
   });
 
   it('should have correct inheritance strategies', () => {
@@ -31,5 +32,6 @@ describe('Language Registry', () => {
     assert.equal(getLanguageModule(Language.Ruby).inheritanceStrategy, 'mixin-aware');
     assert.equal(getLanguageModule(Language.Rust).inheritanceStrategy, 'none');
     assert.equal(getLanguageModule(Language.Java).inheritanceStrategy, 'depth-first');
+    assert.equal(getLanguageModule(Language.HTML).inheritanceStrategy, 'none');
   });
 });

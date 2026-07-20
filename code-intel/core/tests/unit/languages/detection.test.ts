@@ -25,6 +25,10 @@ describe('Language Detection', () => {
     assert.equal(detectLanguage('main.rs'), Language.Rust);
   });
 
+  it('should detect HTML', () => {
+    assert.equal(detectLanguage('index.html'), Language.HTML);
+  });
+
   it('should return null for unknown extensions', () => {
     assert.equal(detectLanguage('readme.md'), null);
     assert.equal(detectLanguage('data.json'), null);
@@ -35,6 +39,7 @@ describe('Language Detection', () => {
     assert.ok(exts.includes('.ts'));
     assert.ok(exts.includes('.py'));
     assert.ok(exts.includes('.go'));
+    assert.ok(exts.includes('.html'));
     assert.ok(exts.length > 10);
   });
 });

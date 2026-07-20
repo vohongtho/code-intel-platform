@@ -2,15 +2,16 @@
 
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { join, dirname } from 'node:path';
+// path is imported further below as a default import; use that to avoid
+// importing 'node:path' multiple times.
 import { createInterface } from 'node:readline/promises';
 import { searchableMultiSelect } from './searchable-multi-select.js';
 import { AMBIGUOUS_SYMBOL_EXIT_CODE, formatSymbolTarget, resolveSymbolTarget } from './symbol-target.js';
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+const __dirname = path.dirname(__filename);
 // Resolve package.json relative to the built CLI file (dist/cli/main.js → ../../package.json)
-const _pkg = JSON.parse(readFileSync(join(__dirname, '../../package.json'), 'utf-8')) as { version: string };
+const _pkg = JSON.parse(readFileSync(path.join(__dirname, '../../package.json'), 'utf-8')) as { version: string };
 
 import { Command } from 'commander';
 import path from 'node:path';
@@ -108,6 +109,12 @@ import { runRewrite, runClaudeHook } from './hook-rewriter.js';
 //   1. Skip all expensive startup work (OTel, network, filesystem checks)
 //   2. Always exit(0) on errors — a non-zero exit blocks the agent's command
 const IS_HOOK_MODE = process.argv[2] === 'hook';
+const IS_VERSION_ONLY = !IS_HOOK_MODE && process.argv.length === 3 && (process.argv[2] === '--version' || process.argv[2] === '-V');
+
+if (IS_VERSION_ONLY) {
+  process.stdout.write(`${_pkg.version}\n`);
+  process.exit(0);
+}
 
 // Bootstrap OTel tracing if enabled (must be called before any auto-instrumented code).
 // Skipped in hook mode: OTel SDK adds significant startup latency.

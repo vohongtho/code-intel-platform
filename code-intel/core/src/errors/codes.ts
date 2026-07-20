@@ -1,4 +1,4 @@
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 
 export const ErrorCodes = {
@@ -116,6 +116,31 @@ export interface PrerequisiteCheck {
   message: string;
 }
 
+export function parseDfAvailableMB(output: string): number | null {
+  const lines = output.trim().split(/\r?\n/).filter(Boolean);
+  const dataLine = lines.at(-1);
+  if (!dataLine) return null;
+  const parts = dataLine.trim().split(/\s+/);
+  const available = parts[3];
+  if (!available) return null;
+  const availMB = parseInt(available.replace(/M$/i, ''), 10);
+  return Number.isFinite(availMB) ? availMB : null;
+}
+
+export function getAvailableDiskMB(homeDir = os.homedir(), platform = process.platform): number | null {
+  if (platform === 'win32') return null;
+
+  try {
+    const out = execFileSync('df', ['-BM', homeDir], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return parseDfAvailableMB(out);
+  } catch {
+    return null;
+  }
+}
+
 /** Run startup prerequisite checks. Returns list of failed/warning checks only. */
 export function runPrerequisiteChecks(): PrerequisiteCheck[] {
   const results: PrerequisiteCheck[] = [];
@@ -133,7 +158,7 @@ export function runPrerequisiteChecks(): PrerequisiteCheck[] {
 
   // git in PATH
   try {
-    execSync('git --version', { stdio: 'pipe' });
+    execFileSync('git', ['--version'], { stdio: ['ignore', 'pipe', 'pipe'] });
   } catch {
     results.push({
       name: 'git',
@@ -144,19 +169,14 @@ export function runPrerequisiteChecks(): PrerequisiteCheck[] {
   }
 
   // Disk space > 500 MB on home dir
-  try {
-    const out = execSync(`df -BM "${os.homedir()}" 2>/dev/null | tail -1 | awk '{print $4}'`, { encoding: 'utf8' });
-    const availMB = parseInt(out.trim().replace('M', ''), 10);
-    if (Number.isFinite(availMB) && availMB < 500) {
-      results.push({
-        name: 'Disk space',
-        ok: false,
-        level: 'warn',
-        message: `Low disk space: ${availMB} MB available in ${os.homedir()} (500 MB recommended)`,
-      });
-    }
-  } catch {
-    // Ignore — disk check is best-effort
+  const availMB = getAvailableDiskMB();
+  if (availMB !== null && availMB < 500) {
+    results.push({
+      name: 'Disk space',
+      ok: false,
+      level: 'warn',
+      message: `Low disk space: ${availMB} MB available in ${os.homedir()} (500 MB recommended)`,
+    });
   }
 
   return results;

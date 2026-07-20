@@ -13,4 +13,5 @@ export enum Language {
   Ruby = 'ruby',
   Swift = 'swift',
   Dart = 'dart',
+  HTML = 'html',
 }

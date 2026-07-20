@@ -13,6 +13,7 @@ import { kotlinModule } from './modules/kotlin.js';
 import { rubyModule } from './modules/ruby.js';
 import { swiftModule } from './modules/swift.js';
 import { dartModule } from './modules/dart.js';
+import { htmlModule } from './modules/html.js';
 
 const MODULES: Record<Language, LanguageModule> = {
   [Language.TypeScript]: typescriptModule,
@@ -29,6 +30,7 @@ const MODULES: Record<Language, LanguageModule> = {
   [Language.Ruby]: rubyModule,
   [Language.Swift]: swiftModule,
   [Language.Dart]: dartModule,
+  [Language.HTML]: htmlModule,
 };
 
 export function getLanguageModule(lang: Language): LanguageModule {

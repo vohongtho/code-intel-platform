@@ -6,6 +6,20 @@ All notable changes to this project are documented in this file.
 
 ## [1.0.5] — Intent-Aware Search & Symbol Disambiguation
 
+### 🐛 CLI output fixes
+
+- Fixed Windows `code-intel --version` noise where CMD could print `The system cannot find the path specified.` before the version.
+- Replaced the POSIX-only startup disk-space probe with a safer cross-platform path that skips shell-only checks on Windows.
+- Added an early version-only fast path so `code-intel --version` and `code-intel -V` print only the package version without startup hints, prerequisite checks, or update-check side effects.
+- Added regression coverage for quiet version-command output and the Windows-specific startup-check failure mode.
+
+### 🌐 HTML parser support
+
+- Added HTML as a detected source language in shared and core extension detection.
+- Added `tree-sitter-html` to bundled and development WASM grammar resolution paths.
+- Added build-time copying of `tree-sitter-html.wasm` for packaged installs.
+- Added coverage for HTML language detection, grammar validation wiring, and language-registry support.
+
 ### 🔎 Search relevance and performance
 
 - Natural-language symbol search now filters low-value query words and applies deterministic reranking across symbol names, paths, kinds, content, and multi-term coverage.

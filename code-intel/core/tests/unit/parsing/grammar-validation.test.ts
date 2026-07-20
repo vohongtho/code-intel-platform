@@ -18,6 +18,7 @@ import {
   rubyQueries,
   swiftQueries,
   dartQueries,
+  htmlQueries,
 } from '../../../src/parsing/queries/index.js';
 
 const QUERY_BY_LANGUAGE: Record<Language, string> = {
@@ -35,6 +36,7 @@ const QUERY_BY_LANGUAGE: Record<Language, string> = {
   [Language.Ruby]: rubyQueries,
   [Language.Swift]: swiftQueries,
   [Language.Dart]: dartQueries,
+  [Language.HTML]: htmlQueries,
 };
 
 describe('grammar query validation', () => {

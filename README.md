@@ -28,7 +28,7 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 - **Test Coverage Gaps** — `code-intel coverage` lists untested exported symbols sorted by blast radius; `--threshold <pct>` fails CI if below target
 - **Deprecated API Detection** — `code-intel deprecated` finds usages of `@deprecated` JSDoc, `@Deprecated` (Java), `#[deprecated]` (Rust), and built-in Node.js deprecated APIs
 - **CLI** — analyze, serve, watch, query, search, inspect, impact, health commands with animated `█░` progress bars and braille spinners
-- **Multi-language** — TypeScript, JavaScript, Python, Java, Go, C, C++, C#, Rust, PHP, Ruby, Swift, Kotlin, Dart (14 languages via tree-sitter AST)
+- **Multi-language** — TypeScript, JavaScript, Python, Java, Go, C, C++, C#, Rust, PHP, Ruby, Swift, Kotlin, Dart, HTML (15 languages via tree-sitter AST)
 - **Incremental Analysis** — `--incremental` flag re-parses only git-changed/mtime-changed files; 10k-file repo with 3 changes: 288ms
 - **Parallel Analysis** — `--parallel` flag runs parse + resolve phases on worker threads for large repos
 - **AI Context Files** — auto-generates `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `.cursor/rules/code-intel.mdc`, `.kiro/steering/code-intel.md`, `.clinerules`, `.windsurfrules`, `.kilocode/rules/code-intel-rules.md`, and `.agents/rules/code-intel-rules.md` after every analysis — supporting Amp, Claude Code, Codex, Copilot, Cursor, Aider, Gemini, Kiro, Trae, Hermes, Factory, OpenCode, Pi, Antigravity, OpenClaw, Cline, Windsurf, Kilo Code, and more
@@ -115,7 +115,7 @@ npm install
 npm run build
 ```
 
-This runs `tsup` for the core package (outputs to `code-intel/core/dist/`) and `vite` for the web UI (outputs to `code-intel/web/dist/`).
+This runs `tsup` for the core package (outputs to `code-intel/core/dist/`) and `vite` for the web UI (outputs to `code-intel/web/dist/`). The core build also copies bundled tree-sitter WASM grammars, including `tree-sitter-html.wasm`, into `code-intel/core/dist/wasm/` for packaged installs.
 
 **4. Install the built CLI globally**
 

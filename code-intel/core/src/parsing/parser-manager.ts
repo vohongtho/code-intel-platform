@@ -55,6 +55,7 @@ function wasmPath(lang: Language): string | null {
     [Language.Swift]: 'tree-sitter-swift.wasm',
     [Language.Kotlin]: 'tree-sitter-kotlin.wasm',
     [Language.Dart]: 'tree-sitter-dart.wasm',
+    [Language.HTML]: 'tree-sitter-html.wasm',
   };
 
   const DEV_WASM_PACKAGE_MAP: Partial<Record<Language, string>> = {
@@ -72,6 +73,7 @@ function wasmPath(lang: Language): string | null {
     [Language.Swift]: 'tree-sitter-swift/tree-sitter-swift.wasm',
     [Language.Kotlin]: 'tree-sitter-kotlin/tree-sitter-kotlin.wasm',
     [Language.Dart]: 'tree-sitter-dart/tree-sitter-dart.wasm',
+    [Language.HTML]: 'tree-sitter-html/tree-sitter-html.wasm',
   };
 
   const bundled = BUNDLED_WASM_MAP[lang];
