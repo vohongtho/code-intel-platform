@@ -53,36 +53,40 @@ export class VectorIndex {
     if (!this.db) throw new Error('VectorIndex not initialized');
 
     this.db.exec(`DELETE FROM ${EMBED_TABLE}`);
+    this._insertMany(nodes);
+    this.cache = nodes.map((n) => this._toCachedRow(n));
+  }
 
-    const stmt = this.db.prepare(`
-      INSERT INTO ${EMBED_TABLE} (id, name, kind, file_path, text, embedding)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `);
+  async deleteByFilePaths(filePaths: string[]): Promise<number> {
+    if (!this.db) throw new Error('VectorIndex not initialized');
+    if (filePaths.length === 0) return 0;
 
-    // Single transaction for all inserts — dramatically faster than auto-commit
-    const insertMany = this.db.transaction((items: EmbeddedNode[]) => {
-      for (const node of items) {
-        stmt.run(
-          node.id,
-          node.name,
-          node.kind,
-          node.filePath,
-          node.text,
-          // Store as packed Float32 bytes — 4× smaller than JSON, no parse overhead
-          Buffer.from(new Float32Array(node.embedding).buffer),
-        );
-      }
-    });
-    insertMany(nodes);
+    const uniquePaths = [...new Set(filePaths)];
+    const placeholders = uniquePaths.map(() => '?').join(', ');
+    const stmt = this.db.prepare(`DELETE FROM ${EMBED_TABLE} WHERE file_path IN (${placeholders})`);
+    const result = stmt.run(...uniquePaths) as { changes?: number };
 
-    // Populate in-memory cache immediately after building
-    this.cache = nodes.map((n) => ({
-      nodeId:    n.id,
-      name:      n.name,
-      kind:      n.kind,
-      filePath:  n.filePath,
-      embedding: new Float32Array(n.embedding),
-    }));
+    if (this.cache) {
+      const deleted = new Set(uniquePaths);
+      this.cache = this.cache.filter((row) => !deleted.has(row.filePath));
+    }
+
+    return Number(result.changes ?? 0);
+  }
+
+  async upsertIndex(nodes: EmbeddedNode[]): Promise<number> {
+    if (!this.db) throw new Error('VectorIndex not initialized');
+    if (nodes.length === 0) return 0;
+
+    this._insertMany(nodes);
+
+    if (this.cache) {
+      const upsertedIds = new Set(nodes.map((node) => node.id));
+      const preserved = this.cache.filter((row) => !upsertedIds.has(row.nodeId));
+      this.cache = [...preserved, ...nodes.map((n) => this._toCachedRow(n))];
+    }
+
+    return nodes.length;
   }
 
   async search(queryEmbedding: number[], topK = 10): Promise<VectorHit[]> {
@@ -143,6 +147,37 @@ export class VectorIndex {
       filePath:  row.file_path,
       embedding: new Float32Array(row.embedding.buffer, row.embedding.byteOffset, EMBED_DIM),
     }));
+  }
+
+  private _insertMany(items: EmbeddedNode[]): void {
+    const stmt = this.db!.prepare(`
+      INSERT OR REPLACE INTO ${EMBED_TABLE} (id, name, kind, file_path, text, embedding)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+
+    const insertMany = this.db!.transaction((nodes: EmbeddedNode[]) => {
+      for (const node of nodes) {
+        stmt.run(
+          node.id,
+          node.name,
+          node.kind,
+          node.filePath,
+          node.text,
+          Buffer.from(new Float32Array(node.embedding).buffer),
+        );
+      }
+    });
+    insertMany(items);
+  }
+
+  private _toCachedRow(node: EmbeddedNode): CachedRow {
+    return {
+      nodeId:    node.id,
+      name:      node.name,
+      kind:      node.kind,
+      filePath:  node.filePath,
+      embedding: new Float32Array(node.embedding),
+    };
   }
 }
 

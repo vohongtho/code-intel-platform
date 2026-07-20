@@ -759,14 +759,23 @@ async function analyzeWorkspace(targetPath: string, options?: {
       const { getVectorDbPath } = await import('../storage/index.js');
       const { VectorIndex } = await import('../search/vector-index.js');
       const vdbPath = getVectorDbPath(workspaceRoot);
-      // Remove stale vector DB file before writing.
-      const staleVdb = [vdbPath, `${vdbPath}-shm`, `${vdbPath}-wal`];
-      for (const f of staleVdb) {
-        try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* ignore */ }
+      const incrementalEmbeddingPaths = isIncremental && incrementalChangedFiles && incrementalChangedFiles.length > 0
+        ? incrementalChangedFiles.map((f) => path.relative(workspaceRoot, f))
+        : null;
+      const useIncrementalEmbeddings = incrementalEmbeddingPaths !== null;
+
+      if (!useIncrementalEmbeddings) {
+        // Remove stale vector DB file before writing.
+        const staleVdb = [vdbPath, `${vdbPath}-shm`, `${vdbPath}-wal`];
+        for (const f of staleVdb) {
+          try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* ignore */ }
+        }
       }
+
       const idx = new VectorIndex(vdbPath);
       await idx.init();
       const nodes = await embedNodes(graph, {
+        filePaths: incrementalEmbeddingPaths ?? undefined,
         onProgress: (done, total) => {
           if (!options?.silent) {
             stopSpinner();
@@ -776,9 +785,17 @@ async function analyzeWorkspace(targetPath: string, options?: {
         },
       });
       stopSpinner();
-      Logger.info(`Embeddings built: ${nodes.length} vectors`);
-      await idx.buildIndex(nodes);
-      if (!options?.silent) console.log(`  ✓ Embeddings: ${nodes.length} vectors built`);
+
+      if (useIncrementalEmbeddings) {
+        const deleted = await idx.deleteByFilePaths(incrementalEmbeddingPaths);
+        const upserted = await idx.upsertIndex(nodes);
+        Logger.info(`Embeddings updated incrementally: -${deleted}, +${upserted}`);
+        if (!options?.silent) console.log(`  ✓ Embeddings: ${upserted} vectors updated incrementally`);
+      } else {
+        Logger.info(`Embeddings built: ${nodes.length} vectors`);
+        await idx.buildIndex(nodes);
+        if (!options?.silent) console.log(`  ✓ Embeddings: ${nodes.length} vectors built`);
+      }
       idx.close();
     } catch (err) {
       stopSpinner();

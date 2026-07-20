@@ -31,20 +31,32 @@ export async function getEmbedder() {
   return pipelineInstance!;
 }
 
-export async function embedNodes(
+export function collectEmbeddingCandidates(
   graph: KnowledgeGraph,
-  opts: { batchSize?: number; onProgress?: (done: number, total: number) => void } = {},
-): Promise<EmbeddedNode[]> {
-  // Larger batch = fewer forward passes = faster overall
-  const { batchSize = 64, onProgress } = opts;
-
-  // Collect candidates — skip cluster/directory/flow to save time
+  filePaths?: Iterable<string>,
+): { id: string; name: string; kind: string; filePath: string; text: string; embeddingSource: 'summary' | 'code' }[] {
+  const allowedPaths = filePaths ? new Set(filePaths) : null;
   const candidates: { id: string; name: string; kind: string; filePath: string; text: string; embeddingSource: 'summary' | 'code' }[] = [];
+
   for (const node of graph.allNodes()) {
     if (['cluster', 'directory', 'flow'].includes(node.kind)) continue;
+    if (allowedPaths && !allowedPaths.has(node.filePath)) continue;
     const { text, embeddingSource } = buildText(node);
     candidates.push({ id: node.id, name: node.name, kind: node.kind, filePath: node.filePath, text, embeddingSource });
   }
+
+  return candidates;
+}
+
+export async function embedNodes(
+  graph: KnowledgeGraph,
+  opts: { batchSize?: number; onProgress?: (done: number, total: number) => void; filePaths?: Iterable<string> } = {},
+): Promise<EmbeddedNode[]> {
+  // Larger batch = fewer forward passes = faster overall
+  const { batchSize = 64, onProgress, filePaths } = opts;
+
+  // Collect candidates — skip cluster/directory/flow to save time
+  const candidates = collectEmbeddingCandidates(graph, filePaths);
 
   const embedder = await getEmbedder();
   const results: EmbeddedNode[] = [];
