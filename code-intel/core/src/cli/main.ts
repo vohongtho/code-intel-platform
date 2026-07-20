@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { searchableMultiSelect } from './searchable-multi-select.js';
+import { AMBIGUOUS_SYMBOL_EXIT_CODE, formatSymbolTarget, resolveSymbolTarget } from './symbol-target.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -2453,6 +2454,7 @@ program
   .argument('<query>', 'Search query (name, kind, or partial match)')
   .option('-l, --limit <n>', 'Maximum number of results', '20')
   .option('-p, --path <path>', 'Path to the repository (default: current directory)', '.')
+  .option('--json', 'Output machine-readable JSON')
   .addHelpText('after', `
   Runs BM25 text search across all indexed symbols — functions, classes,
   files, routes, interfaces, and more.
@@ -2462,9 +2464,16 @@ program
     $ code-intel search "auth" --limit 10
     $ code-intel search "UserService" --path ./backend
 `)
-  .action(async (query: string, options: { limit: string; path: string }) => {
+  .action(async (query: string, options: { limit: string; path: string; json?: boolean }) => {
     const { graph } = await loadOrAnalyzeWorkspace(options.path);
-    const results = textSearch(graph, query, parseInt(options.limit, 10));
+    const results = textSearch(graph, query, parseInt(options.limit, 10)).map((result) => {
+      const node = graph.getNode(result.nodeId);
+      return { ...result, selector: node ? formatSymbolTarget(node) : undefined };
+    });
+    if (options.json) {
+      console.log(JSON.stringify({ query, results }, null, 2));
+      return;
+    }
     if (results.length === 0) {
       console.log(`\n  No results found for "${query}".\n`);
       return;
@@ -2472,6 +2481,7 @@ program
     console.log(`\n  ${results.length} result(s) for "${query}":\n`);
     for (const r of results) {
       console.log(`  ${r.kind.padEnd(14)} ${r.name.padEnd(32)} ${r.filePath}`);
+      if (r.selector) console.log(`  ${''.padEnd(14)} ${r.selector}`);
     }
     console.log('');
   });
@@ -2480,8 +2490,9 @@ program
 program
   .command('inspect')
   .description('Inspect a symbol — show callers, callees, file location, and export status')
-  .argument('<symbol>', 'Exact symbol name to inspect')
+  .argument('<symbol>', 'Symbol name or qualified selector to inspect')
   .option('-p, --path <path>', 'Path to the repository (default: current directory)', '.')
+  .option('--json', 'Output machine-readable JSON')
   .addHelpText('after', `
   Finds the symbol in the knowledge graph and prints its full connection
   profile: where it lives, who calls it, and what it calls.
@@ -2492,47 +2503,72 @@ program
     $ code-intel inspect runPipeline
     $ code-intel inspect ApiClient --path ./frontend
 `)
-  .action(async (symbol: string, options: { path: string }) => {
+  .action(async (symbol: string, options: { path: string; json?: boolean }) => {
     const { graph } = await loadOrAnalyzeWorkspace(options.path);
-
-    let found = false;
-    for (const node of graph.allNodes()) {
-      if (node.name === symbol) {
-        found = true;
-        console.log(`\n  ◆  ${node.kind}: ${node.name}`);
-        console.log(`     File     : ${node.filePath}:${node.startLine ?? '?'}`);
-        console.log(`     Exported : ${node.exported ?? 'unknown'}`);
-
-        const incoming = [...graph.findEdgesTo(node.id)];
-        const outgoing = [...graph.findEdgesFrom(node.id)];
-        const callers = incoming.filter((e) => e.kind === 'calls');
-        const callees = outgoing.filter((e) => e.kind === 'calls');
-
-        if (callers.length > 0) {
-          console.log(`\n     Callers (${callers.length}):`);
-          for (const c of callers.slice(0, 10)) {
-            const n = graph.getNode(c.source);
-            console.log(`       ←  ${n?.name ?? c.source}  (${n?.filePath})`);
-          }
-          if (callers.length > 10) console.log(`       … and ${callers.length - 10} more`);
-        }
-        if (callees.length > 0) {
-          console.log(`\n     Callees (${callees.length}):`);
-          for (const c of callees.slice(0, 10)) {
-            const n = graph.getNode(c.target);
-            console.log(`       →  ${n?.name ?? c.target}  (${n?.filePath})`);
-          }
-          if (callees.length > 10) console.log(`       … and ${callees.length - 10} more`);
-        }
-        console.log('');
-        break;
+    const resolution = resolveSymbolTarget(graph, symbol);
+    if (resolution.status === 'not-found') {
+      if (options.json) console.log(JSON.stringify({ status: 'not-found', symbol, candidates: [] }, null, 2));
+      else {
+        console.log(`\n  Symbol "${symbol}" not found.`);
+        console.log(`  Try: code-intel search "${symbol}"\n`);
       }
+      return;
+    }
+    if (resolution.status === 'ambiguous') {
+      const candidates = resolution.candidates.map((node) => ({
+        kind: node.kind, name: node.name, filePath: node.filePath,
+        startLine: node.startLine, selector: formatSymbolTarget(node),
+      }));
+      if (options.json) console.log(JSON.stringify({ status: 'ambiguous', symbol, candidates }, null, 2));
+      else {
+        console.error(`\n  Symbol "${symbol}" is ambiguous. Choose a qualified target:\n`);
+        for (const candidate of candidates) {
+          console.error(`  ${candidate.kind.padEnd(14)} ${candidate.name.padEnd(32)} ${candidate.filePath}:${candidate.startLine ?? '?'}`);
+          console.error(`  ${''.padEnd(14)} ${candidate.selector}`);
+        }
+        console.error('');
+      }
+      process.exitCode = AMBIGUOUS_SYMBOL_EXIT_CODE;
+      return;
     }
 
-    if (!found) {
-      console.log(`\n  Symbol "${symbol}" not found.`);
-      console.log(`  Try: code-intel search "${symbol}"\n`);
+    const node = resolution.node;
+    const incoming = [...graph.findEdgesTo(node.id)];
+    const outgoing = [...graph.findEdgesFrom(node.id)];
+    const callers = incoming.filter((e) => e.kind === 'calls');
+    const callees = outgoing.filter((e) => e.kind === 'calls');
+    if (options.json) {
+      console.log(JSON.stringify({
+        status: 'found', symbol: {
+          kind: node.kind, name: node.name, filePath: node.filePath, startLine: node.startLine,
+          exported: node.exported, selector: formatSymbolTarget(node),
+        },
+        callers: callers.map((edge) => graph.getNode(edge.source)).filter(Boolean),
+        callees: callees.map((edge) => graph.getNode(edge.target)).filter(Boolean),
+      }, null, 2));
+      return;
     }
+    console.log(`\n  ◆  ${node.kind}: ${node.name}`);
+    console.log(`     File     : ${node.filePath}:${node.startLine ?? '?'}`);
+    console.log(`     Exported : ${node.exported ?? 'unknown'}`);
+    console.log(`     Selector : ${formatSymbolTarget(node)}`);
+    if (callers.length > 0) {
+      console.log(`\n     Callers (${callers.length}):`);
+      for (const c of callers.slice(0, 10)) {
+        const n = graph.getNode(c.source);
+        console.log(`       ←  ${n?.name ?? c.source}  (${n?.filePath})`);
+      }
+      if (callers.length > 10) console.log(`       … and ${callers.length - 10} more`);
+    }
+    if (callees.length > 0) {
+      console.log(`\n     Callees (${callees.length}):`);
+      for (const c of callees.slice(0, 10)) {
+        const n = graph.getNode(c.target);
+        console.log(`       →  ${n?.name ?? c.target}  (${n?.filePath})`);
+      }
+      if (callees.length > 10) console.log(`       … and ${callees.length - 10} more`);
+    }
+    console.log('');
   });
 
 // ─── 10. impact ──────────────────────────────────────────────────────────────
@@ -2557,15 +2593,23 @@ program
     const { graph } = await loadOrAnalyzeWorkspace(options.path);
     const maxHops = parseInt(options.depth, 10);
 
-    let targetNode = null;
-    for (const node of graph.allNodes()) {
-      if (node.name === symbol) { targetNode = node; break; }
-    }
-    if (!targetNode) {
+    const resolution = resolveSymbolTarget(graph, symbol);
+    if (resolution.status === 'not-found') {
       console.log(`\n  Symbol "${symbol}" not found.`);
       console.log(`  Try: code-intel search "${symbol}"\n`);
       return;
     }
+    if (resolution.status === 'ambiguous') {
+      console.error(`\n  Symbol "${symbol}" is ambiguous. Choose a qualified target:\n`);
+      for (const node of resolution.candidates) {
+        console.error(`  ${node.kind.padEnd(14)} ${node.name.padEnd(32)} ${node.filePath}:${node.startLine ?? '?'}`);
+        console.error(`  ${''.padEnd(14)} ${formatSymbolTarget(node)}`);
+      }
+      console.error('');
+      process.exitCode = AMBIGUOUS_SYMBOL_EXIT_CODE;
+      return;
+    }
+    const targetNode = resolution.node;
 
     const affected = new Set<string>();
     const queue: { id: string; depth: number }[] = [{ id: targetNode.id, depth: 0 }];

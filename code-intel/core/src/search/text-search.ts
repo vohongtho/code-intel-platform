@@ -9,12 +9,48 @@ export interface SearchResult {
   snippet?: string;
 }
 
+const STOP_WORDS = new Set(['a', 'an', 'and', 'for', 'how', 'of', 'the', 'to', 'what', 'where']);
+const TERM_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  portal: ['page'],
+};
+const SEARCH_CACHE_MAX = 100;
+const searchCache = new WeakMap<KnowledgeGraph, Map<string, SearchResult[]>>();
+
+export function clearTextSearchCache(graph?: KnowledgeGraph): void {
+  if (graph) searchCache.delete(graph);
+}
+
+function queryTerms(query: string): string[] {
+  const normalized = query.toLowerCase().match(/[\p{L}\p{N}_-]+/gu) ?? [];
+  const terms = normalized.filter((term) => !STOP_WORDS.has(term));
+  return [...new Set(terms.flatMap((term) => [term, ...(TERM_ALIASES[term] ?? [])]))];
+}
+
+function compareResults(a: SearchResult, b: SearchResult): number {
+  return b.score - a.score
+    || a.name.localeCompare(b.name)
+    || a.filePath.localeCompare(b.filePath)
+    || a.nodeId.localeCompare(b.nodeId);
+}
+
 export function textSearch(
   graph: KnowledgeGraph,
   query: string,
   limit = 20,
 ): SearchResult[] {
-  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const terms = queryTerms(query);
+  if (terms.length === 0) return [];
+
+  const cacheKey = `${graph.size.nodes}:${graph.size.edges}\0${limit}\0${terms.join('\0')}`;
+  let graphCache = searchCache.get(graph);
+  if (!graphCache) {
+    graphCache = new Map();
+    searchCache.set(graph, graphCache);
+  }
+  const cached = graphCache.get(cacheKey);
+  if (cached) return cached.map((result) => ({ ...result }));
+
+  const candidateLimit = Math.max(50, limit * 5);
   const results: SearchResult[] = [];
 
   // Deprioritize test/dist paths
@@ -29,14 +65,20 @@ export function textSearch(
     let score = 0;
     const nameLC = node.name.toLowerCase();
     const pathLC = node.filePath.toLowerCase();
+    const contentLC = node.content?.toLowerCase() ?? '';
+    let coveredTerms = 0;
 
     for (const term of terms) {
-      if (nameLC === term) score += 10;
-      else if (nameLC.startsWith(term)) score += 7;
-      else if (nameLC.includes(term)) score += 5;
-      if (pathLC.includes(term)) score += 2;
-      if (node.content?.toLowerCase().includes(term)) score += 3;
+      let matched = false;
+      if (nameLC === term) { score += 14; matched = true; }
+      else if (nameLC.startsWith(term)) { score += 9; matched = true; }
+      else if (nameLC.includes(term)) { score += 6; matched = true; }
+      if (pathLC.includes(term)) { score += 4; matched = true; }
+      if (contentLC.includes(term)) { score += 2; matched = true; }
+      if (matched) coveredTerms++;
     }
+    // Multi-term coverage is the strongest signal for natural-language intent.
+    if (coveredTerms > 1) score += coveredTerms * coveredTerms * 3;
 
     // Boost source files over compiled/test files
     if (score > 0) {
@@ -55,11 +97,18 @@ export function textSearch(
         score,
         snippet: node.content?.slice(0, 200),
       });
+      if (results.length > candidateLimit * 2) {
+        results.sort(compareResults);
+        results.length = candidateLimit;
+      }
     }
   }
 
-  results.sort((a, b) => b.score - a.score);
-  return results.slice(0, limit);
+  results.sort(compareResults);
+  const ranked = results.slice(0, Math.min(limit, candidateLimit));
+  graphCache.set(cacheKey, ranked);
+  if (graphCache.size > SEARCH_CACHE_MAX) graphCache.delete(graphCache.keys().next().value!);
+  return ranked.map((result) => ({ ...result }));
 }
 
 export function reciprocalRankFusion(

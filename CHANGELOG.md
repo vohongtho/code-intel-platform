@@ -4,6 +4,33 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.0.5] — Intent-Aware Search & Symbol Disambiguation
+
+### 🔎 Search relevance and performance
+
+- Natural-language symbol search now filters low-value query words and applies deterministic reranking across symbol names, paths, kinds, content, and multi-term coverage.
+- Search candidate work is bounded, reducing cost on large repositories while preserving exact-name ranking.
+- Added graph-generation-scoped query caching with automatic invalidation when graph node or edge counts change.
+- Added deterministic tie-breaking for stable result order across repeated searches.
+- Added a 10,003-symbol relevance/performance benchmark with cold `<250ms` and warm cached `<25ms` budgets.
+
+### 🎯 Qualified symbol selection
+
+- Search output now includes copyable qualified selectors for exact follow-up with `inspect` and `impact`.
+- Selectors use `<kind>:<percent-encoded-name>@<path>[:line]`; path separators remain readable, for example `method:login@code-intel/web/src/api/client.ts:84`.
+- `inspect` and `impact` now share deterministic qualified-selector parsing and resolution.
+- Reserved selector characters remain percent-encoded while repository paths stay human-readable.
+
+### ⚠️ Ambiguous symbol handling
+
+- `inspect <symbol>` no longer silently selects the first match when duplicate symbol names exist.
+- Ambiguous results now list ranked candidates with kind, name, repository-relative location, and copyable selector.
+- Ambiguous non-interactive inspection exits with status `2`.
+- Added `--json` output for `search` and `inspect`, including structured ambiguity candidates and selectors.
+- Added unit and CLI integration coverage for natural-language ranking, deterministic ordering, cache invalidation, selector escaping, ambiguous inspection, qualified inspection, and qualified impact analysis.
+
+---
+
 ## [1.0.4] — 2026-07-14 — MCP Freshness, Agent Targeting & Security Scan Expansion
 
 ### 🔄 MCP graph freshness

@@ -485,12 +485,29 @@ code-intel clean --all --force           # Permanently remove all indexed reposi
 ### Exploration
 
 ```bash
-code-intel search <query>                # Execute a BM25 keyword search across all indexed symbols
+code-intel search <query>                # Execute intent-aware symbol search
 code-intel search <query> --limit <n>    # Limit number of results (default: 20)
-code-intel inspect <symbol>              # Show callers, callees, import edges, and source location
-code-intel impact <symbol>               # Compute the transitive blast radius of a change to a symbol
+code-intel search <query> --json         # Include machine-readable qualified selectors
+code-intel inspect <symbol>              # Inspect a unique symbol; lists candidates when ambiguous
+code-intel inspect <selector>            # Inspect an exact qualified result from search/inspect
+code-intel inspect <symbol> --json       # Structured result; ambiguity exits with status 2
+code-intel impact <symbol-or-selector>   # Compute the transitive blast radius of a selected symbol
 code-intel impact <symbol> --depth <n>   # Set maximum traversal depth / hops (default: 5)
 ```
+
+Qualified selectors use `<kind>:<percent-encoded-name>@<path>[:line]`; path separators remain readable. Copy selectors from command output; for example:
+
+```bash
+code-intel search "how to login portal"
+code-intel inspect "login"               # Ambiguous names print ranked selectors
+code-intel inspect "method:login@code-intel/web/src/api/client.ts:84"
+code-intel impact "method:login@code-intel/web/src/api/client.ts:84"
+
+# Relevance/performance regression check (from code-intel/core)
+npm run build && node tests/perf/search-relevance-bench.mjs
+```
+
+The benchmark uses 10,003 symbols. Budgets: cold search `<250ms`; warm cached search `<25ms`.
 
 ### Groups (multi-repo / monorepo service tracking)
 
