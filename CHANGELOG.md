@@ -11,7 +11,8 @@ All notable changes to this project are documented in this file.
 - Fixed Windows `code-intel --version` noise where CMD could print `The system cannot find the path specified.` before the version.
 - Replaced the POSIX-only startup disk-space probe with a safer cross-platform path that skips shell-only checks on Windows.
 - Added an early version-only fast path so `code-intel --version` and `code-intel -V` print only the package version without startup hints, prerequisite checks, or update-check side effects.
-- Added regression coverage for quiet version-command output and the Windows-specific startup-check failure mode.
+- Added a lightweight CLI bootstrap that handles version flags before importing the full app module, reducing version-command startup cost.
+- Added regression coverage for quiet version-command output, bootstrap-vs-app startup behavior, and the Windows-specific startup-check failure mode.
 
 ### 🌐 HTML parser support
 

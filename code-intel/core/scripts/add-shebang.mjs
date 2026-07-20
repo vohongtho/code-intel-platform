@@ -1,4 +1,4 @@
-// Prepend #!/usr/bin/env node shebang to dist/cli/main.js and dist/cli/hook.js after tsup build
+// Prepend #!/usr/bin/env node shebang to executable CLI outputs after tsup build
 import fs from 'node:fs';
 
 for (const f of ['dist/cli/main.js', 'dist/cli/hook.js']) {
