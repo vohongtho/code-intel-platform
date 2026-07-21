@@ -1,5 +1,6 @@
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
 import type { CodeNode } from '../shared/index.js';
+import { classifySearchPath } from '../search/text-search.js';
 
 export const AMBIGUOUS_SYMBOL_EXIT_CODE = 2;
 
@@ -37,8 +38,13 @@ export function parseSymbolTarget(value: string): QualifiedSymbolTarget | null {
 }
 
 function compareCandidates(a: CodeNode, b: CodeNode): number {
-  const testPenalty = (node: CodeNode) => /(^|[/\\])(?:test|tests|spec|__tests__)([/\\]|$)|\.(?:test|spec)\./i.test(node.filePath) ? 1 : 0;
-  return testPenalty(a) - testPenalty(b)
+  const rank = (node: CodeNode) => {
+    const intent = classifySearchPath(node.filePath);
+    if (intent === 'main') return 0;
+    if (intent === 'unknown') return 1;
+    return 2;
+  };
+  return rank(a) - rank(b)
     || a.filePath.localeCompare(b.filePath)
     || (a.startLine ?? 0) - (b.startLine ?? 0)
     || a.kind.localeCompare(b.kind)

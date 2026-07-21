@@ -97,4 +97,14 @@ describe('hybridSearch (Epic 2.2 — Hybrid Search)', () => {
     assert.equal(searchMode, 'bm25');
     assert.ok(Array.isArray(results));
   });
+
+  it('filters unit-test symbols from default results', async () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: 'main', kind: 'function', name: 'login', filePath: 'src/auth.ts', content: 'login auth function' });
+    graph.addNode({ id: 'test', kind: 'function', name: 'login', filePath: 'tests/auth.test.ts', content: 'login auth test' });
+
+    const { results, searchMode } = await hybridSearch(graph, 'login', 10);
+    assert.equal(searchMode, 'bm25');
+    assert.deepEqual(results.map((result) => result.nodeId), ['main']);
+  });
 });

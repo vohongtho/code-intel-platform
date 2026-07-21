@@ -9,6 +9,8 @@ export interface SearchResult {
   snippet?: string;
 }
 
+export type SearchPathIntent = 'main' | 'test' | 'fixture' | 'bench' | 'generated' | 'unknown';
+
 const STOP_WORDS = new Set(['a', 'an', 'and', 'for', 'how', 'of', 'the', 'to', 'what', 'where']);
 const TERM_ALIASES: Readonly<Record<string, readonly string[]>> = {
   portal: ['page'],
@@ -26,7 +28,22 @@ function queryTerms(query: string): string[] {
   return [...new Set(terms.flatMap((term) => [term, ...(TERM_ALIASES[term] ?? [])]))];
 }
 
-function compareResults(a: SearchResult, b: SearchResult): number {
+export function classifySearchPath(filePath: string): SearchPathIntent {
+  const path = filePath.toLowerCase().replaceAll('\\', '/');
+  if (/(^|\/)(?:dist|build|coverage|generated|gen)(\/|$)|\.(?:d\.ts|min\.[^.]+)$/i.test(path)) return 'generated';
+  if (/(^|\/)(?:fixtures?|__fixtures__|mocks?|__mocks__)(\/|$)/i.test(path)) return 'fixture';
+  if (/(^|\/)(?:bench|benches|benchmark|benchmarks|eval)(\/|$)/i.test(path)) return 'bench';
+  if (/(^|\/)(?:test|tests|__tests__|spec|specs)(\/|$)|\.(?:test|spec)\.|(^|\/)(?:test_[^/]+|[^/]+_(?:test|spec))\.[^/]+$/i.test(path)) return 'test';
+  if (/(^|\/)(?:src|lib|app|cmd|pkg|internal)(\/|$)/i.test(path)) return 'main';
+  return 'unknown';
+}
+
+export function isDefaultExcludedSearchPath(filePath: string): boolean {
+  const intent = classifySearchPath(filePath);
+  return intent === 'test' || intent === 'fixture' || intent === 'bench' || intent === 'generated';
+}
+
+export function compareResults(a: SearchResult, b: SearchResult): number {
   return b.score - a.score
     || a.name.localeCompare(b.name)
     || a.filePath.localeCompare(b.filePath)
@@ -53,12 +70,6 @@ export function textSearch(
   const candidateLimit = Math.max(50, limit * 5);
   const results: SearchResult[] = [];
 
-  // Deprioritize test/dist paths
-  const isTestPath = (fp: string) =>
-    fp.includes('test') || fp.includes('spec') || fp.includes('__test');
-  const isDistPath = (fp: string) =>
-    fp.includes('/dist') || fp.includes('\\dist') || fp.includes('.d.ts');
-
   for (const node of graph.allNodes()) {
     if (['directory', 'cluster', 'flow'].includes(node.kind)) continue;
 
@@ -80,15 +91,11 @@ export function textSearch(
     // Multi-term coverage is the strongest signal for natural-language intent.
     if (coveredTerms > 1) score += coveredTerms * coveredTerms * 3;
 
-    // Boost source files over compiled/test files
     if (score > 0) {
-      if (isDistPath(node.filePath)) score -= 8;
-      if (isTestPath(node.filePath)) score -= 4;
-      // Boost by kind relevance
       if (['function', 'class', 'interface', 'method'].includes(node.kind)) score += 1;
     }
 
-    if (score > 0) {
+    if (score > 0 && !isDefaultExcludedSearchPath(node.filePath)) {
       results.push({
         nodeId: node.id,
         name: node.name,

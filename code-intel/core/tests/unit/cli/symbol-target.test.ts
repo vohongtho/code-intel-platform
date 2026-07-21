@@ -22,6 +22,15 @@ describe('qualified symbol targets', () => {
     if (resolution.status === 'ambiguous') assert.equal(resolution.candidates[0].id, 'source');
   });
 
+  it('prefers unknown paths over explicit test paths when no main source exists', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: 'test', kind: 'function', name: 'login', filePath: 'tests/login.test.ts', startLine: 1 });
+    graph.addNode({ id: 'unknown', kind: 'function', name: 'login', filePath: 'login.ts', startLine: 1 });
+    const resolution = resolveSymbolTarget(graph, 'login');
+    assert.equal(resolution.status, 'ambiguous');
+    if (resolution.status === 'ambiguous') assert.equal(resolution.candidates[0].id, 'unknown');
+  });
+
   it('resolves a displayed qualified target exactly', () => {
     const graph = createKnowledgeGraph();
     const selected = { id: 'selected', kind: 'method', name: 'login', filePath: 'src/client.ts', startLine: 2 } as const;

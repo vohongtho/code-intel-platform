@@ -58,10 +58,32 @@ describe('Text Search', () => {
   it('should respect limit', () => {
     const graph = createKnowledgeGraph();
     for (let i = 0; i < 50; i++) {
-      graph.addNode({ id: `n${i}`, kind: 'function', name: `func${i}`, filePath: 'a.ts' });
+      graph.addNode({ id: `n${i}`, kind: 'function', name: `func${i}`, filePath: `src/func${i}.ts` });
     }
     const results = textSearch(graph, 'func', 5);
     assert.equal(results.length, 5);
+  });
+
+  it('excludes test symbols across common language conventions', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: 'src-ts', kind: 'function', name: 'login', filePath: 'src/auth.ts' });
+    graph.addNode({ id: 'test-ts', kind: 'function', name: 'login', filePath: 'tests/auth.test.ts' });
+    graph.addNode({ id: 'test-py', kind: 'function', name: 'login', filePath: 'python/test_auth.py' });
+    graph.addNode({ id: 'test-rs', kind: 'function', name: 'login', filePath: 'rust/login_spec.rs' });
+
+    const results = textSearch(graph, 'login');
+    assert.deepEqual(results.map((result) => result.nodeId), ['src-ts']);
+  });
+
+  it('excludes fixture, eval, and generated symbols from default results', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: 'main', kind: 'function', name: 'searchIndex', filePath: 'src/search/index.ts' });
+    graph.addNode({ id: 'fixture', kind: 'function', name: 'searchIndex', filePath: 'fixtures/search/index.ts' });
+    graph.addNode({ id: 'eval', kind: 'function', name: 'searchIndex', filePath: 'eval/search-index.ts' });
+    graph.addNode({ id: 'generated', kind: 'function', name: 'searchIndex', filePath: 'dist/search/index.d.ts' });
+
+    const results = textSearch(graph, 'searchIndex');
+    assert.deepEqual(results.map((result) => result.nodeId), ['main']);
   });
 });
 

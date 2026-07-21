@@ -133,6 +133,23 @@ describe('MCP graph reload on index change', () => {
     }
   });
 
+  it('repo-scoped MCP search excludes unit-test symbols by default', async () => {
+    const repoPath = mkRepo('mcp-search-tests');
+    saveRegistry([{ name: 'repo-search', path: repoPath, indexedAt: new Date().toISOString(), stats: { nodes: 2, edges: 0, files: 2 } }]);
+
+    await writeRepoIndex(repoPath, {
+      indexVersion: 'v1',
+      nodes: [
+        { id: 'main', name: 'LoginService', filePath: 'src/login.ts' },
+        { id: 'test', name: 'LoginService', filePath: 'tests/login.test.ts' },
+      ],
+    });
+
+    const result = await dispatchTool('search', { query: 'LoginService', repo: 'repo-search' }, createKnowledgeGraph(), 'fallback', undefined);
+    const payload = JSON.parse(result.content[0]?.text ?? '{}') as { results?: Array<{ filePath?: string; name?: string }> };
+    assert.deepEqual(payload.results?.map((row) => row.filePath), ['src/login.ts']);
+  });
+
   it('repo-scoped vulnerability_scan uses the requested repo graph', async () => {
     const repoA = mkRepo('mcp-vuln-a');
     const repoB = mkRepo('mcp-vuln-b');
