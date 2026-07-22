@@ -8,6 +8,7 @@ All notable changes to this project are documented in this file.
 
 ### 🛡️ Vulnerability scan generic-tier precision
 
+- Forced `@hono/node-server` to `2.0.11` in the owned workspace dependency graph to remove the moderate npm audit finding inherited through `@modelcontextprotocol/sdk`; validation confirmed `npm test` still passes after the override.
 - Vulnerability scanning for non-JS/Python languages (Go, Java, C, C++, C#, Rust, PHP, Kotlin, Ruby, Swift, Dart) now uses case-insensitive sink matching, fixing silent misses on lowercase or case-variant function names (e.g., PHP's `readfile()`).
 - SQL injection detection for generic-tier languages now recognizes ORM raw-query methods (`whereRaw`, `selectRaw`, `orderByRaw`, `havingRaw`, `updateRaw`) in addition to generic `query`/`execute` patterns.
 - XSS detection for generic-tier languages no longer flags bare output statements (`echo`, `print`, `printf`, `write`) that are not inherently HTML-rendering; detection remains active for unambiguous HTML sinks (`innerHTML`, `Html.Raw`, `template.HTML`, `html_safe`, `Response.Write`, `respondText`).

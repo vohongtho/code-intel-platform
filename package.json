@@ -38,7 +38,7 @@
     "@vohongtho.infotech/code-intel": "^1.0.4"
   },
   "overrides": {
-    "sharp": "^0.33.0",
+    "sharp": "^0.35.0",
     "adm-zip": "^0.6.0",
     "node-domexception": "^2.0.2",
     "qs": "^6.15.3",
@@ -51,9 +51,7 @@
     "@modelcontextprotocol/sdk": {
       "hono": "^4.12.27"
     },
-    "@hono/node-server": {
-      "hono": "^4.12.27"
-    },
+    "@hono/node-server": "2.0.11",
     "tsup": {
       "esbuild": "^0.28.1"
     }

@@ -39,6 +39,7 @@
   },
   "scripts": {
     "build": "tsup --config tsup.config.ts && node scripts/add-shebang.mjs && node scripts/copy-grammars.mjs",
+    "validate:dist": "rm -f vohongtho.infotech-code-intel-*.tgz && npm pack --silent >/dev/null && rm -f vohongtho.infotech-code-intel-*.tgz",
     "typecheck": "tsc -b --noEmit",
     "prepublishOnly": "npm run build",
     "clean": "rm -rf dist dist-tests *.tsbuildinfo",
