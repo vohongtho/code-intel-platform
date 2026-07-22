@@ -189,4 +189,21 @@ describe('flowPhase', () => {
     }
     assert.ok(flowCount > 0);
   });
+
+  it('excludes test-path targets from generated production flows', async () => {
+    const ctx = makeContext();
+    ctx.graph.addNode({ id: 'ep', kind: 'function', name: 'process', filePath: '/src/app.ts', exported: true });
+    ctx.graph.addNode({ id: 'prod', kind: 'function', name: 'prod', filePath: '/src/prod.ts' });
+    ctx.graph.addNode({ id: 'testStub', kind: 'function', name: 'get', filePath: '/tests/stub.spec.ts' });
+    ctx.graph.addNode({ id: 'end', kind: 'function', name: 'end', filePath: '/src/end.ts' });
+    ctx.graph.addEdge({ id: 'e1', source: 'ep', target: 'prod', kind: 'calls', weight: 1 });
+    ctx.graph.addEdge({ id: 'e2', source: 'prod', target: 'testStub', kind: 'calls', weight: 1 });
+    ctx.graph.addEdge({ id: 'e3', source: 'prod', target: 'end', kind: 'calls', weight: 1 });
+
+    await flowPhase.execute(ctx, new Map());
+
+    const flows = [...ctx.graph.allNodes()].filter((node) => node.kind === 'flow');
+    assert.ok(flows.length > 0);
+    assert.ok(flows.every((node) => !JSON.stringify(node.metadata ?? {}).includes('/tests/')));
+  });
 });

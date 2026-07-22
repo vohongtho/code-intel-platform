@@ -7,6 +7,7 @@ const ENV_VAR_RE = /^process\.env\./;
 
 // Name patterns for sensitive variables
 const SENSITIVE_NAME_RE = /_SECRET$|_PASSWORD$|_TOKEN$|_KEY$|_API_KEY$/i;
+const COMMON_SENSITIVE_NAME_RE = /^(password|token|secret|apiKey|dbPassword)$/i;
 
 // Value patterns → [pattern label, severity]
 const VALUE_PATTERNS: [RegExp, string, string][] = [
@@ -38,6 +39,8 @@ function isTestFile(filePath: string): boolean {
     filePath.includes('mocks/')
   );
 }
+
+const FILE_CONTENT_SECRET_RE = /["']?(password|token|secret|apiKey|dbPassword)["']?\s*(=>|:|=)\s*["']([^"'\n]{1,200})["']/gi;
 
 export interface SecretFinding {
   file: string;
@@ -89,6 +92,22 @@ export class SecretScanner {
       const meta = node.metadata as Record<string, unknown> | undefined;
       const rawValue = (meta?.value ?? meta?.literalValue) as string | undefined;
 
+      if (node.kind === 'file' && typeof node.content === 'string') {
+        for (const match of node.content.matchAll(FILE_CONTENT_SECRET_RE)) {
+          const secretName = match[1];
+          const secretValue = match[3]?.trim();
+          if (!secretName || !secretValue || ENV_VAR_RE.test(secretValue)) continue;
+          const lineOffset = node.content.slice(0, match.index ?? 0).split('\n').length - 1;
+          findings.push({
+            file: filePath,
+            line: lineOffset + 1,
+            symbol: secretName,
+            pattern: 'sensitive-name-with-value',
+            severity: 'MEDIUM',
+          });
+        }
+      }
+
       if (typeof rawValue !== 'string' || rawValue.trim() === '') continue;
       const value = rawValue.trim();
       if (ENV_VAR_RE.test(value)) continue;
@@ -115,7 +134,9 @@ export class SecretScanner {
       if (matched) continue;
 
       // ── Name-based check ────────────────────────────────────────────────────
-      if (SENSITIVE_NAME_RE.test(node.name)) {
+      const hasSensitiveName =
+        SENSITIVE_NAME_RE.test(node.name) || COMMON_SENSITIVE_NAME_RE.test(node.name);
+      if (hasSensitiveName) {
         node.metadata = {
           ...(node.metadata ?? {}),
           security: { secretRisk: true, secretPattern: 'sensitive-name-with-value' },
@@ -131,11 +152,7 @@ export class SecretScanner {
       }
 
       // ── High-entropy check ──────────────────────────────────────────────────
-      if (
-        SENSITIVE_NAME_RE.test(node.name) &&
-        value.length > 20 &&
-        shannonEntropy(value) > 4.5
-      ) {
+      if (value.length > 20 && shannonEntropy(value) > 4.5) {
         node.metadata = {
           ...(node.metadata ?? {}),
           security: { secretRisk: true, secretPattern: 'high-entropy-string' },

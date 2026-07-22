@@ -7,6 +7,10 @@ export interface EntryPoint {
   filePath: string;
 }
 
+function isTestLikePath(filePath: string): boolean {
+  return filePath.includes('test') || filePath.includes('spec') || filePath.includes('fixture');
+}
+
 export function findEntryPoints(graph: KnowledgeGraph): EntryPoint[] {
   const calledNodes = new Set<string>();
   for (const edge of graph.findEdgesByKind('calls')) {
@@ -25,7 +29,7 @@ export function findEntryPoints(graph: KnowledgeGraph): EntryPoint[] {
     if (outEdges.length > 0 && inDegree === 0) score += 10;
     if (node.exported) score += 5;
     if (/^(main|handle|init|start|run|execute|process|serve|listen)/.test(node.name)) score += 3;
-    if (node.filePath.includes('test') || node.filePath.includes('spec')) score -= 20;
+    if (isTestLikePath(node.filePath)) score -= 20;
     if (node.filePath.includes('route') || node.filePath.includes('controller')) score += 8;
 
     if (score >= 5) {
@@ -58,13 +62,20 @@ export function traceFlow(
   function bfs(): void {
     const queue: { nodeId: string; path: string[] }[] = [{ nodeId: entryId, path: [entryId] }];
     const visited = new Set<string>();
+    const entryNode = graph.getNode(entryId);
+    const filterTargets = entryNode ? !isTestLikePath(entryNode.filePath) : true;
 
     while (queue.length > 0 && flows.length < maxFlows) {
       const { nodeId, path } = queue.shift()!;
       if (path.length > maxDepth) continue;
 
       const callEdges = [...graph.findEdgesFrom(nodeId)]
-        .filter((e) => e.kind === 'calls')
+        .filter((e) => {
+          if (e.kind !== 'calls') return false;
+          if (!filterTargets) return true;
+          const targetNode = graph.getNode(e.target);
+          return targetNode ? !isTestLikePath(targetNode.filePath) : true;
+        })
         .slice(0, maxBranching);
 
       if (callEdges.length === 0 && path.length >= 3) {

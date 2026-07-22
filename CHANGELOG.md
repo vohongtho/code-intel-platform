@@ -4,7 +4,25 @@ All notable changes to this project are documented in this file.
 
 ---
 
-## [1.0.5] — Intent-Aware Search & Symbol Disambiguation
+## [1.0.5] — Intent-Aware Search & Symbol Disambiguation & Vulnerability scan generic-tier precision
+
+### 🛡️ Vulnerability scan generic-tier precision
+
+- Vulnerability scanning for non-JS/Python languages (Go, Java, C, C++, C#, Rust, PHP, Kotlin, Ruby, Swift, Dart) now uses case-insensitive sink matching, fixing silent misses on lowercase or case-variant function names (e.g., PHP's `readfile()`).
+- SQL injection detection for generic-tier languages now recognizes ORM raw-query methods (`whereRaw`, `selectRaw`, `orderByRaw`, `havingRaw`, `updateRaw`) in addition to generic `query`/`execute` patterns.
+- XSS detection for generic-tier languages no longer flags bare output statements (`echo`, `print`, `printf`, `write`) that are not inherently HTML-rendering; detection remains active for unambiguous HTML sinks (`innerHTML`, `Html.Raw`, `template.HTML`, `html_safe`, `Response.Write`, `respondText`).
+- Vulnerability findings now include a `tier` field (`fixture-tested` or `generic-heuristic`) in their evidence, and generic-heuristic findings report scaled-down confidence values relative to fixture-tested findings with equivalent flags.
+- These are intended precision and recall corrections to the always-on generic extraction tier. Existing tool interfaces are unchanged, but `vulnerability_scan` may return different findings (more true positives from case-insensitive matching and ORM sinks, fewer false positives from generic output statements) on the same repository.
+
+### 🛡️ Analyzer accuracy fixes
+
+- Secret scanning now flags common bare and camelCase sensitive names such as `password`, `token`, `secret`, `apiKey`, and `dbPassword` in addition to existing SNAKE_CASE suffix matches.
+- Secret scanning now runs high-entropy detection independently of sensitive-name matching, fixing cases where high-entropy literals under non-sensitive names were silently missed.
+- Coverage gap detection now recognizes PHPUnit `*Test.php`, Python `test_*.py` and `*_test.py`, and Ruby `*_spec.rb` test-file conventions, preventing misleading `0%` coverage on repos that already have tests.
+- Flow tracing now excludes test and fixture targets when tracing from production entry points, avoiding production flows that terminate in unrelated test stubs.
+- Health scoring is now normalized by repository size and exposes normalization metadata, so equal absolute issue counts do not penalize large and small repositories identically.
+- These are intended output corrections. Existing tool interfaces are unchanged, but `secrets`, `coverage_gaps`, `flows`, and `health_report` may now return different values on the same repository.
+
 
 ### 🐛 CLI output fixes
 

@@ -94,9 +94,9 @@ describe('extractSecuritySignals', () => {
 
   it('extracts tier 5.1 language sink signals', () => {
     const cases: Array<[Language, string[]]> = [
-      [Language.Go, ['const query := "SELECT * FROM users"', 'http.Get(r.URL.Query().Get("url"))', 'db.Query("SELECT " + user)', 'db.Query(query)', 'os.Open(r.URL.Query().Get("path"))', 'exec.Command("sh", user).Run()', 'fmt.Fprintf(w, user)']],
-      [Language.Java, ['String query = "SELECT * FROM users";', 'HttpClient.newHttpClient().send(request)', 'stmt.executeQuery("SELECT " + user)', 'stmt.executeQuery(query)', 'Paths.get(user)', 'Runtime.getRuntime().exec(user)', 'response.getWriter().print(user)']],
-      [Language.PHP, ['$query = "SELECT * FROM users";', 'file_get_contents($_GET["url"])', '$db->query("SELECT " . $_GET["id"])', '$db->query($query)', 'fopen($_GET["path"], "r")', 'shell_exec($_GET["cmd"])', 'echo $_GET["html"]']],
+      [Language.Go, ['const query := "SELECT * FROM users"', 'http.Get(r.URL.Query().Get("url"))', 'db.Query("SELECT " + user)', 'db.Query(query)', 'os.Open(r.URL.Query().Get("path"))', 'exec.Command("sh", user).Run()', 'respondText(user)']],
+      [Language.Java, ['String query = "SELECT * FROM users";', 'HttpClient.newHttpClient().send(request)', 'stmt.executeQuery("SELECT " + user)', 'stmt.executeQuery(query)', 'Paths.get(user)', 'Runtime.getRuntime().exec(user)', 'Response.Write(user)']],
+      [Language.PHP, ['$query = "SELECT * FROM users";', 'file_get_contents($_GET["url"])', '$db->query("SELECT " . $_GET["id"])', '$db->query($query)', 'fopen($_GET["path"], "r")', 'shell_exec($_GET["cmd"])', 'Html.Raw($_GET["html"])']],
       [Language.Ruby, ['query = "SELECT * FROM users"', 'Net::HTTP.get(params[:url])', 'db.execute("SELECT #{params[:id]}")', 'db.execute(query)', 'File.read(params[:path])', 'system(params[:cmd])', 'html_safe(params[:html])']],
     ];
 
@@ -113,13 +113,13 @@ describe('extractSecuritySignals', () => {
 
   it('extracts tier 5.2 language sink signals', () => {
     const cases: Array<[Language, string[]]> = [
-      [Language.C, ['const char* query = "SELECT * FROM users";', 'curl_easy_setopt(curl, CURLOPT_URL, argv[1])', 'mysql_query(conn, user)', 'mysql_query(conn, query)', 'fopen(argv[1], "r")', 'system(argv[1])', 'printf(user)']],
-      [Language.Cpp, ['std::string query = "SELECT * FROM users";', 'curl_easy_setopt(curl, CURLOPT_URL, argv[1])', 'db.exec(user)', 'db.exec(query)', 'std::ifstream open(argv[1])', 'system(argv[1])', 'write(user)']],
+      [Language.C, ['const char* query = "SELECT * FROM users";', 'curl_easy_setopt(curl, CURLOPT_URL, argv[1])', 'mysql_query(conn, user)', 'mysql_query(conn, query)', 'fopen(argv[1], "r")', 'system(argv[1])', 'Response.Write(user)']],
+      [Language.Cpp, ['std::string query = "SELECT * FROM users";', 'curl_easy_setopt(curl, CURLOPT_URL, argv[1])', 'db.exec(user)', 'db.exec(query)', 'std::ifstream open(argv[1])', 'system(argv[1])', 'Response.Write(user)']],
       [Language.CSharp, ['var query = "SELECT * FROM users";', 'client.GetAsync(Request.Query["url"])', 'cmd.ExecuteReader(user)', 'cmd.ExecuteReader(query)', 'File.Open(Request.Query["path"])', 'Process.run(user)', 'Response.Write(user)']],
-      [Language.Rust, ['let query = "SELECT * FROM users";', 'reqwest::get(env::args().nth(1))', 'conn.execute(user)', 'conn.execute(query)', 'fs::read_to_string(env::args().nth(1))', 'Command::new(user)', 'write!(res, user)']],
-      [Language.Kotlin, ['val query = "SELECT * FROM users"', 'httpClient.get(user)', 'stmt.executeQuery(user)', 'stmt.executeQuery(query)', 'Paths.get(user)', 'Runtime.getRuntime().exec(user)', 'call.respondText(user)']],
-      [Language.Swift, ['let query = "SELECT * FROM users"', 'URLSession.shared.dataTask(with: user)', 'db.execute(user)', 'db.execute(query)', 'FileManager.default.open(user)', 'Process.run(user)', 'response.write(user)']],
-      [Language.Dart, ['final query = "SELECT * FROM users";', 'http.get(Uri.parse(user))', 'db.rawQuery(user)', 'db.rawQuery(query)', 'File.readAsString(user)', 'Process.run(user, [])', 'response.write(user)']],
+      [Language.Rust, ['let query = "SELECT * FROM users";', 'reqwest::get(env::args().nth(1))', 'conn.execute(user)', 'conn.execute(query)', 'fs::read_to_string(env::args().nth(1))', 'Command::new(user)', 'respondText(user)']],
+      [Language.Kotlin, ['val query = "SELECT * FROM users"', 'httpClient.get(user)', 'stmt.executeQuery(user)', 'stmt.executeQuery(query)', 'Paths.get(user)', 'Runtime.getRuntime().exec(user)', 'respondText(user)']],
+      [Language.Swift, ['let query = "SELECT * FROM users"', 'URLSession.shared.dataTask(with: user)', 'db.execute(user)', 'db.execute(query)', 'FileManager.default.open(user)', 'Process.run(user)', 'respondText(user)']],
+      [Language.Dart, ['final query = "SELECT * FROM users";', 'http.get(Uri.parse(user))', 'db.rawQuery(user)', 'db.rawQuery(query)', 'File.readAsString(user)', 'Process.run(user, [])', 'respondText(user)']],
     ];
 
     for (const [lang, lines] of cases) {

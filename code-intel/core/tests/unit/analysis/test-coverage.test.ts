@@ -106,4 +106,48 @@ describe('computeCoverage', () => {
     assert.equal(summary.totalExported, 1);
     assert.equal(summary.untestedByRisk[0].name, 'authFn');
   });
+
+  it('recognizes PHPUnit Test.php convention', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: 'phpFn', kind: 'function', name: 'handleLogin', filePath: 'src/AccountController.php', exported: true });
+    graph.addNode({ id: 'phpTest', kind: 'function', name: 'testHandleLogin', filePath: 'tests/AccountControllerTest.php' });
+    graph.addEdge({ id: 'php-import', source: 'phpTest', target: 'phpFn', kind: 'imports' });
+
+    const summary = computeCoverage(graph);
+    assert.equal(summary.coveragePct, 100);
+    assert.equal(summary.untestedByRisk.length, 0);
+  });
+
+  it('recognizes Python test_*.py convention', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: 'pyFn', kind: 'function', name: 'load_user', filePath: 'src/user_service.py', exported: true });
+    graph.addNode({ id: 'pyTest', kind: 'function', name: 'test_load_user', filePath: 'tests/test_user_service.py' });
+    graph.addEdge({ id: 'py-import', source: 'pyTest', target: 'pyFn', kind: 'imports' });
+
+    const summary = computeCoverage(graph);
+    assert.equal(summary.coveragePct, 100);
+    assert.equal(summary.untestedByRisk.length, 0);
+  });
+
+  it('recognizes Python *_test.py convention', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: 'pyFn2', kind: 'function', name: 'save_user', filePath: 'src/user_repo.py', exported: true });
+    graph.addNode({ id: 'pyTest2', kind: 'function', name: 'save_user_test', filePath: 'tests/user_repo_test.py' });
+    graph.addEdge({ id: 'py-import-2', source: 'pyTest2', target: 'pyFn2', kind: 'imports' });
+
+    const summary = computeCoverage(graph);
+    assert.equal(summary.coveragePct, 100);
+    assert.equal(summary.untestedByRisk.length, 0);
+  });
+
+  it('recognizes Ruby *_spec.rb convention', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: 'rbFn', kind: 'function', name: 'build_report', filePath: 'lib/report_builder.rb', exported: true });
+    graph.addNode({ id: 'rbTest', kind: 'function', name: 'build_report_spec', filePath: 'spec/report_builder_spec.rb' });
+    graph.addEdge({ id: 'rb-import', source: 'rbTest', target: 'rbFn', kind: 'imports' });
+
+    const summary = computeCoverage(graph);
+    assert.equal(summary.coveragePct, 100);
+    assert.equal(summary.untestedByRisk.length, 0);
+  });
 });

@@ -96,6 +96,7 @@ describe('computeHealthReport', () => {
     assert.equal(result.cycles.length, 0, 'should have no cycles');
     assert.equal(result.godNodes.length, 0, 'should have no god nodes');
     assert.equal(result.healthScore, 100, 'health score should be 100');
+    assert.equal(result.normalization.basis, 'node-count');
   });
 
   it('god nodes detected for nodes with > 10 outgoing edges', () => {
@@ -127,6 +128,40 @@ describe('computeHealthReport', () => {
 
     assert.ok(result.healthScore < 100, 'health score should be below 100 with issues');
     assert.ok(result.healthScore >= 0, 'health score should be >= 0');
+  });
+
+  it('exposes normalization metadata', () => {
+    const graph = buildTestGraph();
+    const result = computeHealthReport(graph, '.') as HealthReportResult;
+
+    assert.ok(result.normalization.size > 0);
+    assert.equal(result.normalization.basis, 'node-count');
+    assert.equal(result.normalization.weights.deadCode, 2);
+    assert.equal(result.normalization.weights.cycles, 5);
+    assert.equal(result.normalization.weights.godNodes, 3);
+    assert.equal(result.normalization.weights.orphanFiles, 1);
+  });
+
+  it('penalizes same absolute issue count less in larger scoped repo', () => {
+    const small = createKnowledgeGraph();
+    small.addNode({ id: 'smallDead', kind: 'function', name: 'smallDead', filePath: 'src/small/dead.ts', exported: false });
+    for (let i = 0; i < 9; i++) {
+      small.addNode({ id: `smallExtra${i}`, kind: 'function', name: `smallExtra${i}`, filePath: `src/small/extra${i}.ts`, exported: true });
+      small.addNode({ id: `smallCaller${i}`, kind: 'function', name: `smallCaller${i}`, filePath: `src/shared/caller${i}.ts`, exported: false });
+      small.addEdge({ id: `smallEdge${i}`, source: `smallCaller${i}`, target: `smallExtra${i}`, kind: 'calls' });
+    }
+
+    const large = createKnowledgeGraph();
+    large.addNode({ id: 'largeDead', kind: 'function', name: 'largeDead', filePath: 'src/large/dead.ts', exported: false });
+    for (let i = 0; i < 99; i++) {
+      large.addNode({ id: `largeExtra${i}`, kind: 'function', name: `largeExtra${i}`, filePath: `src/large/extra${i}.ts`, exported: true });
+      large.addNode({ id: `largeCaller${i}`, kind: 'function', name: `largeCaller${i}`, filePath: `src/shared/caller${i}.ts`, exported: false });
+      large.addEdge({ id: `largeEdge${i}`, source: `largeCaller${i}`, target: `largeExtra${i}`, kind: 'calls' });
+    }
+
+    const smallResult = computeHealthReport(small, 'src/small/') as HealthReportResult;
+    const largeResult = computeHealthReport(large, 'src/large/') as HealthReportResult;
+    assert.ok(largeResult.healthScore > smallResult.healthScore);
   });
 
   it('orphan files contain files with no edges at all', () => {
