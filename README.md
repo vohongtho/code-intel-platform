@@ -35,7 +35,7 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 - **Agent Hook System** _(v1.0.2)_ — `code-intel setup` installs PreToolUse hooks for all major AI agents; when an agent runs `grep MyClass src/`, the `code-intel-hook` binary (~10KB, ~50ms startup) silently rewrites it to `code-intel search "MyClass"` — saving ~3,000 tokens per lookup; supports Claude Code, Cursor, Gemini CLI, GitHub Copilot (VS Code + CLI), OpenCode, OpenClaw; rules files for Cline/Roo Code, Windsurf, Kilo Code, Antigravity, Codex CLI
 - **Repository Groups** — multi-repo / monorepo service tracking with workspace auto-discovery (npm, pnpm, Nx, Turborepo), contract extraction (OpenAPI, GraphQL, Protobuf), type-aware similarity scoring, and cross-repo dependency detection
   - **OpenAPI note:** contract extraction currently parses **JSON** OpenAPI/Swagger specs. YAML filenames are discovered, but YAML parsing is not implemented in `v1.0.4`.
-- **`.codeintelignore`** — exclude directories from analysis (like `.gitignore` but for code-intel)
+- **Multi-Layer Exclusion System** — exclude files and folders from analysis with `.codeintelignore` (team, tracked), `.codeintelignore.local` (personal, gitignored), or CLI flags `--skip-folders` / `--skip-files` (per-run); supports basename matching (`tests`), path matching (`src/legacy`), and glob patterns (`**/*.generated.ts`)
 - **Structured Logging** — winston-based logger with daily-rotating log files at `~/.code-intel/logs/`, sensitive-data masking, and configurable log levels
 - **Performance** — parallel batch file I/O, shared file cache (zero double-reads), O(log n) binary-search enclosing-function lookup
 - **`code-intel init` Wizard** _(v0.9)_ — interactive 5-step setup wizard; creates `~/.code-intel/config.json` with editor MCP registration, LLM provider, embeddings, auth mode, and port settings
@@ -83,6 +83,8 @@ npm install -g @vohongtho.infotech/code-intel
 > ```
 >
 > This refreshes `.code-intel/graph.db` and `.code-intel/meta.json`. Comparing fresh CLI behavior against stale indexes can look like a regression when it is only old index state.
+>
+> **Upgrade note for sticky embeddings:** if a repo was previously indexed with semantic search, the next `code-intel analyze` will detect legacy `vector.db` state, normalize `.code-intel/meta.json`, and keep embeddings up to date automatically. Older CLI builds may ignore the remembered preference until upgraded, but they should continue to tolerate the extra metadata fields.
 
 Verify the installation:
 
@@ -256,16 +258,67 @@ Then open **http://localhost:4747** in your browser — the Web UI auto-connects
   - **File exists with markers** → only the `<!-- code-intel:start -->…<!-- code-intel:end -->` block is updated; all your custom content is preserved untouched
   - **File exists without markers** → the block is appended at the end; existing content is never overwritten
 
-### Exclude directories
+### Exclude files and folders from analysis
 
-Create a `.codeintelignore` file in your project root:
+Code-intel provides a **multi-layer exclusion system** for fine-grained control over what gets analyzed:
+
+#### 1. `.codeintelignore` (team-level, tracked)
+
+Create a `.codeintelignore` file in your project root for team-wide exclusions:
 
 ```
-# one directory name per line
+# Exclude specific folders
 vendor
 generated
 fixtures
+
+# Exclude specific files
+config.generated.ts
+schema.proto.ts
+
+# Exclude by pattern (glob)
+*.min.js
+**/*.test.ts
+src/legacy/**
 ```
+
+**Pattern types:**
+- **Basename match**: `tests` → matches any file or folder named "tests" anywhere
+- **Path match**: `src/legacy` → matches only that specific path from workspace root
+- **Glob match**: `**/*.generated.ts` → matches all generated TypeScript files at any depth
+
+#### 2. `.codeintelignore.local` (personal preferences, gitignored)
+
+Create a `.codeintelignore.local` file for personal exclusions that won't be committed:
+
+```
+# My personal preferences (not tracked in git)
+examples
+docs
+tutorials
+```
+
+This file is automatically added to `.gitignore` when you run `code-intel analyze`.
+
+#### 3. CLI flags (one-off exclusions)
+
+For temporary or experimental exclusions, use CLI flags:
+
+```bash
+# Exclude specific folders for this run only
+code-intel analyze --skip-folders tests,examples
+
+# Exclude files by pattern
+code-intel analyze --skip-files "*.generated.ts,*.proto.ts"
+
+# Combine multiple exclusions
+code-intel analyze --skip-folders src/legacy --skip-files config.gen.ts
+
+# Repeatable flags (alternative syntax)
+code-intel analyze --skip-folders tests --skip-folders examples
+```
+
+**All layers combine additively** — an entry excluded by any layer is excluded from analysis.
 
 ---
 
@@ -460,11 +513,23 @@ code-intel setup                         # Register the MCP server in your edito
 ### Analyze
 
 ```bash
-code-intel analyze [path]                # Parse source code and build the knowledge graph
+code-intel analyze [path]                # Parse source code and auto-use incremental mode when prior metadata makes it safe
 code-intel analyze --force               # Discard existing index and perform a full re-analysis
-code-intel analyze --embeddings          # Build a vector index for semantic (natural-language) search
-code-intel analyze --skip-embeddings     # Omit embedding generation for a significantly faster run
+code-intel analyze --embeddings          # Build a vector index and remember embeddings for this repo
+code-intel analyze --skip-embeddings     # Skip embedding generation for this run only
 code-intel analyze --skip-agents-md      # Preserve any hand-edited content in AGENTS.md / CLAUDE.md
+```
+
+Sticky embeddings behavior:
+
+- The first successful `code-intel analyze --embeddings` run stores the repo preference in `.code-intel/meta.json`.
+- Later `code-intel analyze`, `code-intel analyze --incremental`, and `code-intel analyze --force` runs auto-enable embeddings for that repo unless you pass `--skip-embeddings`.
+- Plain `code-intel analyze` now auto-attempts incremental graph reindexing when valid prior `.code-intel/meta.json` exists and incremental safety checks pass; otherwise it falls back to full analysis.
+- If `vector.db` is missing, stale, corrupted, or incompatible with the current embedding fingerprint, `code-intel analyze` rebuilds the full vector index automatically.
+- `--skip-embeddings` does not forget the repo preference; it skips vectors for that run and marks remembered embeddings stale until the next normal analyze.
+- Previously indexed repos with only a legacy `vector.db` upgrade in place on the next analyze; no manual migration command is required.
+
+```bash
 code-intel analyze --skip-git            # Allow analysis of directories that are not Git repositories
 code-intel analyze --verbose             # Print every file skipped due to an unsupported parser
 ```

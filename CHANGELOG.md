@@ -6,6 +6,24 @@ All notable changes to this project are documented in this file.
 
 ## [1.0.5] - 2026-07-24
 
+### ⚡ Plain analyze auto-incremental
+
+- Plain `code-intel analyze` now auto-attempts incremental graph reindexing when valid prior `.code-intel/meta.json` exists and the existing safety checks pass.
+- Explicit `--incremental` and `--force` semantics are unchanged.
+- CLI output now distinguishes auto-incremental mode from full-analysis fallback and reports fallback reasons when plain analyze cannot safely increment.
+- Remembered embeddings now follow plain analyze's chosen graph mode, so changed-file-only graph refresh also keeps changed-file-only vector upkeep when safe.
+
+### 🧠 Sticky embeddings on analyze
+
+- `code-intel analyze --embeddings` now remembers semantic-search preference per repository in `.code-intel/meta.json`.
+- Later plain `code-intel analyze`, `code-intel analyze --incremental`, and `code-intel analyze --force` runs now auto-enable embeddings for remembered repositories unless `--skip-embeddings` is passed.
+- Persisted embedding metadata now records enablement, readiness/staleness, provider, model, and vector dimension so the CLI can detect stale or incompatible vector state.
+- Repositories with legacy `vector.db` but no embedding metadata now normalize automatically on the next analyze; no manual migration command is required.
+- Missing, stale, corrupted, or fingerprint-mismatched vector indexes now rebuild from `code-intel analyze` without requiring users to remember `--embeddings`.
+- `--skip-embeddings` is now documented as a one-run override that preserves remembered preference and leaves embeddings marked stale until refreshed.
+- `code-intel doctor` now reports remembered embedding readiness/staleness and recovery guidance uses `code-intel analyze` for rebuilds.
+- Updated README and CLI guide text for sticky embeddings behavior and mixed-version compatibility expectations.
+
 ### 🗂️ Stable repository identity and unique names
 
 - Added stable repository `id` fields to persisted registry entries while keeping user-facing unique `name` values and mutable `path` values.
@@ -75,6 +93,25 @@ All notable changes to this project are documented in this file.
 - Ambiguous non-interactive inspection exits with status `2`.
 - Added `--json` output for `search` and `inspect`, including structured ambiguity candidates and selectors.
 - Added unit and CLI integration coverage for natural-language ranking, deterministic ordering, cache invalidation, selector escaping, ambiguous inspection, qualified inspection, and qualified impact analysis.
+
+### 🎯 Multi-Layer Exclusion System
+
+- Added `--skip-folders` and `--skip-files` CLI options to `code-intel analyze` for transient per-run exclusions without modifying tracked files.
+- CLI flags support both comma-separated values (`--skip-folders tests,examples`) and repeatable invocations (`--skip-folders tests --skip-folders examples`).
+- Added `.codeintelignore.local` support for personal developer preferences (automatically gitignored, not tracked in version control).
+- Enhanced `.codeintelignore` to support file patterns in addition to directory patterns (e.g., `*.generated.ts`, `config.gen.ts`).
+- Implemented smart pattern matching with auto-detection:
+  - **Basename match**: `tests` matches any file or folder named "tests" at any depth
+  - **Path match**: `src/legacy` matches that specific path from workspace root
+  - **Glob match**: `**/*.test.ts` matches all test files recursively
+- All exclusion layers combine additively: hard-coded defaults → `.codeintelignore` → `.codeintelignore.local` → CLI flags.
+- Hard-coded file suffix exclusions (`.d.ts`, `.js.map`, `.min.js`) now integrated into unified pattern system as glob patterns.
+- Pattern compilation and caching optimizes performance: glob patterns compiled once and reused across file checks.
+- Added verbose logging (`--verbose`) showing which patterns matched excluded entries and which layer triggered exclusion.
+- Updated `ensureGitignore()` to automatically add `.codeintelignore.local` to `.gitignore` during analyze.
+- 100% backward compatible: existing `.codeintelignore` files with simple directory names continue to work unchanged.
+- Updated README with comprehensive exclusion documentation, pattern type examples, and CLI flag usage.
+- Updated analyze command help text with `--skip-folders` and `--skip-files` examples.
 
 ---
 

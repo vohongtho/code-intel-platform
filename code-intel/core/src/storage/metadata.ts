@@ -6,6 +6,28 @@ const META_DIRNAME = '.code-intel';
 const META_FILE = 'meta.json';
 const AGENT_TARGETS_FILE = 'agent-targets.json';
 
+export type EmbeddingStatus = 'ready' | 'stale';
+export type EmbeddingPreferenceSource = 'explicit' | 'metadata' | 'legacy' | 'disabled';
+
+export interface EmbeddingMetadata {
+  enabled: boolean;
+  status: EmbeddingStatus;
+  provider: string;
+  model: string;
+  dimension: number;
+}
+
+export interface ResolvedEmbeddingMode {
+  enabled: boolean;
+  remembered: boolean;
+  source: EmbeddingPreferenceSource;
+}
+
+export interface ResolvedAnalyzeMode {
+  attemptIncremental: boolean;
+  source: 'explicit' | 'auto' | 'full';
+}
+
 export interface IndexMetadata {
   indexedAt: string;
   schemaVersion?: number;
@@ -15,6 +37,7 @@ export interface IndexMetadata {
   parser?: 'tree-sitter' | 'regex';
   /** mtime (ms since epoch) for each indexed file path (relative to workspace root) */
   lastAnalyzedMtimes?: Record<string, number>;
+  embeddings?: EmbeddingMetadata;
   stats: {
     nodes: number;
     edges: number;
@@ -66,6 +89,60 @@ export function getDbPath(repoDir: string): string {
 
 export function getVectorDbPath(repoDir: string): string {
   return path.join(getMetaDir(repoDir), 'vector.db');
+}
+
+export function resolveEmbeddingMode(args: {
+  explicitEnable?: boolean;
+  explicitSkip?: boolean;
+  metadata?: IndexMetadata | null;
+  hasLegacyVectorDb?: boolean;
+}): ResolvedEmbeddingMode {
+  if (args.explicitSkip) {
+    return { enabled: false, remembered: Boolean(args.metadata?.embeddings?.enabled), source: 'disabled' };
+  }
+  if (args.explicitEnable) {
+    return { enabled: true, remembered: true, source: 'explicit' };
+  }
+  if (args.metadata?.embeddings?.enabled) {
+    return { enabled: true, remembered: true, source: 'metadata' };
+  }
+  if (!args.metadata?.embeddings && args.hasLegacyVectorDb) {
+    return { enabled: true, remembered: true, source: 'legacy' };
+  }
+  return { enabled: false, remembered: false, source: 'disabled' };
+}
+
+export function embeddingFingerprintMatches(
+  stored: Pick<EmbeddingMetadata, 'provider' | 'model' | 'dimension'> | null | undefined,
+  runtime: Pick<EmbeddingMetadata, 'provider' | 'model' | 'dimension'>,
+): boolean {
+  return Boolean(
+    stored
+    && stored.provider === runtime.provider
+    && stored.model === runtime.model
+    && stored.dimension === runtime.dimension,
+  );
+}
+
+export function shouldRebuildEmbeddings(args: {
+  metadata?: IndexMetadata | null;
+  runtime: Pick<EmbeddingMetadata, 'provider' | 'model' | 'dimension'>;
+  hasVectorDb: boolean;
+}): boolean {
+  return !args.hasVectorDb
+    || args.metadata?.embeddings?.status === 'stale'
+    || !embeddingFingerprintMatches(args.metadata?.embeddings, args.runtime);
+}
+
+export function resolveAnalyzeMode(args: {
+  explicitIncremental?: boolean;
+  force?: boolean;
+  metadata?: IndexMetadata | null;
+}): ResolvedAnalyzeMode {
+  if (args.force) return { attemptIncremental: false, source: 'full' };
+  if (args.explicitIncremental) return { attemptIncremental: true, source: 'explicit' };
+  if (args.metadata) return { attemptIncremental: true, source: 'auto' };
+  return { attemptIncremental: false, source: 'full' };
 }
 
 function statToken(filePath: string): string {

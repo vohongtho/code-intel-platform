@@ -35,7 +35,7 @@ import { startHttpServer } from '../http/app.js';
 import { startMcpStdio } from '../mcp-server/server.js';
 import { textSearch } from '../search/text-search.js';
 import type { PipelineContext } from '../pipeline/types.js';
-import { saveMetadata, loadMetadata, getDbPath, loadAgentTargets, saveAgentTargets, computeIndexVersion, type AgentTargetConfig, type AgentTargetSelection, type AgentTargetFormat } from '../storage/metadata.js';
+import { saveMetadata, loadMetadata, getDbPath, getVectorDbPath, loadAgentTargets, saveAgentTargets, computeIndexVersion, resolveEmbeddingMode, shouldRebuildEmbeddings, resolveAnalyzeMode, type AgentTargetConfig, type AgentTargetSelection, type AgentTargetFormat, type EmbeddingMetadata } from '../storage/metadata.js';
 import { writeContextFiles } from './context-writer.js';
 import { AGENT_OPTIONS, isValidRepoRelativeTargetPath, resolveBuiltinTarget } from './agent-targets.js';
 import { upsertRepo, loadRegistry, findRepoByName, findRepoByPath, renameRepo, relinkRepo, removeRepo } from '../storage/repo-registry.js';
@@ -243,12 +243,12 @@ program
 `);
 
 /**
- * Ensures `.code-intel/` is present in the project's `.gitignore`.
- * Skips silently if the entry already exists; creates the file if absent.
+ * Ensures `.code-intel/` and `.codeintelignore.local` are present in the project's `.gitignore`.
+ * Skips silently if entries already exist; creates the file if absent.
  */
 function ensureGitignore(workspaceRoot: string, silent: boolean): void {
   const gitignorePath = path.join(workspaceRoot, '.gitignore');
-  const entry = '.code-intel/';
+  const requiredEntries = ['.code-intel/', '.codeintelignore.local'];
 
   try {
     // Read existing content (if file exists)
@@ -257,20 +257,35 @@ function ensureGitignore(workspaceRoot: string, silent: boolean): void {
       existing = fs.readFileSync(gitignorePath, 'utf-8');
     }
 
-    // Check if already present (with or without trailing slash)
+    // Check which entries are missing
     const lines = existing.split(/\r?\n/).map((l) => l.trim());
-    if (lines.includes('.code-intel/') || lines.includes('.code-intel')) {
+    const missing: string[] = [];
+    
+    // Check .code-intel/ (with or without trailing slash)
+    if (!lines.includes('.code-intel/') && !lines.includes('.code-intel')) {
+      missing.push('.code-intel/');
+    }
+    
+    // Check .codeintelignore.local
+    if (!lines.includes('.codeintelignore.local')) {
+      missing.push('.codeintelignore.local');
+    }
+
+    // If nothing to add, return early
+    if (missing.length === 0) {
       return;
     }
 
+    // Append missing entries
+    const additions = missing.join('\n');
     const next = existing.trimEnd() === ''
-      ? `${entry}\n`
-      : `${existing.trimEnd()}\n${entry}\n`;
+      ? `${additions}\n`
+      : `${existing.trimEnd()}\n${additions}\n`;
 
     fs.writeFileSync(gitignorePath, next, 'utf-8');
-    Logger.info('.gitignore updated: added .code-intel/');
+    Logger.info(`.gitignore updated: added ${missing.join(', ')}`);
     if (!silent) {
-      console.log(`  ✓ .gitignore: added .code-intel/`);
+      console.log(`  ✓ .gitignore: added ${missing.join(', ')}`);
     }
   } catch (err) {
     Logger.warn(`Failed to update .gitignore: ${err instanceof Error ? err.message : err}`);
@@ -368,6 +383,16 @@ async function getOrCreateAgentTargets(workspaceRoot: string, silent = false): P
   return [];
 }
 
+function buildEmbeddingMetadata(status: 'ready' | 'stale'): EmbeddingMetadata {
+  return {
+    enabled: true,
+    status,
+    provider: 'huggingface-transformers',
+    model: 'Xenova/all-MiniLM-L6-v2',
+    dimension: 384,
+  };
+}
+
 async function analyzeWorkspace(targetPath: string, options?: {
   silent?: boolean;
   force?: boolean;
@@ -376,6 +401,8 @@ async function analyzeWorkspace(targetPath: string, options?: {
   skipEmbeddings?: boolean;
   skipAgentsMd?: boolean;
   skipGit?: boolean;
+  skipFolders?: string[];
+  skipFiles?: string[];
   embeddings?: boolean;
   verbose?: boolean;
   repoName?: string;
@@ -433,6 +460,15 @@ async function analyzeWorkspace(targetPath: string, options?: {
     }
   }
 
+  const previousMetadata = loadMetadata(workspaceRoot);
+  const vectorDbPath = getVectorDbPath(workspaceRoot);
+  const runtimeEmbeddingMetadata = buildEmbeddingMetadata('ready');
+  const embeddingMode = resolveEmbeddingMode({
+    explicitEnable: options?.embeddings,
+    explicitSkip: options?.skipEmbeddings,
+    metadata: previousMetadata,
+    hasLegacyVectorDb: !previousMetadata?.embeddings && fs.existsSync(vectorDbPath),
+  });
   const graph = createKnowledgeGraph();
   let activeGraph: KnowledgeGraph = graph;
 
@@ -481,6 +517,8 @@ async function analyzeWorkspace(targetPath: string, options?: {
     graph: activeGraph,
     filePaths: [],
     verbose: options?.verbose,
+    skipFolders: options?.skipFolders,
+    skipFiles: options?.skipFiles,
     summarize: options?.summarize,
     profile: options?.profile,
     llmConfig: options?.summarize ? {
@@ -514,12 +552,16 @@ async function analyzeWorkspace(targetPath: string, options?: {
     },
   };
 
-  // ── Incremental mode: run scan first, then decide which files changed ────────
+  // ── Incremental mode: explicit or auto for plain analyze ───────────────────
   let isIncremental = false;
   let incrementalChangedFiles: string[] | undefined;
-  if (options?.incremental && !options?.force) {
-    const prevMeta = loadMetadata(workspaceRoot);
-    // Run scan phase alone to populate context.filePaths
+  const analyzeMode = resolveAnalyzeMode({
+    explicitIncremental: options?.incremental,
+    force: options?.force,
+    metadata: previousMetadata,
+  });
+  if (analyzeMode.attemptIncremental) {
+    const prevMeta = previousMetadata;
     const scanResult = await runPipeline([scanPhase], context);
     if (scanResult.success && context.filePaths.length > 0) {
       const decision = decideIncremental(
@@ -532,17 +574,19 @@ async function analyzeWorkspace(targetPath: string, options?: {
         isIncremental = true;
         incrementalChangedFiles = decision.changedFiles;
         if (!options?.silent) {
-          console.log(`  ◈ Incremental: ${incrementalChangedFiles.length} changed file(s) of ${context.filePaths.length} total`);
+          const label = analyzeMode.source === 'auto' ? 'Auto-incremental' : 'Incremental';
+          console.log(`  ◈ ${label}: ${incrementalChangedFiles.length} changed file(s) of ${context.filePaths.length} total`);
         }
         Logger.info(`[incremental] re-parsing ${incrementalChangedFiles.length} files`);
-        // Limit filePaths to only changed files for the remaining pipeline phases
         context.filePaths = incrementalChangedFiles;
       } else {
         if (!options?.silent) {
+          if (analyzeMode.source === 'auto') {
+            console.log(`  ◈ Auto-incremental unavailable: ${decision.fallbackReason}`);
+          }
           console.log(`  ◈ Falling back to full analysis: ${decision.fallbackReason}`);
         }
         Logger.info(`[incremental] fallback: ${decision.fallbackReason}`);
-        // Reset filePaths so full pipeline re-scans below
         context.filePaths = [];
       }
     }
@@ -667,8 +711,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
   // Merge with previous mtimes when incremental (so unchanged files keep their stored mtime)
   let mergedMtimes: Record<string, number> | undefined;
   if (isIncremental) {
-    const prevMeta2 = loadMetadata(workspaceRoot);
-    mergedMtimes = { ...(prevMeta2?.lastAnalyzedMtimes ?? {}), ...newMtimes };
+    mergedMtimes = { ...(previousMetadata?.lastAnalyzedMtimes ?? {}), ...newMtimes };
   } else {
     mergedMtimes = newMtimes;
   }
@@ -761,32 +804,47 @@ async function analyzeWorkspace(targetPath: string, options?: {
     Logger.warn(`BM25 index build failed: ${err instanceof Error ? err.message : err}`);
   }
 
-  // Vector embeddings (opt-in or --embeddings, skip if --skip-embeddings)
-  const doEmbeddings = options?.embeddings && !options?.skipEmbeddings;
-  if (doEmbeddings) {
+  // Vector embeddings (explicit or remembered per repo)
+  const incrementalEmbeddingPaths = isIncremental && incrementalChangedFiles && incrementalChangedFiles.length > 0
+    ? incrementalChangedFiles.map((f) => path.relative(workspaceRoot, f))
+    : null;
+  const shouldForceFullEmbeddingRebuild = !incrementalEmbeddingPaths
+    || shouldRebuildEmbeddings({ metadata: previousMetadata, runtime: runtimeEmbeddingMetadata, hasVectorDb: fs.existsSync(vectorDbPath) });
+  const useIncrementalEmbeddings = Boolean(incrementalEmbeddingPaths && !shouldForceFullEmbeddingRebuild);
+  let embeddingMetadataForSave = previousMetadata?.embeddings;
+  let embeddingBuildFailed = false;
+
+  if (embeddingMode.enabled) {
+    const embeddingModeLabel = embeddingMode.source === 'metadata'
+      ? 'auto-enabled from previous index'
+      : embeddingMode.source === 'legacy'
+        ? 'auto-enabled from legacy vector index'
+        : 'enabled';
+    if (!options?.silent) console.log(`  ◈ Embeddings: ${embeddingModeLabel}`);
     startSpinner('Building vector embeddings');
     try {
       const { embedNodes } = await import('../search/embedder.js');
-      const { getVectorDbPath } = await import('../storage/index.js');
       const { VectorIndex } = await import('../search/vector-index.js');
-      const vdbPath = getVectorDbPath(workspaceRoot);
-      const incrementalEmbeddingPaths = isIncremental && incrementalChangedFiles && incrementalChangedFiles.length > 0
-        ? incrementalChangedFiles.map((f) => path.relative(workspaceRoot, f))
-        : null;
-      const useIncrementalEmbeddings = incrementalEmbeddingPaths !== null;
 
       if (!useIncrementalEmbeddings) {
-        // Remove stale vector DB file before writing.
-        const staleVdb = [vdbPath, `${vdbPath}-shm`, `${vdbPath}-wal`];
+        if (!options?.silent && previousMetadata?.embeddings?.status === 'stale') {
+          console.log('  ◈ Embeddings: stale state detected, rebuilding full vector index');
+        } else if (!options?.silent && previousMetadata?.embeddings
+          && previousMetadata.embeddings.model !== runtimeEmbeddingMetadata.model) {
+          console.log(`  ◈ Embeddings: fingerprint changed from ${previousMetadata.embeddings.model} to ${runtimeEmbeddingMetadata.model}, rebuilding full vector index`);
+        } else if (!options?.silent && !fs.existsSync(vectorDbPath)) {
+          console.log('  ◈ Embeddings: vector.db missing, rebuilding full vector index');
+        }
+        const staleVdb = [vectorDbPath, `${vectorDbPath}-shm`, `${vectorDbPath}-wal`];
         for (const f of staleVdb) {
           try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* ignore */ }
         }
       }
 
-      const idx = new VectorIndex(vdbPath);
+      const idx = new VectorIndex(vectorDbPath);
       await idx.init();
       const nodes = await embedNodes(graph, {
-        filePaths: incrementalEmbeddingPaths ?? undefined,
+        filePaths: useIncrementalEmbeddings ? incrementalEmbeddingPaths ?? undefined : undefined,
         onProgress: (done, total) => {
           if (!options?.silent) {
             stopSpinner();
@@ -798,7 +856,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
       stopSpinner();
 
       if (useIncrementalEmbeddings) {
-        const deleted = await idx.deleteByFilePaths(incrementalEmbeddingPaths);
+        const deleted = await idx.deleteByFilePaths(incrementalEmbeddingPaths!);
         const upserted = await idx.upsertIndex(nodes);
         Logger.info(`Embeddings updated incrementally: -${deleted}, +${upserted}`);
         if (!options?.silent) console.log(`  ✓ Embeddings: ${upserted} vectors updated incrementally`);
@@ -808,12 +866,20 @@ async function analyzeWorkspace(targetPath: string, options?: {
         if (!options?.silent) console.log(`  ✓ Embeddings: ${nodes.length} vectors built`);
       }
       idx.close();
+      embeddingMetadataForSave = runtimeEmbeddingMetadata;
     } catch (err) {
       stopSpinner();
+      embeddingBuildFailed = true;
+      embeddingMetadataForSave = buildEmbeddingMetadata('stale');
       Logger.warn(`Embeddings failed: ${err instanceof Error ? err.message : err}`);
     }
-  } else if (!options?.skipEmbeddings && !options?.silent) {
-    console.log('  Embeddings: skipped (use --embeddings to enable)');
+  } else if (!options?.silent) {
+    console.log(embeddingMode.remembered
+      ? '  Embeddings: skipped for this run (--skip-embeddings). Repository preference preserved.'
+      : '  Embeddings: skipped (use --embeddings to enable and remember for this repo)');
+    if (embeddingMode.remembered && graphPersisted) {
+      embeddingMetadataForSave = buildEmbeddingMetadata('stale');
+    }
   }
 
   // Publish metadata last so MCP never reloads a half-written index.
@@ -827,6 +893,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
       commitHash: currentCommitHash,
       lastAnalyzedMtimes: mergedMtimes,
       parser: context.parserUsed ?? 'regex',
+      embeddings: embeddingMetadataForSave ?? (embeddingBuildFailed ? buildEmbeddingMetadata('stale') : undefined),
       stats: {
         nodes: graph.size.nodes,
         edges: graph.size.edges,
@@ -1751,10 +1818,12 @@ program
   .option('--force',                   'Force full re-index, ignoring cached data')
   .option('--incremental',             'Only re-parse files changed since last analysis (git diff or mtime)')
   .option('--parallel',                'Use worker threads for parse + resolve phases (faster on multi-core)')
-  .option('--embeddings',              'Build vector embeddings for semantic search (slower, recommended)')
-  .option('--skip-embeddings',         'Skip embedding generation (faster, text-search only)')
+  .option('--embeddings',              'Build vector embeddings for semantic search and remember the preference for this repo')
+  .option('--skip-embeddings',         'Skip embedding generation for this run only (faster, text-search only)')
   .option('--skip-agents-md',          'Skip writing agent-targeted context files')
   .option('--skip-git',                'Allow indexing directories that are not Git repositories')
+  .option('--skip-folders <patterns...>', 'Exclude folders from analysis (comma-separated or repeat flag)')
+  .option('--skip-files <patterns...>',   'Exclude files from analysis (comma-separated or repeat flag)')
   .option('--verbose',                 'Log every file skipped due to missing parser support')
   .option('--summarize',               'Generate AI summaries for function/class/method/interface nodes (opt-in)')
   .option('--llm-provider <provider>', 'LLM provider for --summarize: openai | anthropic | ollama | custom (default: ollama)')
@@ -1780,10 +1849,13 @@ program
     $ code-intel analyze --force                Force full re-index
     $ code-intel analyze --incremental          Only re-parse changed files (fast)
     $ code-intel analyze --parallel             Use worker threads for faster indexing
-    $ code-intel analyze --embeddings           Enable semantic (vector) search
-    $ code-intel analyze --skip-embeddings      Skip vectors for a faster run
+    $ code-intel analyze --embeddings           Enable semantic (vector) search and remember it for this repo
+    $ code-intel analyze --skip-embeddings      Skip vectors for this run only
     $ code-intel analyze --skip-agents-md       Skip writing agent-targeted context files
     $ code-intel analyze --skip-git             Index a non-Git folder
+    $ code-intel analyze --skip-folders tests,examples  Exclude specific folders
+    $ code-intel analyze --skip-files "*.generated.ts"  Exclude files by pattern
+    $ code-intel analyze --skip-folders src/legacy --skip-files config.gen.ts  Combine exclusions
     $ code-intel analyze --verbose              Show files skipped by the parser
     $ code-intel analyze --summarize            Generate AI summaries (uses Ollama by default)
     $ code-intel analyze --summarize --llm-provider openai --llm-model gpt-4o-mini
@@ -1804,6 +1876,8 @@ program
     skipEmbeddings?: boolean;
     skipAgentsMd?: boolean;
     skipGit?: boolean;
+    skipFolders?: string | string[];
+    skipFiles?: string | string[];
     embeddings?: boolean;
     verbose?: boolean;
     summarize?: boolean;
@@ -1819,6 +1893,19 @@ program
     profile?: boolean;
     name?: string;
   }) => {
+    // Parse comma-separated and repeatable patterns into arrays
+    const parsePatterns = (value: string | string[] | undefined): string[] => {
+      if (!value) return [];
+      const rawValues = Array.isArray(value) ? value : [value];
+      return rawValues
+        .flatMap(v => v.split(','))
+        .map(p => p.trim())
+        .filter(p => p.length > 0);
+    };
+
+    const skipFolders = parsePatterns(opts.skipFolders);
+    const skipFiles = parsePatterns(opts.skipFiles);
+
     // ── --dry-run: scan files only, no DB write ──────────────────────────────
     if (opts.dryRun) {
       const workspaceRoot = path.resolve(targetPath);
@@ -1829,6 +1916,8 @@ program
         graph,
         filePaths: [] as string[],
         verbose: opts.verbose,
+        skipFolders,
+        skipFiles,
       };
       await import('../pipeline/orchestrator.js').then(({ runPipeline }) =>
         runPipeline([sp], context as Parameters<typeof runPipeline>[1]),
@@ -1849,6 +1938,8 @@ program
       skipEmbeddings: opts.skipEmbeddings,
       skipAgentsMd: opts.skipAgentsMd,
       skipGit: opts.skipGit,
+      skipFolders,
+      skipFiles,
       embeddings: opts.embeddings,
       verbose: opts.verbose,
       summarize: opts.summarize,
@@ -4819,18 +4910,27 @@ program
       if (fs.existsSync(vdbPath)) {
         try {
           const vdb = new Database(vdbPath, { readonly: true, fileMustExist: true });
-          vdb.prepare('SELECT COUNT(*) FROM vectors').get();
+          vdb.prepare('SELECT COUNT(*) FROM embed_nodes').get();
           vdb.close();
         } catch {
           hasError = true;
-          line('❌', `${repo.name} / vector.db`, 'corrupted — run `clean && analyze --embeddings`');
+          line('❌', `${repo.name} / vector.db`, 'corrupted — run `code-intel analyze` to rebuild remembered embeddings');
         }
+      } else if (meta.embeddings?.enabled) {
+        line('⚠️ ', `${repo.name} / vector.db`, 'missing — next `code-intel analyze` will rebuild remembered embeddings');
+      }
+
+      if (meta.embeddings?.enabled && meta.embeddings.status === 'stale') {
+        line('⚠️ ', `${repo.name} / embeddings`, 'stale — run `code-intel analyze` to refresh vectors');
       }
 
       if (ageDays > STALE_DAYS) {
         line('⚠️ ', repo.name, `index is ${Math.floor(ageDays)} days old (run \`analyze\`)`);
       } else {
-        line('✅', repo.name, `${meta.stats.nodes} nodes · ${meta.stats.edges} edges · ${Math.floor(ageDays)}d old`);
+        const embeddingDetail = meta.embeddings?.enabled
+          ? ` · embeddings:${meta.embeddings.status}`
+          : '';
+        line('✅', repo.name, `${meta.stats.nodes} nodes · ${meta.stats.edges} edges${embeddingDetail} · ${Math.floor(ageDays)}d old`);
       }
     }
 

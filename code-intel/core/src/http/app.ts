@@ -14,7 +14,7 @@ import { textSearch } from '../search/text-search.js';
 import { hybridSearch } from '../search/hybrid-search.js';
 import { Bm25Index, getBm25DbPath } from '../search/bm25-index.js';
 import { DbManager, getDbPath, getVectorDbPath } from '../storage/index.js';
-import { loadMetadata } from '../storage/metadata.js';
+import { loadMetadata, shouldRebuildEmbeddings } from '../storage/metadata.js';
 import { VectorIndex } from '../search/vector-index.js';
 // VectorIndex uses the shared SQLite wrapper directly.
 import fs from 'node:fs';
@@ -304,11 +304,19 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     if (!workspaceRoot || vectorIndexBuilding) return null;
     vectorIndexBuilding = true;
     try {
-      const { embedNodes } = await import('../search/embedder.js');
+      const { embedNodes, getEmbeddingFingerprint } = await import('../search/embedder.js');
       const vdbPath = getVectorDbPath(workspaceRoot);
+      const meta = loadMetadata(workspaceRoot);
+      const runtimeFingerprint = getEmbeddingFingerprint();
+      const shouldRebuild = shouldRebuildEmbeddings({ metadata: meta, runtime: runtimeFingerprint, hasVectorDb: fs.existsSync(vdbPath) });
+      if (shouldRebuild) {
+        for (const f of [vdbPath, `${vdbPath}-shm`, `${vdbPath}-wal`]) {
+          try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* ignore */ }
+        }
+      }
       const idx = new VectorIndex(vdbPath);
       await idx.init();
-      const alreadyBuilt = await idx.isBuilt();
+      const alreadyBuilt = shouldRebuild ? false : await idx.isBuilt();
       if (!alreadyBuilt) {
         Logger.info('  [vector] Building embeddings…');
         const nodes = await embedNodes(graph, {
