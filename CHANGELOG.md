@@ -252,6 +252,7 @@ All notable changes to this project are documented in this file.
 
 - **Auto-update `.gitignore`** — `code-intel analyze` now automatically appends `.code-intel/` to the project's `.gitignore` if not already present; creates the file if it doesn't exist; idempotent (skips if `.code-intel` or `.code-intel/` already listed); errors caught and logged as warnings, never abort analysis
 - **"Remember Me" on login screen** — new checkbox below the Password field; when checked, the session cookie is set to **12 hours** (`Max-Age`) so re-opening the browser tab within that window keeps the user signed in; unchecked uses the normal session TTL (default 8 h, `CODE_INTEL_SESSION_TTL_HOURS`); sliding-window renewal uses the original TTL of the session; `POST /auth/login` now accepts optional `rememberMe: boolean` in the request body
+- **Password visibility toggles on auth forms** — login and first-run bootstrap password fields now provide accessible eye-icon toggles to show or hide the current value without affecting validation or submit behavior; username placeholders in the login and bootstrap UI now read `User Name`
 
 ### 📊 Token Savings Summary
 

@@ -250,6 +250,8 @@ Legacy registries without repo IDs migrate automatically on load. If old entries
 
 Then open **http://localhost:4747** in your browser — the Web UI auto-connects and loads the graph.
 
+If no admin account exists yet, the first-run setup screen appears. The login and bootstrap forms include eye-icon password visibility toggles, and the username input placeholder reads `User Name`.
+
 ### After analysis
 
 `code-intel analyze` automatically generates or updates:
