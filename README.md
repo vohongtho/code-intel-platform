@@ -252,6 +252,8 @@ Then open **http://localhost:4747** in your browser — the Web UI auto-connects
 
 If no admin account exists yet, the first-run setup screen appears. The login and bootstrap forms include eye-icon password visibility toggles, and the username input placeholder reads `User Name`.
 
+Authenticated users can open **Settings** from the profile menu in the Web UI to inspect global server configuration. Admin users can edit routed settings sections for LLM, embeddings, analysis, server, authentication, updates, and telemetry. These settings are server-global and complement the CLI flows (`code-intel init` and `code-intel config *`) rather than replacing editor/MCP setup.
+
 ### After analysis
 
 `code-intel analyze` automatically generates or updates:
@@ -379,6 +381,15 @@ After setup, the MCP server starts automatically when your AI editor launches, g
 | **Group** | Multi-repo group view with contracts and cross-repo links (visible when in group mode) |
 | **Graph Canvas** | Force-directed graph, click nodes to inspect, hover to highlight neighbors |
 | **Code AI** | Chat with grounded answers citing source file locations |
+| **Settings** | Routed global server configuration screen under the profile menu; admin-editable sections for LLM, embeddings, analysis, server, authentication, updates, and telemetry |
+
+### Settings
+
+- Open **Settings** from the profile menu in the top-right header, above **Sign out**.
+- Settings routes use `/settings/:section` with browser back/forward support instead of `#fragment` anchors.
+- Settings are **server-global** for the connected code-intel instance, not per-user preferences.
+- Authenticated viewers can inspect masked config values; admins can save edits.
+- `code-intel init` and `code-intel config *` remain the CLI source for first-run setup and editor/MCP registration. The Web UI settings screen complements those commands; it does not replace editor/MCP setup in v1.
 
 ### Search Modes
 

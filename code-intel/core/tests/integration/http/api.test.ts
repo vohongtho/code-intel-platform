@@ -61,7 +61,8 @@ async function req(
 
   if (stateChanging) {
     // Fetch CSRF token + capture the Set-Cookie header
-    const csrfRes = await rawReq(server, { method: 'GET', path: '/auth/csrf-token' });
+    const csrfHeaders = opts.headers?.['Cookie'] ? { Cookie: opts.headers['Cookie'] } : undefined;
+    const csrfRes = await rawReq(server, { method: 'GET', path: '/auth/csrf-token', headers: csrfHeaders });
     const csrfBody = csrfRes.body as { csrfToken?: string };
     csrfToken = csrfBody.csrfToken ?? '';
     // Extract the csrf cookie from Set-Cookie header
@@ -77,9 +78,14 @@ async function req(
   if (csrfToken) extraHeaders['x-csrf-token'] = csrfToken;
   if (csrfCookie) extraHeaders['Cookie'] = csrfCookie;
 
+  const mergedHeaders = { ...extraHeaders, ...(opts.headers ?? {}) };
+  if (csrfCookie && opts.headers?.['Cookie']) {
+    mergedHeaders['Cookie'] = `${opts.headers['Cookie']}; ${csrfCookie}`;
+  }
+
   const result = await rawReq(server, {
     ...opts,
-    headers: { ...extraHeaders, ...(opts.headers ?? {}) },
+    headers: mergedHeaders,
   });
   return { ...result, headers: result.headers as Record<string, string[]> };
 }
@@ -139,8 +145,17 @@ describe('HTTP API — public routes', () => {
 
 describe('HTTP API — auth routes', () => {
   let server: http.Server;
+  let dbPath: string;
+  let db: UsersDB;
 
   before(() => {
+    dbPath = path.join(os.tmpdir(), `http-api-auth-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.db`);
+    process.env['CODE_INTEL_USERS_DB_PATH'] = dbPath;
+    resetUsersDBForTesting();
+    db = new UsersDB(dbPath);
+    db.createUser('admin', 'admin-pass-123', 'admin');
+    db.createUser('viewer', 'viewer-pass-123', 'viewer');
+
     const graph = createKnowledgeGraph();
     const app = createApp(graph, 'test-repo');
     server = http.createServer(app);
@@ -148,6 +163,10 @@ describe('HTTP API — auth routes', () => {
   });
 
   after(() => {
+    db.close();
+    try { fs.unlinkSync(dbPath); } catch { /* ignore */ }
+    delete process.env['CODE_INTEL_USERS_DB_PATH'];
+    resetUsersDBForTesting();
     return new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
   });
 
@@ -168,6 +187,115 @@ describe('HTTP API — auth routes', () => {
   it('POST /auth/logout → 200', async () => {
     const res = await req(server, { method: 'POST', path: '/auth/logout' });
     assert.equal(res.status, 200);
+  });
+
+  it('GET /api/v1/config → 401 without auth', async () => {
+    const res = await req(server, { method: 'GET', path: '/api/v1/config' });
+    assert.equal(res.status, 401);
+  });
+
+  it('GET /api/v1/config → 200 for viewer with masked config', async () => {
+    const loginRes = await req(server, {
+      method: 'POST',
+      path: '/auth/login',
+      body: { username: 'viewer', password: 'viewer-pass-123' },
+    });
+    assert.equal(loginRes.status, 200);
+    const cookies = loginRes.headers['set-cookie'] ?? [];
+    const sessionCookie = cookies.map((c) => c.split(';')[0] ?? '').join('; ');
+
+    const res = await req(server, {
+      method: 'GET',
+      path: '/api/v1/config',
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(res.status, 200);
+    const body = res.body as { config: { llm: { apiKey: string } } };
+    assert.equal(body.config.llm.apiKey, '');
+  });
+
+  it('PUT /api/v1/config → 403 for viewer', async () => {
+    const loginRes = await req(server, {
+      method: 'POST',
+      path: '/auth/login',
+      body: { username: 'viewer', password: 'viewer-pass-123' },
+    });
+    assert.equal(loginRes.status, 200);
+    const cookies = loginRes.headers['set-cookie'] ?? [];
+    const sessionCookie = cookies.map((c) => c.split(';')[0] ?? '').join('; ');
+
+    const res = await req(server, {
+      method: 'PUT',
+      path: '/api/v1/config',
+      body: { config: { llm: { provider: 'ollama', model: 'llama3', apiKey: '', batchSize: 20, maxTokensPerSummary: 100 }, embeddings: { model: 'all-MiniLM-L6-v2', enabled: false }, analysis: { maxFileSizeKB: 512, ignorePatterns: [], incrementalByDefault: false }, serve: { defaultPort: 4747, openBrowser: true }, auth: { mode: 'local' }, updates: { checkOnStartup: true, intervalHours: 24 }, telemetry: { enabled: false } } },
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(res.status, 403);
+  });
+
+  it('PUT /api/v1/config → 400 for invalid payload by admin', async () => {
+    const loginRes = await req(server, {
+      method: 'POST',
+      path: '/auth/login',
+      body: { username: 'admin', password: 'admin-pass-123' },
+    });
+    assert.equal(loginRes.status, 200);
+    const cookies = loginRes.headers['set-cookie'] ?? [];
+    const sessionCookie = cookies.map((c) => c.split(';')[0] ?? '').join('; ');
+
+    const res = await req(server, {
+      method: 'PUT',
+      path: '/api/v1/config',
+      body: { config: { llm: { provider: 'bad', model: 'llama3', apiKey: '', batchSize: 20, maxTokensPerSummary: 100 }, embeddings: { model: 'all-MiniLM-L6-v2', enabled: false }, analysis: { maxFileSizeKB: 512, ignorePatterns: [], incrementalByDefault: false }, serve: { defaultPort: 4747, openBrowser: true }, auth: { mode: 'local' }, updates: { checkOnStartup: true, intervalHours: 24 }, telemetry: { enabled: false } } },
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(res.status, 400);
+    const body = res.body as { validationErrors?: unknown[] };
+    assert.ok(Array.isArray(body.validationErrors));
+  });
+
+  it('PUT /api/v1/config → 200 for admin and masks secret in response', async () => {
+    const globalDir = fs.mkdtempSync(path.join(os.tmpdir(), 'code-intel-global-'));
+    process.env['CODE_INTEL_GLOBAL_DIR'] = globalDir;
+
+    const loginRes = await req(server, {
+      method: 'POST',
+      path: '/auth/login',
+      body: { username: 'admin', password: 'admin-pass-123' },
+    });
+    assert.equal(loginRes.status, 200);
+    const cookies = loginRes.headers['set-cookie'] ?? [];
+    const sessionCookie = cookies.map((c) => c.split(';')[0] ?? '').join('; ');
+
+    const payload = {
+      config: {
+        llm: { provider: 'openai', model: 'gpt-5', apiKey: '$OPENAI_API_KEY', baseUrl: '', batchSize: 10, maxTokensPerSummary: 200 },
+        embeddings: { model: 'all-MiniLM-L6-v2', enabled: true },
+        analysis: { maxFileSizeKB: 1024, ignorePatterns: ['dist'], incrementalByDefault: true },
+        serve: { defaultPort: 4848, openBrowser: false },
+        auth: { mode: 'local' },
+        updates: { checkOnStartup: false, intervalHours: 48 },
+        telemetry: { enabled: true },
+      },
+    };
+
+    const res = await req(server, {
+      method: 'PUT',
+      path: '/api/v1/config',
+      body: payload,
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(res.status, 200);
+    const body = res.body as { config: { llm: { apiKey: string; provider: string }; serve: { defaultPort: number } } };
+    assert.equal(body.config.llm.apiKey, '$OPENAI_API_KEY');
+    assert.equal(body.config.llm.provider, 'openai');
+    assert.equal(body.config.serve.defaultPort, 4848);
+
+    const stored = JSON.parse(fs.readFileSync(path.join(globalDir, 'config.json'), 'utf-8')) as { llm: { provider: string } };
+    assert.equal(stored.llm.provider, 'openai');
+
+    fs.rmSync(globalDir, { recursive: true, force: true });
+    delete process.env['CODE_INTEL_GLOBAL_DIR'];
   });
 });
 

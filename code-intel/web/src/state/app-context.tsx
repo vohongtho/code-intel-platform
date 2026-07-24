@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useReducer } from 'react';
-import type { AppState, SearchResult, ChatMessage, FocusDepth, CurrentUser, GraphLoadProgress } from './types';
+import type { AppState, AppConfig, SearchResult, ChatMessage, FocusDepth, CurrentUser, GraphLoadProgress } from './types';
 import type { CodeNode, CodeEdge, NodeKind, EdgeKind } from 'code-intel-shared';
 
 type Action =
@@ -24,7 +24,14 @@ type Action =
   | { type: 'SET_GROUP_NAME'; name: string }
   | { type: 'SET_GROUP_MEMBERS'; members: { groupPath: string; repoId?: string; registryName: string }[] }
   | { type: 'SET_GROUP_CONTRACTS'; contracts: AppState['groupContracts']; links: AppState['groupLinks']; syncedAt: string }
-  | { type: 'SET_GRAPH_LOAD'; progress: GraphLoadProgress | null };
+  | { type: 'SET_GRAPH_LOAD'; progress: GraphLoadProgress | null }
+  | { type: 'SET_CONFIG_LOADING'; loading: boolean }
+  | { type: 'SET_CONFIG_ERROR'; error: string | null }
+  | { type: 'SET_CONFIG_VALIDATION_ERRORS'; errors: AppState['config']['validationErrors'] }
+  | { type: 'SET_CONFIG'; config: AppConfig }
+  | { type: 'UPDATE_CONFIG'; config: AppConfig }
+  | { type: 'SET_CONFIG_SAVING'; saving: boolean }
+  | { type: 'RESET_CONFIG_EDITS' };
 
 const initialState: AppState = {
   view: 'login',
@@ -50,6 +57,14 @@ const initialState: AppState = {
   groupContracts: [],
   groupLinks: [],
   groupSyncedAt: null,
+  config: {
+    current: null,
+    original: null,
+    loading: false,
+    saving: false,
+    error: null,
+    validationErrors: [],
+  },
 };
 
 function reducer(state: AppState, action: Action): AppState {
@@ -61,7 +76,20 @@ function reducer(state: AppState, action: Action): AppState {
     case 'SET_CONNECTED':
       return { ...state, connected: action.connected };
     case 'SET_CURRENT_USER':
-      return { ...state, currentUser: action.user };
+      return action.user
+        ? { ...state, currentUser: action.user }
+        : {
+            ...state,
+            currentUser: null,
+            config: {
+              current: null,
+              original: null,
+              loading: false,
+              saving: false,
+              error: null,
+              validationErrors: [],
+            },
+          };
     case 'SET_REPO_NAME':
       return { ...state, repoName: action.name };
     case 'SET_GRAPH':
@@ -108,6 +136,20 @@ function reducer(state: AppState, action: Action): AppState {
     case 'SET_GROUP_MEMBERS': return { ...state, groupMembers: action.members };
     case 'SET_GROUP_CONTRACTS': return { ...state, groupContracts: action.contracts, groupLinks: action.links, groupSyncedAt: action.syncedAt };
     case 'SET_GRAPH_LOAD': return { ...state, graphLoad: action.progress };
+    case 'SET_CONFIG_LOADING':
+      return { ...state, config: { ...state.config, loading: action.loading } };
+    case 'SET_CONFIG_ERROR':
+      return { ...state, config: { ...state.config, error: action.error } };
+    case 'SET_CONFIG_VALIDATION_ERRORS':
+      return { ...state, config: { ...state.config, validationErrors: action.errors } };
+    case 'SET_CONFIG':
+      return { ...state, config: { ...state.config, current: action.config, original: action.config, error: null, validationErrors: [] } };
+    case 'UPDATE_CONFIG':
+      return { ...state, config: { ...state.config, current: action.config } };
+    case 'SET_CONFIG_SAVING':
+      return { ...state, config: { ...state.config, saving: action.saving } };
+    case 'RESET_CONFIG_EDITS':
+      return { ...state, config: { ...state.config, current: state.config.original, error: null, validationErrors: [] } };
     default:
       return state;
   }

@@ -1,5 +1,5 @@
 import type { CodeNode, CodeEdge } from 'code-intel-shared';
-import type { SearchResult, CurrentUser } from '../state/types';
+import type { SearchResult, CurrentUser, AppConfig } from '../state/types';
 
 export interface CountGroup {
   key: string;
@@ -43,6 +43,12 @@ export interface GrepHit {
   file: string;
   line: number;
   text: string;
+}
+
+export interface ConfigValidationError {
+  path: string;
+  reason: string;
+  hint: string;
 }
 
 export class ApiClient {
@@ -112,6 +118,32 @@ export class ApiClient {
     });
     if (!res.ok) return { authenticated: false };
     return res.json() as Promise<AuthStatus>;
+  }
+
+  async getConfig(): Promise<{ config: AppConfig }> {
+    const res = await fetch(`${this.baseUrl}/api/v1/config`, { credentials: 'include' });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { error?: { message?: string } };
+      throw new Error(body?.error?.message ?? 'Failed to load config');
+    }
+    return res.json() as Promise<{ config: AppConfig }>;
+  }
+
+  async saveConfig(config: AppConfig): Promise<{ config: AppConfig }> {
+    const csrfToken = await this.getCsrfToken();
+    const res = await fetch(`${this.baseUrl}/api/v1/config`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      credentials: 'include',
+      body: JSON.stringify({ config }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { error?: { message?: string }; validationErrors?: ConfigValidationError[] };
+      const error = new Error(body?.error?.message ?? 'Failed to save config') as Error & { validationErrors?: ConfigValidationError[] };
+      error.validationErrors = body.validationErrors ?? [];
+      throw error;
+    }
+    return res.json() as Promise<{ config: AppConfig }>;
   }
 
   // ── Graph & repos ──────────────────────────────────────────────────────────

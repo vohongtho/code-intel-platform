@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAppState } from '../state/app-context';
 import { ApiClient } from '../api/client';
 
 export function LoginPage() {
   const { state, dispatch } = useAppState();
+  const navigate = useNavigate();
 
   const defaultUrl =
     window.location.port === '5173' || window.location.port === '5174'
@@ -38,6 +40,7 @@ export function LoginPage() {
           dispatch({ type: 'SET_SERVER_URL', url: state.serverUrl || defaultUrl });
           dispatch({ type: 'SET_CURRENT_USER', user: status.user });
           dispatch({ type: 'SET_VIEW', view: 'connect' });
+          navigate('/connect');
         }
       } catch { /* ignore */ }
       setChecking(false);
@@ -59,6 +62,7 @@ export function LoginPage() {
       dispatch({ type: 'SET_SERVER_URL', url: serverUrl });
       dispatch({ type: 'SET_CURRENT_USER', user });
       dispatch({ type: 'SET_VIEW', view: 'connect' });
+      navigate('/connect');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed');
     } finally {
@@ -88,6 +92,7 @@ export function LoginPage() {
       dispatch({ type: 'SET_SERVER_URL', url: serverUrl });
       dispatch({ type: 'SET_CURRENT_USER', user });
       dispatch({ type: 'SET_VIEW', view: 'connect' });
+      navigate('/connect');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Setup failed');
     } finally {

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAppState } from '../state/app-context';
 import { ApiClient } from '../api/client';
 import type { AppState } from '../state/types';
@@ -7,6 +8,7 @@ type ConnectTab = 'repo' | 'group';
 
 export function ConnectPage() {
   const { dispatch } = useAppState();
+  const navigate = useNavigate();
 
   const defaultUrl =
     window.location.port === '5173' || window.location.port === '5174'
@@ -67,6 +69,7 @@ export function ConnectPage() {
       dispatch({ type: 'SET_MODE', mode: 'repo' });
       dispatch({ type: 'SET_REPO_NAME', name: repoName });
       dispatch({ type: 'SET_VIEW', view: 'loading' });
+      navigate('/loading');
 
       const PAGE = 200;
 
@@ -111,10 +114,12 @@ export function ConnectPage() {
       dispatch({ type: 'SET_GRAPH', nodes: allNodes, edges: fullGraph.edges });
       dispatch({ type: 'SET_CONNECTED', connected: true });
       dispatch({ type: 'SET_VIEW', view: 'exploring' });
+      navigate('/explore');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Connection failed');
       dispatch({ type: 'SET_GRAPH_LOAD', progress: null });
       dispatch({ type: 'SET_VIEW', view: 'connect' });
+      navigate('/connect');
       setConnecting(false);
     }
   };
@@ -126,6 +131,7 @@ export function ConnectPage() {
       const client = new ApiClient(url);
       dispatch({ type: 'SET_SERVER_URL', url });
       dispatch({ type: 'SET_VIEW', view: 'loading' });
+      navigate('/loading');
 
       const [groupConfig, graphData] = await Promise.all([
         client.getGroup(groupName),
@@ -139,6 +145,7 @@ export function ConnectPage() {
       dispatch({ type: 'SET_GRAPH', nodes: graphData.nodes, edges: graphData.edges });
       dispatch({ type: 'SET_CONNECTED', connected: true });
       dispatch({ type: 'SET_VIEW', view: 'exploring' });
+      navigate('/explore');
 
       client.getGroupContracts(groupName).then((contracts) => {
         if (contracts) {
@@ -153,6 +160,7 @@ export function ConnectPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load group');
       dispatch({ type: 'SET_VIEW', view: 'connect' });
+      navigate('/connect');
     } finally {
       setConnectingGroup(null);
     }

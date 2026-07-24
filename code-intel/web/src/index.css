@@ -84,6 +84,12 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+button:not(:disabled),
+a,
+[role='button'] {
+  cursor: pointer !important;
+}
+
 /* ── Scrollbar ──────────────────────────────── */
 .scrollbar-thin {
   scrollbar-width: thin;

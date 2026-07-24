@@ -6,6 +6,16 @@ All notable changes to this project are documented in this file.
 
 ## [1.0.5] - 2026-07-24
 
+### 🖥️ Routed portal settings screen
+
+- Added authenticated Web UI settings routes under `/settings/:section` for global server configuration, with browser back/forward support and router-managed section navigation instead of `#fragment` anchors.
+- Added a profile-menu `Settings` entry above `Sign Out` in the portal header.
+- Added masked config read and validated config update HTTP endpoints at `/api/v1/config`.
+- Added portal config editing for LLM, embeddings, analysis, server, authentication, updates, and telemetry settings.
+- Global config reads are available to authenticated viewers; updates require the admin role.
+- Logout now clears cached portal settings state so revisiting routed settings URLs redirects cleanly through auth.
+- Affected files and symbols include `code-intel/web/src/components/shared/Header.tsx` (`handleLogout` + settings navigation), `code-intel/web/src/App.tsx` (`AppContent` route table), `code-intel/web/src/api/client.ts` (`ApiClient.getConfig` / `ApiClient.saveConfig`), `code-intel/core/src/http/app.ts` (`createApp` + `/api/v1/config`), `code-intel/core/src/cli/init-wizard.ts` (`loadConfig` / `saveConfig` via configurable global config path), `code-intel/core/src/cli/config-manager.ts` (`maskConfig` / `validateConfig`), `code-intel/web/src/pages/SettingsPage.tsx`, and `code-intel/web/src/routing.ts`.
+
 ### ⚡ Plain analyze auto-incremental
 
 - Plain `code-intel analyze` now auto-attempts incremental graph reindexing when valid prior `.code-intel/meta.json` exists and the existing safety checks pass.

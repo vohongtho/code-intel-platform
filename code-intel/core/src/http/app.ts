@@ -56,6 +56,8 @@ import {
   pollDeviceFlow,
   refreshOIDCToken,
 } from '../auth/oidc.js';
+import { loadConfig, saveConfig, DEFAULT_CONFIG, type CodeIntelConfig } from '../cli/init-wizard.js';
+import { maskConfig, validateConfig } from '../cli/config-manager.js';
 import {
   metricsRegistry,
   httpRequestsTotal,
@@ -754,6 +756,46 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
       timestamp: new Date().toISOString(),
       requestId: req.requestId,
     });
+  });
+
+  // ── Global config ────────────────────────────────────────────────────────────
+  app.get('/api/v1/config', requireRole('viewer'), (_req: Request, res: Response) => {
+    const cfg = loadConfig() ?? DEFAULT_CONFIG;
+    res.json({ config: maskConfig(cfg) });
+  });
+
+  app.put('/api/v1/config', requireRole('admin'), (req: Request, res: Response) => {
+    const body = req.body as { config?: CodeIntelConfig };
+    if (!body.config || typeof body.config !== 'object' || Array.isArray(body.config)) {
+      res.status(400).json({
+        error: {
+          code: ErrorCodes.INVALID_REQUEST,
+          message: 'config object is required',
+          hint: 'Provide { "config": { ... } } in request body',
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+
+    const errors = validateConfig(body.config);
+    if (errors.length > 0) {
+      res.status(400).json({
+        error: {
+          code: ErrorCodes.INVALID_REQUEST,
+          message: 'Config validation failed',
+          hint: errors[0]?.hint,
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+        validationErrors: errors,
+      });
+      return;
+    }
+
+    saveConfig(body.config);
+    res.json({ config: maskConfig(body.config) });
   });
 
   // ── Repos ───────────────────────────────────────────────────────────────────

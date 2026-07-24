@@ -1,6 +1,6 @@
 import type { CodeNode, CodeEdge, NodeKind, EdgeKind } from 'code-intel-shared';
 
-export type AppView = 'login' | 'connect' | 'loading' | 'exploring';
+export type AppView = 'login' | 'connect' | 'loading' | 'exploring' | 'settings';
 
 export interface CurrentUser {
   id: string;
@@ -53,6 +53,45 @@ export interface GraphLoadProgress {
   phase: 'edges' | 'nodes'; // what we're currently fetching
 }
 
+export interface AppConfig {
+  llm: {
+    provider: 'openai' | 'anthropic' | 'ollama' | 'custom' | 'none';
+    model: string;
+    apiKey: string;
+    baseUrl?: string;
+    batchSize: number;
+    maxTokensPerSummary: number;
+  };
+  embeddings: {
+    model: string;
+    enabled: boolean;
+  };
+  analysis: {
+    maxFileSizeKB: number;
+    ignorePatterns: string[];
+    incrementalByDefault: boolean;
+  };
+  serve: {
+    defaultPort: number;
+    openBrowser: boolean;
+  };
+  auth: {
+    mode: 'local' | 'oidc';
+    oidc?: {
+      issuerUrl: string;
+      clientId: string;
+      clientSecret: string;
+    };
+  };
+  updates: {
+    checkOnStartup: boolean;
+    intervalHours: number;
+  };
+  telemetry: {
+    enabled: boolean;
+  };
+}
+
 export interface AppState {
   view: AppView;
   serverUrl: string;
@@ -73,4 +112,12 @@ export interface AppState {
   groupContracts: { kind: string; name: string; repoName: string; filePath: string; signature?: string }[];
   groupLinks: { providerRepo: string; providerContract: string; consumerRepo: string; consumerContract: string; matchKind: string; confidence: number }[];
   groupSyncedAt: string | null;
+  config: {
+    current: AppConfig | null;
+    original: AppConfig | null;
+    loading: boolean;
+    saving: boolean;
+    error: string | null;
+    validationErrors: { path: string; reason: string; hint: string }[];
+  };
 }
