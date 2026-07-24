@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import type { RepoGroup, GroupMember } from './types.js';
+import { findRepoById, findRepoByName, loadRegistry } from '../storage/repo-registry.js';
 
 const GROUPS_DIR = path.join(os.homedir(), '.code-intel', 'groups');
 
@@ -15,7 +16,25 @@ function groupFile(name: string): string {
 
 export function loadGroup(name: string): RepoGroup | null {
   try {
-    return JSON.parse(fs.readFileSync(groupFile(name), 'utf-8')) as RepoGroup;
+    const group = JSON.parse(fs.readFileSync(groupFile(name), 'utf-8')) as RepoGroup;
+    let changed = false;
+    const registry = loadRegistry();
+    group.members = group.members.map((member) => {
+      if (member.repoId) {
+        const repo = findRepoById(member.repoId, registry);
+        if (repo && member.registryName !== repo.name) {
+          changed = true;
+          return { ...member, registryName: repo.name };
+        }
+        return member;
+      }
+      const repo = findRepoByName(member.registryName, registry);
+      if (!repo) return member;
+      changed = true;
+      return { ...member, repoId: repo.id, registryName: repo.name };
+    });
+    if (changed) saveGroup(group);
+    return group;
   } catch {
     return null;
   }
@@ -56,12 +75,15 @@ export function groupExists(name: string): boolean {
 export function addMember(groupName: string, member: GroupMember): RepoGroup {
   const group = loadGroup(groupName);
   if (!group) throw new Error(`Group "${groupName}" not found.`);
+  const repo = member.repoId ? findRepoById(member.repoId) : findRepoByName(member.registryName);
+  if (!repo) throw new Error(`Repository "${member.registryName}" not found.`);
+  const normalized: GroupMember = { ...member, repoId: repo.id, registryName: repo.name };
   // replace if same groupPath already exists
   const idx = group.members.findIndex((m) => m.groupPath === member.groupPath);
   if (idx >= 0) {
-    group.members[idx] = member;
+    group.members[idx] = normalized;
   } else {
-    group.members.push(member);
+    group.members.push(normalized);
   }
   saveGroup(group);
   return group;

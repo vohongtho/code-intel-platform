@@ -23,7 +23,7 @@ import { syncGroup } from '../multi-repo/group-sync.js';
 import { queryGroup } from '../multi-repo/group-query.js';
 import { createKnowledgeGraph } from '../graph/knowledge-graph.js';
 import { loadGraphFromDB } from '../multi-repo/graph-from-db.js';
-import { loadRegistry } from '../storage/repo-registry.js';
+import { loadRegistry, findRepoByName } from '../storage/repo-registry.js';
 import Logger from '../shared/logger.js';
 import { AppError, ErrorCodes } from '../errors/codes.js';
 import {
@@ -752,10 +752,11 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
   app.get('/api/v1/repos', (_req, res) => {
     const registry = loadRegistry();
     if (registry.length === 0) {
-      res.json([{ name: repoName, path: workspaceRoot ?? '', nodes: graph.size.nodes, edges: graph.size.edges, indexedAt: null }]);
+      res.json([{ id: workspaceRoot ?? repoName, name: repoName, path: workspaceRoot ?? '', nodes: graph.size.nodes, edges: graph.size.edges, indexedAt: null }]);
       return;
     }
     res.json(registry.map((r) => ({
+      id: r.id,
       name: r.name,
       path: r.path,
       nodes: r.stats.nodes,
@@ -769,7 +770,7 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
   async function loadRepoGraph(requestedRepo: string): Promise<KnowledgeGraph | null> {
     if (requestedRepo === repoName) return graph;
     const registry = loadRegistry();
-    const entry = registry.find((r) => r.name === requestedRepo || r.path === requestedRepo);
+    const entry = registry.find((r) => r.id === requestedRepo || r.name === requestedRepo || r.path === requestedRepo);
     if (!entry) return null;
     const dbPath = path.join(entry.path, '.code-intel', 'graph.db');
     if (!fs.existsSync(dbPath)) return null;
@@ -792,7 +793,7 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     const registry = loadRegistry();
     const mergedGraph = createKnowledgeGraph();
     for (const member of group.members) {
-      const regEntry = registry.find((r) => r.name === member.registryName);
+      const regEntry = registry.find((r) => r.id === member.repoId || r.name === member.registryName);
       if (!regEntry) continue;
       const dbPath = path.join(regEntry.path, '.code-intel', 'graph.db');
       if (!fs.existsSync(dbPath)) continue;
@@ -1271,18 +1272,19 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     const groupName = req.params['name'] as string;
     const group = loadGroup(groupName);
     if (!group) { res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: 'Group not found' } }); return; }
-    const { groupPath, registryName } = req.body as { groupPath?: string; registryName?: string };
-    if (!groupPath || !registryName) {
-      res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: 'groupPath and registryName are required' } });
+    const { groupPath, registryName, repoId } = req.body as { groupPath?: string; registryName?: string; repoId?: string };
+    if (!groupPath || (!registryName && !repoId)) {
+      res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: 'groupPath and registryName or repoId are required' } });
       return;
     }
     const registry = loadRegistry();
-    if (!registry.find((r) => r.name === registryName)) {
-      res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: `Repo "${registryName}" not found in registry. Run code-intel analyze first.` } });
+    const repo = registry.find((r) => r.id === repoId || r.name === registryName);
+    if (!repo) {
+      res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: `Repo "${registryName ?? repoId}" not found in registry. Run code-intel analyze first.` } });
       return;
     }
     try {
-      const updated = addMember(groupName, { groupPath, registryName });
+      const updated = addMember(groupName, { groupPath, repoId: repo.id, registryName: repo.name });
       res.json(updated);
     } catch (err) {
       res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: err instanceof Error ? err.message : String(err) } });
@@ -1340,7 +1342,7 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     const registry = loadRegistry();
     const mergedGraph = createKnowledgeGraph();
     for (const member of group.members) {
-      const regEntry = registry.find((r) => r.name === member.registryName);
+      const regEntry = registry.find((r) => r.id === member.repoId || r.name === member.registryName);
       if (!regEntry) continue;
       const dbPath = path.join(regEntry.path, '.code-intel', 'graph.db');
       if (!fs.existsSync(dbPath)) continue;
@@ -1362,7 +1364,7 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     const registry = loadRegistry();
 
     const repos = await Promise.all(group.members.map(async (member) => {
-      const regEntry = registry.find((r) => r.name === member.registryName);
+      const regEntry = registry.find((r) => r.id === member.repoId || r.name === member.registryName);
       let nodeCount = 0;
       let edgeCount = 0;
       if (regEntry) {

@@ -4,7 +4,20 @@ All notable changes to this project are documented in this file.
 
 ---
 
-## [1.0.5] — Intent-Aware Search & Symbol Disambiguation & Vulnerability scan generic-tier precision
+## [1.0.5] - 2026-07-24
+
+### 🗂️ Stable repository identity and unique names
+
+- Added stable repository `id` fields to persisted registry entries while keeping user-facing unique `name` values and mutable `path` values.
+- Added automatic migration for legacy registry entries that lacked IDs.
+- Added deterministic duplicate-name repair during migration, with warnings when old basename-derived names collide.
+- `code-intel analyze` now accepts `--name <name>` and enforces explicit create vs rename vs relink semantics.
+- Added `code-intel repo list|show|rename|relink` for repository identity management.
+- MCP and HTTP repo resolution now accept stable IDs in addition to names and paths.
+- Group membership persistence now stores `repoId` so repository renames do not break group resolution.
+- `/api/v1/repos` now includes repository IDs in responses.
+- Updated CLI help and README guidance for repository naming, duplicate validation, rename, and relink workflows.
+
 
 ### 🛡️ Vulnerability scan generic-tier precision
 

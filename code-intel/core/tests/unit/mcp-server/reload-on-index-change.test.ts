@@ -61,7 +61,7 @@ describe('MCP graph reload on index change', () => {
 
   it('reloads when meta.json indexVersion changes', async () => {
     const repoPath = mkRepo('mcp-reload');
-    saveRegistry([{ name: 'repo-a', path: repoPath, indexedAt: new Date().toISOString(), stats: { nodes: 1, edges: 0, files: 1 } }]);
+    saveRegistry([{ id: 'repo-a-id', name: 'repo-a', path: repoPath, indexedAt: new Date().toISOString(), stats: { nodes: 1, edges: 0, files: 1 } }]);
 
     await writeRepoIndex(repoPath, {
       indexVersion: 'v1',
@@ -85,7 +85,7 @@ describe('MCP graph reload on index change', () => {
 
   it('reuses cached graph when indexVersion is unchanged', async () => {
     const repoPath = mkRepo('mcp-cache');
-    saveRegistry([{ name: 'repo-cache', path: repoPath, indexedAt: new Date().toISOString(), stats: { nodes: 1, edges: 0, files: 1 } }]);
+    saveRegistry([{ id: 'repo-cache-id', name: 'repo-cache', path: repoPath, indexedAt: new Date().toISOString(), stats: { nodes: 1, edges: 0, files: 1 } }]);
 
     await writeRepoIndex(repoPath, {
       indexVersion: 'same-v1',
@@ -110,8 +110,8 @@ describe('MCP graph reload on index change', () => {
     const repoA = mkRepo('mcp-repo-a');
     const repoB = mkRepo('mcp-repo-b');
     saveRegistry([
-      { name: 'repo-a', path: repoA, indexedAt: new Date().toISOString(), stats: { nodes: 1, edges: 0, files: 1 } },
-      { name: 'repo-b', path: repoB, indexedAt: new Date().toISOString(), stats: { nodes: 1, edges: 0, files: 1 } },
+      { id: 'repo-a-id', name: 'repo-a', path: repoA, indexedAt: new Date().toISOString(), stats: { nodes: 1, edges: 0, files: 1 } },
+      { id: 'repo-b-id', name: 'repo-b', path: repoB, indexedAt: new Date().toISOString(), stats: { nodes: 1, edges: 0, files: 1 } },
     ]);
 
     await writeRepoIndex(repoA, {
@@ -135,7 +135,7 @@ describe('MCP graph reload on index change', () => {
 
   it('repo-scoped MCP search excludes unit-test symbols by default', async () => {
     const repoPath = mkRepo('mcp-search-tests');
-    saveRegistry([{ name: 'repo-search', path: repoPath, indexedAt: new Date().toISOString(), stats: { nodes: 2, edges: 0, files: 2 } }]);
+    saveRegistry([{ id: 'repo-search-id', name: 'repo-search', path: repoPath, indexedAt: new Date().toISOString(), stats: { nodes: 2, edges: 0, files: 2 } }]);
 
     await writeRepoIndex(repoPath, {
       indexVersion: 'v1',
@@ -154,8 +154,8 @@ describe('MCP graph reload on index change', () => {
     const repoA = mkRepo('mcp-vuln-a');
     const repoB = mkRepo('mcp-vuln-b');
     saveRegistry([
-      { name: 'repo-a', path: repoA, indexedAt: new Date().toISOString(), stats: { nodes: 1, edges: 0, files: 1 } },
-      { name: 'repo-b', path: repoB, indexedAt: new Date().toISOString(), stats: { nodes: 1, edges: 0, files: 1 } },
+      { id: 'repo-a-id', name: 'repo-a', path: repoA, indexedAt: new Date().toISOString(), stats: { nodes: 1, edges: 0, files: 1 } },
+      { id: 'repo-b-id', name: 'repo-b', path: repoB, indexedAt: new Date().toISOString(), stats: { nodes: 1, edges: 0, files: 1 } },
     ]);
 
     await writeRepoIndex(repoA, {

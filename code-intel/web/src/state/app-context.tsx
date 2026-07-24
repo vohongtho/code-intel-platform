@@ -22,7 +22,7 @@ type Action =
   | { type: 'RESET_FILTERS' }
   | { type: 'SET_MODE'; mode: 'repo' | 'group' }
   | { type: 'SET_GROUP_NAME'; name: string }
-  | { type: 'SET_GROUP_MEMBERS'; members: { groupPath: string; registryName: string }[] }
+  | { type: 'SET_GROUP_MEMBERS'; members: { groupPath: string; repoId?: string; registryName: string }[] }
   | { type: 'SET_GROUP_CONTRACTS'; contracts: AppState['groupContracts']; links: AppState['groupLinks']; syncedAt: string }
   | { type: 'SET_GRAPH_LOAD'; progress: GraphLoadProgress | null };
 

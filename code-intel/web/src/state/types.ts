@@ -69,7 +69,7 @@ export interface AppState {
   chat: { messages: ChatMessage[]; loading: boolean };
   mode: 'repo' | 'group';
   groupName: string;
-  groupMembers: { groupPath: string; registryName: string }[];
+  groupMembers: { groupPath: string; repoId?: string; registryName: string }[];
   groupContracts: { kind: string; name: string; repoName: string; filePath: string; signature?: string }[];
   groupLinks: { providerRepo: string; providerContract: string; consumerRepo: string; consumerContract: string; matchKind: string; confidence: number }[];
   groupSyncedAt: string | null;

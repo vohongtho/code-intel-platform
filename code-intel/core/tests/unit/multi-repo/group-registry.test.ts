@@ -15,6 +15,7 @@ import {
   saveSyncResult,
   loadSyncResult,
 } from '../../../src/multi-repo/group-registry.js';
+import { saveRegistry } from '../../../src/storage/repo-registry.js';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -72,8 +73,8 @@ describe('saveGroup + loadGroup', () => {
       name,
       createdAt: '2025-01-01T00:00:00.000Z',
       members: [
-        { groupPath: 'frontend', registryName: 'my-frontend' },
-        { groupPath: 'backend', registryName: 'my-backend' },
+        { groupPath: 'frontend', repoId: 'repo-frontend', registryName: 'my-frontend' },
+        { groupPath: 'backend', repoId: 'repo-backend', registryName: 'my-backend' },
       ],
     };
     saveGroup(group);
@@ -85,7 +86,7 @@ describe('saveGroup + loadGroup', () => {
   it('overwrites existing group on re-save', () => {
     const name = grpName('overwrite');
     saveGroup({ name, createdAt: '2025-01-01T00:00:00.000Z', members: [] });
-    saveGroup({ name, createdAt: '2025-06-01T00:00:00.000Z', members: [{ groupPath: 'x', registryName: 'y' }] });
+    saveGroup({ name, createdAt: '2025-06-01T00:00:00.000Z', members: [{ groupPath: 'x', repoId: 'repo-y', registryName: 'y' }] });
     const loaded = loadGroup(name);
     assert.equal(loaded!.members.length, 1);
   });
@@ -173,24 +174,30 @@ describe('addMember', () => {
   after(cleanup);
 
   it('adds a new member to group', () => {
+    saveRegistry([{ id: 'repo-auth', name: 'auth-service', path: '/repos/auth', indexedAt: '2025-01-01T00:00:00.000Z', stats: { nodes: 1, edges: 0, files: 1 } }]);
     const name = grpName('add-member');
     saveGroup(makeGroup(name));
-    const updated = addMember(name, { groupPath: 'auth', registryName: 'auth-service' });
+    const updated = addMember(name, { groupPath: 'auth', repoId: 'repo-auth', registryName: 'auth-service' });
     assert.equal(updated.members.length, 1);
     assert.equal(updated.members[0]!.groupPath, 'auth');
   });
 
   it('replaces member with same groupPath', () => {
+    saveRegistry([
+      { id: 'repo-old', name: 'old-api', path: '/repos/old', indexedAt: '2025-01-01T00:00:00.000Z', stats: { nodes: 1, edges: 0, files: 1 } },
+      { id: 'repo-new', name: 'new-api', path: '/repos/new', indexedAt: '2025-01-01T00:00:00.000Z', stats: { nodes: 1, edges: 0, files: 1 } },
+    ]);
     const name = grpName('replace-member');
-    saveGroup({ name, createdAt: new Date().toISOString(), members: [{ groupPath: 'api', registryName: 'old-api' }] });
-    const updated = addMember(name, { groupPath: 'api', registryName: 'new-api' });
+    saveGroup({ name, createdAt: new Date().toISOString(), members: [{ groupPath: 'api', repoId: 'repo-old', registryName: 'old-api' }] });
+    const updated = addMember(name, { groupPath: 'api', repoId: 'repo-new', registryName: 'new-api' });
     assert.equal(updated.members.length, 1);
     assert.equal(updated.members[0]!.registryName, 'new-api');
   });
 
   it('throws when group does not exist', () => {
+    saveRegistry([{ id: 'repo-y', name: 'y', path: '/repos/y', indexedAt: '2025-01-01T00:00:00.000Z', stats: { nodes: 1, edges: 0, files: 1 } }]);
     assert.throws(
-      () => addMember(grpName('no-group'), { groupPath: 'x', registryName: 'y' }),
+      () => addMember(grpName('no-group'), { groupPath: 'x', repoId: 'repo-y', registryName: 'y' }),
       /not found/,
     );
   });
@@ -207,8 +214,8 @@ describe('removeMember', () => {
       name,
       createdAt: new Date().toISOString(),
       members: [
-        { groupPath: 'keep', registryName: 'keep-svc' },
-        { groupPath: 'remove', registryName: 'remove-svc' },
+        { groupPath: 'keep', repoId: 'repo-keep', registryName: 'keep-svc' },
+        { groupPath: 'remove', repoId: 'repo-remove', registryName: 'remove-svc' },
       ],
     });
     const updated = removeMember(name, 'remove');
@@ -225,7 +232,7 @@ describe('removeMember', () => {
 
   it('throws when member path does not exist in group', () => {
     const name = grpName('no-member');
-    saveGroup({ name, createdAt: new Date().toISOString(), members: [{ groupPath: 'a', registryName: 'a-svc' }] });
+    saveGroup({ name, createdAt: new Date().toISOString(), members: [{ groupPath: 'a', repoId: 'repo-a', registryName: 'a-svc' }] });
     assert.throws(
       () => removeMember(name, 'nonexistent-path'),
       /No member at path/,

@@ -568,6 +568,7 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
 export type ToolResult = { content: { type: string; text: string }[]; isError?: boolean };
 
 type LoadedRepoGraph = {
+  id: string;
   repo: string;
   path: string;
   indexVersion: string;
@@ -584,22 +585,22 @@ export function resetRepoGraphCacheForTests(): void {
   repoReloads.clear();
 }
 
-function repoCacheKey(repo: string, repoPath: string): string {
-  return `${repo}:${path.resolve(repoPath)}`;
+function repoCacheKey(repoId: string, repoPath: string): string {
+  return `${repoId}:${path.resolve(repoPath)}`;
 }
 
-function resolveRepo(repo: string | undefined, defaultRepo: string, defaultPath: string | undefined): { name: string; path: string } | null {
+function resolveRepo(repo: string | undefined, defaultRepo: string, defaultPath: string | undefined): { id: string; name: string; path: string } | null {
   const registry = loadRegistry();
   if (repo) {
-    const entry = registry.find((r) => r.name === repo || r.path === repo);
-    return entry ? { name: entry.name, path: entry.path } : null;
+    const entry = registry.find((r) => r.id === repo || r.name === repo || r.path === repo);
+    return entry ? { id: entry.id, name: entry.name, path: entry.path } : null;
   }
   const entry = registry.find((r) => r.name === defaultRepo || (defaultPath && r.path === defaultPath));
-  if (entry) return { name: entry.name, path: entry.path };
-  return defaultPath ? { name: defaultRepo, path: defaultPath } : null;
+  if (entry) return { id: entry.id, name: entry.name, path: entry.path };
+  return defaultPath ? { id: defaultPath, name: defaultRepo, path: defaultPath } : null;
 }
 
-async function loadRepoGraph(resolved: { name: string; path: string }, indexVersion: string, schemaVersion: number): Promise<LoadedRepoGraph> {
+async function loadRepoGraph(resolved: { id: string; name: string; path: string }, indexVersion: string, schemaVersion: number): Promise<LoadedRepoGraph> {
   const dbPath = getDbPath(resolved.path);
   if (!fs.existsSync(dbPath)) throw new Error(`Graph DB not found for repo "${resolved.name}" at ${dbPath}`);
   const db = new DbManager(dbPath, true);
@@ -620,32 +621,35 @@ async function loadRepoGraph(resolved: { name: string; path: string }, indexVers
     bm25Index = null;
   }
 
-  return { repo: resolved.name, path: resolved.path, indexVersion, schemaVersion, graph, bm25Index };
+  return { id: resolved.id, repo: resolved.name, path: resolved.path, indexVersion, schemaVersion, graph, bm25Index };
 }
 
 async function ensureRepoLoaded(repo: string | undefined, defaultRepo: string, defaultPath: string | undefined, fallbackGraph: KnowledgeGraph): Promise<LoadedRepoGraph> {
   const resolved = resolveRepo(repo, defaultRepo, defaultPath);
   if (!resolved) {
-    return { repo: repo ?? defaultRepo, path: defaultPath ?? '', indexVersion: 'memory', schemaVersion: CURRENT_SCHEMA_VERSION, graph: fallbackGraph, bm25Index: null };
+    return { id: defaultPath ?? defaultRepo, repo: repo ?? defaultRepo, path: defaultPath ?? '', indexVersion: 'memory', schemaVersion: CURRENT_SCHEMA_VERSION, graph: fallbackGraph, bm25Index: null };
   }
 
   const meta = loadMetadata(resolved.path);
-  if (!meta?.indexVersion) {
-    return { repo: resolved.name, path: resolved.path, indexVersion: 'memory', schemaVersion: meta?.schemaVersion ?? CURRENT_SCHEMA_VERSION, graph: fallbackGraph, bm25Index: null };
-  }
-  const schemaVersion = meta.schemaVersion ?? CURRENT_SCHEMA_VERSION;
+  const schemaVersion = meta?.schemaVersion ?? CURRENT_SCHEMA_VERSION;
   if (schemaVersion > CURRENT_SCHEMA_VERSION) {
     throw new Error(`Unsupported schemaVersion ${schemaVersion} for repo "${resolved.name}". Re-run code-intel analyze or upgrade the MCP server.`);
   }
 
-  const key = repoCacheKey(resolved.name, resolved.path);
+  const indexVersion = meta?.indexVersion ?? meta?.indexedAt ?? 'legacy';
+  const dbPath = getDbPath(resolved.path);
+  if (!fs.existsSync(dbPath)) {
+    return { id: resolved.id, repo: resolved.name, path: resolved.path, indexVersion: 'memory', schemaVersion, graph: fallbackGraph, bm25Index: null };
+  }
+
+  const key = repoCacheKey(resolved.id, resolved.path);
   const cached = repoGraphCache.get(key);
-  if (cached?.indexVersion === meta.indexVersion && cached.schemaVersion === schemaVersion && cached.path === resolved.path) return cached;
+  if (cached?.indexVersion === indexVersion && cached.schemaVersion === schemaVersion && cached.path === resolved.path) return cached;
 
   const existing = repoReloads.get(key);
   if (existing) return existing;
 
-  const loading = loadRepoGraph(resolved, meta.indexVersion, schemaVersion)
+  const loading = loadRepoGraph(resolved, indexVersion, schemaVersion)
     .then((loaded) => {
       repoGraphCache.set(key, loaded);
       return loaded;
@@ -693,7 +697,7 @@ export async function dispatchTool(
           content: [{
             type: 'text',
             text: compact(
-              registry.map((r) => ({ name: r.name, path: r.path, indexedAt: r.indexedAt, stats: r.stats }))
+              registry.map((r) => ({ id: r.id, name: r.name, path: r.path, indexedAt: r.indexedAt, stats: r.stats }))
             ),
           }],
         };

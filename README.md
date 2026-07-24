@@ -211,6 +211,9 @@ ENTRYPOINT ["code-intel"]
 # First, analyze the project to build the index
 code-intel analyze
 
+# Or assign a stable unique repo name
+code-intel analyze ./my-project --name api-core
+
 # Then start the server (requires an existing index)
 code-intel serve
 
@@ -218,6 +221,30 @@ code-intel serve
 code-intel analyze ./my-project
 code-intel serve ./my-project --port 4747
 ```
+
+### Stable repository names and IDs
+
+Indexed repositories now have:
+- a stable internal `id`
+- a unique user-facing `name`
+- a mutable filesystem `path`
+
+Use names for lookup. IDs stay stable across rename and relink operations.
+
+```bash
+code-intel repo list
+code-intel repo show api-core
+code-intel repo rename api-core api-platform
+code-intel repo relink api-platform ../new-location
+```
+
+`code-intel analyze` naming rules:
+- new path + new `--name` creates a named repo entry
+- existing path + same `--name` refreshes that repo
+- existing path + different `--name` fails; use `code-intel repo rename`
+- new path + existing `--name` fails; use `code-intel repo relink`
+
+Legacy registries without repo IDs migrate automatically on load. If old entries share the same basename-derived name, the migration repairs duplicates deterministically and prints a warning so you can rename them later.
 
 Then open **http://localhost:4747** in your browser — the Web UI auto-connects and loads the graph.
 

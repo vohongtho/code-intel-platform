@@ -38,7 +38,7 @@ import type { PipelineContext } from '../pipeline/types.js';
 import { saveMetadata, loadMetadata, getDbPath, loadAgentTargets, saveAgentTargets, computeIndexVersion, type AgentTargetConfig, type AgentTargetSelection, type AgentTargetFormat } from '../storage/metadata.js';
 import { writeContextFiles } from './context-writer.js';
 import { AGENT_OPTIONS, isValidRepoRelativeTargetPath, resolveBuiltinTarget } from './agent-targets.js';
-import { upsertRepo, loadRegistry, removeRepo } from '../storage/repo-registry.js';
+import { upsertRepo, loadRegistry, findRepoByName, findRepoByPath, renameRepo, relinkRepo, removeRepo } from '../storage/repo-registry.js';
 import { DbManager, loadGraphToDB, removeNodesForFile } from '../storage/index.js';
 import {
   getCurrentCommitHash,
@@ -378,6 +378,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
   skipGit?: boolean;
   embeddings?: boolean;
   verbose?: boolean;
+  repoName?: string;
   /** v0.4.0: opt-in AI summarize phase */
   summarize?: boolean;
   llmProvider?: 'openai' | 'anthropic' | 'ollama' | 'custom';
@@ -674,9 +675,19 @@ async function analyzeWorkspace(targetPath: string, options?: {
 
   // Get current commit hash for git-based incremental on the next run
   const currentCommitHash = getCurrentCommitHash(workspaceRoot) ?? undefined;
-  const repoName = path.basename(workspaceRoot);
+  const requestedRepoName = options?.repoName?.trim();
+  const existingByPath = findRepoByPath(workspaceRoot);
+  const existingByName = requestedRepoName ? findRepoByName(requestedRepoName) : undefined;
+  if (requestedRepoName && existingByPath && existingByPath.name !== requestedRepoName) {
+    throw new Error(`Path already indexed as "${existingByPath.name}". Use \`code-intel repo rename ${existingByPath.name} ${requestedRepoName}\`.`);
+  }
+  if (requestedRepoName && existingByName && existingByName.path !== workspaceRoot) {
+    throw new Error(`Repository name "${requestedRepoName}" is linked to ${existingByName.path}. Use \`code-intel repo relink ${requestedRepoName} ${workspaceRoot}\`.`);
+  }
+  const repoName = existingByPath?.name ?? requestedRepoName ?? path.basename(workspaceRoot);
 
-  upsertRepo({
+  const savedRepo = upsertRepo({
+    id: existingByPath?.id,
     name: repoName,
     path: workspaceRoot,
     indexedAt: new Date().toISOString(),
@@ -885,7 +896,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
     }
   }
 
-  return { graph: activeGraph, result, repoName, workspaceRoot };
+  return { graph: activeGraph, result, repoName: savedRepo.name, workspaceRoot };
 }
 
 // ─── 0. init ─────────────────────────────────────────────────────────────────
@@ -1736,6 +1747,7 @@ program
   .command('analyze')
   .description('Index a repository and build the knowledge graph')
   .argument('[path]', 'Path to the repository (default: current directory)', '.')
+  .option('--name <name>',             'Explicit unique repository name for create/refresh flows')
   .option('--force',                   'Force full re-index, ignoring cached data')
   .option('--incremental',             'Only re-parse files changed since last analysis (git diff or mtime)')
   .option('--parallel',                'Use worker threads for parse + resolve phases (faster on multi-core)')
@@ -1763,6 +1775,8 @@ program
   Examples:
     $ code-intel analyze                        Index current directory
     $ code-intel analyze ./my-project           Index a specific path
+    $ code-intel analyze ./my-project --name api-core
+    $ code-intel analyze ./my-project --name api-core   Create or refresh named repo
     $ code-intel analyze --force                Force full re-index
     $ code-intel analyze --incremental          Only re-parse changed files (fast)
     $ code-intel analyze --parallel             Use worker threads for faster indexing
@@ -1776,6 +1790,12 @@ program
     $ code-intel analyze --summarize --llm-provider anthropic --llm-max-nodes 500
     $ code-intel analyze --summarize --llm-provider custom --llm-base-url http://localhost:1234/v1 --llm-model mistral --llm-api-key mytoken
     $ code-intel analyze --dry-run             Preview files that would be scanned
+
+  Naming rules:
+    - New path + new --name creates a named repo entry
+    - Existing path + same --name refreshes the repo
+    - Existing path + different --name fails; use \`code-intel repo rename\`
+    - New path + existing --name fails; use \`code-intel repo relink\`
 `)
   .action(async (targetPath: string, opts: {
     force?: boolean;
@@ -1797,6 +1817,7 @@ program
     dryRun?: boolean;
     maxMemory?: string;
     profile?: boolean;
+    name?: string;
   }) => {
     // ── --dry-run: scan files only, no DB write ──────────────────────────────
     if (opts.dryRun) {
@@ -1839,6 +1860,7 @@ program
       llmApiKey: opts.llmApiKey,
       maxMemoryMB:  (() => { const v = parseInt(opts.maxMemory    ?? '', 10); return Number.isFinite(v) && v >= 1 ? v : undefined; })(),
       profile: opts.profile,
+      repoName: opts.name,
     });
     // LadybugDB keeps background checkpoint threads alive after close(),
     // preventing Node from exiting naturally.  Force-exit once the work is done.
@@ -2198,11 +2220,16 @@ program
   });
 
 
-program
+const repoCmd = program
+  .command('repo')
+  .description('Manage stable repository identities, names, and paths');
+
+repoCmd
   .command('list')
   .description('List all indexed repositories in the registry')
   .addHelpText('after', `
   Shows every repository that has been indexed with \`code-intel analyze\`.
+  Names are unique lookup keys; IDs are stable internal identities.
   Useful for checking what is available before using \`code-intel group add\`.
 
   Examples:
@@ -2218,9 +2245,58 @@ program
     console.log(`\n  Indexed repositories (${repos.length}):\n`);
     for (const r of repos) {
       console.log(`  ◆  ${r.name}`);
+      console.log(`     ID:      ${r.id}`);
       console.log(`     Nodes:   ${r.stats.nodes}  ·  Edges: ${r.stats.edges}  ·  Files: ${r.stats.files}`);
       console.log(`     Path:    ${r.path}`);
       console.log(`     Indexed: ${r.indexedAt}\n`);
+    }
+  });
+
+repoCmd
+  .command('show <name>')
+  .description('Show repository identity, path, and index stats by unique repo name')
+  .action((name: string) => {
+    const repo = findRepoByName(name);
+    if (!repo) {
+      console.error(`\n  ✗  Repository "${name}" not found.\n`);
+      process.exit(1);
+    }
+    console.log(`\n  ◈  Repository: ${repo.name}\n`);
+    console.log(`     ID:       ${repo.id}`);
+    console.log(`     Path:     ${repo.path}`);
+    console.log(`     Indexed:  ${repo.indexedAt}`);
+    console.log(`     Nodes:    ${repo.stats.nodes}`);
+    console.log(`     Edges:    ${repo.stats.edges}`);
+    console.log(`     Files:    ${repo.stats.files}\n`);
+  });
+
+repoCmd
+  .command('rename <name> <newName>')
+  .description('Rename a repository without changing its stable identity')
+  .action((name: string, newName: string) => {
+    try {
+      const repo = renameRepo(name, newName);
+      console.log(`\n  ✅  Renamed repository "${name}" → "${repo.name}"`);
+      console.log(`      ID:   ${repo.id}`);
+      console.log(`      Path: ${repo.path}\n`);
+    } catch (err) {
+      console.error(`\n  ✗  ${err instanceof Error ? err.message : err}\n`);
+      process.exit(1);
+    }
+  });
+
+repoCmd
+  .command('relink <name> <newPath>')
+  .description('Move a repository to a new path without changing its stable identity')
+  .action((name: string, newPath: string) => {
+    try {
+      const repo = relinkRepo(name, newPath);
+      console.log(`\n  ✅  Relinked repository "${repo.name}"`);
+      console.log(`      ID:   ${repo.id}`);
+      console.log(`      Path: ${repo.path}\n`);
+    } catch (err) {
+      console.error(`\n  ✗  ${err instanceof Error ? err.message : err}\n`);
+      process.exit(1);
     }
   });
 
@@ -2228,7 +2304,7 @@ program
 program
   .command('status')
   .description('Show index freshness and statistics for a repository')
-  .argument('[path]', 'Path to check (default: current directory)', '.')
+  .argument('[path]', 'Repository path or unique name to check (default: current directory)', '.')
   .addHelpText('after', `
   Reads the metadata from .code-intel/meta.json and reports when the index
   was last built and how many symbols were found.
@@ -2236,9 +2312,11 @@ program
   Examples:
     $ code-intel status
     $ code-intel status ./my-project
+    $ code-intel status api-core
 `)
   .action((targetPath: string) => {
-    const workspaceRoot = path.resolve(targetPath);
+    const resolvedRepo = findRepoByName(targetPath);
+    const workspaceRoot = resolvedRepo?.path ?? path.resolve(targetPath);
     const meta = loadMetadata(workspaceRoot);
     if (!meta) {
       console.log(`\n  ✗  ${workspaceRoot} is not indexed.`);
@@ -2462,6 +2540,21 @@ async function loadOrAnalyzeWorkspace(targetPath: string) {
   // No index yet — run full analysis and persist for next time
   return analyzeWorkspace(targetPath, { silent: true });
 }
+
+repoCmd.addHelpText('after', `
+  Stable repo management commands:
+    list                      List indexed repos with IDs
+    show <name>               Show one repo by unique name
+    rename <name> <newName>   Rename a repo without changing its ID
+    relink <name> <newPath>   Update a repo path without changing its ID
+
+  Examples:
+    $ code-intel repo list
+    $ code-intel repo show api-core
+    $ code-intel repo rename api-core api-platform
+    $ code-intel repo relink api-platform ../new-location
+`);
+
 
 // ─── 8. search ───────────────────────────────────────────────────────────────
 program
@@ -2710,7 +2803,7 @@ const groupCmd = program
 
   Subcommands:
     create <name>                        Create a new group
-    add <group> <groupPath> <registry>   Add a repo to the group
+    add <group> <groupPath> <registry>   Add a repo to the group by unique repo name
     remove <group> <groupPath>           Remove a repo from the group
     list [name]                          List all groups or inspect one
     sync <name>                          Extract contracts + detect cross-links
@@ -2750,7 +2843,7 @@ groupCmd
   .description('Add an indexed repository to a group at the given hierarchy path')
   .addHelpText('after', `
   <groupPath>     Dot-separated or slash-separated hierarchy path, e.g. hr/hiring/backend
-  <registryName>  The repo's name as shown by \`code-intel list\`
+  <registryName>  The repo's unique name as shown by \`code-intel list\`
 
   Examples:
     $ code-intel group add my-platform services/auth      auth-service
@@ -2770,7 +2863,7 @@ groupCmd
       console.error(`     Create it first: code-intel group create ${group}\n`);
       process.exit(1);
     }
-    addMember(group, { groupPath, registryName });
+    addMember(group, { groupPath, repoId: regEntry.id, registryName: regEntry.name });
     console.log(`\n  ✅  Added "${registryName}" → group "${group}" at path "${groupPath}"\n`);
   });
 
@@ -2820,7 +2913,8 @@ groupCmd
         console.log('       (none — use `code-intel group add` to add repos)');
       } else {
         for (const m of group.members) {
-          console.log(`       ${m.groupPath.padEnd(35)} →  ${m.registryName}`);
+          const label = m.repoId ? `${m.registryName} [${m.repoId}]` : m.registryName;
+          console.log(`       ${m.groupPath.padEnd(35)} →  ${label}`);
         }
       }
       console.log('');
@@ -2870,7 +2964,7 @@ groupCmd
       console.log(`\n  ◈  Dry run — group sync "${name}"\n`);
       console.log(`  Members that would be synced (${group.members.length}):`);
       for (const m of group.members) {
-        console.log(`    • ${m.registryName}  (${m.groupPath})`);
+        console.log(`    • ${m.registryName}${m.repoId ? ` [${m.repoId}]` : ''}  (${m.groupPath})`);
       }
       console.log(`\n  Would extract contracts and resolve cross-repo links.`);
       console.log('  Pass without --dry-run to execute.\n');
@@ -3108,7 +3202,7 @@ groupCmd
           const idx = i + j + 1;
           console.log(`  [${idx}/${ws.packages.length}] Analyzing ${pkg.name}…`);
           try {
-            await analyzeWorkspace(pkg.path, { silent: true });
+            await analyzeWorkspace(pkg.path, { silent: true, repoName: pkg.name });
             results.push({ name: pkg.name, status: '✅' });
           } catch (err) {
             results.push({ name: pkg.name, status: `✗ ${err instanceof Error ? err.message : String(err)}` });
@@ -3124,8 +3218,8 @@ groupCmd
     // Register each package in group
     for (const pkg of ws.packages) {
       try {
-        upsertRepo({ name: pkg.name, path: pkg.path, indexedAt: new Date().toISOString(), stats: { nodes: 0, edges: 0, files: 0 } });
-        addMember(groupName, { groupPath: pkg.name, registryName: pkg.name });
+        const repo = upsertRepo({ name: pkg.name, path: pkg.path, indexedAt: new Date().toISOString(), stats: { nodes: 0, edges: 0, files: 0 } });
+        addMember(groupName, { groupPath: pkg.name, repoId: repo.id, registryName: repo.name });
       } catch { /* already a member */ }
     }
 

@@ -167,10 +167,10 @@ export class ApiClient {
     return res.json() as Promise<{ ready: boolean; building: boolean }>;
   }
 
-  async listRepos(): Promise<{ name: string; path: string; nodes: number; edges: number; indexedAt: string | null; active?: boolean }[]> {
+  async listRepos(): Promise<{ id: string; name: string; path: string; nodes: number; edges: number; indexedAt: string | null; active?: boolean }[]> {
     const res = await fetch(`${this.baseUrl}/api/v1/repos`, { credentials: 'include' });
     if (!res.ok) throw new Error(`Failed to list repos: ${res.statusText}`);
-    return res.json() as Promise<{ name: string; path: string; nodes: number; edges: number; indexedAt: string | null; active?: boolean }[]>;
+    return res.json() as Promise<{ id: string; name: string; path: string; nodes: number; edges: number; indexedAt: string | null; active?: boolean }[]>;
   }
 
   async readFile(filePath: string): Promise<{ content: string }> {
@@ -233,10 +233,10 @@ export class ApiClient {
     return res.json() as Promise<{ name: string; memberCount: number; lastSync: string | null; createdAt: string }[]>;
   }
 
-  async getGroup(name: string): Promise<{ name: string; members: { groupPath: string; registryName: string }[]; lastSync?: string; createdAt: string }> {
+  async getGroup(name: string): Promise<{ name: string; members: { groupPath: string; repoId?: string; registryName: string }[]; lastSync?: string; createdAt: string }> {
     const res = await fetch(`${this.baseUrl}/api/v1/groups/${encodeURIComponent(name)}`, { credentials: 'include' });
     if (!res.ok) throw new Error(`Group not found: ${res.statusText}`);
-    return res.json() as Promise<{ name: string; members: { groupPath: string; registryName: string }[]; lastSync?: string; createdAt: string }>;
+    return res.json() as Promise<{ name: string; members: { groupPath: string; repoId?: string; registryName: string }[]; lastSync?: string; createdAt: string }>;
   }
 
   async getGroupContracts(name: string): Promise<{ contracts: unknown[]; links: unknown[]; syncedAt: string } | null> {
@@ -300,7 +300,7 @@ export class ApiClient {
     }>;
   }
 
-  async createGroup(name: string): Promise<{ name: string; members: { groupPath: string; registryName: string }[]; createdAt: string }> {
+  async createGroup(name: string): Promise<{ name: string; members: { groupPath: string; repoId?: string; registryName: string }[]; createdAt: string }> {
     const csrfToken = await this.getCsrfToken();
     const res = await fetch(`${this.baseUrl}/api/v1/groups`, {
       method: 'POST',
@@ -310,10 +310,10 @@ export class ApiClient {
     });
     const body = await res.json().catch(() => ({})) as { error?: { message?: string } };
     if (!res.ok) throw new Error(body?.error?.message ?? `Create group failed: ${res.statusText}`);
-    return body as { name: string; members: { groupPath: string; registryName: string }[]; createdAt: string };
+    return body as { name: string; members: { groupPath: string; repoId?: string; registryName: string }[]; createdAt: string };
   }
 
-  async renameGroup(oldName: string, newName: string): Promise<{ name: string; members: { groupPath: string; registryName: string }[] }> {
+  async renameGroup(oldName: string, newName: string): Promise<{ name: string; members: { groupPath: string; repoId?: string; registryName: string }[] }> {
     const csrfToken = await this.getCsrfToken();
     const res = await fetch(`${this.baseUrl}/api/v1/groups/${encodeURIComponent(oldName)}`, {
       method: 'PATCH',
@@ -323,7 +323,7 @@ export class ApiClient {
     });
     const body = await res.json().catch(() => ({})) as { error?: { message?: string } };
     if (!res.ok) throw new Error(body?.error?.message ?? `Rename failed: ${res.statusText}`);
-    return body as { name: string; members: { groupPath: string; registryName: string }[] };
+    return body as { name: string; members: { groupPath: string; repoId?: string; registryName: string }[] };
   }
 
   async deleteGroup(name: string): Promise<void> {
@@ -339,20 +339,20 @@ export class ApiClient {
     }
   }
 
-  async addGroupMember(groupName: string, groupPath: string, registryName: string): Promise<{ name: string; members: { groupPath: string; registryName: string }[] }> {
+  async addGroupMember(groupName: string, groupPath: string, repoId: string, registryName: string): Promise<{ name: string; members: { groupPath: string; repoId?: string; registryName: string }[] }> {
     const csrfToken = await this.getCsrfToken();
     const res = await fetch(`${this.baseUrl}/api/v1/groups/${encodeURIComponent(groupName)}/members`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
       credentials: 'include',
-      body: JSON.stringify({ groupPath, registryName }),
+      body: JSON.stringify({ groupPath, repoId, registryName }),
     });
     const body = await res.json().catch(() => ({})) as { error?: { message?: string } };
     if (!res.ok) throw new Error(body?.error?.message ?? `Add member failed: ${res.statusText}`);
-    return body as { name: string; members: { groupPath: string; registryName: string }[] };
+    return body as { name: string; members: { groupPath: string; repoId?: string; registryName: string }[] };
   }
 
-  async removeGroupMember(groupName: string, groupPath: string): Promise<{ name: string; members: { groupPath: string; registryName: string }[] }> {
+  async removeGroupMember(groupName: string, groupPath: string): Promise<{ name: string; members: { groupPath: string; repoId?: string; registryName: string }[] }> {
     const csrfToken = await this.getCsrfToken();
     const res = await fetch(`${this.baseUrl}/api/v1/groups/${encodeURIComponent(groupName)}/members`, {
       method: 'DELETE',
@@ -362,7 +362,7 @@ export class ApiClient {
     });
     const body = await res.json().catch(() => ({})) as { error?: { message?: string } };
     if (!res.ok) throw new Error(body?.error?.message ?? `Remove member failed: ${res.statusText}`);
-    return body as { name: string; members: { groupPath: string; registryName: string }[] };
+    return body as { name: string; members: { groupPath: string; repoId?: string; registryName: string }[] };
   }
 
   async queryGQL(gql: string): Promise<GQLResult> {

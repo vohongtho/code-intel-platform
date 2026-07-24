@@ -4,6 +4,8 @@
 export interface GroupMember {
   /** Hierarchy path inside the group, e.g. "hr/hiring/backend" */
   groupPath: string;
+  /** Stable repo identity for rename-safe persistence */
+  repoId?: string;
   /** Name from the global registry (`code-intel list`) */
   registryName: string;
 }
