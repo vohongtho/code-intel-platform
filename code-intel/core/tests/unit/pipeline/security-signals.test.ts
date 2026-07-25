@@ -59,6 +59,70 @@ describe('extractSecuritySignals', () => {
     assert.equal(signals.find((s) => s.sink === 'fs.readFile' && s.source.includes('safeJoin'))?.flags.hasSanitizer, true);
   });
 
+  it('does not flag sibling options-object keywords as user input', () => {
+    const signals = extractSecuritySignals([
+      "fetch(`${this.baseUrl}/api/v1/config`, { method: 'PUT', body: JSON.stringify({ config }) });",
+    ], Language.TypeScript);
+
+    const ssrf = signals.find((s) => s.type === 'SSRF' && s.sink === 'fetch');
+    assert.ok(ssrf, 'fetch call should still produce an SSRF signal');
+    assert.equal(ssrf?.flags.hasUserInput, false, 'body: key in the sibling options object must not mark hasUserInput true');
+  });
+
+  it('does not flag a non-relational .query() call as SQL injection when the file imports a known non-relational client', () => {
+    const signals = extractSecuritySignals([
+      "import { DbManager } from '@ladybugdb/core';",
+      'const q = `MATCH (n:User {id: ${id}}) RETURN n`;',
+      'dbm.query(q);',
+    ], Language.TypeScript);
+
+    assert.equal(signals.find((s) => s.type === 'SQL_INJECTION' && s.sink === 'dbm.query'), undefined);
+  });
+
+  it('still flags a real SQL client under a generic receiver name with no non-relational import', () => {
+    const signals = extractSecuritySignals([
+      'client.query(`SELECT * FROM users WHERE id = ${req.params.id}`);',
+    ], Language.TypeScript);
+
+    const finding = signals.find((s) => s.type === 'SQL_INJECTION' && s.sink === 'client.query');
+    assert.ok(finding, 'real SQL client under a generic receiver name should still be flagged');
+    assert.equal(finding?.flags.isDynamic, true);
+  });
+
+  it('does not flag a command sink interpolating a same-file enumerated-literal parameter', () => {
+    const lines = [
+      'const EDITORS = [',
+      "  { name: 'VS Code', binaries: ['code'] },",
+      "  { name: 'Cursor', binaries: ['cursor'] },",
+      '];',
+      'function commandExists(bin) {',
+      '  execSync(`which ${bin} 2>/dev/null || where ${bin} 2>nul`, { stdio: \'pipe\' });',
+      '}',
+      'function detectEditors() {',
+      '  return EDITORS.filter((e) => e.binaries.some(commandExists)).map((e) => e.name);',
+      '}',
+    ];
+
+    const signals = extractSecuritySignals(lines, Language.TypeScript);
+    const finding = signals.find((s) => s.type === 'COMMAND_INJECTION' && s.sink === 'execSync');
+    assert.ok(finding, 'execSync call should still produce a signal');
+    assert.equal(finding?.flags.isDynamic, false, 'bin resolved from a hardcoded EDITORS array via .some() must not be dynamic');
+  });
+
+  it('still flags a command sink interpolating a parameter with no enumerated call site', () => {
+    const lines = [
+      'function runTool(bin) {',
+      '  execSync(`which ${bin}`);',
+      '}',
+      'runTool(process.argv[2]);',
+    ];
+
+    const signals = extractSecuritySignals(lines, Language.TypeScript);
+    const finding = signals.find((s) => s.type === 'COMMAND_INJECTION' && s.sink === 'execSync');
+    assert.ok(finding, 'execSync call should still produce a signal');
+    assert.equal(finding?.flags.isDynamic, true, 'bin with no enumerated call site must remain dynamic');
+  });
+
   it('normalizes bounded multiline JS sinks', () => {
     const signals = extractSecuritySignals([
       'db.query(',

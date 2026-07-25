@@ -6,6 +6,20 @@ All notable changes to this project are documented in this file.
 
 ## [1.0.5] - 2026-07-24
 
+### 🎯 `code-intel scan` false-positive reduction
+
+Fixed three confirmed false-positive mechanisms in the security-signal detectors (`code-intel/core/src/pipeline/security-signals.ts`, `code-intel/core/src/security/vulnerability-detector.ts`), found by dogfooding `code-intel scan` against this repo:
+
+- **`buildFlags` — sibling-argument taint bleed.** `hasUserInput` was computed over the sink's full joined argument list instead of just the tainted argument, so any `fetch(url, { body: ... })`-shaped call matched on an unrelated options-object key (`body`/`params`/`query`) regardless of the URL's actual content. Now scoped to the tainted argument alone. Fixed all 15 SSRF false positives in `code-intel/web/src/api/client.ts` plus several previously-undocumented ones elsewhere (`backup-service.ts`, `extensions/vscode/src/extension.ts`, `llm/providers/custom.ts`, `db-manager.ts`, `scripts/add-shebang.mjs`).
+- **`extractJsSecuritySignals`'s generic SQL fallback — non-relational receiver blind spot.** The unconditional `\w+\.query`/`\w+\.execute` regex matched on method name alone, with no signal about the receiver's actual engine, so `DbManager.query()` (wrapping the embedded graph/Cypher engine `@ladybugdb/core`) was flagged as SQL injection. Now gated behind a new same-file `hasNonRelationalQueryImport()` check (denylist: `@ladybugdb/core`, `kuzu`, `neo4j-driver`, `gremlin`, `arangojs`) plus a SQL-keyword-shape check on the resolved query text.
+- **`isDynamic` — no resolution for same-file enumerated parameters.** A template-interpolated identifier was always treated as dynamic even when it was provably drawn from a hardcoded, same-file array via `.some`/`.map`/`.forEach`/`.filter`/`.every`. Added `buildEnumeratedParams()` to resolve this shape; fixed the `commandExists(bin)` command-injection false positive in `code-intel/core/src/cli/init-wizard.ts` (`bin` is only ever drawn from the hardcoded `EDITORS` array).
+- Added fixture/regression coverage for all three false-positive shapes plus their corresponding true-positive counterparts in `security-signals.test.ts` and `vulnerability-detector.test.ts`.
+
+**Known residual false positives (out of scope for this fix, tracked as follow-ups):**
+- `code-intel/core/src/http/app.ts:1061` (`dbm.query(q)`, SQL_INJECTION) — the non-relational-import check is same-file only; `app.ts` imports `DbManager` from a wrapper module (`storage/index.js`) rather than directly from `@ladybugdb/core`, so the gate can't see the import. Fixing this would require cross-file resolution, which is out of scope (see `design.md` non-goals for this change).
+- `code-intel/web/src/api/client.ts:315` and `:402` (SSRF) — a different, previously-masked false-positive mechanism: a generic taint keyword (`params`, `query`) appears inside the *tainted argument itself* (a local `URLSearchParams` variable name, and a literal REST path segment) rather than in a sibling argument. This fix only addressed cross-argument bleed.
+
+
 ### 🖥️ Routed portal settings screen
 
 - Added authenticated Web UI settings routes under `/settings/:section` for global server configuration, with browser back/forward support and router-managed section navigation instead of `#fragment` anchors.

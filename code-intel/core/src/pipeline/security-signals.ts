@@ -6,6 +6,9 @@ const SANITIZER_RE = /DOMPurify\.sanitize|sanitizeHtml|escapeHtml|bleach\.clean|
 const URL_ALLOWLIST_RE = /isAllowedUrl|validateUrl|assertAllowedHost|allowed_hosts?|urlparse\(|startswith\(['"]https:\/\/api\./i;
 const PATH_SAFE_RE = /safeJoin|resolveSafePath|assertSafePath|normalizePath|path\.resolve|Path\(.+\)\.resolve/i;
 const MAX_MULTILINE = 6;
+const KNOWN_SQL_CLIENT_RE = /^(?:db|database|connection|pool|sequelize|prisma|knex)\.(?:query|execute|raw|\$queryRaw|\$executeRaw)$/i;
+const SQL_KEYWORD_RE = /\b(SELECT|INSERT|UPDATE|DELETE|WHERE)\b/i;
+const NON_RELATIONAL_QUERY_PACKAGES = ['@ladybugdb/core', 'kuzu', 'neo4j-driver', 'gremlin', 'arangojs'];
 
 interface Stmt { text: string; line: number }
 
@@ -91,6 +94,14 @@ function isStaticExpression(expr: string): boolean {
   return /^(true|false|null|undefined|None|\d+(?:\.\d+)?)$/.test(trimmed);
 }
 
+function hasNonRelationalQueryImport(lines: string[]): boolean {
+  return lines.some((line) => {
+    const trimmed = line.trim();
+    if (!/^import\b/.test(trimmed) && !/\brequire\s*\(/.test(trimmed)) return false;
+    return NON_RELATIONAL_QUERY_PACKAGES.some((pkg) => trimmed.includes(pkg));
+  });
+}
+
 function buildLiteralAliases(lines: string[]): AliasMap {
   const aliases: AliasMap = new Map();
   for (const s of statements(lines)) {
@@ -109,7 +120,91 @@ function resolveAlias(expr: string, aliases: AliasMap): string {
   return trimmed;
 }
 
-function buildFlags(source: string, type: SecuritySignalType, argList: string[] = []): SecuritySignal['flags'] {
+function escapeRegExpLiteral(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function isDeclaredArrayLiteral(name: string, joined: string): boolean {
+  const declRe = new RegExp(`\\b(?:const|let|var)\\s+${escapeRegExpLiteral(name)}\\s*(?::[^=]*)?=\\s*\\[`);
+  const match = declRe.exec(joined);
+  if (!match) return false;
+  let depth = 0;
+  for (let i = match.index + match[0].length - 1; i < joined.length; i++) {
+    if (joined[i] === '[') depth++;
+    else if (joined[i] === ']') {
+      depth--;
+      if (depth === 0) return true;
+    }
+  }
+  return false;
+}
+
+function findFunctionParam(funcName: string, joined: string): string | null {
+  const fnRe = new RegExp(`function\\s+${escapeRegExpLiteral(funcName)}\\s*\\(\\s*([A-Za-z_$][\\w$]*)`);
+  const arrowRe = new RegExp(`(?:const|let|var)\\s+${escapeRegExpLiteral(funcName)}\\s*(?::[^=]*)?=\\s*\\(?\\s*([A-Za-z_$][\\w$]*)`);
+  const match = fnRe.exec(joined) ?? arrowRe.exec(joined);
+  return match?.[1] ?? null;
+}
+
+function hasDirectCall(funcName: string, joined: string): boolean {
+  const re = new RegExp(`(?<!function\\s)\\b${escapeRegExpLiteral(funcName)}\\s*\\(`);
+  return re.test(joined);
+}
+
+const CHAINED_ITERATION_RE = /\b([A-Za-z_$][\w$]*)\s*\.\s*(?:some|map|forEach|filter|every)\s*\(\s*(?:\(\s*([A-Za-z_$][\w$]*)\s*\)|([A-Za-z_$][\w$]*))\s*=>\s*(?:\2|\3)\.([A-Za-z_$][\w$]*)\s*\.\s*(?:some|map|forEach|filter|every)\s*\(\s*([A-Za-z_$][\w$]*)\s*\)/g;
+const DIRECT_ITERATION_RE = /\b([A-Za-z_$][\w$]*)\s*\.\s*(?:some|map|forEach|filter|every)\s*\(\s*([A-Za-z_$][\w$]*)\s*\)/g;
+
+/**
+ * Marks a function parameter as statically-enumerated when every call site observed for
+ * that function passes it as a bare callback reference to `.some`/`.map`/`.forEach`/
+ * `.filter`/`.every` invoked (directly, or one property-access hop away) on a same-file
+ * array literal — e.g. `EDITORS.filter((e) => e.binaries.some(commandExists))`.
+ */
+function buildEnumeratedParams(lines: string[]): Set<string> {
+  const enumerated = new Set<string>();
+  const joined = lines.join('\n');
+
+  const tryEnumerate = (arrayIdent: string, funcName: string) => {
+    if (!isDeclaredArrayLiteral(arrayIdent, joined)) return;
+    if (hasDirectCall(funcName, joined)) return;
+    const param = findFunctionParam(funcName, joined);
+    if (param) enumerated.add(param);
+  };
+
+  let match: RegExpExecArray | null;
+  CHAINED_ITERATION_RE.lastIndex = 0;
+  while ((match = CHAINED_ITERATION_RE.exec(joined))) {
+    tryEnumerate(match[1], match[5]);
+  }
+  DIRECT_ITERATION_RE.lastIndex = 0;
+  while ((match = DIRECT_ITERATION_RE.exec(joined))) {
+    tryEnumerate(match[1], match[2]);
+  }
+
+  return enumerated;
+}
+
+function isResolvedInterpolationOnly(source: string, aliases: AliasMap, enumeratedParams: Set<string>): boolean {
+  const placeholderRe = /\$\{([^}]*)\}/g;
+  let match: RegExpExecArray | null;
+  let any = false;
+  while ((match = placeholderRe.exec(source))) {
+    any = true;
+    const inner = match[1].trim();
+    const resolvable = isStaticExpression(inner)
+      || (/^[A-Za-z_$][\w$]*$/.test(inner) && (aliases.has(inner) || enumeratedParams.has(inner)));
+    if (!resolvable) return false;
+  }
+  return any;
+}
+
+function buildFlags(
+  source: string,
+  type: SecuritySignalType,
+  argList: string[] = [],
+  aliases: AliasMap = new Map(),
+  enumeratedParams: Set<string> = new Set(),
+): SecuritySignal['flags'] {
   const joined = [source, ...argList].filter(Boolean).join(', ');
   const firstArg = argList[0]?.trim() ?? source.trim();
   const secondArg = argList[1]?.trim() ?? '';
@@ -122,14 +217,19 @@ function buildFlags(source: string, type: SecuritySignalType, argList: string[] 
     && !/\$\{|#\{/.test(firstArg)
     && (/\?/.test(firstArg) || /\$\d+/.test(firstArg) || /%s/.test(firstArg))
     && secondArg.length > 0;
-  const isDynamic = (!isStaticExpression(source) && !argList.every(isStaticExpression))
+  const sourceIsEffectivelyStatic = isStaticExpression(source)
+    || isResolvedInterpolationOnly(source, aliases, enumeratedParams);
+  const isJsTemplateInterpolationOnly = /\$\{/.test(source) && !/#\{/.test(source) && !/[fF]['"].*\{/.test(source);
+  const interpolationForcesDynamic = hasInterpolation
+    && !(isJsTemplateInterpolationOnly && sourceIsEffectivelyStatic);
+  const isDynamic = (!sourceIsEffectivelyStatic && !argList.every(isStaticExpression))
     || /\+|%\s/.test(source)
-    || hasInterpolation;
+    || interpolationForcesDynamic;
 
   const hasTemplateInterpolation = hasInterpolation;
 
   return {
-    hasUserInput: USER_INPUT_RE.test(joined),
+    hasUserInput: USER_INPUT_RE.test(source),
     isDynamic,
     hasStringConcat: /\+/.test(source),
     hasTemplateInterpolation,
@@ -147,8 +247,10 @@ function makeSignal(
   argList: string[],
   language: Language,
   tier: 'fixture-tested' | 'generic-heuristic',
+  aliases: AliasMap = new Map(),
+  enumeratedParams: Set<string> = new Set(),
 ): SecuritySignal {
-  const flags = buildFlags(source, type, argList);
+  const flags = buildFlags(source, type, argList, aliases, enumeratedParams);
   const baseConfidence = flags.hasUserInput ? 0.9 : 0.7;
   const confidence = tier === 'generic-heuristic' ? baseConfidence * 0.7 : baseConfidence;
   return {
@@ -164,26 +266,33 @@ function makeSignal(
   };
 }
 
-function pushCall(signals: SecuritySignal[], s: Stmt, lang: Language, type: SecuritySignalType, sink: string, argsText: string, aliases: AliasMap, tier: 'fixture-tested' | 'generic-heuristic', sourceIndex = 0): void {
+function pushCall(signals: SecuritySignal[], s: Stmt, lang: Language, type: SecuritySignalType, sink: string, argsText: string, aliases: AliasMap, tier: 'fixture-tested' | 'generic-heuristic', sourceIndex = 0, enumeratedParams: Set<string> = new Set()): void {
   const args = splitTopLevelArgs(argsText).map((arg) => resolveAlias(arg, aliases));
   const source = args[sourceIndex] ?? args[0] ?? resolveAlias(argsText, aliases);
-  signals.push(makeSignal(type, sink, s.line, s.text, source, args, lang, tier));
+  signals.push(makeSignal(type, sink, s.line, s.text, source, args, lang, tier, aliases, enumeratedParams));
 }
 
 function extractJsSecuritySignals(lines: string[], lang: Language): SecuritySignal[] {
   const signals: SecuritySignal[] = [];
   const aliases = buildLiteralAliases(lines);
+  const enumeratedParams = buildEnumeratedParams(lines);
   for (const s of statements(lines)) {
     let match: RegExpMatchArray | null;
 
     match = s.text.match(/\b(fetch|got|axios(?:\.(?:get|post|put|delete|request))?|https?\.(?:request|get))\s*\((.+)\)/);
-    if (match) pushCall(signals, s, lang, 'SSRF', match[1], match[2], aliases, 'fixture-tested');
+    if (match) pushCall(signals, s, lang, 'SSRF', match[1], match[2], aliases, 'fixture-tested', 0, enumeratedParams);
 
     match = s.text.match(/\b((?:db|database|connection|pool|sequelize|prisma|knex)\.(?:query|execute|raw|\$queryRaw|\$executeRaw)|\w+\.query|\w+\.execute)\s*\((.+)\)/);
-    if (match) pushCall(signals, s, lang, 'SQL_INJECTION', match[1], match[2], aliases, 'fixture-tested');
+    if (match) {
+      const isKnownSqlClient = KNOWN_SQL_CLIENT_RE.test(match[1]);
+      const resolvedQuery = resolveAlias(splitTopLevelArgs(match[2])[0] ?? match[2], aliases);
+      if (isKnownSqlClient || SQL_KEYWORD_RE.test(resolvedQuery) || !hasNonRelationalQueryImport(lines)) {
+        pushCall(signals, s, lang, 'SQL_INJECTION', match[1], match[2], aliases, 'fixture-tested', 0, enumeratedParams);
+      }
+    }
 
     match = s.text.match(/\b(?:fs\.)?(readFile|writeFile|createReadStream|createWriteStream|readFileSync|writeFileSync|open)\s*\((.+)\)/);
-    if (match) pushCall(signals, s, lang, 'PATH_TRAVERSAL', match[1].startsWith('fs.') ? match[1] : `fs.${match[1]}`, match[2], aliases, 'fixture-tested');
+    if (match) pushCall(signals, s, lang, 'PATH_TRAVERSAL', match[1].startsWith('fs.') ? match[1] : `fs.${match[1]}`, match[2], aliases, 'fixture-tested', 0, enumeratedParams);
 
     match = s.text.match(/\bchild_process\.(exec|execSync|execFile|execFileSync|spawn|spawnSync|eval)\s*\((.+)\)/)
       ?? s.text.match(/(?:^|[^\w$.])(exec|execSync|execFile|execFileSync|spawn|spawnSync|eval)\s*\((.+)\)/);
@@ -194,25 +303,25 @@ function extractJsSecuritySignals(lines: string[], lang: Language): SecuritySign
       const source = sink.startsWith('spawn') || sink.startsWith('execFile')
         ? [args[0], args[1]].filter(Boolean).join(', ')
         : (args[0] ?? resolveAlias(argsText, aliases));
-      signals.push(makeSignal('COMMAND_INJECTION', sink, s.line, s.text, source, args, lang, 'fixture-tested'));
+      signals.push(makeSignal('COMMAND_INJECTION', sink, s.line, s.text, source, args, lang, 'fixture-tested', aliases, enumeratedParams));
     }
 
     match = s.text.match(/\.[ ]*(innerHTML|outerHTML)\s*=\s*(.+?);?$/) ?? s.text.match(/\.[ ]*(innerHTML|outerHTML)\s*=\s*$/);
     if (match?.[2]) {
       const source = resolveAlias(match[2], aliases);
-      signals.push(makeSignal('XSS', match[1], s.line, s.text, source, [source], lang, 'fixture-tested'));
+      signals.push(makeSignal('XSS', match[1], s.line, s.text, source, [source], lang, 'fixture-tested', aliases, enumeratedParams));
     }
 
     match = s.text.match(/\.(insertAdjacentHTML|html|append)\s*\((.+)\)/);
-    if (match) pushCall(signals, s, lang, 'XSS', match[1], match[2], aliases, 'fixture-tested', 1);
+    if (match) pushCall(signals, s, lang, 'XSS', match[1], match[2], aliases, 'fixture-tested', 1, enumeratedParams);
 
     match = s.text.match(/document\.write\s*\((.+)\)/);
-    if (match) pushCall(signals, s, lang, 'XSS', 'document.write', match[1], aliases, 'fixture-tested');
+    if (match) pushCall(signals, s, lang, 'XSS', 'document.write', match[1], aliases, 'fixture-tested', 0, enumeratedParams);
 
     match = s.text.match(/dangerouslySetInnerHTML\s*:\s*\{\s*__html\s*:\s*(.+?)\s*}\s*/);
     if (match) {
       const source = resolveAlias(match[1], aliases);
-      signals.push(makeSignal('XSS', 'dangerouslySetInnerHTML', s.line, s.text, source, [source], lang, 'fixture-tested'));
+      signals.push(makeSignal('XSS', 'dangerouslySetInnerHTML', s.line, s.text, source, [source], lang, 'fixture-tested', aliases, enumeratedParams));
     }
   }
   return signals;
