@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router';
 import { AppProvider, useAppState } from './state/app-context';
 import { LoginPage } from './pages/LoginPage';
 import { ConnectPage } from './pages/ConnectPage';

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useAppState } from '../../state/app-context';
 import { ApiClient } from '../../api/client';
 import { NODE_COLORS } from '../../graph/colors';

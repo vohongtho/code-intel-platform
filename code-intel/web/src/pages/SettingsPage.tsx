@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { NavLink, useNavigate, useParams } from 'react-router-dom';
+import { NavLink, useNavigate, useParams } from 'react-router';
 import { useAppState } from '../state/app-context';
 import { Header } from '../components/shared/Header';
 import { ApiClient, type ConfigValidationError } from '../api/client';
