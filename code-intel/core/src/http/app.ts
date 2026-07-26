@@ -71,15 +71,29 @@ import { withSpan, isTracingEnabled } from '../observability/tracing.js';
 import { openApiSpec } from './openapi.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+function resolveWebDist(): string | null {
+  const candidates = [
+    // Bundled package layouts
+    path.resolve(__dirname, '..', 'web'),
+    path.resolve(__dirname, '..', '..', 'web'),
+    path.resolve(__dirname, 'web'),
+    // Monorepo dev/test layouts
+    path.resolve(__dirname, '..', '..', '..', 'web', 'dist'),
+    path.resolve(__dirname, '..', '..', '..', '..', 'web', 'dist'),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(path.join(candidate, 'index.html'))) return candidate;
+  }
+
+  return null;
+}
+
 // Web UI is bundled into dist/web/ at publish time.
-// Fallback to the monorepo sibling path for local dev.
-const WEB_DIST = (() => {
-  // dist/cli/main.js → ../web = dist/web/  (global install & npm pack)
-  const bundled = path.resolve(__dirname, '..', 'web');
-  if (fs.existsSync(bundled)) return bundled;
-  // Monorepo dev: dist/cli/ → ../../../web/dist = code-intel/web/dist
-  return path.resolve(__dirname, '..', '..', '..', 'web', 'dist');
-})();
+// Fallback to monorepo/test layouts for local development.
+const WEB_DIST = resolveWebDist();
+const WEB_INDEX_HTML = WEB_DIST ? fs.readFileSync(path.join(WEB_DIST, 'index.html'), 'utf8') : null;
 
 // ── CORS allowed origins ──────────────────────────────────────────────────────
 
@@ -1741,11 +1755,9 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
   });
 
   // ── Web UI static files ─────────────────────────────────────────────────────
-  if (fs.existsSync(WEB_DIST)) {
+  // Serve static assets (JS, CSS, images, etc.) from the web UI build directory
+  if (WEB_DIST) {
     app.use(express.static(WEB_DIST));
-    app.get('/{*path}', (_req, res) => {
-      res.sendFile(path.join(WEB_DIST, 'index.html'));
-    });
   }
 
   // ── Admin API — requires admin role ──────────────────────────────────────────
@@ -1816,6 +1828,22 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     res.json({ entries, count: entries.length, enabled: governanceLogger.isEnabled() });
   });
 
+  // ── SPA fallback ────────────────────────────────────────────────────────────
+  // Catch-all route for client-side routing (React Router SPA)
+  // MUST come AFTER all API routes (/api/v1/*, /admin/*, /auth/*, /health/*)
+  // so API requests don't accidentally get served index.html.
+  // Use a terminal middleware fallback instead of a wildcard route because
+  // some packaged/runtime combinations still bypass the Express 5 catch-all.
+  if (WEB_INDEX_HTML) {
+    app.use((req, res, next) => {
+      if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+      if (req.path.startsWith('/api/') || req.path.startsWith('/auth/') || req.path.startsWith('/admin/') || req.path === '/health' || req.path === '/metrics') {
+        return next();
+      }
+      res.type('html').send(WEB_INDEX_HTML);
+    });
+  }
+
   // ── CSRF error handler ──────────────────────────────────────────────────────
   app.use((err: unknown, req: Request, res: Response, next: NextFunction): void => {
     if (err && typeof err === 'object' && 'code' in err && (err as { code: string }).code === 'EBADCSRFTOKEN') {
@@ -1838,8 +1866,22 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
   app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
     const e = err as Error & { status?: number; statusCode?: number; type?: string };
     const statusCode = e.status ?? e.statusCode;
-    // Express 5 throws a 404 Not Found for unmatched routes — handle silently
+    // Express 5 throws unmatched routes into the error pipeline as 404s.
+    // For SPA routes, serve index.html here instead of JSON.
     if (statusCode === 404) {
+      if (
+        WEB_INDEX_HTML &&
+        (req.method === 'GET' || req.method === 'HEAD') &&
+        !req.path.startsWith('/api/') &&
+        !req.path.startsWith('/auth/') &&
+        !req.path.startsWith('/admin/') &&
+        req.path !== '/health' &&
+        req.path !== '/metrics'
+      ) {
+        res.type('html').send(WEB_INDEX_HTML);
+        return;
+      }
+
       res.status(404).json({
         error: {
           code: ErrorCodes.NOT_FOUND,
@@ -1933,6 +1975,8 @@ export async function startHttpServer(
       Logger.info(`Code Intelligence server running at http://localhost:${port}`);
       Logger.info(`  Graph: ${graph.size.nodes} nodes, ${graph.size.edges} edges`);
       Logger.info(`  Auth: login at http://localhost:${port}/auth/login`);
+      if (WEB_DIST) Logger.info(`  Web UI: ${WEB_DIST}`);
+      else Logger.warn('  Web UI: not found; SPA routes like /login and /explore will return 404 JSON');
       if (watcherState?.watching) {
         Logger.info(`  WebSocket: ws://localhost:${port}/ws (graph:updated push enabled)`);
       }

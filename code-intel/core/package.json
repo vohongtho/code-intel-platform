@@ -1,6 +1,6 @@
 {
   "name": "@vohongtho.infotech/code-intel",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Static code analysis platform — builds a Knowledge Graph from source code with Web UI, HTTP API, CLI, and MCP server",
   "license": "MIT",
   "type": "module",
@@ -44,6 +44,9 @@
     "prepublishOnly": "npm run build",
     "clean": "rm -rf dist dist-tests *.tsbuildinfo",
     "test": "tsc -b tsconfig.test.json && NODE_ENV=test node --test --test-concurrency=1 dist-tests/tests/**/*.test.js",
+    "test:e2e": "tsc -b tsconfig.test.json && NODE_ENV=production node --test dist-tests/tests/e2e/**/*.test.js",
+    "test:all": "npm run test && npm run test:e2e",
+    "test:e2e:watch": "tsc -b tsconfig.test.json && NODE_ENV=production node --test --watch dist-tests/tests/e2e/**/*.test.js",
     "test:coverage": "tsc -b tsconfig.test.json && NODE_ENV=test npx c8 --all --include='dist-tests/src/**/*.js' --exclude='dist-tests/src/cli/main.js' --exclude='dist-tests/src/mcp-server/**' --reporter=text --reporter=lcov --reporter=json-summary node --test --test-concurrency=1 dist-tests/tests/**/*.test.js"
   },
   "dependencies": {

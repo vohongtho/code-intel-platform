@@ -4,6 +4,50 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.0.6] - 2026-07-26
+
+### 🐛 Fixed SPA routing: /explore and other routes now work on reload
+
+**Problem**: Reloading any SPA route (`/explore`, `/settings`, `/login`, etc.) in the browser returned a `CI-1002: Not found` error instead of serving the React application. Users could navigate to these routes within the app, but direct access via URL or browser reload failed.
+
+**Root Cause**: A regression introduced in commit 2104435 (April 26, 2026) changed the Express catch-all route from valid syntax `app.get('*', ...)` to invalid syntax `app.get('/{*path}', ...)`. This hybrid pattern doesn't exist in Express.js, so the route was never registered. Requests fell through to the 404 error handler. Additionally, the catch-all was positioned before `/admin` routes, which would have broken admin API calls if the syntax had been valid.
+
+**Changes**:
+- Fixed Express catch-all route syntax: `'/{*path}'` → `'*'` (valid Express wildcard)
+- Moved SPA catch-all to correct position: after all API/admin routes, before error handlers
+- Added comprehensive documentation comments explaining route order requirements
+- Added E2E test suite (`tests/e2e/spa-routing.test.ts`) with coverage for:
+  - All 7 SPA routes return HTML on direct access
+  - API routes continue returning JSON (unaffected by catch-all)
+  - Admin routes continue returning JSON
+  - Error handling (API 404 vs SPA catch-all)
+- Added production smoke test script (`scripts/smoke-test.sh`) for post-deployment verification
+- Added npm scripts: `test:e2e`, `test:all`, `test:e2e:watch`
+
+**Impact**: This bug existed for 3 months (April 26 - July 26, 2026) and affected all users attempting to:
+- Reload any SPA route in the browser
+- Access SPA routes via direct URL
+- Bookmark SPA routes
+- Share deep links to the application
+
+**Why It Wasn't Caught**:
+- Express silently ignores invalid route patterns (no error thrown)
+- Development mode (Vite dev server) has built-in SPA fallback that masked the issue
+- Production testing was insufficient (no E2E tests for SPA route reloading)
+- The syntax change was buried in a massive 4,500+ line commit focused on multi-repo features
+
+**Testing**: All SPA routes now have E2E coverage. Run `npm run test:e2e` to verify. Deploy verification: `./scripts/smoke-test.sh <server-url>`
+
+**Files Modified**:
+- `code-intel/core/src/http/app.ts` - Fixed route syntax and positioning
+- `code-intel/core/tests/e2e/spa-routing.test.ts` - New E2E test suite
+- `code-intel/core/package.json` - Added test:e2e scripts
+- `scripts/smoke-test.sh` - New production verification script
+
+**Related**: User report 2026-07-26T01:10:38.389Z, OpenSpec change `fix-spa-routing-reload`
+
+---
+
 ## [1.0.5] - 2026-07-24
 
 ### 🎯 `code-intel scan` false-positive reduction

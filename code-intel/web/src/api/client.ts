@@ -149,7 +149,7 @@ export class ApiClient {
   // ── Graph & repos ──────────────────────────────────────────────────────────
 
   async fetchGraph(repo: string): Promise<{ nodes: CodeNode[]; edges: CodeEdge[] }> {
-    const res = await fetch(`${this.baseUrl}/api/v1/graph/${repo}`, { credentials: 'include' });
+    const res = await fetch(`${this.baseUrl}/api/v1/graph/${encodeURIComponent(repo)}`, { credentials: 'include' });
     if (!res.ok) throw new Error(`Failed to fetch graph: ${res.statusText}`);
     return res.json() as Promise<{ nodes: CodeNode[]; edges: CodeEdge[] }>;
   }
