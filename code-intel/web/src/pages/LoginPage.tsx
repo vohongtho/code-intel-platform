@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router';
 import { useAppState } from '../state/app-context';
 import { ApiClient } from '../api/client';
 
 export function LoginPage() {
   const { state, dispatch } = useAppState();
+  const navigate = useNavigate();
 
   const defaultUrl =
     window.location.port === '5173' || window.location.port === '5174'
@@ -14,6 +16,9 @@ export function LoginPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [showBootstrapPassword, setShowBootstrapPassword] = useState(false);
+  const [showBootstrapConfirmPassword, setShowBootstrapConfirmPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -35,6 +40,7 @@ export function LoginPage() {
           dispatch({ type: 'SET_SERVER_URL', url: state.serverUrl || defaultUrl });
           dispatch({ type: 'SET_CURRENT_USER', user: status.user });
           dispatch({ type: 'SET_VIEW', view: 'connect' });
+          navigate('/connect');
         }
       } catch { /* ignore */ }
       setChecking(false);
@@ -56,6 +62,7 @@ export function LoginPage() {
       dispatch({ type: 'SET_SERVER_URL', url: serverUrl });
       dispatch({ type: 'SET_CURRENT_USER', user });
       dispatch({ type: 'SET_VIEW', view: 'connect' });
+      navigate('/connect');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed');
     } finally {
@@ -85,6 +92,7 @@ export function LoginPage() {
       dispatch({ type: 'SET_SERVER_URL', url: serverUrl });
       dispatch({ type: 'SET_CURRENT_USER', user });
       dispatch({ type: 'SET_VIEW', view: 'connect' });
+      navigate('/connect');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Setup failed');
     } finally {
@@ -126,16 +134,30 @@ export function LoginPage() {
             </Field>
             <Field label="Admin Username" labelClass={labelClass}>
               <input type="text" value={username} onChange={(e) => setUsername(e.target.value)}
-                disabled={loading} autoComplete="username" className={inputClass} placeholder="admin" />
+                disabled={loading} autoComplete="username" className={inputClass} placeholder="User Name" />
             </Field>
-            <Field label="Password" labelClass={labelClass}>
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
-                disabled={loading} autoComplete="new-password" className={inputClass} placeholder="••••••••" />
-            </Field>
-            <Field label="Confirm Password" labelClass={labelClass}>
-              <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)}
-                disabled={loading} autoComplete="new-password" className={inputClass} placeholder="••••••••" />
-            </Field>
+            <PasswordField
+              label="Password"
+              labelClass={labelClass}
+              value={password}
+              onChange={setPassword}
+              visible={showBootstrapPassword}
+              onToggle={() => setShowBootstrapPassword((v) => !v)}
+              disabled={loading}
+              autoComplete="new-password"
+              inputClass={inputClass}
+            />
+            <PasswordField
+              label="Confirm Password"
+              labelClass={labelClass}
+              value={confirmPassword}
+              onChange={setConfirmPassword}
+              visible={showBootstrapConfirmPassword}
+              onToggle={() => setShowBootstrapConfirmPassword((v) => !v)}
+              disabled={loading}
+              autoComplete="new-password"
+              inputClass={inputClass}
+            />
 
             {error && <ErrorBanner message={error} />}
 
@@ -161,12 +183,19 @@ export function LoginPage() {
           </Field>
           <Field label="Username" labelClass={labelClass}>
             <input type="text" value={username} onChange={(e) => setUsername(e.target.value)}
-              disabled={loading} autoComplete="username" className={inputClass} placeholder="admin" />
+              disabled={loading} autoComplete="username" className={inputClass} placeholder="User Name" />
           </Field>
-          <Field label="Password" labelClass={labelClass}>
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
-              disabled={loading} autoComplete="current-password" className={inputClass} placeholder="••••••••" />
-          </Field>
+          <PasswordField
+            label="Password"
+            labelClass={labelClass}
+            value={password}
+            onChange={setPassword}
+            visible={showLoginPassword}
+            onToggle={() => setShowLoginPassword((v) => !v)}
+            disabled={loading}
+            autoComplete="current-password"
+            inputClass={inputClass}
+          />
 
           {/* Remember Me */}
           <label className="flex items-center gap-2.5 cursor-pointer select-none group">
@@ -233,6 +262,72 @@ function Field({ label, labelClass, children }: { label: string; labelClass: str
       <label className={labelClass}>{label}</label>
       {children}
     </div>
+  );
+}
+
+function PasswordField({
+  label,
+  labelClass,
+  value,
+  onChange,
+  visible,
+  onToggle,
+  disabled,
+  autoComplete,
+  inputClass,
+}: {
+  label: string;
+  labelClass: string;
+  value: string;
+  onChange: (value: string) => void;
+  visible: boolean;
+  onToggle: () => void;
+  disabled: boolean;
+  autoComplete: string;
+  inputClass: string;
+}) {
+  return (
+    <Field label={label} labelClass={labelClass}>
+      <div className="relative">
+        <input
+          type={visible ? 'text' : 'password'}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          disabled={disabled}
+          autoComplete={autoComplete}
+          className={`${inputClass} pr-12`}
+          placeholder="••••••••"
+        />
+        <button
+          type="button"
+          onClick={onToggle}
+          disabled={disabled}
+          aria-label={`${visible ? 'Hide' : 'Show'} ${label.toLowerCase()}`}
+          className="absolute inset-y-0 right-0 flex items-center px-3 text-text-muted transition hover:text-text-secondary focus:outline-none focus:ring-1 focus:ring-accent/30 rounded-r-lg disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {visible ? <EyeOffIcon /> : <EyeIcon />}
+        </button>
+      </div>
+    </Field>
+  );
+}
+
+function EyeIcon() {
+  return (
+    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7Z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+function EyeOffIcon() {
+  return (
+    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3 3l18 18" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M10.585 10.586A2 2 0 0010 12a2 2 0 002 2c.511 0 .977-.191 1.33-.506" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9.88 5.09A10.94 10.94 0 0112 5c4.478 0 8.268 2.943 9.542 7a10.958 10.958 0 01-4.125 5.168M6.61 6.61A10.958 10.958 0 002.458 12c1.274 4.057 5.065 7 9.542 7 1.55 0 3.018-.353 4.327-.983" />
+    </svg>
   );
 }
 

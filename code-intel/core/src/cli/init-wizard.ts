@@ -18,8 +18,13 @@ import { createInterface } from 'node:readline/promises';
 import { execSync } from 'node:child_process';
 
 // ── Paths ────────────────────────────────────────────────────────────────────
-const GLOBAL_DIR = path.join(os.homedir(), '.code-intel');
-const CONFIG_PATH = path.join(GLOBAL_DIR, 'config.json');
+function getGlobalDir(): string {
+  return process.env['CODE_INTEL_GLOBAL_DIR'] ?? path.join(os.homedir(), '.code-intel');
+}
+
+function getConfigPath(): string {
+  return path.join(getGlobalDir(), 'config.json');
+}
 
 // ── Default config ───────────────────────────────────────────────────────────
 export interface CodeIntelConfig {
@@ -98,25 +103,28 @@ export const DEFAULT_CONFIG: CodeIntelConfig = {
 
 // ── Config I/O ────────────────────────────────────────────────────────────────
 export function configExists(): boolean {
-  return fs.existsSync(CONFIG_PATH);
+  return fs.existsSync(getConfigPath());
 }
 
 export function loadConfig(): CodeIntelConfig | null {
   if (!configExists()) return null;
   try {
-    return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8')) as CodeIntelConfig;
+    return JSON.parse(fs.readFileSync(getConfigPath(), 'utf-8')) as CodeIntelConfig;
   } catch {
     return null;
   }
 }
 
 export function saveConfig(cfg: CodeIntelConfig): void {
-  fs.mkdirSync(GLOBAL_DIR, { recursive: true });
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2) + '\n', 'utf-8');
+  const globalDir = getGlobalDir();
+  const configPath = getConfigPath();
+  fs.mkdirSync(globalDir, { recursive: true });
+  fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2) + '\n', 'utf-8');
 }
 
 export function wipeConfig(): void {
-  if (fs.existsSync(CONFIG_PATH)) fs.unlinkSync(CONFIG_PATH);
+  const configPath = getConfigPath();
+  if (fs.existsSync(configPath)) fs.unlinkSync(configPath);
 }
 
 // ── Editor detection ──────────────────────────────────────────────────────────
@@ -221,11 +229,11 @@ export async function runInitWizard(opts: { reset?: boolean; yes?: boolean } = {
   // ── Existing config check ─────────────────────────────────────────────────
   if (configExists() && !reset) {
     if (yes) {
-      console.log(`  Config already exists at ${CONFIG_PATH}. Use --reset to overwrite.\n`);
+      console.log(`  Config already exists at ${getConfigPath()}. Use --reset to overwrite.\n`);
       process.exit(0);
     }
     const rl = createInterface({ input: process.stdin, output: process.stdout });
-    const doReset = await confirm(rl, `Config already exists at ${CONFIG_PATH}. Reset and re-run wizard?`, false);
+    const doReset = await confirm(rl, `Config already exists at ${getConfigPath()}. Reset and re-run wizard?`, false);
     rl.close();
     if (!doReset) {
       console.log('\n  Keeping existing config. Run `code-intel init --reset` to overwrite.\n');
@@ -240,7 +248,7 @@ export async function runInitWizard(opts: { reset?: boolean; yes?: boolean } = {
   if (yes) {
     // Non-interactive: write defaults
     saveConfig(cfg);
-    console.log(`  ✅  Config written to ${CONFIG_PATH} (all defaults)\n`);
+    console.log(`  ✅  Config written to ${getConfigPath()} (all defaults)\n`);
     printNextSteps();
     return;
   }
@@ -381,7 +389,7 @@ export async function runInitWizard(opts: { reset?: boolean; yes?: boolean } = {
     // ── Write config ──────────────────────────────────────────────────────
     console.log('\n  ── Writing config ──────────────────────────────────────────────\n');
     saveConfig(cfg);
-    console.log(`  ✅  Config written to ${CONFIG_PATH}\n`);
+    console.log(`  ✅  Config written to ${getConfigPath()}\n`);
 
   } finally {
     rl.close();

@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import type { RepoGroup } from './types.js';
 import type { SearchResult } from '../search/text-search.js';
 import { textSearch, reciprocalRankFusion } from '../search/text-search.js';
-import { loadRegistry } from '../storage/repo-registry.js';
+import { findRepoById, loadRegistry } from '../storage/repo-registry.js';
 import { DbManager } from '../storage/db-manager.js';
 import { createKnowledgeGraph } from '../graph/knowledge-graph.js';
 import { loadGraphFromDB } from './graph-from-db.js';
@@ -30,7 +30,7 @@ export async function queryGroup(
   const allRankings: SearchResult[][] = [];
 
   for (const member of group.members) {
-    const regEntry = registry.find((r) => r.name === member.registryName);
+    const regEntry = member.repoId ? findRepoById(member.repoId, registry) : registry.find((r) => r.name === member.registryName);
     if (!regEntry) continue;
 
     const dbPath = path.join(regEntry.path, '.code-intel', 'graph.db');
@@ -51,11 +51,11 @@ export async function queryGroup(
     // Tag each result with repo info via snippet prefix
     const taggedResults: SearchResult[] = results.map((r) => ({
       ...r,
-      snippet: `[${member.registryName}] ${r.snippet ?? ''}`.trim(),
+      snippet: `[${regEntry.name}] ${r.snippet ?? ''}`.trim(),
     }));
 
     perRepo.push({
-      repoName: member.registryName,
+      repoName: regEntry.name,
       repoPath: regEntry.path,
       groupPath: member.groupPath,
       results: taggedResults,

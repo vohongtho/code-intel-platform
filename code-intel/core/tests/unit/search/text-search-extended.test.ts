@@ -54,24 +54,22 @@ describe('textSearch', () => {
     assert.equal(results.length, 0);
   });
 
-  it('deprioritizes test path files', () => {
+  it('excludes test path files from default results', () => {
     const graph = createKnowledgeGraph();
     graph.addNode({ id: 'src', kind: 'function', name: 'login', filePath: '/src/auth.ts' });
     graph.addNode({ id: 'test', kind: 'function', name: 'login', filePath: '/src/auth.test.ts' });
     const results = textSearch(graph, 'login');
-    const srcResult = results.find((r) => r.nodeId === 'src')!;
-    const testResult = results.find((r) => r.nodeId === 'test')!;
-    assert.ok(srcResult.score > testResult.score);
+    assert.equal(results.find((r) => r.nodeId === 'src')?.nodeId, 'src');
+    assert.equal(results.find((r) => r.nodeId === 'test'), undefined);
   });
 
-  it('deprioritizes dist path files', () => {
+  it('excludes dist path files from default results', () => {
     const graph = createKnowledgeGraph();
     graph.addNode({ id: 'src', kind: 'function', name: 'login', filePath: '/src/auth.ts' });
     graph.addNode({ id: 'dist', kind: 'function', name: 'login', filePath: '/dist/auth.js' });
     const results = textSearch(graph, 'login');
-    const srcResult = results.find((r) => r.nodeId === 'src')!;
-    const distResult = results.find((r) => r.nodeId === 'dist')!;
-    assert.ok(srcResult.score > distResult.score);
+    assert.equal(results.find((r) => r.nodeId === 'src')?.nodeId, 'src');
+    assert.equal(results.find((r) => r.nodeId === 'dist'), undefined);
   });
 
   it('boosts function/class/interface/method kinds', () => {

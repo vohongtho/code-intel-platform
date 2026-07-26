@@ -1,6 +1,10 @@
 import type { Phase, PhaseResult, PipelineContext } from '../types.js';
 import { generateNodeId, generateEdgeId } from '../../graph/id-generator.js';
 
+function isTestLikePath(filePath: string): boolean {
+  return filePath.includes('test') || filePath.includes('spec') || filePath.includes('fixture');
+}
+
 export const flowPhase: Phase = {
   name: 'flow',
   dependencies: ['resolve'],
@@ -26,7 +30,7 @@ export const flowPhase: Phase = {
       if (!hasCallers && outCalls.length > 0) score += 10;
       if (node.exported) score += 5;
       if (/^(main|handle|init|start|run|execute|process|serve|listen|bootstrap)/.test(node.name)) score += 3;
-      if (node.filePath.includes('test') || node.filePath.includes('spec') || node.filePath.includes('__test')) score -= 20;
+      if (isTestLikePath(node.filePath) || node.filePath.includes('__test')) score -= 20;
       if (node.filePath.includes('route') || node.filePath.includes('controller') || node.filePath.includes('handler')) score += 8;
 
       if (score >= 5) {
@@ -51,13 +55,19 @@ export const flowPhase: Phase = {
       // BFS trace
       const queue: { nodeId: string; path: string[] }[] = [{ nodeId: ep.id, path: [ep.id] }];
       const visited = new Set<string>();
+      const filterTargets = !isTestLikePath(ep.filePath);
 
       while (queue.length > 0 && flowCount < maxFlows) {
         const { nodeId, path } = queue.shift()!;
         if (path.length > maxDepth) continue;
 
         const callEdges = [...graph.findEdgesFrom(nodeId)]
-          .filter((e) => e.kind === 'calls')
+          .filter((e) => {
+            if (e.kind !== 'calls') return false;
+            if (!filterTargets) return true;
+            const targetNode = graph.getNode(e.target);
+            return targetNode ? !isTestLikePath(targetNode.filePath) : true;
+          })
           .slice(0, maxBranching);
 
         if (callEdges.length === 0 && path.length >= 3) {

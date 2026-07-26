@@ -33,61 +33,62 @@ const _bundledWasmDir = findBundledWasmDir();
 /**
  * Resolve the absolute path to a language WASM file.
  *
- * Resolution order:
- *   1. Try the grammar's own npm package (e.g. tree-sitter-typescript).
- *   2. Fall back to the bundled wasm/ directory inside this package.
+ * Published builds prefer wasm files bundled into dist/wasm/ so end users do
+ * not need the language grammar npm packages at install time.
  *
- * The bundled WASMs (Swift, Kotlin, Dart) are dylink.0 format, compatible
- * with web-tree-sitter 0.26.x.  They are copied into wasm/ at build/publish
- * time and listed in the package.json "files" array so they are always
- * available to consumers without needing the optional grammar packages installed.
- *
- * Returns null when no compatible WASM can be found.
+ * For local source/dev runs we still support resolving the grammar package's
+ * wasm directly from node_modules as a fallback.
  */
 function wasmPath(lang: Language): string | null {
-  // Grammars that ship their own dylink.0 WASM inside their npm package.
-  const WASM_PACKAGE_MAP: Partial<Record<Language, string>> = {
+  const BUNDLED_WASM_MAP: Partial<Record<Language, string>> = {
+    [Language.TypeScript]: 'tree-sitter-typescript.wasm',
+    [Language.JavaScript]: 'tree-sitter-javascript.wasm',
+    [Language.Python]: 'tree-sitter-python.wasm',
+    [Language.Java]: 'tree-sitter-java.wasm',
+    [Language.Go]: 'tree-sitter-go.wasm',
+    [Language.C]: 'tree-sitter-c.wasm',
+    [Language.Cpp]: 'tree-sitter-cpp.wasm',
+    [Language.CSharp]: 'tree-sitter-c_sharp.wasm',
+    [Language.Rust]: 'tree-sitter-rust.wasm',
+    [Language.PHP]: 'tree-sitter-php.wasm',
+    [Language.Ruby]: 'tree-sitter-ruby.wasm',
+    [Language.Swift]: 'tree-sitter-swift.wasm',
+    [Language.Kotlin]: 'tree-sitter-kotlin.wasm',
+    [Language.Dart]: 'tree-sitter-dart.wasm',
+    [Language.HTML]: 'tree-sitter-html.wasm',
+  };
+
+  const DEV_WASM_PACKAGE_MAP: Partial<Record<Language, string>> = {
     [Language.TypeScript]: 'tree-sitter-typescript/tree-sitter-typescript.wasm',
     [Language.JavaScript]: 'tree-sitter-javascript/tree-sitter-javascript.wasm',
-    [Language.Python]:     'tree-sitter-python/tree-sitter-python.wasm',
-    [Language.Java]:       'tree-sitter-java/tree-sitter-java.wasm',
-    [Language.Go]:         'tree-sitter-go/tree-sitter-go.wasm',
-    [Language.C]:          'tree-sitter-c/tree-sitter-c.wasm',
-    [Language.Cpp]:        'tree-sitter-cpp/tree-sitter-cpp.wasm',
-    [Language.CSharp]:     'tree-sitter-c-sharp/tree-sitter-c_sharp.wasm',
-    [Language.Rust]:       'tree-sitter-rust/tree-sitter-rust.wasm',
-    [Language.PHP]:        'tree-sitter-php/tree-sitter-php.wasm',
-    [Language.Ruby]:       'tree-sitter-ruby/tree-sitter-ruby.wasm',
-    // These are optional dependencies; their packages may or may not include
-    // a WASM.  If require.resolve fails we fall back to the bundled wasm/.
-    [Language.Swift]:      'tree-sitter-swift/tree-sitter-swift.wasm',
-    [Language.Kotlin]:     'tree-sitter-kotlin/tree-sitter-kotlin.wasm',
-    [Language.Dart]:       'tree-sitter-dart/tree-sitter-dart.wasm',
+    [Language.Python]: 'tree-sitter-python/tree-sitter-python.wasm',
+    [Language.Java]: 'tree-sitter-java/tree-sitter-java.wasm',
+    [Language.Go]: 'tree-sitter-go/tree-sitter-go.wasm',
+    [Language.C]: 'tree-sitter-c/tree-sitter-c.wasm',
+    [Language.Cpp]: 'tree-sitter-cpp/tree-sitter-cpp.wasm',
+    [Language.CSharp]: 'tree-sitter-c-sharp/tree-sitter-c_sharp.wasm',
+    [Language.Rust]: 'tree-sitter-rust/tree-sitter-rust.wasm',
+    [Language.PHP]: 'tree-sitter-php/tree-sitter-php.wasm',
+    [Language.Ruby]: 'tree-sitter-ruby/tree-sitter-ruby.wasm',
+    [Language.Swift]: 'tree-sitter-swift/tree-sitter-swift.wasm',
+    [Language.Kotlin]: 'tree-sitter-kotlin/tree-sitter-kotlin.wasm',
+    [Language.Dart]: 'tree-sitter-dart/tree-sitter-dart.wasm',
+    [Language.HTML]: 'tree-sitter-html/tree-sitter-html.wasm',
   };
 
-  // Grammars bundled inside this package's wasm/ directory as a reliable
-  // fallback (dylink.0 format, confirmed working with web-tree-sitter 0.26.x).
-  const BUNDLED_WASM_MAP: Partial<Record<Language, string>> = {
-    [Language.Swift]:  'tree-sitter-swift.wasm',
-    [Language.Kotlin]: 'tree-sitter-kotlin.wasm',
-    [Language.Dart]:   'tree-sitter-dart.wasm',
-  };
-
-  // 1. Try resolving via the grammar's own npm package.
-  const relative = WASM_PACKAGE_MAP[lang];
-  if (relative) {
-    try {
-      return _require.resolve(relative);
-    } catch {
-      // Package not installed or WASM not present — fall through.
-    }
-  }
-
-  // 2. Fall back to the WASM bundled inside this package.
   const bundled = BUNDLED_WASM_MAP[lang];
   if (bundled) {
     const bundledPath = nodePath.join(_bundledWasmDir, bundled);
     if (existsSync(bundledPath)) return bundledPath;
+  }
+
+  const relative = DEV_WASM_PACKAGE_MAP[lang];
+  if (relative) {
+    try {
+      return _require.resolve(relative);
+    } catch {
+      // dev fallback unavailable
+    }
   }
 
   return null;

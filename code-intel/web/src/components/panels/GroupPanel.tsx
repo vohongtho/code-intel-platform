@@ -4,6 +4,7 @@ import { ApiClient } from '../../api/client';
 
 interface GroupMember {
   groupPath: string;
+  repoId?: string;
   registryName: string;
 }
 
@@ -22,6 +23,7 @@ interface GroupDetail {
 }
 
 interface RepoEntry {
+  id: string;
   name: string;
   path: string;
   nodes: number;
@@ -168,7 +170,9 @@ function EditGroupPanel({
     setAdding(true);
     setAddError('');
     try {
-      const updated = await client.addGroupMember(group.name, addPath.trim(), addRepo);
+      const selected = repos.find((r) => r.name === addRepo);
+      if (!selected) throw new Error(`Repo not found: ${addRepo}`);
+      const updated = await client.addGroupMember(group.name, addPath.trim(), selected.id, selected.name);
       onSaved({ ...group, members: updated.members });
       setAddPath('');
       setAddRepo('');
@@ -193,7 +197,7 @@ function EditGroupPanel({
 
   // Repos not already in the group, sorted alphabetically
   const availableRepos = repos
-    .filter((r) => !group.members.some((m) => m.registryName === r.name))
+    .filter((r) => !group.members.some((m) => (m.repoId && m.repoId === r.id) || m.registryName === r.name))
     .sort((a, b) => a.name.localeCompare(b.name));
 
   return (

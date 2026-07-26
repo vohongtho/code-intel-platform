@@ -25,6 +25,9 @@ function isTestFile(filePath: string): boolean {
   if (filePath.includes('__tests__')) return true;
   const base = path.basename(filePath);
   if (base.startsWith('Test') && filePath.endsWith('.java')) return true;
+  if (base.endsWith('Test.php')) return true;
+  if (/^test_.*\.py$/i.test(base) || /_test\.py$/i.test(base)) return true;
+  if (/_spec\.rb$/i.test(base)) return true;
   return false;
 }
 
@@ -84,15 +87,25 @@ export function computeCoverage(graph: KnowledgeGraph, scope?: string): Coverage
   const baseNameToTestFiles = new Map<string, string[]>();
   for (const testPath of testFilePaths) {
     const base = path.basename(testPath);
+    const candidates = new Set<string>();
     // Strip test/spec suffix patterns
-    const stripped = base
-      .replace(/\.test\.[^.]+$/, '')
-      .replace(/\.spec\.[^.]+$/, '')
-      .replace(/_test\.[^.]+$/, '')
-      .replace(/_test$/, '');
-    const existing = baseNameToTestFiles.get(stripped) ?? [];
-    existing.push(testPath);
-    baseNameToTestFiles.set(stripped, existing);
+    candidates.add(
+      base
+        .replace(/\.test\.[^.]+$/, '')
+        .replace(/\.spec\.[^.]+$/, '')
+        .replace(/_test\.[^.]+$/, '')
+        .replace(/_test$/, ''),
+    );
+    if (base.endsWith('Test.php')) candidates.add(base.replace(/Test\.php$/, ''));
+    if (/^test_.*\.py$/i.test(base)) candidates.add(base.replace(/^test_/, '').replace(/\.py$/i, ''));
+    if (/_test\.py$/i.test(base)) candidates.add(base.replace(/_test\.py$/i, ''));
+    if (/_spec\.rb$/i.test(base)) candidates.add(base.replace(/_spec\.rb$/i, ''));
+
+    for (const candidate of candidates) {
+      const existing = baseNameToTestFiles.get(candidate) ?? [];
+      existing.push(testPath);
+      baseNameToTestFiles.set(candidate, existing);
+    }
   }
 
   const exportedKinds = new Set(['function', 'method', 'class']);

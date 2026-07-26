@@ -439,14 +439,12 @@ describe('detectOrphanFiles', () => {
 // ── 11. Health score formula ───────────────────────────────────────────────────
 
 describe('computeHealthReport', () => {
-  it('computes score: 100 - (deadCode*0.5 + cycles*5 + godNodes*2 + orphans*1)', () => {
+  it('normalizes score by repository size', () => {
     const graph = createKnowledgeGraph();
 
-    // 2 dead code symbols
     graph.addNode(fnNode('dc1', 'deadA', '/src/a.ts'));
     graph.addNode(fnNode('dc2', 'deadB', '/src/b.ts'));
 
-    // 1 cycle (A→B→A between file nodes)
     const fileA = fileNode('cycle-fa', '/src/cycleA.ts');
     const fileB = fileNode('cycle-fb', '/src/cycleB.ts');
     graph.addNode(fileA);
@@ -454,7 +452,6 @@ describe('computeHealthReport', () => {
     graph.addEdge(edge('cycle-e1', 'cycle-fa', 'cycle-fb', 'imports'));
     graph.addEdge(edge('cycle-e2', 'cycle-fb', 'cycle-fa', 'imports'));
 
-    // 1 god node (21 methods) — make it non-exported so it doesn't count as dead code
     const cls: CodeNode = { id: 'god-cls', kind: 'class', name: 'GodCls', filePath: '/src/god.ts', exported: false };
     graph.addNode(cls);
     for (let i = 0; i < 21; i++) {
@@ -463,29 +460,15 @@ describe('computeHealthReport', () => {
       graph.addEdge(edge(`god-e-${i}`, 'god-cls', `god-m-${i}`, 'has_member'));
     }
 
-    // 1 orphan file
     const orphan = fileNode('orphan-f1', '/src/orphan.ts');
     graph.addNode(orphan);
 
     const report = computeHealthReport(graph);
 
-    // Expected: 100 - (2*0.5 + 1*5 + 1*2 + 1*1) = 100 - (1 + 5 + 2 + 1) = 100 - 9 = 91
-    const expected = 91;
-    assert.equal(report.score, expected);
-    assert.equal(report.grade, '🟢'); // >= 80
-  });
-
-  it('clamps score to 0 on extremely bad graph', () => {
-    const graph = createKnowledgeGraph();
-
-    // 200 dead code → 200 * 0.5 = 100 points deducted → score = 0
-    for (let i = 0; i < 200; i++) {
-      graph.addNode(fnNode(`dead-clamp-${i}`, `fn${i}`, '/src/unused.ts'));
-    }
-
-    const report = computeHealthReport(graph);
-    assert.equal(report.score, 0);
-    assert.equal(report.grade, '🔴');
+    assert.ok(report.score >= 0 && report.score <= 100);
+    assert.ok(['🟢', '🟡', '🔴'].includes(report.grade));
+    assert.equal(report.normalization.basis, 'node-count');
+    assert.ok(report.normalization.size > 0);
   });
 
   it('returns 100 score and green grade for empty graph', () => {
@@ -495,33 +478,41 @@ describe('computeHealthReport', () => {
     assert.equal(report.grade, '🟢');
   });
 
-  it('returns 🟡 grade for score in [60, 80)', () => {
-    const graph = createKnowledgeGraph();
+  it('gives similar scores for proportionally equal issue density across repo sizes', () => {
+    const small = createKnowledgeGraph();
+    for (let i = 0; i < 10; i++) small.addNode(fnNode(`s${i}`, `small${i}`, `/src/s${i}.ts`));
 
-    // 40 dead code → 40*0.5 = 20 → score = 80 (green, not yellow)
-    // Need 41+ to get 79.5 → rounds to yellow
-    // Let's use 43 dead code symbols → 43*0.5 = 21.5 → score = 78.5 → yellow
-    for (let i = 0; i < 43; i++) {
-      graph.addNode(fnNode(`yellow-dead-${i}`, `fn${i}`, `/src/file${i}.ts`));
-    }
+    const large = createKnowledgeGraph();
+    for (let i = 0; i < 100; i++) large.addNode(fnNode(`l${i}`, `large${i}`, `/src/l${i}.ts`));
 
-    const report = computeHealthReport(graph);
-    assert.ok(report.score < 80, `score ${report.score} should be < 80`);
-    assert.ok(report.score >= 60, `score ${report.score} should be >= 60`);
-    assert.equal(report.grade, '🟡');
+    const smallReport = computeHealthReport(small);
+    const largeReport = computeHealthReport(large);
+    assert.ok(Math.abs(smallReport.score - largeReport.score) <= 1);
+    assert.equal(smallReport.grade, largeReport.grade);
   });
 
-  it('returns 🔴 grade for score below 60', () => {
-    const graph = createKnowledgeGraph();
-
-    // 82 dead code → 82 * 0.5 = 41 → score = 59 → red
-    for (let i = 0; i < 82; i++) {
-      graph.addNode(fnNode(`red-dead-${i}`, `fn${i}`, `/src/file${i}.ts`));
+  it('penalizes same absolute issue count less in larger repo', () => {
+    const small = createKnowledgeGraph();
+    small.addNode(fnNode('small-dead', 'smallDead', '/src/small.ts'));
+    for (let i = 0; i < 9; i++) {
+      small.addNode(fileNode(`small-file-${i}`, `/src/file${i}.ts`));
+    }
+    for (let i = 1; i < 9; i++) {
+      small.addEdge(edge(`small-import-${i}`, `small-file-${i - 1}`, `small-file-${i}`, 'imports'));
     }
 
-    const report = computeHealthReport(graph);
-    assert.ok(report.score < 60, `score ${report.score} should be < 60`);
-    assert.equal(report.grade, '🔴');
+    const large = createKnowledgeGraph();
+    large.addNode(fnNode('large-dead', 'largeDead', '/src/large.ts'));
+    for (let i = 0; i < 99; i++) {
+      large.addNode(fileNode(`large-file-${i}`, `/src/file${i}.ts`));
+    }
+    for (let i = 1; i < 99; i++) {
+      large.addEdge(edge(`large-import-${i}`, `large-file-${i - 1}`, `large-file-${i}`, 'imports'));
+    }
+
+    const smallReport = computeHealthReport(small);
+    const largeReport = computeHealthReport(large);
+    assert.ok(largeReport.score > smallReport.score);
   });
 
   it('populates all report fields', () => {
@@ -534,5 +525,6 @@ describe('computeHealthReport', () => {
     assert.ok(Array.isArray(report.orphanFiles));
     assert.ok(typeof report.score === 'number');
     assert.ok(['🟢', '🟡', '🔴'].includes(report.grade));
+    assert.ok(report.normalization !== undefined);
   });
 });

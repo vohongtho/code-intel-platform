@@ -433,11 +433,23 @@ code-intel setup                         # Register the MCP server in your edito
 ### Analyze
 
 ```bash
-code-intel analyze [path]                # Parse source code and build the knowledge graph
+code-intel analyze [path]                # Parse source code and auto-use incremental mode when prior metadata makes it safe
 code-intel analyze --force               # Discard existing index and perform a full re-analysis
-code-intel analyze --embeddings          # Build a vector index for semantic (natural-language) search
-code-intel analyze --skip-embeddings     # Omit embedding generation for a significantly faster run
+code-intel analyze --embeddings          # Build a vector index and remember embeddings for this repo
+code-intel analyze --skip-embeddings     # Skip embedding generation for this run only
 code-intel analyze --skip-agents-md      # Preserve any hand-edited content in AGENTS.md / CLAUDE.md
+```
+
+Sticky embeddings behavior:
+
+- The first successful `code-intel analyze --embeddings` run stores the repo preference in `.code-intel/meta.json`.
+- Later `code-intel analyze`, `code-intel analyze --incremental`, and `code-intel analyze --force` runs auto-enable embeddings for that repo unless you pass `--skip-embeddings`.
+- Plain `code-intel analyze` now auto-attempts incremental graph reindexing when valid prior `.code-intel/meta.json` exists and incremental safety checks pass; otherwise it falls back to full analysis.
+- If `vector.db` is missing, stale, corrupted, or incompatible with the current embedding fingerprint, `code-intel analyze` rebuilds the full vector index automatically.
+- `--skip-embeddings` does not forget the repo preference; it skips vectors for that run and marks remembered embeddings stale until the next normal analyze.
+- Previously indexed repos with only a legacy `vector.db` upgrade in place on the next analyze; no manual migration command is required.
+
+```bash
 code-intel analyze --skip-git            # Allow analysis of directories that are not Git repositories
 code-intel analyze --verbose             # Print every file skipped due to an unsupported parser
 ```

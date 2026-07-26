@@ -2,13 +2,41 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { DatabaseSync } = require('node:sqlite') as {
-  DatabaseSync: new (path: string, options?: { readOnly?: boolean }) => {
-    exec(sql: string): void;
-    close(): void;
-    prepare(sql: string): StatementSync;
-  };
-};
+const SQLITE_EXPERIMENTAL_WARNING = 'SQLite is an experimental feature';
+
+function isSqliteExperimentalWarning(warning: string | Error, args: unknown[]): boolean {
+  const type = typeof args[0] === 'string' ? args[0] : undefined;
+  const message = typeof warning === 'string' ? warning : warning.message;
+  const name = typeof warning === 'string' ? undefined : warning.name;
+  return message.includes(SQLITE_EXPERIMENTAL_WARNING)
+    && (type === 'ExperimentalWarning' || name === 'ExperimentalWarning');
+}
+
+function withSqliteWarningSuppressed<T>(fn: () => T): T {
+  const originalEmitWarning = process.emitWarning;
+  process.emitWarning = ((warning: string | Error, ...args: unknown[]) => {
+    if (isSqliteExperimentalWarning(warning, args)) return;
+    return (originalEmitWarning as any).call(process, warning, ...args);
+  }) as typeof process.emitWarning;
+  try {
+    // ponytail: match the current Node SQLite ExperimentalWarning text locally; widen only if Node changes warning shape.
+    return fn();
+  } finally {
+    process.emitWarning = originalEmitWarning;
+  }
+}
+
+function loadDatabaseSync() {
+  return withSqliteWarningSuppressed(() => (require('node:sqlite') as {
+    DatabaseSync: new (path: string, options?: { readOnly?: boolean }) => {
+      exec(sql: string): void;
+      close(): void;
+      prepare(sql: string): StatementSync;
+    };
+  }).DatabaseSync);
+}
+
+const DatabaseSync = loadDatabaseSync();
 
 type StatementSync = {
   run(...params: unknown[]): unknown;
@@ -62,7 +90,9 @@ export class Database {
     if (options.fileMustExist && path !== ':memory:' && !fs.existsSync(path)) {
       throw new Error(`SQLite file does not exist: ${path}`);
     }
-    this.inner = new DatabaseSync(path, { readOnly: options.readonly === true });
+    this.inner = withSqliteWarningSuppressed(
+      () => new DatabaseSync(path, { readOnly: options.readonly === true }),
+    );
   }
 
   exec(sql: string): void {

@@ -13,6 +13,11 @@ export default defineConfig({
     __APP_VERSION__: JSON.stringify(corePkg.version),
   },
   plugins: [react(), tailwindcss()],
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: './src/test/setup.ts',
+  },
   server: {
     port: 5173,
     proxy: {

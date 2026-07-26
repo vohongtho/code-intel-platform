@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router';
 import { useAppState } from '../../state/app-context';
 import { ApiClient } from '../../api/client';
 import { NODE_COLORS } from '../../graph/colors';
 import type { NodeKind } from 'code-intel-shared';
+import { getSettingsPath } from '../../routing';
 
 interface Props {
   onToggleAI: () => void;
@@ -18,6 +20,7 @@ const ROLE_COLORS: Record<string, string> = {
 
 export function Header({ onToggleAI, aiOpen }: Props) {
   const { state, dispatch } = useAppState();
+  const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [vectorMode, setVectorMode] = useState(false);
@@ -98,6 +101,7 @@ export function Header({ onToggleAI, aiOpen }: Props) {
       dispatch({ type: 'SET_CONNECTED', connected: false });
       dispatch({ type: 'SET_GRAPH', nodes: [], edges: [] });
       dispatch({ type: 'SET_VIEW', view: 'login' });
+      navigate('/login');
       setLoggingOut(false);
       setUserMenuOpen(false);
     }
@@ -253,11 +257,23 @@ export function Header({ onToggleAI, aiOpen }: Props) {
                     setUserMenuOpen(false);
                     dispatch({ type: 'SET_CONNECTED', connected: false });
                     dispatch({ type: 'SET_VIEW', view: 'connect' });
+                    navigate('/connect');
                   }}
                   className="w-full text-left px-4 py-2 text-sm text-text-secondary hover:bg-hover hover:text-text-primary transition flex items-center gap-2"
                 >
                   <span className="text-text-muted">⬡</span>
                   Switch Repository
+                </button>
+                <button
+                  onClick={() => {
+                    setUserMenuOpen(false);
+                    dispatch({ type: 'SET_VIEW', view: 'settings' });
+                    navigate(getSettingsPath());
+                  }}
+                  className="w-full text-left px-4 py-2 text-sm text-text-secondary hover:bg-hover hover:text-text-primary transition flex items-center gap-2"
+                >
+                  <span className="text-text-muted">⚙</span>
+                  Settings
                 </button>
                 <button
                   onClick={handleLogout}

@@ -29,6 +29,12 @@ jobs:
       - name: Unit tests
         run: npm test --workspace=code-intel/core
 
+      - name: Build core dist
+        run: npm run build --workspace=code-intel/core
+
+      - name: Validate packaged dist layout
+        run: npm run validate:dist --workspace=code-intel/core
+
       - name: npm audit — 0 high/critical CVEs (production deps only)
         run: npm audit --audit-level=high --omit=dev
 

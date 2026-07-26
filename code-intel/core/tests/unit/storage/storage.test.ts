@@ -12,6 +12,10 @@ import {
   getAgentTargetsPath,
   loadAgentTargets,
   saveAgentTargets,
+  resolveEmbeddingMode,
+  embeddingFingerprintMatches,
+  shouldRebuildEmbeddings,
+  resolveAnalyzeMode,
 } from '../../../src/storage/metadata.js';
 
 // ── Metadata ──────────────────────────────────────────────────────────────────
@@ -31,6 +35,13 @@ describe('Metadata', () => {
   it('saveMetadata + loadMetadata — round-trip', () => {
     const meta = {
       indexedAt: '2025-01-01T00:00:00.000Z',
+      embeddings: {
+        enabled: true,
+        status: 'ready' as const,
+        provider: 'huggingface-transformers',
+        model: 'Xenova/all-MiniLM-L6-v2',
+        dimension: 384,
+      },
       stats: { nodes: 42, edges: 100, files: 10, duration: 500 },
     };
     saveMetadata(repoDir, meta);
@@ -40,6 +51,7 @@ describe('Metadata', () => {
     assert.equal(loaded!.stats.edges, 100);
     assert.equal(loaded!.indexedAt, '2025-01-01T00:00:00.000Z');
     assert.equal(loaded!.stats.duration, 500);
+    assert.deepEqual(loaded!.embeddings, meta.embeddings);
   });
 
   it('loadMetadata — returns null for missing directory', () => {
@@ -134,5 +146,130 @@ describe('Metadata', () => {
     } finally {
       try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
     }
+  });
+
+  it('resolveEmbeddingMode — explicit enable wins', () => {
+    const result = resolveEmbeddingMode({ explicitEnable: true, explicitSkip: false, metadata: null, hasLegacyVectorDb: false });
+    assert.deepEqual(result, { enabled: true, remembered: true, source: 'explicit' });
+  });
+
+  it('resolveEmbeddingMode — explicit skip wins over remembered metadata', () => {
+    const result = resolveEmbeddingMode({
+      explicitEnable: false,
+      explicitSkip: true,
+      metadata: {
+        indexedAt: '2025-01-01T00:00:00.000Z',
+        embeddings: { enabled: true, status: 'ready', provider: 'huggingface-transformers', model: 'Xenova/all-MiniLM-L6-v2', dimension: 384 },
+        stats: { nodes: 1, edges: 0, files: 1, duration: 1 },
+      },
+      hasLegacyVectorDb: true,
+    });
+    assert.deepEqual(result, { enabled: false, remembered: true, source: 'disabled' });
+  });
+
+  it('resolveEmbeddingMode — legacy vector DB implies remembered embeddings when metadata is absent', () => {
+    const result = resolveEmbeddingMode({ explicitEnable: false, explicitSkip: false, metadata: null, hasLegacyVectorDb: true });
+    assert.deepEqual(result, { enabled: true, remembered: true, source: 'legacy' });
+  });
+
+  it('embeddingFingerprintMatches — compares provider model and dimension', () => {
+    assert.equal(
+      embeddingFingerprintMatches(
+        { provider: 'huggingface-transformers', model: 'Xenova/all-MiniLM-L6-v2', dimension: 384 },
+        { provider: 'huggingface-transformers', model: 'Xenova/all-MiniLM-L6-v2', dimension: 384 },
+      ),
+      true,
+    );
+    assert.equal(
+      embeddingFingerprintMatches(
+        { provider: 'huggingface-transformers', model: 'other', dimension: 384 },
+        { provider: 'huggingface-transformers', model: 'Xenova/all-MiniLM-L6-v2', dimension: 384 },
+      ),
+      false,
+    );
+  });
+
+  it('shouldRebuildEmbeddings — true when vector DB missing', () => {
+    assert.equal(
+      shouldRebuildEmbeddings({
+        metadata: null,
+        runtime: { provider: 'huggingface-transformers', model: 'Xenova/all-MiniLM-L6-v2', dimension: 384 },
+        hasVectorDb: false,
+      }),
+      true,
+    );
+  });
+
+  it('shouldRebuildEmbeddings — true when metadata is stale', () => {
+    assert.equal(
+      shouldRebuildEmbeddings({
+        metadata: {
+          indexedAt: '2025-01-01T00:00:00.000Z',
+          embeddings: { enabled: true, status: 'stale', provider: 'huggingface-transformers', model: 'Xenova/all-MiniLM-L6-v2', dimension: 384 },
+          stats: { nodes: 1, edges: 0, files: 1, duration: 1 },
+        },
+        runtime: { provider: 'huggingface-transformers', model: 'Xenova/all-MiniLM-L6-v2', dimension: 384 },
+        hasVectorDb: true,
+      }),
+      true,
+    );
+  });
+
+  it('shouldRebuildEmbeddings — true when fingerprint mismatches', () => {
+    assert.equal(
+      shouldRebuildEmbeddings({
+        metadata: {
+          indexedAt: '2025-01-01T00:00:00.000Z',
+          embeddings: { enabled: true, status: 'ready', provider: 'huggingface-transformers', model: 'old-model', dimension: 384 },
+          stats: { nodes: 1, edges: 0, files: 1, duration: 1 },
+        },
+        runtime: { provider: 'huggingface-transformers', model: 'Xenova/all-MiniLM-L6-v2', dimension: 384 },
+        hasVectorDb: true,
+      }),
+      true,
+    );
+  });
+
+  it('shouldRebuildEmbeddings — false when ready fingerprint matches and vector DB exists', () => {
+    assert.equal(
+      shouldRebuildEmbeddings({
+        metadata: {
+          indexedAt: '2025-01-01T00:00:00.000Z',
+          embeddings: { enabled: true, status: 'ready', provider: 'huggingface-transformers', model: 'Xenova/all-MiniLM-L6-v2', dimension: 384 },
+          stats: { nodes: 1, edges: 0, files: 1, duration: 1 },
+        },
+        runtime: { provider: 'huggingface-transformers', model: 'Xenova/all-MiniLM-L6-v2', dimension: 384 },
+        hasVectorDb: true,
+      }),
+      false,
+    );
+  });
+
+  it('resolveAnalyzeMode — explicit incremental wins', () => {
+    assert.deepEqual(
+      resolveAnalyzeMode({ explicitIncremental: true, force: false, metadata: null }),
+      { attemptIncremental: true, source: 'explicit' },
+    );
+  });
+
+  it('resolveAnalyzeMode — force disables incremental', () => {
+    assert.deepEqual(
+      resolveAnalyzeMode({ explicitIncremental: true, force: true, metadata: { indexedAt: '2025', stats: { nodes: 1, edges: 0, files: 1, duration: 1 } } }),
+      { attemptIncremental: false, source: 'full' },
+    );
+  });
+
+  it('resolveAnalyzeMode — valid metadata enables auto incremental for plain analyze', () => {
+    assert.deepEqual(
+      resolveAnalyzeMode({ explicitIncremental: false, force: false, metadata: { indexedAt: '2025', stats: { nodes: 1, edges: 0, files: 1, duration: 1 } } }),
+      { attemptIncremental: true, source: 'auto' },
+    );
+  });
+
+  it('resolveAnalyzeMode — no metadata keeps plain analyze full', () => {
+    assert.deepEqual(
+      resolveAnalyzeMode({ explicitIncremental: false, force: false, metadata: null }),
+      { attemptIncremental: false, source: 'full' },
+    );
   });
 });

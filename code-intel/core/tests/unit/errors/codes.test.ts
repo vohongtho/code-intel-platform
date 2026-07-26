@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ErrorCodes, AppError } from '../../../src/errors/codes.js';
+import { ErrorCodes, AppError, getAvailableDiskMB, parseDfAvailableMB } from '../../../src/errors/codes.js';
 
 describe('ErrorCodes', () => {
   it('UNAUTHORIZED is CI-1000', () => {
@@ -58,5 +58,22 @@ describe('AppError', () => {
   it('docs is undefined when not provided', () => {
     const err = new AppError('CI-1000', 'msg', 'hint');
     assert.equal(err.docs, undefined);
+  });
+});
+
+describe('parseDfAvailableMB', () => {
+  it('parses available megabytes from df output', () => {
+    const out = 'Filesystem     1M-blocks  Used Available Use% Mounted on\n/dev/disk1s1      102400  4000     98400   4% /\n';
+    assert.equal(parseDfAvailableMB(out), 98400);
+  });
+
+  it('returns null for malformed output', () => {
+    assert.equal(parseDfAvailableMB('not df output'), null);
+  });
+});
+
+describe('getAvailableDiskMB', () => {
+  it('skips disk-space shell checks on Windows', () => {
+    assert.equal(getAvailableDiskMB('C:\\Users\\thomas', 'win32'), null);
   });
 });

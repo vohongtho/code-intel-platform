@@ -24,13 +24,66 @@ describe('Text Search', () => {
     assert.equal(results[0].name, 'login');
   });
 
+  it('ranks portal login intent above incidental token matches', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: 'page', kind: 'file', name: 'LoginPage', filePath: 'web/pages/LoginPage.tsx', content: 'portal authentication login page' });
+    graph.addNode({ id: 'api', kind: 'method', name: 'login', filePath: 'web/api/client.ts', content: 'login to portal' });
+    graph.addNode({ id: 'noise', kind: 'variable', name: 'token', filePath: 'core/query.ts', content: 'how to process login token' });
+
+    const results = textSearch(graph, 'how to login portal');
+    assert.deepEqual(new Set(results.slice(0, 2).map((result) => result.nodeId)), new Set(['api', 'page']));
+  });
+
+  it('returns deterministic ordering and cached copies', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: 'b', kind: 'function', name: 'login', filePath: 'b.ts' });
+    graph.addNode({ id: 'a', kind: 'function', name: 'login', filePath: 'a.ts' });
+
+    const first = textSearch(graph, 'login');
+    first[0].name = 'mutated';
+    const second = textSearch(graph, 'login');
+    assert.deepEqual(second.map((result) => result.nodeId), ['a', 'b']);
+    assert.equal(second[0].name, 'login');
+  });
+
+  it('invalidates cached results when graph generation shape changes', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: 'first', kind: 'function', name: 'loginHelper', filePath: 'a.ts' });
+    assert.deepEqual(textSearch(graph, 'login').map((result) => result.nodeId), ['first']);
+
+    graph.addNode({ id: 'exact', kind: 'function', name: 'login', filePath: 'b.ts' });
+    assert.equal(textSearch(graph, 'login')[0].nodeId, 'exact');
+  });
+
   it('should respect limit', () => {
     const graph = createKnowledgeGraph();
     for (let i = 0; i < 50; i++) {
-      graph.addNode({ id: `n${i}`, kind: 'function', name: `func${i}`, filePath: 'a.ts' });
+      graph.addNode({ id: `n${i}`, kind: 'function', name: `func${i}`, filePath: `src/func${i}.ts` });
     }
     const results = textSearch(graph, 'func', 5);
     assert.equal(results.length, 5);
+  });
+
+  it('excludes test symbols across common language conventions', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: 'src-ts', kind: 'function', name: 'login', filePath: 'src/auth.ts' });
+    graph.addNode({ id: 'test-ts', kind: 'function', name: 'login', filePath: 'tests/auth.test.ts' });
+    graph.addNode({ id: 'test-py', kind: 'function', name: 'login', filePath: 'python/test_auth.py' });
+    graph.addNode({ id: 'test-rs', kind: 'function', name: 'login', filePath: 'rust/login_spec.rs' });
+
+    const results = textSearch(graph, 'login');
+    assert.deepEqual(results.map((result) => result.nodeId), ['src-ts']);
+  });
+
+  it('excludes fixture, eval, and generated symbols from default results', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: 'main', kind: 'function', name: 'searchIndex', filePath: 'src/search/index.ts' });
+    graph.addNode({ id: 'fixture', kind: 'function', name: 'searchIndex', filePath: 'fixtures/search/index.ts' });
+    graph.addNode({ id: 'eval', kind: 'function', name: 'searchIndex', filePath: 'eval/search-index.ts' });
+    graph.addNode({ id: 'generated', kind: 'function', name: 'searchIndex', filePath: 'dist/search/index.d.ts' });
+
+    const results = textSearch(graph, 'searchIndex');
+    assert.deepEqual(results.map((result) => result.nodeId), ['main']);
   });
 });
 

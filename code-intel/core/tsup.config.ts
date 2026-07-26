@@ -18,6 +18,7 @@ export default defineConfig([
     },
     sourcemap: true,
     clean: true,
+    bundle: false,
     external: [
       /^node:/,
       '@huggingface/transformers',
@@ -50,9 +51,9 @@ export default defineConfig([
     treeshake: true,
     splitting: false,
   },
-  // CLI entry — dist/cli/main.js (bundled single file, no types needed)
+  // CLI app entry — dist/cli/app.js (full CLI implementation)
   {
-    entry: { 'cli/main': 'src/cli/main.ts' },
+    entry: { 'cli/app': 'src/cli/app.ts' },
     format: ['esm'],
     outDir: 'dist',
     dts: false,
@@ -74,6 +75,18 @@ export default defineConfig([
       'openai',
       'compression',
     ],
+    treeshake: true,
+    splitting: false,
+  },
+  // CLI bootstrap entry — dist/cli/main.js (tiny binary, lazy-loads app)
+  {
+    entry: { 'cli/main': 'src/cli/main.ts' },
+    format: ['esm'],
+    outDir: 'dist',
+    dts: false,
+    sourcemap: true,
+    clean: false,
+    external: [/^node:/],
     treeshake: true,
     splitting: false,
   },

@@ -7,7 +7,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import type { RepoGroup, Contract, ContractLink, GroupSyncResult } from './types.js';
-import { loadRegistry } from '../storage/repo-registry.js';
+import { findRepoById, loadRegistry } from '../storage/repo-registry.js';
 import { DbManager } from '../storage/db-manager.js';
 import { createKnowledgeGraph, type KnowledgeGraph } from '../graph/knowledge-graph.js';
 import { loadGraphFromDB } from './graph-from-db.js';
@@ -174,7 +174,7 @@ export async function syncGroup(group: RepoGroup): Promise<GroupSyncResult> {
 
   for (const member of group.members) {
     // Resolve the actual repo path from the registry
-    const regEntry = registry.find((r) => r.name === member.registryName);
+    const regEntry = member.repoId ? findRepoById(member.repoId, registry) : registry.find((r) => r.name === member.registryName);
     if (!regEntry) {
       Logger.warn(`  ⚠ Registry entry "${member.registryName}" not found — skipping ${member.groupPath}`);
       continue;
@@ -198,7 +198,7 @@ export async function syncGroup(group: RepoGroup): Promise<GroupSyncResult> {
       continue;
     }
 
-    const contracts = extractContracts(graph, member.registryName, regEntry.path);
+    const contracts = extractContracts(graph, regEntry.name, regEntry.path);
 
     // Schema-file contracts (OpenAPI, GraphQL, Protobuf)
     const [openapiContracts, graphqlContracts, protoContracts] = await Promise.all([
@@ -209,7 +209,7 @@ export async function syncGroup(group: RepoGroup): Promise<GroupSyncResult> {
 
     for (const c of openapiContracts) {
       contracts.push({
-        repoName: member.registryName,
+        repoName: regEntry.name,
         repoPath: regEntry.path,
         kind: 'route',
         name: c.name,
@@ -220,7 +220,7 @@ export async function syncGroup(group: RepoGroup): Promise<GroupSyncResult> {
     }
     for (const c of graphqlContracts) {
       contracts.push({
-        repoName: member.registryName,
+        repoName: regEntry.name,
         repoPath: regEntry.path,
         kind: 'graphql',
         name: c.name,
@@ -231,7 +231,7 @@ export async function syncGroup(group: RepoGroup): Promise<GroupSyncResult> {
     }
     for (const c of protoContracts) {
       contracts.push({
-        repoName: member.registryName,
+        repoName: regEntry.name,
         repoPath: regEntry.path,
         kind: 'grpc',
         name: c.name,
@@ -241,7 +241,7 @@ export async function syncGroup(group: RepoGroup): Promise<GroupSyncResult> {
       });
     }
 
-    Logger.info(`  ✓ ${member.registryName} (${member.groupPath}): ${contracts.length} contracts`);
+    Logger.info(`  ✓ ${regEntry.name} (${member.groupPath}): ${contracts.length} contracts`);
     allContracts.push(...contracts);
   }
 

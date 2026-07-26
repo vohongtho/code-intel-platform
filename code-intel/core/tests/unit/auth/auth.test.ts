@@ -33,7 +33,7 @@ describe('UsersDB — local accounts', () => {
     try { fs.unlinkSync(dbPath); } catch { /* ignore */ }
   });
 
-  it('createUser — stores user with bcrypt hash', () => {
+  it('createUser — stores user with password hash', () => {
     const user = db.createUser('alice', 'password123', 'admin');
     assert.equal(user.username, 'alice');
     assert.equal(user.role, 'admin');
@@ -66,7 +66,7 @@ describe('UsersDB — local accounts', () => {
     assert.equal(user!.role, 'analyst');
   });
 
-  it('resetPassword — updates bcrypt hash', () => {
+  it('resetPassword — updates password hash', () => {
     db.resetPassword('alice', 'newpassword');
     const user = db.findUserByUsername('alice');
     assert.ok(user !== null);

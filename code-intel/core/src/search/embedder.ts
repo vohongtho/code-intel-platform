@@ -1,5 +1,9 @@
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
 
+export const EMBEDDING_PROVIDER = 'huggingface-transformers';
+export const EMBEDDING_MODEL = 'Xenova/all-MiniLM-L6-v2';
+export const EMBEDDING_DIMENSION = 384;
+
 export interface EmbeddedNode {
   id: string;
   name: string;
@@ -9,7 +13,7 @@ export interface EmbeddedNode {
   embedding: number[];
 }
 
-const EMBED_DIM = 384; // all-MiniLM-L6-v2 output dimension
+const EMBED_DIM = EMBEDDING_DIMENSION; // all-MiniLM-L6-v2 output dimension
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let pipelineInstance: ((text: string | string[], opts: Record<string, unknown>) => Promise<{ data: Float32Array }>) | null = null;
@@ -26,25 +30,45 @@ export async function getEmbedder() {
     // dtype:'q8' loads the int8-quantized ONNX weights — ~2-4× faster on CPU,
     // negligible quality difference for code-symbol embeddings.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    pipelineInstance = (await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', { dtype: 'q8' } as any)) as unknown as typeof pipelineInstance;
+    pipelineInstance = (await pipeline('feature-extraction', EMBEDDING_MODEL, { dtype: 'q8' } as any)) as unknown as typeof pipelineInstance;
   }
   return pipelineInstance!;
 }
 
-export async function embedNodes(
-  graph: KnowledgeGraph,
-  opts: { batchSize?: number; onProgress?: (done: number, total: number) => void } = {},
-): Promise<EmbeddedNode[]> {
-  // Larger batch = fewer forward passes = faster overall
-  const { batchSize = 64, onProgress } = opts;
+export function getEmbeddingFingerprint() {
+  return {
+    provider: EMBEDDING_PROVIDER,
+    model: EMBEDDING_MODEL,
+    dimension: EMBEDDING_DIMENSION,
+  };
+}
 
-  // Collect candidates — skip cluster/directory/flow to save time
+export function collectEmbeddingCandidates(
+  graph: KnowledgeGraph,
+  filePaths?: Iterable<string>,
+): { id: string; name: string; kind: string; filePath: string; text: string; embeddingSource: 'summary' | 'code' }[] {
+  const allowedPaths = filePaths ? new Set(filePaths) : null;
   const candidates: { id: string; name: string; kind: string; filePath: string; text: string; embeddingSource: 'summary' | 'code' }[] = [];
+
   for (const node of graph.allNodes()) {
     if (['cluster', 'directory', 'flow'].includes(node.kind)) continue;
+    if (allowedPaths && !allowedPaths.has(node.filePath)) continue;
     const { text, embeddingSource } = buildText(node);
     candidates.push({ id: node.id, name: node.name, kind: node.kind, filePath: node.filePath, text, embeddingSource });
   }
+
+  return candidates;
+}
+
+export async function embedNodes(
+  graph: KnowledgeGraph,
+  opts: { batchSize?: number; onProgress?: (done: number, total: number) => void; filePaths?: Iterable<string> } = {},
+): Promise<EmbeddedNode[]> {
+  // Larger batch = fewer forward passes = faster overall
+  const { batchSize = 64, onProgress, filePaths } = opts;
+
+  // Collect candidates — skip cluster/directory/flow to save time
+  const candidates = collectEmbeddingCandidates(graph, filePaths);
 
   const embedder = await getEmbedder();
   const results: EmbeddedNode[] = [];

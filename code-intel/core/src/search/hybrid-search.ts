@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
-import { textSearch, reciprocalRankFusion } from './text-search.js';
+import { textSearch, reciprocalRankFusion, compareResults, isDefaultExcludedSearchPath } from './text-search.js';
 import type { SearchResult } from './text-search.js';
 import { VectorIndex } from './vector-index.js';
 import { getEmbedder } from './embedder.js';
@@ -41,7 +41,9 @@ export async function hybridSearch(
 
   if (!hasVectorDb) {
     // BM25-only path
-    const bm25Results = await bm25Promise;
+    const bm25Results = (await bm25Promise)
+      .filter((result) => !isDefaultExcludedSearchPath(result.filePath))
+      .sort(compareResults);
     return {
       results: bm25Results.slice(0, limit).map((r) => ({ ...r, searchMode: 'bm25' as const })),
       searchMode: 'bm25',
@@ -54,8 +56,11 @@ export async function hybridSearch(
 
   if (vectorResults === null || vectorResults.length === 0) {
     // Vector search failed or returned nothing — fall back to BM25
+    const filteredBm25 = bm25Results
+      .filter((result) => !isDefaultExcludedSearchPath(result.filePath))
+      .sort(compareResults);
     return {
-      results: bm25Results.slice(0, limit).map((r) => ({ ...r, searchMode: 'bm25' as const })),
+      results: filteredBm25.slice(0, limit).map((r) => ({ ...r, searchMode: 'bm25' as const })),
       searchMode: 'bm25',
     };
   }
@@ -71,7 +76,9 @@ export async function hybridSearch(
   }));
 
   // Merge with Reciprocal Rank Fusion
-  const merged = reciprocalRankFusion(bm25Results, vectorAsSearchResults);
+  const merged = reciprocalRankFusion(bm25Results, vectorAsSearchResults)
+    .filter((result) => !isDefaultExcludedSearchPath(result.filePath))
+    .sort(compareResults);
 
   return {
     results: merged.slice(0, limit).map((r) => ({ ...r, searchMode: 'hybrid' as const })),

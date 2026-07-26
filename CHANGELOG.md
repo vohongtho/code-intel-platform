@@ -4,6 +4,141 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.0.5] - 2026-07-24
+
+### 🎯 `code-intel scan` false-positive reduction
+
+Fixed three confirmed false-positive mechanisms in the security-signal detectors (`code-intel/core/src/pipeline/security-signals.ts`, `code-intel/core/src/security/vulnerability-detector.ts`), found by dogfooding `code-intel scan` against this repo:
+
+- **`buildFlags` — sibling-argument taint bleed.** `hasUserInput` was computed over the sink's full joined argument list instead of just the tainted argument, so any `fetch(url, { body: ... })`-shaped call matched on an unrelated options-object key (`body`/`params`/`query`) regardless of the URL's actual content. Now scoped to the tainted argument alone. Fixed all 15 SSRF false positives in `code-intel/web/src/api/client.ts` plus several previously-undocumented ones elsewhere (`backup-service.ts`, `extensions/vscode/src/extension.ts`, `llm/providers/custom.ts`, `db-manager.ts`, `scripts/add-shebang.mjs`).
+- **`extractJsSecuritySignals`'s generic SQL fallback — non-relational receiver blind spot.** The unconditional `\w+\.query`/`\w+\.execute` regex matched on method name alone, with no signal about the receiver's actual engine, so `DbManager.query()` (wrapping the embedded graph/Cypher engine `@ladybugdb/core`) was flagged as SQL injection. Now gated behind a new same-file `hasNonRelationalQueryImport()` check (denylist: `@ladybugdb/core`, `kuzu`, `neo4j-driver`, `gremlin`, `arangojs`) plus a SQL-keyword-shape check on the resolved query text.
+- **`isDynamic` — no resolution for same-file enumerated parameters.** A template-interpolated identifier was always treated as dynamic even when it was provably drawn from a hardcoded, same-file array via `.some`/`.map`/`.forEach`/`.filter`/`.every`. Added `buildEnumeratedParams()` to resolve this shape; fixed the `commandExists(bin)` command-injection false positive in `code-intel/core/src/cli/init-wizard.ts` (`bin` is only ever drawn from the hardcoded `EDITORS` array).
+- Added fixture/regression coverage for all three false-positive shapes plus their corresponding true-positive counterparts in `security-signals.test.ts` and `vulnerability-detector.test.ts`.
+
+**Known residual false positives (out of scope for this fix, tracked as follow-ups):**
+- `code-intel/core/src/http/app.ts:1061` (`dbm.query(q)`, SQL_INJECTION) — the non-relational-import check is same-file only; `app.ts` imports `DbManager` from a wrapper module (`storage/index.js`) rather than directly from `@ladybugdb/core`, so the gate can't see the import. Fixing this would require cross-file resolution, which is out of scope (see `design.md` non-goals for this change).
+- `code-intel/web/src/api/client.ts:315` and `:402` (SSRF) — a different, previously-masked false-positive mechanism: a generic taint keyword (`params`, `query`) appears inside the *tainted argument itself* (a local `URLSearchParams` variable name, and a literal REST path segment) rather than in a sibling argument. This fix only addressed cross-argument bleed.
+
+
+### 🖥️ Routed portal settings screen
+
+- Added authenticated Web UI settings routes under `/settings/:section` for global server configuration, with browser back/forward support and router-managed section navigation instead of `#fragment` anchors.
+- Added a profile-menu `Settings` entry above `Sign Out` in the portal header.
+- Added masked config read and validated config update HTTP endpoints at `/api/v1/config`.
+- Added portal config editing for LLM, embeddings, analysis, server, authentication, updates, and telemetry settings.
+- Global config reads are available to authenticated viewers; updates require the admin role.
+- Logout now clears cached portal settings state so revisiting routed settings URLs redirects cleanly through auth.
+- Affected files and symbols include `code-intel/web/src/components/shared/Header.tsx` (`handleLogout` + settings navigation), `code-intel/web/src/App.tsx` (`AppContent` route table), `code-intel/web/src/api/client.ts` (`ApiClient.getConfig` / `ApiClient.saveConfig`), `code-intel/core/src/http/app.ts` (`createApp` + `/api/v1/config`), `code-intel/core/src/cli/init-wizard.ts` (`loadConfig` / `saveConfig` via configurable global config path), `code-intel/core/src/cli/config-manager.ts` (`maskConfig` / `validateConfig`), `code-intel/web/src/pages/SettingsPage.tsx`, and `code-intel/web/src/routing.ts`.
+
+### ⚡ Plain analyze auto-incremental
+
+- Plain `code-intel analyze` now auto-attempts incremental graph reindexing when valid prior `.code-intel/meta.json` exists and the existing safety checks pass.
+- Explicit `--incremental` and `--force` semantics are unchanged.
+- CLI output now distinguishes auto-incremental mode from full-analysis fallback and reports fallback reasons when plain analyze cannot safely increment.
+- Remembered embeddings now follow plain analyze's chosen graph mode, so changed-file-only graph refresh also keeps changed-file-only vector upkeep when safe.
+
+### 🧠 Sticky embeddings on analyze
+
+- `code-intel analyze --embeddings` now remembers semantic-search preference per repository in `.code-intel/meta.json`.
+- Later plain `code-intel analyze`, `code-intel analyze --incremental`, and `code-intel analyze --force` runs now auto-enable embeddings for remembered repositories unless `--skip-embeddings` is passed.
+- Persisted embedding metadata now records enablement, readiness/staleness, provider, model, and vector dimension so the CLI can detect stale or incompatible vector state.
+- Repositories with legacy `vector.db` but no embedding metadata now normalize automatically on the next analyze; no manual migration command is required.
+- Missing, stale, corrupted, or fingerprint-mismatched vector indexes now rebuild from `code-intel analyze` without requiring users to remember `--embeddings`.
+- `--skip-embeddings` is now documented as a one-run override that preserves remembered preference and leaves embeddings marked stale until refreshed.
+- `code-intel doctor` now reports remembered embedding readiness/staleness and recovery guidance uses `code-intel analyze` for rebuilds.
+- Updated README and CLI guide text for sticky embeddings behavior and mixed-version compatibility expectations.
+
+### 🗂️ Stable repository identity and unique names
+
+- Added stable repository `id` fields to persisted registry entries while keeping user-facing unique `name` values and mutable `path` values.
+- Added automatic migration for legacy registry entries that lacked IDs.
+- Added deterministic duplicate-name repair during migration, with warnings when old basename-derived names collide.
+- `code-intel analyze` now accepts `--name <name>` and enforces explicit create vs rename vs relink semantics.
+- Added `code-intel repo list|show|rename|relink` for repository identity management.
+- MCP and HTTP repo resolution now accept stable IDs in addition to names and paths.
+- Group membership persistence now stores `repoId` so repository renames do not break group resolution.
+- `/api/v1/repos` now includes repository IDs in responses.
+- Updated CLI help and README guidance for repository naming, duplicate validation, rename, and relink workflows.
+
+
+### 🛡️ Vulnerability scan generic-tier precision
+
+- Forced `@hono/node-server` to `2.0.11` in the owned workspace dependency graph to remove the moderate npm audit finding inherited through `@modelcontextprotocol/sdk`; validation confirmed `npm test` still passes after the override.
+- Vulnerability scanning for non-JS/Python languages (Go, Java, C, C++, C#, Rust, PHP, Kotlin, Ruby, Swift, Dart) now uses case-insensitive sink matching, fixing silent misses on lowercase or case-variant function names (e.g., PHP's `readfile()`).
+- SQL injection detection for generic-tier languages now recognizes ORM raw-query methods (`whereRaw`, `selectRaw`, `orderByRaw`, `havingRaw`, `updateRaw`) in addition to generic `query`/`execute` patterns.
+- XSS detection for generic-tier languages no longer flags bare output statements (`echo`, `print`, `printf`, `write`) that are not inherently HTML-rendering; detection remains active for unambiguous HTML sinks (`innerHTML`, `Html.Raw`, `template.HTML`, `html_safe`, `Response.Write`, `respondText`).
+- Vulnerability findings now include a `tier` field (`fixture-tested` or `generic-heuristic`) in their evidence, and generic-heuristic findings report scaled-down confidence values relative to fixture-tested findings with equivalent flags.
+- These are intended precision and recall corrections to the always-on generic extraction tier. Existing tool interfaces are unchanged, but `vulnerability_scan` may return different findings (more true positives from case-insensitive matching and ORM sinks, fewer false positives from generic output statements) on the same repository.
+
+### 🛡️ Analyzer accuracy fixes
+
+- Secret scanning now flags common bare and camelCase sensitive names such as `password`, `token`, `secret`, `apiKey`, and `dbPassword` in addition to existing SNAKE_CASE suffix matches.
+- Secret scanning now runs high-entropy detection independently of sensitive-name matching, fixing cases where high-entropy literals under non-sensitive names were silently missed.
+- Coverage gap detection now recognizes PHPUnit `*Test.php`, Python `test_*.py` and `*_test.py`, and Ruby `*_spec.rb` test-file conventions, preventing misleading `0%` coverage on repos that already have tests.
+- Flow tracing now excludes test and fixture targets when tracing from production entry points, avoiding production flows that terminate in unrelated test stubs.
+- Health scoring is now normalized by repository size and exposes normalization metadata, so equal absolute issue counts do not penalize large and small repositories identically.
+- These are intended output corrections. Existing tool interfaces are unchanged, but `secrets`, `coverage_gaps`, `flows`, and `health_report` may now return different values on the same repository.
+
+
+### 🐛 CLI output fixes
+
+- Fixed Windows `code-intel --version` noise where CMD could print `The system cannot find the path specified.` before the version.
+- Replaced the POSIX-only startup disk-space probe with a safer cross-platform path that skips shell-only checks on Windows.
+- Added an early version-only fast path so `code-intel --version` and `code-intel -V` print only the package version without startup hints, prerequisite checks, or update-check side effects.
+- Added a lightweight CLI bootstrap that handles version flags before importing the full app module, reducing version-command startup cost.
+- Added regression coverage for quiet version-command output, bootstrap-vs-app startup behavior, and the Windows-specific startup-check failure mode.
+
+### 🌐 HTML parser support
+
+- Added HTML as a detected source language in shared and core extension detection.
+- Added `tree-sitter-html` to bundled and development WASM grammar resolution paths.
+- Added build-time copying of `tree-sitter-html.wasm` for packaged installs.
+- Added coverage for HTML language detection, grammar validation wiring, and language-registry support.
+
+### 🔎 Search relevance and performance
+
+- Natural-language symbol search now filters low-value query words and applies deterministic reranking across symbol names, paths, kinds, content, and multi-term coverage.
+- Search candidate work is bounded, reducing cost on large repositories while preserving exact-name ranking.
+- Added graph-generation-scoped query caching with automatic invalidation when graph node or edge counts change.
+- Added deterministic tie-breaking for stable result order across repeated searches.
+- Added a 10,003-symbol relevance/performance benchmark with cold `<250ms` and warm cached `<25ms` budgets.
+
+### 🎯 Qualified symbol selection
+
+- Search output now includes copyable qualified selectors for exact follow-up with `inspect` and `impact`.
+- Selectors use `<kind>:<percent-encoded-name>@<path>[:line]`; path separators remain readable, for example `method:login@code-intel/web/src/api/client.ts:84`.
+- `inspect` and `impact` now share deterministic qualified-selector parsing and resolution.
+- Reserved selector characters remain percent-encoded while repository paths stay human-readable.
+
+### ⚠️ Ambiguous symbol handling
+
+- `inspect <symbol>` no longer silently selects the first match when duplicate symbol names exist.
+- Ambiguous results now list ranked candidates with kind, name, repository-relative location, and copyable selector.
+- Ambiguous non-interactive inspection exits with status `2`.
+- Added `--json` output for `search` and `inspect`, including structured ambiguity candidates and selectors.
+- Added unit and CLI integration coverage for natural-language ranking, deterministic ordering, cache invalidation, selector escaping, ambiguous inspection, qualified inspection, and qualified impact analysis.
+
+### 🎯 Multi-Layer Exclusion System
+
+- Added `--skip-folders` and `--skip-files` CLI options to `code-intel analyze` for transient per-run exclusions without modifying tracked files.
+- CLI flags support both comma-separated values (`--skip-folders tests,examples`) and repeatable invocations (`--skip-folders tests --skip-folders examples`).
+- Added `.codeintelignore.local` support for personal developer preferences (automatically gitignored, not tracked in version control).
+- Enhanced `.codeintelignore` to support file patterns in addition to directory patterns (e.g., `*.generated.ts`, `config.gen.ts`).
+- Implemented smart pattern matching with auto-detection:
+  - **Basename match**: `tests` matches any file or folder named "tests" at any depth
+  - **Path match**: `src/legacy` matches that specific path from workspace root
+  - **Glob match**: `**/*.test.ts` matches all test files recursively
+- All exclusion layers combine additively: hard-coded defaults → `.codeintelignore` → `.codeintelignore.local` → CLI flags.
+- Hard-coded file suffix exclusions (`.d.ts`, `.js.map`, `.min.js`) now integrated into unified pattern system as glob patterns.
+- Pattern compilation and caching optimizes performance: glob patterns compiled once and reused across file checks.
+- Added verbose logging (`--verbose`) showing which patterns matched excluded entries and which layer triggered exclusion.
+- Updated `ensureGitignore()` to automatically add `.codeintelignore.local` to `.gitignore` during analyze.
+- 100% backward compatible: existing `.codeintelignore` files with simple directory names continue to work unchanged.
+- Updated README with comprehensive exclusion documentation, pattern type examples, and CLI flag usage.
+- Updated analyze command help text with `--skip-folders` and `--skip-files` examples.
+
+---
+
 ## [1.0.4] — 2026-07-14 — MCP Freshness, Agent Targeting & Security Scan Expansion
 
 ### 🔄 MCP graph freshness
@@ -141,6 +276,7 @@ All notable changes to this project are documented in this file.
 
 - **Auto-update `.gitignore`** — `code-intel analyze` now automatically appends `.code-intel/` to the project's `.gitignore` if not already present; creates the file if it doesn't exist; idempotent (skips if `.code-intel` or `.code-intel/` already listed); errors caught and logged as warnings, never abort analysis
 - **"Remember Me" on login screen** — new checkbox below the Password field; when checked, the session cookie is set to **12 hours** (`Max-Age`) so re-opening the browser tab within that window keeps the user signed in; unchecked uses the normal session TTL (default 8 h, `CODE_INTEL_SESSION_TTL_HOURS`); sliding-window renewal uses the original TTL of the session; `POST /auth/login` now accepts optional `rememberMe: boolean` in the request body
+- **Password visibility toggles on auth forms** — login and first-run bootstrap password fields now provide accessible eye-icon toggles to show or hide the current value without affecting validation or submit behavior; username placeholders in the login and bootstrap UI now read `User Name`
 
 ### 📊 Token Savings Summary
 

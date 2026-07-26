@@ -152,6 +152,82 @@ describe('SecretScanner', () => {
     assert.ok(f, 'DB_PASSWORD should be flagged');
   });
 
+  it('flags bare password name with literal value', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({
+      id: 'bare-password',
+      kind: 'variable',
+      name: 'password',
+      filePath: 'src/config.php',
+      metadata: { value: 'hunter2-but-real' },
+    });
+    const findings = new SecretScanner().scan(graph);
+    assert.equal(findings.length, 1);
+    assert.equal(findings[0].pattern, 'sensitive-name-with-value');
+  });
+
+  it('flags camelCase sensitive names with literal value', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({
+      id: 'api-key',
+      kind: 'variable',
+      name: 'apiKey',
+      filePath: 'src/config.ts',
+      metadata: { value: 'plain-api-key-value' },
+    });
+    graph.addNode({
+      id: 'db-password',
+      kind: 'variable',
+      name: 'dbPassword',
+      filePath: 'src/db.ts',
+      metadata: { value: 'plain-db-password-value' },
+    });
+    const findings = new SecretScanner().scan(graph);
+    assert.equal(findings.length, 2);
+    assert.ok(findings.every((f) => f.pattern === 'sensitive-name-with-value'));
+  });
+
+  it('flags high-entropy string under non-sensitive name', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({
+      id: 'entropy',
+      kind: 'variable',
+      name: 'sessionValue',
+      filePath: 'src/config.ts',
+      metadata: { value: 'A1b2C3d4E5f6G7h8I9j0K!L@m#N$' },
+    });
+    const findings = new SecretScanner().scan(graph);
+    assert.equal(findings.length, 1);
+    assert.equal(findings[0].pattern, 'high-entropy-string');
+  });
+
+  it('does NOT flag low-entropy string under non-sensitive name', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({
+      id: 'low-entropy',
+      kind: 'variable',
+      name: 'sessionValue',
+      filePath: 'src/config.ts',
+      metadata: { value: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' },
+    });
+    const findings = new SecretScanner().scan(graph);
+    assert.equal(findings.length, 0);
+  });
+
+  it('flags sensitive key literals in file content fallback', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({
+      id: 'file1',
+      kind: 'file',
+      name: 'local.php',
+      filePath: 'src/Settings/Env/local.php',
+      content: "$sendMailConfig = ['password' => 'msqtkhuodggkazzm'];\n$mqttServer = ['password' => \"Pd/D'*PcJU3dCQT\"];",
+    });
+    const findings = new SecretScanner().scan(graph);
+    assert.equal(findings.length, 2);
+    assert.ok(findings.every((f) => f.pattern === 'sensitive-name-with-value'));
+  });
+
   it('applies scope filter correctly', () => {
     const graph = createKnowledgeGraph();
     graph.addNode({

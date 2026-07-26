@@ -148,4 +148,32 @@ describe('traceFlow', () => {
     const flows = traceFlow('start', graph);
     assert.ok(Array.isArray(flows));
   });
+
+  it('excludes test-path targets when tracing from production entry point', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: 'entry', kind: 'function', name: 'handle', filePath: '/src/handler.ts' });
+    graph.addNode({ id: 'prod', kind: 'function', name: 'service', filePath: '/src/service.ts' });
+    graph.addNode({ id: 'testStub', kind: 'function', name: 'serviceStub', filePath: '/tests/service.spec.ts' });
+    graph.addNode({ id: 'end', kind: 'function', name: 'done', filePath: '/src/done.ts' });
+    graph.addEdge({ id: 'fp1', source: 'entry', target: 'prod', kind: 'calls', weight: 1 });
+    graph.addEdge({ id: 'fp2', source: 'prod', target: 'testStub', kind: 'calls', weight: 1 });
+    graph.addEdge({ id: 'fp3', source: 'prod', target: 'end', kind: 'calls', weight: 1 });
+
+    const flows = traceFlow('entry', graph);
+    assert.ok(flows.length > 0);
+    assert.ok(flows.every((flow) => !flow.steps.includes('testStub')));
+  });
+
+  it('allows test-path targets when entry point is itself a test file', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: 'testEntry', kind: 'function', name: 'testHandle', filePath: '/tests/handler.spec.ts' });
+    graph.addNode({ id: 'testHelper', kind: 'function', name: 'helper', filePath: '/tests/helper.spec.ts' });
+    graph.addNode({ id: 'testEnd', kind: 'function', name: 'done', filePath: '/tests/done.spec.ts' });
+    graph.addEdge({ id: 'ft1', source: 'testEntry', target: 'testHelper', kind: 'calls', weight: 1 });
+    graph.addEdge({ id: 'ft2', source: 'testHelper', target: 'testEnd', kind: 'calls', weight: 1 });
+
+    const flows = traceFlow('testEntry', graph);
+    assert.ok(flows.some((flow) => flow.steps.includes('testHelper')));
+    assert.ok(flows.some((flow) => flow.steps.includes('testEnd')));
+  });
 });

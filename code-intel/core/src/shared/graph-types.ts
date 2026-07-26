@@ -51,6 +51,7 @@ export interface SecuritySignal {
   source: string;
   language?: string;
   confidence?: number;
+  tier: 'fixture-tested' | 'generic-heuristic';
   flags: {
     hasUserInput: boolean;
     isDynamic: boolean;

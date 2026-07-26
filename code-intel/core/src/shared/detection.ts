@@ -28,6 +28,7 @@ const EXTENSION_MAP: Record<string, Language> = {
   '.rb': Language.Ruby,
   '.swift': Language.Swift,
   '.dart': Language.Dart,
+  '.html': Language.HTML,
 };
 
 export function detectLanguage(filePath: string): Language | null {

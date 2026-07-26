@@ -37,6 +37,12 @@ jobs:
       - name: Unit tests
         run: npm test --workspace=code-intel/core
 
+      - name: Build core dist
+        run: npm run build --workspace=code-intel/core
+
+      - name: Validate packaged dist layout
+        run: npm run validate:dist --workspace=code-intel/core
+
       - name: npm audit — 0 high/critical CVEs (production deps only)
         run: npm audit --audit-level=high --omit=dev
 
@@ -65,11 +71,14 @@ jobs:
       - name: Install dependencies
         run: npm ci --legacy-peer-deps --ignore-scripts
 
+      - name: Build web
+        run: npm run build --workspace=code-intel/web
+
       - name: Build core
         run: npm run build --workspace=code-intel/core
 
-      - name: Build web
-        run: npm run build --workspace=code-intel/web
+      - name: Validate packaged dist layout
+        run: npm run validate:dist --workspace=code-intel/core
 
       - name: Publish to npm (with provenance)
         run: npm publish --workspace=code-intel/core --access public --provenance
@@ -240,6 +249,8 @@ jobs:
             ```bash
             npm install @vohongtho.infotech/code-intel@${{ github.ref_name }}
             ```
+
+            Built package includes packaged `dist/` runtime assets and validates the `dist` layout before publish.
 
             ## 🗂 SBOM
 

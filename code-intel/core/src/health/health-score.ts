@@ -17,11 +17,37 @@ export interface HealthReport {
   orphanFiles: OrphanFileResult[];
   score: number;     // 0-100
   grade: '🟢' | '🟡' | '🔴';
+  normalization: {
+    basis: 'node-count' | 'file-count';
+    size: number;
+    weights: {
+      deadCode: number;
+      cycles: number;
+      godNodes: number;
+      orphanFiles: number;
+    };
+  };
+}
+
+const HEALTH_WEIGHTS = {
+  deadCode: 0.5,
+  cycles: 5,
+  godNodes: 2,
+  orphanFiles: 1,
+} as const;
+
+function getNormalizationBasis(graph: KnowledgeGraph): { basis: 'node-count' | 'file-count'; size: number } {
+  const fileIds = new Set<string>();
+  for (const node of graph.allNodes()) {
+    if (node.kind === 'file') fileIds.add(node.id);
+  }
+  if (graph.size.nodes > 0) return { basis: 'node-count', size: graph.size.nodes };
+  return { basis: 'file-count', size: Math.max(fileIds.size, 1) };
 }
 
 /**
  * Run all health checks and compute health score.
- * Score formula: 100 - (deadCode.length * 0.5 + cycles.length * 5 + godNodes.length * 2 + orphanFiles.length * 1)
+ * Score formula: 100 - normalized penalty percent using per-category weights over repo size.
  * Clamped to [0, 100].
  * Grade: >= 80 = 🟢, >= 60 = 🟡, < 60 = 🔴
  */
@@ -31,12 +57,14 @@ export function computeHealthReport(graph: KnowledgeGraph, godNodeConfig?: GodNo
   const godNodes = detectGodNodes(graph, godNodeConfig);
   const orphanFiles = detectOrphanFiles(graph);
 
-  const raw =
-    100 -
-    (deadCode.length * 0.5 +
-      cycles.length * 5 +
-      godNodes.length * 2 +
-      orphanFiles.length * 1);
+  const normalization = getNormalizationBasis(graph);
+  const penaltyRatio =
+    (deadCode.length * HEALTH_WEIGHTS.deadCode +
+      cycles.length * HEALTH_WEIGHTS.cycles +
+      godNodes.length * HEALTH_WEIGHTS.godNodes +
+      orphanFiles.length * HEALTH_WEIGHTS.orphanFiles) /
+    Math.max(normalization.size, 1);
+  const raw = 100 - penaltyRatio * 100;
 
   const score = Math.max(0, Math.min(100, raw));
   const grade: '🟢' | '🟡' | '🔴' = score >= 80 ? '🟢' : score >= 60 ? '🟡' : '🔴';
@@ -48,5 +76,9 @@ export function computeHealthReport(graph: KnowledgeGraph, godNodeConfig?: GodNo
     orphanFiles,
     score,
     grade,
+    normalization: {
+      ...normalization,
+      weights: { ...HEALTH_WEIGHTS },
+    },
   };
 }

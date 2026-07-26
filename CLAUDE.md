@@ -24,7 +24,7 @@ rtk smart <cmd>            # 2-line heuristic summary
 <!-- code-intel:start -->
 # Code Intelligence — code-intel-platform
 
-> Auto-managed by `code-intel analyze` (v1.0.4) — re-running it overwrites this block. Put durable notes below `<!-- code-intel:end -->`.
+> Auto-managed by `code-intel analyze` (v1.0.5) — re-running it overwrites this block. Put durable notes below `<!-- code-intel:end -->`.
 
 `code-intel` keeps a symbol / call-graph index of this repo. It **complements** reading files, it doesn't replace it — on a repo this size, read files directly for most work and reach for code-intel when you need the call graph.
 

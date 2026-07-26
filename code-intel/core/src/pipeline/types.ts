@@ -25,6 +25,10 @@ export interface PipelineContext {
   /** Per-phase progress callback — called with (phase, done, total) for each processed item */
   onPhaseProgress?: (phase: string, done: number, total: number) => void;
   verbose?: boolean;
+  /** Exclude specific folders from analysis (CLI: --skip-folders) */
+  skipFolders?: string[];
+  /** Exclude specific files from analysis (CLI: --skip-files) */
+  skipFiles?: string[];
   /** Set by parse-phase after execution: which parser was used */
   parserUsed?: 'tree-sitter' | 'regex';
   /**

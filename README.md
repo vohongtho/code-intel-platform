@@ -28,14 +28,14 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 - **Test Coverage Gaps** — `code-intel coverage` lists untested exported symbols sorted by blast radius; `--threshold <pct>` fails CI if below target
 - **Deprecated API Detection** — `code-intel deprecated` finds usages of `@deprecated` JSDoc, `@Deprecated` (Java), `#[deprecated]` (Rust), and built-in Node.js deprecated APIs
 - **CLI** — analyze, serve, watch, query, search, inspect, impact, health commands with animated `█░` progress bars and braille spinners
-- **Multi-language** — TypeScript, JavaScript, Python, Java, Go, C, C++, C#, Rust, PHP, Ruby, Swift, Kotlin, Dart (14 languages via tree-sitter AST)
+- **Multi-language** — TypeScript, JavaScript, Python, Java, Go, C, C++, C#, Rust, PHP, Ruby, Swift, Kotlin, Dart, HTML (15 languages via tree-sitter AST)
 - **Incremental Analysis** — `--incremental` flag re-parses only git-changed/mtime-changed files; 10k-file repo with 3 changes: 288ms
 - **Parallel Analysis** — `--parallel` flag runs parse + resolve phases on worker threads for large repos
 - **AI Context Files** — auto-generates `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `.cursor/rules/code-intel.mdc`, `.kiro/steering/code-intel.md`, `.clinerules`, `.windsurfrules`, `.kilocode/rules/code-intel-rules.md`, and `.agents/rules/code-intel-rules.md` after every analysis — supporting Amp, Claude Code, Codex, Copilot, Cursor, Aider, Gemini, Kiro, Trae, Hermes, Factory, OpenCode, Pi, Antigravity, OpenClaw, Cline, Windsurf, Kilo Code, and more
 - **Agent Hook System** _(v1.0.2)_ — `code-intel setup` installs PreToolUse hooks for all major AI agents; when an agent runs `grep MyClass src/`, the `code-intel-hook` binary (~10KB, ~50ms startup) silently rewrites it to `code-intel search "MyClass"` — saving ~3,000 tokens per lookup; supports Claude Code, Cursor, Gemini CLI, GitHub Copilot (VS Code + CLI), OpenCode, OpenClaw; rules files for Cline/Roo Code, Windsurf, Kilo Code, Antigravity, Codex CLI
 - **Repository Groups** — multi-repo / monorepo service tracking with workspace auto-discovery (npm, pnpm, Nx, Turborepo), contract extraction (OpenAPI, GraphQL, Protobuf), type-aware similarity scoring, and cross-repo dependency detection
   - **OpenAPI note:** contract extraction currently parses **JSON** OpenAPI/Swagger specs. YAML filenames are discovered, but YAML parsing is not implemented in `v1.0.4`.
-- **`.codeintelignore`** — exclude directories from analysis (like `.gitignore` but for code-intel)
+- **Multi-Layer Exclusion System** — exclude files and folders from analysis with `.codeintelignore` (team, tracked), `.codeintelignore.local` (personal, gitignored), or CLI flags `--skip-folders` / `--skip-files` (per-run); supports basename matching (`tests`), path matching (`src/legacy`), and glob patterns (`**/*.generated.ts`)
 - **Structured Logging** — winston-based logger with daily-rotating log files at `~/.code-intel/logs/`, sensitive-data masking, and configurable log levels
 - **Performance** — parallel batch file I/O, shared file cache (zero double-reads), O(log n) binary-search enclosing-function lookup
 - **`code-intel init` Wizard** _(v0.9)_ — interactive 5-step setup wizard; creates `~/.code-intel/config.json` with editor MCP registration, LLM provider, embeddings, auth mode, and port settings
@@ -83,6 +83,8 @@ npm install -g @vohongtho.infotech/code-intel
 > ```
 >
 > This refreshes `.code-intel/graph.db` and `.code-intel/meta.json`. Comparing fresh CLI behavior against stale indexes can look like a regression when it is only old index state.
+>
+> **Upgrade note for sticky embeddings:** if a repo was previously indexed with semantic search, the next `code-intel analyze` will detect legacy `vector.db` state, normalize `.code-intel/meta.json`, and keep embeddings up to date automatically. Older CLI builds may ignore the remembered preference until upgraded, but they should continue to tolerate the extra metadata fields.
 
 Verify the installation:
 
@@ -115,7 +117,7 @@ npm install
 npm run build
 ```
 
-This runs `tsup` for the core package (outputs to `code-intel/core/dist/`) and `vite` for the web UI (outputs to `code-intel/web/dist/`).
+This runs `tsup` for the core package (outputs to `code-intel/core/dist/`) and `vite` for the web UI (outputs to `code-intel/web/dist/`). The core build also copies bundled tree-sitter WASM grammars, including `tree-sitter-html.wasm`, into `code-intel/core/dist/wasm/` for packaged installs.
 
 **4. Install the built CLI globally**
 
@@ -211,6 +213,9 @@ ENTRYPOINT ["code-intel"]
 # First, analyze the project to build the index
 code-intel analyze
 
+# Or assign a stable unique repo name
+code-intel analyze ./my-project --name api-core
+
 # Then start the server (requires an existing index)
 code-intel serve
 
@@ -219,7 +224,35 @@ code-intel analyze ./my-project
 code-intel serve ./my-project --port 4747
 ```
 
+### Stable repository names and IDs
+
+Indexed repositories now have:
+- a stable internal `id`
+- a unique user-facing `name`
+- a mutable filesystem `path`
+
+Use names for lookup. IDs stay stable across rename and relink operations.
+
+```bash
+code-intel repo list
+code-intel repo show api-core
+code-intel repo rename api-core api-platform
+code-intel repo relink api-platform ../new-location
+```
+
+`code-intel analyze` naming rules:
+- new path + new `--name` creates a named repo entry
+- existing path + same `--name` refreshes that repo
+- existing path + different `--name` fails; use `code-intel repo rename`
+- new path + existing `--name` fails; use `code-intel repo relink`
+
+Legacy registries without repo IDs migrate automatically on load. If old entries share the same basename-derived name, the migration repairs duplicates deterministically and prints a warning so you can rename them later.
+
 Then open **http://localhost:4747** in your browser — the Web UI auto-connects and loads the graph.
+
+If no admin account exists yet, the first-run setup screen appears. The login and bootstrap forms include eye-icon password visibility toggles, and the username input placeholder reads `User Name`.
+
+Authenticated users can open **Settings** from the profile menu in the Web UI to inspect global server configuration. Admin users can edit routed settings sections for LLM, embeddings, analysis, server, authentication, updates, and telemetry. These settings are server-global and complement the CLI flows (`code-intel init` and `code-intel config *`) rather than replacing editor/MCP setup.
 
 ### After analysis
 
@@ -229,16 +262,67 @@ Then open **http://localhost:4747** in your browser — the Web UI auto-connects
   - **File exists with markers** → only the `<!-- code-intel:start -->…<!-- code-intel:end -->` block is updated; all your custom content is preserved untouched
   - **File exists without markers** → the block is appended at the end; existing content is never overwritten
 
-### Exclude directories
+### Exclude files and folders from analysis
 
-Create a `.codeintelignore` file in your project root:
+Code-intel provides a **multi-layer exclusion system** for fine-grained control over what gets analyzed:
+
+#### 1. `.codeintelignore` (team-level, tracked)
+
+Create a `.codeintelignore` file in your project root for team-wide exclusions:
 
 ```
-# one directory name per line
+# Exclude specific folders
 vendor
 generated
 fixtures
+
+# Exclude specific files
+config.generated.ts
+schema.proto.ts
+
+# Exclude by pattern (glob)
+*.min.js
+**/*.test.ts
+src/legacy/**
 ```
+
+**Pattern types:**
+- **Basename match**: `tests` → matches any file or folder named "tests" anywhere
+- **Path match**: `src/legacy` → matches only that specific path from workspace root
+- **Glob match**: `**/*.generated.ts` → matches all generated TypeScript files at any depth
+
+#### 2. `.codeintelignore.local` (personal preferences, gitignored)
+
+Create a `.codeintelignore.local` file for personal exclusions that won't be committed:
+
+```
+# My personal preferences (not tracked in git)
+examples
+docs
+tutorials
+```
+
+This file is automatically added to `.gitignore` when you run `code-intel analyze`.
+
+#### 3. CLI flags (one-off exclusions)
+
+For temporary or experimental exclusions, use CLI flags:
+
+```bash
+# Exclude specific folders for this run only
+code-intel analyze --skip-folders tests,examples
+
+# Exclude files by pattern
+code-intel analyze --skip-files "*.generated.ts,*.proto.ts"
+
+# Combine multiple exclusions
+code-intel analyze --skip-folders src/legacy --skip-files config.gen.ts
+
+# Repeatable flags (alternative syntax)
+code-intel analyze --skip-folders tests --skip-folders examples
+```
+
+**All layers combine additively** — an entry excluded by any layer is excluded from analysis.
 
 ---
 
@@ -297,6 +381,15 @@ After setup, the MCP server starts automatically when your AI editor launches, g
 | **Group** | Multi-repo group view with contracts and cross-repo links (visible when in group mode) |
 | **Graph Canvas** | Force-directed graph, click nodes to inspect, hover to highlight neighbors |
 | **Code AI** | Chat with grounded answers citing source file locations |
+| **Settings** | Routed global server configuration screen under the profile menu; admin-editable sections for LLM, embeddings, analysis, server, authentication, updates, and telemetry |
+
+### Settings
+
+- Open **Settings** from the profile menu in the top-right header, above **Sign out**.
+- Settings routes use `/settings/:section` with browser back/forward support instead of `#fragment` anchors.
+- Settings are **server-global** for the connected code-intel instance, not per-user preferences.
+- Authenticated viewers can inspect masked config values; admins can save edits.
+- `code-intel init` and `code-intel config *` remain the CLI source for first-run setup and editor/MCP registration. The Web UI settings screen complements those commands; it does not replace editor/MCP setup in v1.
 
 ### Search Modes
 
@@ -433,11 +526,23 @@ code-intel setup                         # Register the MCP server in your edito
 ### Analyze
 
 ```bash
-code-intel analyze [path]                # Parse source code and build the knowledge graph
+code-intel analyze [path]                # Parse source code and auto-use incremental mode when prior metadata makes it safe
 code-intel analyze --force               # Discard existing index and perform a full re-analysis
-code-intel analyze --embeddings          # Build a vector index for semantic (natural-language) search
-code-intel analyze --skip-embeddings     # Omit embedding generation for a significantly faster run
+code-intel analyze --embeddings          # Build a vector index and remember embeddings for this repo
+code-intel analyze --skip-embeddings     # Skip embedding generation for this run only
 code-intel analyze --skip-agents-md      # Preserve any hand-edited content in AGENTS.md / CLAUDE.md
+```
+
+Sticky embeddings behavior:
+
+- The first successful `code-intel analyze --embeddings` run stores the repo preference in `.code-intel/meta.json`.
+- Later `code-intel analyze`, `code-intel analyze --incremental`, and `code-intel analyze --force` runs auto-enable embeddings for that repo unless you pass `--skip-embeddings`.
+- Plain `code-intel analyze` now auto-attempts incremental graph reindexing when valid prior `.code-intel/meta.json` exists and incremental safety checks pass; otherwise it falls back to full analysis.
+- If `vector.db` is missing, stale, corrupted, or incompatible with the current embedding fingerprint, `code-intel analyze` rebuilds the full vector index automatically.
+- `--skip-embeddings` does not forget the repo preference; it skips vectors for that run and marks remembered embeddings stale until the next normal analyze.
+- Previously indexed repos with only a legacy `vector.db` upgrade in place on the next analyze; no manual migration command is required.
+
+```bash
 code-intel analyze --skip-git            # Allow analysis of directories that are not Git repositories
 code-intel analyze --verbose             # Print every file skipped due to an unsupported parser
 ```
@@ -485,12 +590,29 @@ code-intel clean --all --force           # Permanently remove all indexed reposi
 ### Exploration
 
 ```bash
-code-intel search <query>                # Execute a BM25 keyword search across all indexed symbols
+code-intel search <query>                # Execute intent-aware symbol search
 code-intel search <query> --limit <n>    # Limit number of results (default: 20)
-code-intel inspect <symbol>              # Show callers, callees, import edges, and source location
-code-intel impact <symbol>               # Compute the transitive blast radius of a change to a symbol
+code-intel search <query> --json         # Include machine-readable qualified selectors
+code-intel inspect <symbol>              # Inspect a unique symbol; lists candidates when ambiguous
+code-intel inspect <selector>            # Inspect an exact qualified result from search/inspect
+code-intel inspect <symbol> --json       # Structured result; ambiguity exits with status 2
+code-intel impact <symbol-or-selector>   # Compute the transitive blast radius of a selected symbol
 code-intel impact <symbol> --depth <n>   # Set maximum traversal depth / hops (default: 5)
 ```
+
+Qualified selectors use `<kind>:<percent-encoded-name>@<path>[:line]`; path separators remain readable. Copy selectors from command output; for example:
+
+```bash
+code-intel search "how to login portal"
+code-intel inspect "login"               # Ambiguous names print ranked selectors
+code-intel inspect "method:login@code-intel/web/src/api/client.ts:84"
+code-intel impact "method:login@code-intel/web/src/api/client.ts:84"
+
+# Relevance/performance regression check (from code-intel/core)
+npm run build && node tests/perf/search-relevance-bench.mjs
+```
+
+The benchmark uses 10,003 symbols. Budgets: cold search `<250ms`; warm cached search `<25ms`.
 
 ### Groups (multi-repo / monorepo service tracking)
 

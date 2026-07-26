@@ -7,6 +7,16 @@ export interface HealthReportResult {
   godNodes: Array<{ name: string; edgeCount: number; filePath: string }>;
   orphanFiles: string[];
   complexityHotspots: Array<{ name: string; blastRadius: number; filePath: string }>;
+  normalization: {
+    basis: 'node-count' | 'file-count';
+    size: number;
+    weights: {
+      deadCode: number;
+      cycles: number;
+      godNodes: number;
+      orphanFiles: number;
+    };
+  };
 }
 
 export function computeHealthReport(graph: KnowledgeGraph, scope: string): HealthReportResult {
@@ -177,10 +187,24 @@ export function computeHealthReport(graph: KnowledgeGraph, scope: string): Healt
   const complexityHotspots = hotspotCandidates.slice(0, 5);
 
   // ── Health score ───────────────────────────────────────────────────────────
-  const healthScore = Math.max(
-    0,
-    Math.min(100, 100 - deadCode.length * 2 - cycles.length * 5 - godNodes.length * 3),
-  );
+  const fileCount = filePathToNodes.size;
+  const normalization = {
+    basis: scopedNodes.length > 0 ? 'node-count' as const : 'file-count' as const,
+    size: Math.max(scopedNodes.length > 0 ? scopedNodes.length : fileCount, 1),
+    weights: {
+      deadCode: 2,
+      cycles: 5,
+      godNodes: 3,
+      orphanFiles: 1,
+    },
+  };
+  const penaltyRatio =
+    (deadCode.length * normalization.weights.deadCode +
+      cycles.length * normalization.weights.cycles +
+      godNodes.length * normalization.weights.godNodes +
+      orphanFiles.length * normalization.weights.orphanFiles) /
+    normalization.size;
+  const healthScore = Math.max(0, Math.min(100, 100 - penaltyRatio * 100));
 
   return {
     healthScore,
@@ -189,5 +213,6 @@ export function computeHealthReport(graph: KnowledgeGraph, scope: string): Healt
     godNodes,
     orphanFiles,
     complexityHotspots,
+    normalization,
   };
 }
