@@ -40,6 +40,15 @@ function RouteSync() {
   return null;
 }
 
+export function shouldRestoreWorkspaceForPath(pathname: string): boolean {
+  return pathname === '/explore' || pathname === '/loading';
+}
+
+export function loadingRefreshFallback(pathname: string, connected: boolean, graphLoadPresent: boolean): '/explore' | '/connect' | null {
+  if (pathname !== '/loading' || graphLoadPresent) return null;
+  return connected ? '/explore' : '/connect';
+}
+
 function AppContent() {
   const { state, dispatch } = useAppState();
   const location = useLocation();
@@ -54,7 +63,7 @@ function AppContent() {
 
     const serverUrl = state.serverUrl || defaultUrl;
     const client = new ApiClient(serverUrl);
-    const needsWorkspaceRestore = location.pathname === '/explore';
+    const needsWorkspaceRestore = shouldRestoreWorkspaceForPath(location.pathname);
 
     (async () => {
       try {
@@ -130,7 +139,15 @@ function AppContent() {
     );
   }
 
-  if (authed && location.pathname === '/explore' && !state.connected) {
+  const loadingFallback = authed
+    ? loadingRefreshFallback(location.pathname, state.connected, Boolean(state.graphLoad))
+    : null;
+
+  if (loadingFallback) {
+    return <Navigate to={loadingFallback} replace />;
+  }
+
+  if (authed && shouldRestoreWorkspaceForPath(location.pathname) && !state.connected) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-void">
         <div className="flex items-center gap-3 text-text-muted">

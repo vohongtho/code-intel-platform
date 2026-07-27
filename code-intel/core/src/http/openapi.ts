@@ -65,6 +65,42 @@ export const openApiSpec = {
           timestamp: { type: 'string', format: 'date-time' },
         },
       },
+      SearchScope: {
+        type: 'object',
+        properties: {
+          type: { type: 'string', enum: ['repo', 'group'] },
+          name: { type: 'string' },
+        },
+        required: ['type', 'name'],
+      },
+      SearchRequest: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Search query' },
+          limit: { type: 'integer', default: 20 },
+          mode: { type: 'string', enum: ['bm25', 'vector', 'hybrid'], default: 'hybrid' },
+          scope: { '$ref': '#/components/schemas/SearchScope' },
+          repo: { type: 'string', description: 'Deprecated legacy repo scope' },
+          group: { type: 'string', description: 'Deprecated legacy group scope' },
+        },
+        required: ['query'],
+      },
+      SearchResponse: {
+        type: 'object',
+        properties: {
+          results: { type: 'array', items: { '$ref': '#/components/schemas/CodeNode' } },
+          searchMode: { type: 'string', enum: ['bm25', 'vector', 'hybrid'] },
+          scope: { '$ref': '#/components/schemas/SearchScope' },
+          deprecated: { type: 'boolean' },
+          deprecation: { type: 'string' },
+          vectorReady: { type: 'boolean' },
+          total: { type: 'integer' },
+          offset: { type: 'integer' },
+          limit: { type: 'integer' },
+          hasMore: { type: 'boolean' },
+        },
+        required: ['results', 'searchMode'],
+      },
     },
   },
   security: [{ BearerAuth: [] }, { SessionCookie: [] }],
@@ -104,38 +140,33 @@ export const openApiSpec = {
     '/search': {
       post: {
         tags: ['Search'],
-        summary: 'BM25 text search across all symbols',
+        summary: 'Canonical scoped search endpoint',
         requestBody: {
           required: true,
           content: {
             'application/json': {
-              schema: {
-                type: 'object',
-                properties: {
-                  query: { type: 'string', description: 'Search query' },
-                  limit: { type: 'integer', default: 20 },
-                  repo: { type: 'string', description: 'Optional repo filter' },
-                },
-                required: ['query'],
-              },
+              schema: { '$ref': '#/components/schemas/SearchRequest' },
             },
           },
         },
         responses: {
-          '200': { description: 'Search results', content: { 'application/json': { schema: { type: 'object', properties: { results: { type: 'array', items: { '$ref': '#/components/schemas/CodeNode' } } } } } } },
+          '200': { description: 'Search results', content: { 'application/json': { schema: { '$ref': '#/components/schemas/SearchResponse' } } } },
+          '400': { description: 'Ambiguous or invalid request', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '404': { description: 'Repo or group not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
         },
       },
     },
     '/vector-search': {
       post: {
         tags: ['Search'],
-        summary: 'Semantic vector search using embeddings',
+        summary: 'Deprecated compatibility alias for scoped vector search',
         requestBody: {
           required: true,
-          content: { 'application/json': { schema: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'integer', default: 10 } }, required: ['query'] } } },
+          content: { 'application/json': { schema: { '$ref': '#/components/schemas/SearchRequest' } } },
         },
         responses: {
-          '200': { description: 'Vector search results', content: { 'application/json': { schema: { type: 'object' } } } },
+          '200': { description: 'Vector search results', content: { 'application/json': { schema: { '$ref': '#/components/schemas/SearchResponse' } } } },
+          '400': { description: 'Ambiguous or invalid request', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
         },
       },
     },

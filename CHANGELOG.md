@@ -4,7 +4,16 @@ All notable changes to this project are documented in this file.
 
 ---
 
-## [1.0.6] - 2026-07-26
+## [1.0.6] - 2026-07-27
+
+### 🔎 Scoped search unification
+
+- Added canonical scoped search contract around `POST /api/v1/search`, centered on explicit `scope` plus `mode` metadata.
+- Kept `POST /api/v1/vector-search` and `POST /api/v1/groups/:name/search` as compatibility adapters during migration, with deprecation metadata and normalized scope/mode reporting.
+- Normalized legacy flat `repo` / `group` request shapes into explicit scope, and rejected ambiguous mixed request shapes.
+- Extended group search execution to support deterministic RRF-merged vector/hybrid behavior with per-repo attribution and graceful BM25 fallback when vector indexes are unavailable.
+- Updated affected search symbols and files including `code-intel/core/src/http/app.ts`, `code-intel/core/src/multi-repo/group-query.ts`, `code-intel/core/src/mcp-server/server.ts`, `code-intel/core/src/http/openapi.ts`, `code-intel/web/src/api/client.ts`, `code-intel/web/src/components/shared/Header.tsx`, `code-intel/web/src/components/panels/SearchBar.tsx`, `code-intel/web/src/components/panels/SidebarChat.tsx`, and `code-intel/web/src/ai/agent.ts`.
+
 
 ### 🐳 Docker publish arm64 build validation
 

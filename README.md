@@ -646,8 +646,8 @@ code-intel group status <name>                                             # Aud
 | `GET`  | `/api/v1/health` | Server status, graph size, watcher state |
 | `GET`  | `/api/v1/repos` | List indexed repos |
 | `GET`  | `/api/v1/graph/:repo` | Full graph (nodes + edges) |
-| `POST` | `/api/v1/search` | BM25 / hybrid text + vector search |
-| `POST` | `/api/v1/vector-search` | Semantic vector search |
+| `POST` | `/api/v1/search` | Canonical scoped search (`query`, `limit`, `mode`, `scope`) with repo/group targeting |
+| `POST` | `/api/v1/vector-search` | Deprecated compatibility alias for vector mode; returns resolved scope/mode metadata |
 | `GET`  | `/api/v1/vector-status` | Vector index ready/building status |
 | `GET`  | `/api/v1/nodes/:id` | Node detail (callers, callees, imports, etc.) |
 | `POST` | `/api/v1/blast-radius` | Impact analysis |
@@ -670,7 +670,7 @@ All tools are available to any MCP-capable editor (Claude Desktop, Claude Code, 
 |------|-------|-------------|
 | `repos` | _(none)_ | List all indexed repositories with path, indexedAt, and node/edge counts |
 | `overview` | _(none)_ | Repository summary: total nodes/edges + full breakdown by kind. **Use this first** to understand the codebase shape. |
-| `search` | `query` (string), `limit` (number, default 10) | BM25 / hybrid keyword + semantic search across all symbols |
+| `search` | `query` (string), `limit` (number, default 10), `scope` (object, optional), legacy `repo`/`group` during migration | Scoped search with MCP auto-selecting vector when ready and falling back to BM25 otherwise |
 | `inspect` | `symbol_name` (string) | 360° view of a symbol: definition, callers, callees, imports, heritage (extends/implements), members, cluster, and source preview |
 | `blast_radius` | `target` (string), `direction` (`callers`\|`callees`\|`both`), `max_hops` (number, default 2) | Impact analysis: traverse the call/import graph to find all affected symbols. Returns a `riskLevel` (LOW / MEDIUM / HIGH). |
 | `file_symbols` | `file_path` (string, partial match), `limit` (number, default 10) | List all symbols defined in a file, ordered by line number. Avoids having to read raw source. |
@@ -711,7 +711,7 @@ All tools are available to any MCP-capable editor (Claude Desktop, Claude Code, 
 | `group_list` | `name` (string, optional) | List all configured repository groups, or show full membership of one group |
 | `group_sync` | `name` (string) | Extract contracts (exports, routes, schemas, events) from all member repos and detect cross-repo provider→consumer links via name matching + RRF scoring |
 | `group_contracts` | `name` (string), `kind` (`export`\|`route`\|`schema`\|`event`, optional), `repo` (string, optional), `min_confidence` (number 0–1, optional) | Inspect extracted contracts and confidence-ranked cross-repo links from the last sync |
-| `group_query` | `name` (string), `query` (string), `limit` (number, default 10) | BM25 search across all repos in a group, merged via Reciprocal Rank Fusion. Returns unified ranked list + per-repo breakdown. |
+| `group_query` | `name` (string), `query` (string), `limit` (number, default 10) | Group-scoped search across all repos in a group with automatic vector/BM25 selection, deterministic RRF merge, and per-repo breakdown. |
 | `group_status` | `name` (string) | Check index freshness and sync staleness for all repos in a group. Flags repos as `OK`, `STALE` (>24h), or `NOT_INDEXED`. |
 
 ### Resources

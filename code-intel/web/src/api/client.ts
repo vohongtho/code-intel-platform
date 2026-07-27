@@ -1,5 +1,5 @@
 import type { CodeNode, CodeEdge } from 'code-intel-shared';
-import type { SearchResult, CurrentUser, AppConfig } from '../state/types';
+import type { SearchResult, CurrentUser, AppConfig, SearchMode, SearchScope } from '../state/types';
 
 export interface CountGroup {
   key: string;
@@ -43,6 +43,26 @@ export interface GrepHit {
   file: string;
   line: number;
   text: string;
+}
+
+export interface SearchResponse {
+  results: SearchResult[];
+  searchMode: SearchMode;
+  scope?: SearchScope;
+  deprecated?: boolean;
+  deprecation?: string;
+  vectorReady?: boolean;
+  hasMore?: boolean;
+  total?: number;
+  offset?: number;
+  limit?: number;
+}
+
+export interface SearchRequest {
+  query: string;
+  limit?: number;
+  mode?: SearchMode;
+  scope?: SearchScope;
 }
 
 export interface ConfigValidationError {
@@ -169,28 +189,34 @@ export class ApiClient {
     return res.json() as Promise<{ nodes: CodeNode[]; offset: number; limit: number; total: number; hasMore: boolean }>;
   }
 
-  async search(query: string, limit = 20, options?: { repo?: string; group?: string }): Promise<{ results: SearchResult[]; searchMode?: string; repo?: string; group?: string }> {
+  async search(queryOrRequest: string | SearchRequest, limit = 20, options?: { repo?: string; group?: string }): Promise<SearchResponse> {
     const csrfToken = await this.getCsrfToken();
+    const request = typeof queryOrRequest === 'string'
+      ? { query: queryOrRequest, limit, ...(options?.group ? { scope: { type: 'group' as const, name: options.group } } : options?.repo ? { scope: { type: 'repo' as const, name: options.repo } } : {}) }
+      : queryOrRequest;
     const res = await fetch(`${this.baseUrl}/api/v1/search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
       credentials: 'include',
-      body: JSON.stringify({ query, limit, ...options }),
+      body: JSON.stringify(request),
     });
     if (!res.ok) throw new Error(`Search failed: ${res.statusText}`);
-    return res.json() as Promise<{ results: SearchResult[]; searchMode?: string; repo?: string; group?: string }>;
+    return res.json() as Promise<SearchResponse>;
   }
 
-  async vectorSearch(query: string, limit = 10): Promise<{ results: SearchResult[]; source: string; vectorReady: boolean }> {
+  async vectorSearch(queryOrRequest: string | SearchRequest, limit = 10): Promise<SearchResponse> {
     const csrfToken = await this.getCsrfToken();
+    const request = typeof queryOrRequest === 'string'
+      ? { query: queryOrRequest, limit, mode: 'vector' as const }
+      : { ...queryOrRequest, mode: 'vector' as const };
     const res = await fetch(`${this.baseUrl}/api/v1/vector-search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
       credentials: 'include',
-      body: JSON.stringify({ query, limit }),
+      body: JSON.stringify(request),
     });
     if (!res.ok) throw new Error(`Vector search failed: ${res.statusText}`);
-    return res.json() as Promise<{ results: SearchResult[]; source: string; vectorReady: boolean }>;
+    return res.json() as Promise<SearchResponse>;
   }
 
   async vectorStatus(): Promise<{ ready: boolean; building: boolean }> {
@@ -289,16 +315,16 @@ export class ApiClient {
     return res.json() as Promise<{ contracts: unknown[]; links: unknown[]; syncedAt: string; memberCount: number }>;
   }
 
-  async searchGroup(name: string, q: string, limit = 20): Promise<{ perRepo: { repoName: string; groupPath: string; results: SearchResult[] }[]; merged: SearchResult[] }> {
+  async searchGroup(name: string, q: string, limit = 20): Promise<SearchResponse> {
     const csrfToken = await this.getCsrfToken();
     const res = await fetch(`${this.baseUrl}/api/v1/groups/${encodeURIComponent(name)}/search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
       credentials: 'include',
-      body: JSON.stringify({ q, limit }),
+      body: JSON.stringify({ query: q, limit, mode: 'hybrid', scope: { type: 'group', name } }),
     });
     if (!res.ok) throw new Error(`Group search failed: ${res.statusText}`);
-    return res.json() as Promise<{ perRepo: { repoName: string; groupPath: string; results: SearchResult[] }[]; merged: SearchResult[] }>;
+    return res.json() as Promise<SearchResponse>;
   }
 
   async fetchGroupGraph(name: string): Promise<{ nodes: import('code-intel-shared').CodeNode[]; edges: import('code-intel-shared').CodeEdge[] }> {

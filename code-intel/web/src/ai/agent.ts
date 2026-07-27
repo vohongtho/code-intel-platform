@@ -1,5 +1,5 @@
 import type { ApiClient, NodeInspectInfo, BlastRadiusResult } from '../api/client';
-import type { ChatToolCall, ChatCitation, SearchResult } from '../state/types';
+import type { ChatToolCall, ChatCitation, SearchResult, SearchScope } from '../state/types';
 
 export interface AgentStreamEvent {
   type: 'tool-start' | 'tool-end' | 'final';
@@ -53,6 +53,7 @@ export async function runAgent(
   query: string,
   client: ApiClient,
   emit: AgentStream,
+  scope?: SearchScope,
 ): Promise<void> {
   const intent = parseIntent(query);
   const citations: ChatCitation[] = [];
@@ -62,11 +63,11 @@ export async function runAgent(
     try {
       const status = await client.vectorStatus();
       if (status.ready) {
-        const res = await client.vectorSearch(q, limit);
+        const res = await client.search({ query: q, limit, scope, mode: 'vector' });
         if (res.results.length > 0) return res.results;
       }
     } catch { /* fall through */ }
-    const res = await client.search(q, limit);
+    const res = await client.search({ query: q, limit, scope, mode: 'bm25' });
     return res.results;
   };
 

@@ -12,7 +12,12 @@ export function SearchBar() {
     setLoading(true);
     try {
       const client = new ApiClient(state.serverUrl);
-      const { results } = await client.search(query);
+      const scope = state.mode === 'group'
+        ? { type: 'group' as const, name: state.groupName || state.repoName }
+        : state.repoName
+          ? { type: 'repo' as const, name: state.repoName }
+          : undefined;
+      const { results } = await client.search({ query, limit: 20, scope, mode: 'hybrid' });
       dispatch({ type: 'SET_SEARCH', query, results });
     } catch (err) {
       console.error('Search failed:', err);

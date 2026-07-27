@@ -2663,6 +2663,11 @@ program
     $ code-intel search "handleRequest"
     $ code-intel search "auth" --limit 10
     $ code-intel search "UserService" --path ./backend
+
+  Note:
+    The HTTP API now uses canonical scoped search via POST /api/v1/search.
+    Legacy /api/v1/vector-search and /api/v1/groups/:name/search remain
+    compatibility adapters during migration.
 `)
   .action(async (query: string, options: { limit: string; path: string; json?: boolean }) => {
     const { graph } = await loadOrAnalyzeWorkspace(options.path);

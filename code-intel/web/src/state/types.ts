@@ -15,6 +15,15 @@ export interface SearchResult {
   filePath: string;
   score: number;
   snippet?: string;
+  repoName?: string;
+  groupPath?: string;
+}
+
+export type SearchMode = 'bm25' | 'vector' | 'hybrid';
+
+export interface SearchScope {
+  type: 'repo' | 'group';
+  name: string;
 }
 
 export interface ChatCitation {
