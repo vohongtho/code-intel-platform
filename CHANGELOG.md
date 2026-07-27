@@ -12,6 +12,7 @@ All notable changes to this project are documented in this file.
 - Added `scripts/verify-docker-publish.mjs` plus root `package.json` script `verify:docker-publish` to validate the Docker publish build path for `linux/amd64` and `linux/arm64`.
 - Updated `.github/workflows/publish.yml` validate job to run Docker publish verification before release publishing.
 - Updated `.github/workflows/release-validate.yml` to add Docker build validation and Trivy image scanning, including SARIF upload and CRITICAL-CVE gating.
+- Updated `Dockerfile` base and production stages to install `npm@12.0.1`, removing the vulnerable bundled npm `tar@7.5.11` that Trivy still detected in the Node 22 Alpine base image.
 - Preserved the runtime container contract in `Dockerfile`: `USER codeuser`, `EXPOSE 4747`, and `node /app/code-intel/core/dist/cli/main.js serve /data --port 4747`.
 
 ### 🐛 Fixed SPA routing: /explore and other routes now work on reload

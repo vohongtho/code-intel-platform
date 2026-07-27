@@ -1,6 +1,9 @@
 FROM node:22-alpine AS base
 WORKDIR /app
 
+# Upgrade bundled npm to pull fixed tar transitive versions before image scanning
+RUN npm install -g npm@12.0.1
+
 # Install build dependencies for bcrypt
 RUN apk add --no-cache python3 make g++ libc6-compat
 
@@ -20,6 +23,9 @@ RUN npm run build --workspace=code-intel/web
 
 # ── Production stage ──────────────────────────────────────────────────────────
 FROM node:22-alpine AS production
+
+# Upgrade bundled npm to pull fixed tar transitive versions before image scanning
+RUN npm install -g npm@12.0.1
 
 # Security: run as non-root user (uid=1001, avoids clash with node:alpine's built-in node user at 1000)
 RUN addgroup -g 1001 codeuser && adduser -u 1001 -G codeuser -s /bin/sh -D codeuser
