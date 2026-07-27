@@ -14,8 +14,30 @@ import path from 'node:path';
 
 const GLOBAL_DIR = path.join(os.homedir(), '.code-intel');
 const META_PATH = path.join(GLOBAL_DIR, 'update-meta.json');
-const PACKAGE_NAME = 'code-intel';
-const NPM_REGISTRY_URL = `https://registry.npmjs.org/${PACKAGE_NAME}/latest`;
+
+interface InstalledPackageMeta {
+  name: string;
+  version: string;
+}
+
+function loadInstalledPackageMeta(): InstalledPackageMeta | null {
+  const candidates = [
+    path.join(import.meta.dirname, '../package.json'),
+    path.join(import.meta.dirname, '../../package.json'),
+  ];
+
+  for (const packageJsonPath of candidates) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8')) as Partial<InstalledPackageMeta>;
+      if (!pkg.name || !pkg.version) continue;
+      return { name: pkg.name, version: pkg.version };
+    } catch {
+      // try next candidate
+    }
+  }
+
+  return null;
+}
 
 // ── Meta persistence ──────────────────────────────────────────────────────────
 
@@ -51,14 +73,17 @@ export function isNewer(current: string, candidate: string): boolean {
 
 // ── Fetch latest version from npm ─────────────────────────────────────────────
 
-async function fetchLatestVersion(): Promise<string | null> {
+async function fetchLatestVersion(packageName: string): Promise<{ version: string | null; error?: string }> {
   try {
-    const resp = await fetch(NPM_REGISTRY_URL, { signal: AbortSignal.timeout(5000) });
-    if (!resp.ok) return null;
+    const registryUrl = `https://registry.npmjs.org/${encodeURIComponent(packageName)}/latest`;
+    const resp = await fetch(registryUrl, { signal: AbortSignal.timeout(5000) });
+    if (!resp.ok) {
+      return { error: `npm registry returned ${resp.status} for ${packageName}`, version: null };
+    }
     const data = await resp.json() as { version?: string };
-    return data.version ?? null;
+    return { version: data.version ?? null };
   } catch {
-    return null;
+    return { error: 'Could not reach npm registry. Check your internet connection.', version: null };
   }
 }
 
@@ -87,6 +112,9 @@ function isSuppressed(): boolean {
 export function backgroundVersionCheck(currentVersion: string): void {
   if (isSuppressed()) return;
 
+  const installed = loadInstalledPackageMeta();
+  if (!installed?.name) return;
+
   // Check if enough time has passed since last check
   const meta = loadMeta();
   if (meta?.lastCheckedAt) {
@@ -105,7 +133,7 @@ export function backgroundVersionCheck(currentVersion: string): void {
   // Do a background fetch (fire-and-forget, don't await)
   void (async () => {
     try {
-      const latest = await fetchLatestVersion();
+      const { version: latest } = await fetchLatestVersion(installed.name);
       if (!latest) return;
       saveMeta({ lastCheckedAt: new Date().toISOString(), latestVersion: latest });
       if (isNewer(currentVersion, latest)) {
@@ -124,28 +152,22 @@ export function backgroundVersionCheck(currentVersion: string): void {
 export async function runUpdate(opts: { yes?: boolean } = {}): Promise<void> {
   console.log('\n  ◈  code-intel — Self Update\n');
 
-  const { readFileSync } = await import('node:fs');
-  const { fileURLToPath } = await import('node:url');
-  const { join, dirname } = await import('node:path');
-
-  // Resolve current version from the installed package.json
-  let currentVersion = '0.0.0';
-  try {
-    const __filename = fileURLToPath(import.meta.url);
-    const __dirname = dirname(__filename);
-    const pkg = JSON.parse(readFileSync(join(__dirname, '../../package.json'), 'utf-8')) as { version: string };
-    currentVersion = pkg.version;
-  } catch {
-    // Fallback: can't determine current version
-  }
+  const installed = loadInstalledPackageMeta();
+  const currentVersion = installed?.version ?? '0.0.0';
+  const packageName = installed?.name;
 
   console.log(`  Current version : v${currentVersion}`);
   console.log('  Checking npm registry…\n');
 
-  const latest = await fetchLatestVersion();
+  if (!packageName) {
+    console.error('  ✗  Could not determine installed package metadata.\n');
+    process.exit(1);
+  }
+
+  const { version: latest, error } = await fetchLatestVersion(packageName);
 
   if (!latest) {
-    console.error('  ✗  Could not reach npm registry. Check your internet connection.\n');
+    console.error(`  ✗  ${error ?? 'Could not determine latest version.'}\n`);
     process.exit(1);
   }
 
@@ -176,11 +198,11 @@ export async function runUpdate(opts: { yes?: boolean } = {}): Promise<void> {
   const { execSync } = await import('node:child_process');
   console.log(`  Installing code-intel@${latest}…\n`);
   try {
-    execSync(`npm install -g ${PACKAGE_NAME}@${latest}`, { stdio: 'inherit' });
+    execSync(`npm install -g ${packageName}@${latest}`, { stdio: 'inherit' });
     console.log(`\n  ✅  Updated to v${latest}. Run \`code-intel --version\` to verify.\n`);
   } catch (err) {
     console.error(`\n  ✗  Update failed: ${err instanceof Error ? err.message : err}`);
-    console.error('     Try manually: npm install -g code-intel\n');
+    console.error(`     Try manually: npm install -g ${packageName}\n`);
     process.exit(1);
   }
 }

@@ -75,12 +75,17 @@ export function Header({ onToggleAI, aiOpen }: Props) {
     setSearching(true);
     try {
       const client = new ApiClient(state.serverUrl);
+      const scope = state.mode === 'group'
+        ? { type: 'group' as const, name: state.groupName || state.repoName }
+        : state.repoName
+          ? { type: 'repo' as const, name: state.repoName }
+          : undefined;
       if (vectorMode && vectorReady) {
-        const { results, source } = await client.vectorSearch(q, 12);
+        const { results, searchMode, deprecation } = await client.vectorSearch({ query: q, limit: 12, scope });
         dispatch({ type: 'SET_SEARCH', query: q, results });
-        console.log('[search] vector source:', source);
+        console.log('[search] mode:', searchMode, deprecation ? `deprecated: ${deprecation}` : '');
       } else {
-        const { results } = await client.search(q, 12);
+        const { results } = await client.search({ query: q, limit: 12, scope, mode: 'hybrid' });
         dispatch({ type: 'SET_SEARCH', query: q, results });
       }
       setOpen(true);

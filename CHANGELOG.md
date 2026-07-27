@@ -4,6 +4,68 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.0.6] - 2026-07-27
+
+### 🔎 Scoped search unification
+
+- Added canonical scoped search contract around `POST /api/v1/search`, centered on explicit `scope` plus `mode` metadata.
+- Kept `POST /api/v1/vector-search` and `POST /api/v1/groups/:name/search` as compatibility adapters during migration, with deprecation metadata and normalized scope/mode reporting.
+- Normalized legacy flat `repo` / `group` request shapes into explicit scope, and rejected ambiguous mixed request shapes.
+- Extended group search execution to support deterministic RRF-merged vector/hybrid behavior with per-repo attribution and graceful BM25 fallback when vector indexes are unavailable.
+- Updated affected search symbols and files including `code-intel/core/src/http/app.ts`, `code-intel/core/src/multi-repo/group-query.ts`, `code-intel/core/src/mcp-server/server.ts`, `code-intel/core/src/http/openapi.ts`, `code-intel/web/src/api/client.ts`, `code-intel/web/src/components/shared/Header.tsx`, `code-intel/web/src/components/panels/SearchBar.tsx`, `code-intel/web/src/components/panels/SidebarChat.tsx`, and `code-intel/web/src/ai/agent.ts`.
+
+
+### 🐳 Docker publish arm64 build validation
+
+- Bumped `code-intel/core/package.json` from `@ladybugdb/core@^0.15.4` to `^0.18.3`, and refreshed `package-lock.json`, so Docker `npm ci` can resolve the published `@ladybugdb/core-linux-arm64` prebuilt package instead of falling back to the failing source-build path.
+- Added `scripts/verify-docker-publish.mjs` plus root `package.json` script `verify:docker-publish` to validate the Docker publish build path for `linux/amd64` and `linux/arm64`.
+- Updated `.github/workflows/publish.yml` validate job to run Docker publish verification before release publishing.
+- Updated `.github/workflows/release-validate.yml` to add Docker build validation and Trivy image scanning, including SARIF upload and CRITICAL-CVE gating.
+- Updated `Dockerfile` base and production stages to install `npm@12.0.1`, removing the vulnerable bundled npm `tar@7.5.11` that Trivy still detected in the Node 22 Alpine base image.
+- Preserved the runtime container contract in `Dockerfile`: `USER codeuser`, `EXPOSE 4747`, and `node /app/code-intel/core/dist/cli/main.js serve /data --port 4747`.
+
+### 🐛 Fixed SPA routing: /explore and other routes now work on reload
+
+**Problem**: Reloading any SPA route (`/explore`, `/settings`, `/login`, etc.) in the browser returned a `CI-1002: Not found` error instead of serving the React application. Users could navigate to these routes within the app, but direct access via URL or browser reload failed.
+
+**Root Cause**: A regression introduced in commit 2104435 (April 26, 2026) changed the Express catch-all route from valid syntax `app.get('*', ...)` to invalid syntax `app.get('/{*path}', ...)`. This hybrid pattern doesn't exist in Express.js, so the route was never registered. Requests fell through to the 404 error handler. Additionally, the catch-all was positioned before `/admin` routes, which would have broken admin API calls if the syntax had been valid.
+
+**Changes**:
+- Fixed Express catch-all route syntax: `'/{*path}'` → `'*'` (valid Express wildcard)
+- Moved SPA catch-all to correct position: after all API/admin routes, before error handlers
+- Added comprehensive documentation comments explaining route order requirements
+- Added E2E test suite (`tests/e2e/spa-routing.test.ts`) with coverage for:
+  - All 7 SPA routes return HTML on direct access
+  - API routes continue returning JSON (unaffected by catch-all)
+  - Admin routes continue returning JSON
+  - Error handling (API 404 vs SPA catch-all)
+- Added production smoke test script (`scripts/smoke-test.sh`) for post-deployment verification
+- Added npm scripts: `test:e2e`, `test:all`, `test:e2e:watch`
+
+**Impact**: This bug existed for 3 months (April 26 - July 26, 2026) and affected all users attempting to:
+- Reload any SPA route in the browser
+- Access SPA routes via direct URL
+- Bookmark SPA routes
+- Share deep links to the application
+
+**Why It Wasn't Caught**:
+- Express silently ignores invalid route patterns (no error thrown)
+- Development mode (Vite dev server) has built-in SPA fallback that masked the issue
+- Production testing was insufficient (no E2E tests for SPA route reloading)
+- The syntax change was buried in a massive 4,500+ line commit focused on multi-repo features
+
+**Testing**: All SPA routes now have E2E coverage. Run `npm run test:e2e` to verify. Deploy verification: `./scripts/smoke-test.sh <server-url>`
+
+**Files Modified**:
+- `code-intel/core/src/http/app.ts` - Fixed route syntax and positioning
+- `code-intel/core/tests/e2e/spa-routing.test.ts` - New E2E test suite
+- `code-intel/core/package.json` - Added test:e2e scripts
+- `scripts/smoke-test.sh` - New production verification script
+
+**Related**: User report 2026-07-26T01:10:38.389Z, OpenSpec change `fix-spa-routing-reload`
+
+---
+
 ## [1.0.5] - 2026-07-24
 
 ### 🎯 `code-intel scan` false-positive reduction

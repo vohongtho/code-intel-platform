@@ -94,15 +94,23 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
       // ── Search & inspect ─────────────────────────────────────────────────
       {
         name: 'search',
-        description: 'BM25 keyword search across all indexed symbols — functions, classes, files, routes, etc. Optionally scope to a specific repo or group.',
+        description: 'Scoped search across indexed symbols with automatic vector/BM25 selection. Accepts canonical scope or legacy repo/group during migration.',
         inputSchema: {
           type: 'object' as const,
           properties: {
             query: { type: 'string', description: 'Search query (symbol name, keyword, or partial match)' },
             offset: { type: 'number', description: 'Number of results to skip for pagination (default: 0)' },
             limit: { type: 'number', description: 'Max results per page (default: 10, max: 500)' },
-            repo: { type: 'string', description: 'Scope search to a specific indexed repo name (optional; defaults to current repo)' },
-            group: { type: 'string', description: 'Scope search across all repos in a group via cross-repo RRF merge (optional; overrides repo)' },
+            scope: {
+              type: 'object' as const,
+              description: 'Canonical search scope',
+              properties: {
+                type: { type: 'string', enum: ['repo', 'group'] },
+                name: { type: 'string' },
+              },
+            },
+            repo: { type: 'string', description: 'Legacy repo scope during migration (deprecated)' },
+            group: { type: 'string', description: 'Legacy group scope during migration (deprecated)' },
             ..._tokenProp,
           },
           required: ['query'],
@@ -745,14 +753,25 @@ export async function dispatchTool(
         const query = a.query as string;
         const offset = (a.offset as number) ?? 0;
         const effectiveLimit = Math.min((a.limit as number) ?? 10, 500);
+        const scope = a.scope as { type?: 'repo' | 'group'; name?: string } | undefined;
+        const legacyGroup = a.group as string | undefined;
+        const legacyRepo = a.repo as string | undefined;
+        if (scope && (legacyGroup || legacyRepo)) {
+          return { content: [{ type: 'text', text: 'Ambiguous request shape. Use either scope or legacy repo/group, not both.' }] };
+        }
+        if (legacyGroup && legacyRepo) {
+          return { content: [{ type: 'text', text: 'Ambiguous legacy scope. Use either repo or group, not both.' }] };
+        }
+        const normalizedScope = scope?.type && scope.name ? scope : legacyGroup ? { type: 'group' as const, name: legacyGroup } : legacyRepo ? { type: 'repo' as const, name: legacyRepo } : undefined;
 
-        // ── Group-scoped cross-repo search ──────────────────────────────────
-        if (a.group) {
-          const grp = loadGroup(a.group as string);
+        if (normalizedScope?.type === 'group' && normalizedScope.name) {
+          const grp = loadGroup(normalizedScope.name);
           if (!grp) {
-            return { content: [{ type: 'text', text: `Group "${a.group}" not found. Use list_groups to see available groups.` }] };
+            return { content: [{ type: 'text', text: `Group "${normalizedScope.name}" not found. Use list_groups to see available groups.` }] };
           }
-          const { perRepo, merged } = await queryGroup(grp, query, effectiveLimit + offset);
+          const { ready } = activeWorkspaceRoot ? { ready: fs.existsSync(getVectorDbPath(activeWorkspaceRoot)) } : { ready: false };
+          const mode = ready ? 'vector' as const : 'bm25' as const;
+          const { perRepo, merged, searchMode, vectorReady } = await queryGroup(grp, query, effectiveLimit + offset, { mode });
           const paged = merged.slice(offset, offset + effectiveLimit);
           return {
             content: [{
@@ -760,8 +779,11 @@ export async function dispatchTool(
               text: compact({
                 results: paged,
                 perRepo,
-                searchMode: 'bm25-cross-repo',
-                group: a.group,
+                searchMode,
+                scope: normalizedScope,
+                vectorReady,
+                deprecated: Boolean(legacyGroup),
+                deprecation: legacyGroup ? 'Legacy group parameter is deprecated; use scope.' : undefined,
                 total: merged.length,
                 offset,
                 limit: effectiveLimit,
@@ -771,14 +793,15 @@ export async function dispatchTool(
           };
         }
 
-        // ── Single-repo search ──────────────────────────────────────────────
         const repoGraph = graph;
         const vdbPath = activeWorkspaceRoot ? getVectorDbPath(activeWorkspaceRoot) : undefined;
         const fetchLimit = Math.min(offset + effectiveLimit, 500);
-        const bm25 = activeBm25 ?? ((!a.repo || a.repo === repoName) ? (bm25Resolver ? bm25Resolver() : null) : null);
+        const bm25 = activeBm25 ?? ((!legacyRepo || legacyRepo === repoName) ? (bm25Resolver ? bm25Resolver() : null) : null);
         const bm25Results = bm25 ? bm25.search(query, fetchLimit * 3) : undefined;
+        const vectorReady = Boolean(vdbPath && fs.existsSync(vdbPath));
+        const requestedMode = vectorReady ? 'vector' : 'bm25';
         const { results: allResults, searchMode } = await hybridSearch(repoGraph, query, fetchLimit, {
-          vectorDbPath: vdbPath,
+          vectorDbPath: requestedMode === 'vector' ? vdbPath : undefined,
           bm25Results: bm25Results ?? undefined,
         });
         const total = allResults.length;
@@ -800,8 +823,11 @@ export async function dispatchTool(
             type: 'text',
             text: compact({
               results,
-              searchMode,
-              repo: activeRepoName,
+              searchMode: requestedMode === 'vector' ? (searchMode === 'bm25' ? 'bm25' : 'vector') : 'bm25',
+              scope: normalizedScope ?? { type: 'repo', name: activeRepoName },
+              vectorReady,
+              deprecated: Boolean(legacyRepo),
+              deprecation: legacyRepo ? 'Legacy repo parameter is deprecated; use scope.' : undefined,
               total,
               offset,
               limit: effectiveLimit,

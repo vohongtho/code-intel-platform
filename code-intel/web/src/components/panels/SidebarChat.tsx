@@ -29,7 +29,13 @@ export function SidebarChat() {
     const client = new ApiClient(state.serverUrl);
     const toolCalls: ChatToolCall[] = [];
     try {
+      const scope = state.mode === 'group'
+        ? { type: 'group' as const, name: state.groupName || state.repoName }
+        : state.repoName
+          ? { type: 'repo' as const, name: state.repoName }
+          : undefined;
       await runAgent(trimmed, client, (ev) => {
+        
         if (ev.type === 'tool-start' && ev.toolCall) {
           toolCalls.push(ev.toolCall);
           dispatch({ type: 'UPDATE_LAST_CHAT_MESSAGE', message: { toolCalls: [...toolCalls] } });
@@ -41,7 +47,7 @@ export function SidebarChat() {
         } else if (ev.type === 'final') {
           dispatch({ type: 'UPDATE_LAST_CHAT_MESSAGE', message: { content: ev.text ?? '', citations: ev.citations ?? [] } });
         }
-      });
+      }, scope);
     } catch (err) {
       dispatch({ type: 'UPDATE_LAST_CHAT_MESSAGE', message: { content: `Error: ${err instanceof Error ? err.message : 'unknown'}` } });
     } finally {

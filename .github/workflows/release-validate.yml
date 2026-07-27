@@ -5,6 +5,10 @@ on:
     branches:
       - 'release/**'
 
+permissions:
+  contents: read
+  security-events: write
+
 jobs:
   validate:
     name: Validate
@@ -45,3 +49,74 @@ jobs:
             --excludePrivatePackages \
             --failOn "GPL-2.0;GPL-3.0;AGPL-1.0;AGPL-3.0;LGPL-2.0;LGPL-2.1;LGPL-3.0;CPAL-1.0" \
           || (echo "❌ GPL-incompatible license detected — review output above." && exit 1)
+
+  build-docker:
+    name: Build Docker
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU (ARM emulation)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build production image archive
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          target: production
+          tags: code-intel:release-validate
+          outputs: type=docker,dest=/tmp/code-intel-release-validate.tar
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Upload Docker image archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-intel-release-validate-image
+          path: /tmp/code-intel-release-validate.tar
+          if-no-files-found: error
+
+  scan-image:
+    name: Trivy Image Scan
+    needs: build-docker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Docker image archive
+        uses: actions/download-artifact@v4
+        with:
+          name: code-intel-release-validate-image
+          path: /tmp
+
+      - name: Trivy — SARIF report (CRITICAL + HIGH)
+        uses: aquasecurity/trivy-action@master
+        with:
+          input: '/tmp/code-intel-release-validate.tar'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          exit-code: '0'
+
+      - name: Upload Trivy SARIF to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Trivy — gate on CRITICAL CVEs
+        uses: aquasecurity/trivy-action@master
+        with:
+          input: '/tmp/code-intel-release-validate.tar'
+          format: 'table'
+          severity: 'CRITICAL'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          exit-code: '1'

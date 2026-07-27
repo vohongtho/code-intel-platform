@@ -71,15 +71,30 @@ import { withSpan, isTracingEnabled } from '../observability/tracing.js';
 import { openApiSpec } from './openapi.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+function resolveWebDist(): string | null {
+  const candidates = [
+    // Bundled package layouts
+    path.resolve(__dirname, '..', 'web'),
+    path.resolve(__dirname, '..', '..', 'web'),
+    path.resolve(__dirname, 'web'),
+    // Monorepo dev/test layouts
+    path.resolve(__dirname, '..', '..', '..', 'dist', 'web'),
+    path.resolve(__dirname, '..', '..', '..', 'web', 'dist'),
+    path.resolve(__dirname, '..', '..', '..', '..', 'web', 'dist'),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(path.join(candidate, 'index.html'))) return candidate;
+  }
+
+  return null;
+}
+
 // Web UI is bundled into dist/web/ at publish time.
-// Fallback to the monorepo sibling path for local dev.
-const WEB_DIST = (() => {
-  // dist/cli/main.js → ../web = dist/web/  (global install & npm pack)
-  const bundled = path.resolve(__dirname, '..', 'web');
-  if (fs.existsSync(bundled)) return bundled;
-  // Monorepo dev: dist/cli/ → ../../../web/dist = code-intel/web/dist
-  return path.resolve(__dirname, '..', '..', '..', 'web', 'dist');
-})();
+// Fallback to monorepo/test layouts for local development.
+const WEB_DIST = resolveWebDist();
+const WEB_INDEX_HTML = WEB_DIST ? fs.readFileSync(path.join(WEB_DIST, 'index.html'), 'utf8') : null;
 
 // ── CORS allowed origins ──────────────────────────────────────────────────────
 
@@ -859,12 +874,33 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
 
   async function getGraphForRepo(requestedRepo: string | undefined): Promise<KnowledgeGraph> {
     if (!requestedRepo || requestedRepo === repoName) return graph;
-    // Try as a single repo first
     const g = await loadRepoGraph(requestedRepo);
     if (g) return g;
-    // Fall back to group
     const gg = await loadGroupGraph(requestedRepo);
     return gg ?? graph;
+  }
+
+  type SearchMode = 'bm25' | 'vector' | 'hybrid';
+  type SearchScope = { type: 'repo' | 'group'; name: string };
+
+  function normalizeSearchRequest(body: { query?: string; limit?: number; mode?: SearchMode; scope?: SearchScope; repo?: string; group?: string }) {
+    const { query, limit, mode, scope, repo, group } = body;
+    if (!query) return { error: { status: 400, message: 'Missing query', hint: 'Provide { "query": "..." } in request body' } } as const;
+    if (scope && (repo || group)) return { error: { status: 400, message: 'Ambiguous request shape', hint: 'Use either scope or legacy repo/group fields, not both' } } as const;
+    if (repo && group) return { error: { status: 400, message: 'Ambiguous legacy scope', hint: 'Use either repo or group, not both' } } as const;
+    const normalizedScope = scope ?? (group ? { type: 'group' as const, name: group } : repo ? { type: 'repo' as const, name: repo } : undefined);
+    return {
+      query,
+      limit: limit ?? 20,
+      mode: mode ?? 'hybrid',
+      scope: normalizedScope,
+      deprecated: Boolean(repo || group),
+    } as const;
+  }
+
+  function deprecationFor(req: { deprecated?: boolean }, endpoint?: string): string | undefined {
+    if (!req.deprecated && !endpoint) return undefined;
+    return endpoint ? `${endpoint} is deprecated; use POST /api/v1/search with { query, limit, mode, scope }.` : 'Legacy repo/group request shape is deprecated; use { query, limit, mode, scope }.';
   }
 
   // ── Graph download ──────────────────────────────────────────────────────────
@@ -940,62 +976,94 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     });
   });
 
-  // ── Search ──────────────────────────────────────────────────────────────────
-  app.post('/api/v1/search', requireToolScope('search'), async (req, res) => {
-    const { query, limit, repo, group } = req.body as { query?: string; limit?: number; repo?: string; group?: string };
+  type SearchExecResult =
+    | { error: { status: number; message: string; hint?: string } }
+    | { body: { results: unknown[]; perRepo?: unknown[]; searchMode: SearchMode | string; scope: SearchScope; vectorReady?: boolean; deprecated: boolean; deprecation?: string; total: number; offset: number; limit: number; hasMore: boolean } };
 
-    // ── Group-scoped search (cross-repo) ──────────────────────────────────────
-    if (group) {
-      const grp = loadGroup(group);
-      if (!grp) {
-        res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: `Group '${group}' not found`, hint: 'Use /api/v1/groups to list available groups' } });
-        return;
-      }
-      try {
-        const { perRepo, merged } = await queryGroup(grp, query ?? '', limit ?? 20);
-        res.json({ results: merged, perRepo, searchMode: 'bm25', group });
-      } catch (err) {
-        res.status(500).json({ error: { code: ErrorCodes.INTERNAL_ERROR, message: err instanceof Error ? err.message : String(err) } });
-      }
-      return;
+  async function executeSearchRequest(body: { query?: string; limit?: number; mode?: SearchMode; scope?: SearchScope; repo?: string; group?: string }, extra: { endpoint?: string; forceDeprecated?: boolean } = {}): Promise<SearchExecResult> {
+    const normalized = normalizeSearchRequest(body);
+    if ('error' in normalized && normalized.error) {
+      return { error: normalized.error };
     }
 
-    // ── Single-repo search ────────────────────────────────────────────────────
-    const g = await getGraphForRepo(repo);
-    const vdbPath = workspaceRoot ? getVectorDbPath(workspaceRoot) : undefined;
+    const { query, limit, mode, scope, deprecated } = normalized;
+    const endpointDeprecated = extra.forceDeprecated || Boolean(extra.endpoint);
+    const deprecatedFlag = deprecated || endpointDeprecated;
+    const deprecation = deprecationFor({ deprecated: deprecatedFlag }, extra.endpoint);
 
-    // Use pre-built BM25 index when available and querying the current repo
-    const bm25 = (!repo || repo === repoName) ? ensureBm25Index() : null;
-    const bm25Results = bm25 ? bm25.search(query ?? '', (limit ?? 20) * 3) : null;
+    if (scope?.type === 'group') {
+      const grp = loadGroup(scope.name);
+      if (!grp) {
+        return { error: { status: 404, message: `Group '${scope.name}' not found`, hint: 'Use /api/v1/groups to list available groups' } } as const;
+      }
+      const { perRepo, merged, searchMode, vectorReady } = await queryGroup(grp, query, limit, { mode });
+      return {
+        body: {
+          results: merged,
+          perRepo,
+          searchMode,
+          scope,
+          vectorReady,
+          deprecated: deprecatedFlag,
+          deprecation,
+          total: merged.length,
+          offset: 0,
+          limit,
+          hasMore: false,
+        },
+      } as const;
+    }
 
-    const { results, searchMode } = await hybridSearch(g, query ?? '', limit ?? 20, {
+    const requestedRepo = scope?.type === 'repo' ? scope.name : undefined;
+    const g = await getGraphForRepo(requestedRepo);
+    const resolvedScope = scope ?? { type: 'repo' as const, name: requestedRepo ?? repoName };
+    const repoEntry = requestedRepo && requestedRepo !== repoName
+      ? loadRegistry().find((r) => r.id === requestedRepo || r.name === requestedRepo || r.path === requestedRepo)
+      : null;
+    const vdbPath = repoEntry ? getVectorDbPath(repoEntry.path) : (workspaceRoot ? getVectorDbPath(workspaceRoot) : undefined);
+    const bm25 = (!requestedRepo || requestedRepo === repoName) ? ensureBm25Index() : null;
+    const bm25Results = bm25 ? bm25.search(query, limit * 3) : null;
+
+    if (mode === 'bm25') {
+      const results = (bm25Results ?? textSearch(g, query, limit)).slice(0, limit);
+      return { body: { results, searchMode: 'bm25', scope: resolvedScope, deprecated: deprecatedFlag, deprecation, total: results.length, offset: 0, limit, hasMore: false } } as const;
+    }
+
+    const { results, searchMode } = await hybridSearch(g, query, limit, {
       vectorDbPath: vdbPath,
       bm25Results: bm25Results ?? undefined,
     });
-    res.json({ results, searchMode, repo: repo ?? repoName });
+    const finalMode = mode === 'vector' ? (searchMode === 'bm25' ? 'bm25' : 'vector') : searchMode;
+    return { body: { results, searchMode: finalMode, scope: resolvedScope, vectorReady: searchMode !== 'bm25', deprecated: deprecatedFlag, deprecation, total: results.length, offset: 0, limit, hasMore: false } } as const;
+  }
+
+  // ── Search ──────────────────────────────────────────────────────────────────
+  app.post('/api/v1/search', requireToolScope('search'), async (req, res) => {
+    try {
+      const result = await executeSearchRequest(req.body as { query?: string; limit?: number; mode?: SearchMode; scope?: SearchScope; repo?: string; group?: string });
+      if ('error' in result && result.error) {
+        res.status(result.error.status).json({ error: { code: result.error.status === 404 ? ErrorCodes.NOT_FOUND : ErrorCodes.INVALID_REQUEST, message: result.error.message, hint: result.error.hint } });
+        return;
+      }
+      if (!('body' in result)) throw new Error('Invalid search result');
+      res.json(result.body);
+    } catch (err) {
+      res.status(500).json({ error: { code: ErrorCodes.INTERNAL_ERROR, message: err instanceof Error ? err.message : String(err) } });
+    }
   });
 
   // ── Vector search ───────────────────────────────────────────────────────────
-  app.post('/api/v1/vector-search', async (req, res) => {
-    const { query, limit = 10 } = req.body as { query?: string; limit?: number };
-    if (!query) { res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: 'Missing query', hint: 'Provide { "query": "..." } in request body' } }); return; }
-    const idx = await ensureVectorIndex();
-    if (!idx) {
-      const results = textSearch(graph, query, limit);
-      res.json({ results, source: 'text-fallback', vectorReady: false });
-      return;
-    }
+  app.post('/api/v1/vector-search', requireToolScope('search'), async (req, res) => {
     try {
-      const { pipeline } = await import('@huggingface/transformers');
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const embedder = (await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2')) as unknown as (text: string, opts: Record<string, unknown>) => Promise<{ data: Float32Array }>;
-      const out = await embedder(query, { pooling: 'mean', normalize: true });
-      const queryEmbedding = Array.from(out.data);
-      const hits = await idx.search(queryEmbedding, limit);
-      res.json({ results: hits.map((h) => ({ nodeId: h.nodeId, name: h.name, kind: h.kind, filePath: h.filePath, score: h.score })), source: 'vector', vectorReady: true });
+      const result = await executeSearchRequest({ ...(req.body as Record<string, unknown>), mode: 'vector' } as { query?: string; limit?: number; mode?: SearchMode; scope?: SearchScope; repo?: string; group?: string }, { endpoint: '/api/v1/vector-search', forceDeprecated: true });
+      if ('error' in result && result.error) {
+        res.status(result.error.status).json({ error: { code: result.error.status === 404 ? ErrorCodes.NOT_FOUND : ErrorCodes.INVALID_REQUEST, message: result.error.message, hint: result.error.hint } });
+        return;
+      }
+      if (!('body' in result)) throw new Error('Invalid search result');
+      res.json(result.body);
     } catch (err) {
-      const results = textSearch(graph, query, limit);
-      res.json({ results, source: 'text-fallback', vectorReady: false, error: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ error: { code: ErrorCodes.INTERNAL_ERROR, message: err instanceof Error ? err.message : String(err) } });
     }
   });
 
@@ -1373,14 +1441,21 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     }
   });
 
-  app.post('/api/v1/groups/:name/search', async (req, res) => {
-    const group = loadGroup(req.params.name);
-    if (!group) { res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: 'Group not found' } }); return; }
-    const { q, limit = 20 } = req.body as { q?: string; limit?: number };
-    if (!q) { res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: 'Missing query q' } }); return; }
+  app.post('/api/v1/groups/:name/search', requireToolScope('search'), async (req, res) => {
     try {
-      const { perRepo, merged } = await queryGroup(group, q, limit);
-      res.json({ perRepo, merged });
+      const groupName = Array.isArray(req.params.name) ? req.params.name[0] : req.params.name;
+      const result = await executeSearchRequest({
+        query: (req.body as { q?: string; query?: string }).query ?? (req.body as { q?: string; query?: string }).q,
+        limit: (req.body as { limit?: number }).limit,
+        mode: (req.body as { mode?: SearchMode }).mode ?? 'hybrid',
+        scope: { type: 'group', name: groupName },
+      }, { endpoint: '/api/v1/groups/:name/search', forceDeprecated: true });
+      if ('error' in result && result.error) {
+        res.status(result.error.status).json({ error: { code: result.error.status === 404 ? ErrorCodes.NOT_FOUND : ErrorCodes.INVALID_REQUEST, message: result.error.message, hint: result.error.hint } });
+        return;
+      }
+      if (!('body' in result)) throw new Error('Invalid search result');
+      res.json(result.body);
     } catch (err) {
       res.status(500).json({ error: { code: ErrorCodes.INTERNAL_ERROR, message: err instanceof Error ? err.message : String(err) } });
     }
@@ -1741,11 +1816,9 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
   });
 
   // ── Web UI static files ─────────────────────────────────────────────────────
-  if (fs.existsSync(WEB_DIST)) {
+  // Serve static assets (JS, CSS, images, etc.) from the web UI build directory
+  if (WEB_DIST) {
     app.use(express.static(WEB_DIST));
-    app.get('/{*path}', (_req, res) => {
-      res.sendFile(path.join(WEB_DIST, 'index.html'));
-    });
   }
 
   // ── Admin API — requires admin role ──────────────────────────────────────────
@@ -1816,6 +1889,22 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     res.json({ entries, count: entries.length, enabled: governanceLogger.isEnabled() });
   });
 
+  // ── SPA fallback ────────────────────────────────────────────────────────────
+  // Catch-all route for client-side routing (React Router SPA)
+  // MUST come AFTER all API routes (/api/v1/*, /admin/*, /auth/*, /health/*)
+  // so API requests don't accidentally get served index.html.
+  // Use a terminal middleware fallback instead of a wildcard route because
+  // some packaged/runtime combinations still bypass the Express 5 catch-all.
+  if (WEB_INDEX_HTML) {
+    app.use((req, res, next) => {
+      if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+      if (req.path.startsWith('/api/') || req.path.startsWith('/auth/') || req.path.startsWith('/admin/') || req.path === '/health' || req.path === '/metrics') {
+        return next();
+      }
+      res.type('html').send(WEB_INDEX_HTML);
+    });
+  }
+
   // ── CSRF error handler ──────────────────────────────────────────────────────
   app.use((err: unknown, req: Request, res: Response, next: NextFunction): void => {
     if (err && typeof err === 'object' && 'code' in err && (err as { code: string }).code === 'EBADCSRFTOKEN') {
@@ -1838,8 +1927,22 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
   app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
     const e = err as Error & { status?: number; statusCode?: number; type?: string };
     const statusCode = e.status ?? e.statusCode;
-    // Express 5 throws a 404 Not Found for unmatched routes — handle silently
+    // Express 5 throws unmatched routes into the error pipeline as 404s.
+    // For SPA routes, serve index.html here instead of JSON.
     if (statusCode === 404) {
+      if (
+        WEB_INDEX_HTML &&
+        (req.method === 'GET' || req.method === 'HEAD') &&
+        !req.path.startsWith('/api/') &&
+        !req.path.startsWith('/auth/') &&
+        !req.path.startsWith('/admin/') &&
+        req.path !== '/health' &&
+        req.path !== '/metrics'
+      ) {
+        res.type('html').send(WEB_INDEX_HTML);
+        return;
+      }
+
       res.status(404).json({
         error: {
           code: ErrorCodes.NOT_FOUND,
@@ -1933,6 +2036,8 @@ export async function startHttpServer(
       Logger.info(`Code Intelligence server running at http://localhost:${port}`);
       Logger.info(`  Graph: ${graph.size.nodes} nodes, ${graph.size.edges} edges`);
       Logger.info(`  Auth: login at http://localhost:${port}/auth/login`);
+      if (WEB_DIST) Logger.info(`  Web UI: ${WEB_DIST}`);
+      else Logger.warn('  Web UI: not found; SPA routes like /login and /explore will return 404 JSON');
       if (watcherState?.watching) {
         Logger.info(`  WebSocket: ws://localhost:${port}/ws (graph:updated push enabled)`);
       }
