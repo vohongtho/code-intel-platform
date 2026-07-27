@@ -23,7 +23,8 @@
     "eval:summary": "node eval/summarize.mjs",
     "bench": "node eval/run-agent-bench.mjs --json",
     "bench:mcp": "node eval/run-mcp-bench.mjs --json",
-    "verify:clean-install": "node scripts/verify-clean-install.mjs"
+    "verify:clean-install": "node scripts/verify-clean-install.mjs",
+    "verify:docker-publish": "node scripts/verify-docker-publish.mjs"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.64.0",

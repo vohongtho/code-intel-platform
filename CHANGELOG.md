@@ -6,6 +6,14 @@ All notable changes to this project are documented in this file.
 
 ## [1.0.6] - 2026-07-26
 
+### 🐳 Docker publish arm64 build validation
+
+- Bumped `code-intel/core/package.json` from `@ladybugdb/core@^0.15.4` to `^0.18.3`, and refreshed `package-lock.json`, so Docker `npm ci` can resolve the published `@ladybugdb/core-linux-arm64` prebuilt package instead of falling back to the failing source-build path.
+- Added `scripts/verify-docker-publish.mjs` plus root `package.json` script `verify:docker-publish` to validate the Docker publish build path for `linux/amd64` and `linux/arm64`.
+- Updated `.github/workflows/publish.yml` validate job to run Docker publish verification before release publishing.
+- Updated `.github/workflows/release-validate.yml` to add Docker build validation and Trivy image scanning, including SARIF upload and CRITICAL-CVE gating.
+- Preserved the runtime container contract in `Dockerfile`: `USER codeuser`, `EXPOSE 4747`, and `node /app/code-intel/core/dist/cli/main.js serve /data --port 4747`.
+
 ### 🐛 Fixed SPA routing: /explore and other routes now work on reload
 
 **Problem**: Reloading any SPA route (`/explore`, `/settings`, `/login`, etc.) in the browser returned a `CI-1002: Not found` error instead of serving the React application. Users could navigate to these routes within the app, but direct access via URL or browser reload failed.
