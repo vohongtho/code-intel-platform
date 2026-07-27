@@ -36,7 +36,9 @@ jobs:
         run: npm rebuild @ladybugdb/core better-sqlite3 --legacy-peer-deps
 
       - name: Build
-        run: npm run build --workspace=code-intel/core
+        run: |
+          npm run build --workspace=code-intel/core
+          npx tsc -b code-intel/core/tsconfig.json --force
 
       - name: Run load test — ${{ matrix.size }}
         run: node tests/perf/load-test.mjs --size=${{ matrix.size }} --regression-gate
