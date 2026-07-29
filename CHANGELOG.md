@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.0.7] - 2026-07-29
+
+### 🔍 MCP search mode + context tool
+
+- Added MCP `search.mode` support with `auto | bm25 | vector`, preserving existing default behavior when omitted while allowing callers to force BM25-only search or prefer vector search with BM25 fallback.
+- Routed MCP `search` through the same shared scoped-search executor used by HTTP by extracting `code-intel/core/src/search/execute-scoped-search.ts` and wiring both `code-intel/core/src/http/app.ts` and `code-intel/core/src/mcp-server/server.ts` to it, closing the MCP gap left after scoped-search unification.
+- Added MCP `context` tool as a thin wrapper around `code-intel/core/src/context/builder.ts`, exposing structured `summary`, `logic`, `relation`, `focusCode`, and `truncated` fields for one or more resolved seed symbols with `intent` and `max_tokens` controls.
+- Added MCP regression coverage in `code-intel/core/tests/unit/mcp-server/search-tool.test.ts` and `code-intel/core/tests/unit/mcp-server/context-tool.test.ts` for explicit search modes, default-mode parity, partial/total unresolved context seeds, explicit intent, and token-budget clamping.
+- Affected files and symbols include `code-intel/core/src/search/execute-scoped-search.ts` (`executeSearchRequest`, `normalizeSearchRequest`), `code-intel/core/src/http/app.ts` (`createApp` scoped search handlers), `code-intel/core/src/mcp-server/server.ts` (`createMcpServer`, `dispatchTool`, MCP `search`, MCP `context`), `code-intel/core/src/context/builder.ts` (`build`, `detectQueryIntent`), `code-intel/core/tests/unit/mcp-server/search-tool.test.ts`, and `code-intel/core/tests/unit/mcp-server/context-tool.test.ts`.
+
 ## [1.0.6] - 2026-07-27
 
 ### 🔎 Scoped search unification

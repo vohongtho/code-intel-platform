@@ -7,9 +7,9 @@ import {
   ReadResourceRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
-import { textSearch } from '../search/text-search.js';
-import { hybridSearch } from '../search/hybrid-search.js';
 import { Bm25Index, getBm25DbPath } from '../search/bm25-index.js';
+import { executeSearchRequest, type SearchMode } from '../search/execute-scoped-search.js';
+import { build, detectQueryIntent, type QueryIntent, type SeedSymbol } from '../context/builder.js';
 import { getVectorDbPath, getDbPath } from '../storage/index.js';
 import { loadRegistry } from '../storage/repo-registry.js';
 import { loadMetadata } from '../storage/metadata.js';
@@ -101,6 +101,11 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
             query: { type: 'string', description: 'Search query (symbol name, keyword, or partial match)' },
             offset: { type: 'number', description: 'Number of results to skip for pagination (default: 0)' },
             limit: { type: 'number', description: 'Max results per page (default: 10, max: 500)' },
+            mode: {
+              type: 'string',
+              enum: ['auto', 'bm25', 'vector'],
+              description: 'Search mode: automatic default behavior, BM25-only, or vector-preferred with BM25 fallback',
+            },
             scope: {
               type: 'object' as const,
               description: 'Canonical search scope',
@@ -126,6 +131,35 @@ export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspa
             ..._tokenProp,
           },
           required: ['symbol_name'],
+        },
+      },
+      {
+        name: 'context',
+        description: 'Token-budgeted deep context for one or more symbols: summary, logic, relations, and focused code snippets built from the shared context builder.',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            symbols: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'One or more symbol names to resolve and include as context seeds',
+            },
+            intent: {
+              type: 'string',
+              enum: ['code', 'callers', 'architecture', 'auto'],
+              description: 'Bias token allocation toward code, callers, architecture, or keep auto-balanced behavior',
+            },
+            max_tokens: {
+              type: 'number',
+              description: 'Max total tokens for the built context document (default: 6000, server max: 6000)',
+            },
+            limit: {
+              type: 'number',
+              description: 'Max seed symbols to resolve from the provided symbol list (default: 10)',
+            },
+            ..._tokenProp,
+          },
+          required: ['symbols'],
         },
       },
       {
@@ -672,7 +706,7 @@ async function graphContext(a: Record<string, unknown>, repoName: string, worksp
 }
 
 const GRAPH_BACKED_TOOLS = new Set([
-  'overview', 'inspect', 'blast_radius', 'file_symbols', 'find_path', 'list_exports', 'routes', 'clusters', 'flows',
+  'overview', 'inspect', 'context', 'blast_radius', 'file_symbols', 'find_path', 'list_exports', 'routes', 'clusters', 'flows',
   'detect_changes', 'query', 'raw_query', 'explain_relationship', 'pr_impact', 'similar_symbols', 'health_report',
   'suggest_tests', 'cluster_summary', 'deprecated_usage', 'complexity_hotspots', 'coverage_gaps', 'secrets', 'vulnerability_scan',
 ]);
@@ -750,84 +784,59 @@ export async function dispatchTool(
 
       // ── search ─────────────────────────────────────────────────────────────
       case 'search': {
-        const query = a.query as string;
-        const offset = (a.offset as number) ?? 0;
+        const offset = Math.max((a.offset as number) ?? 0, 0);
         const effectiveLimit = Math.min((a.limit as number) ?? 10, 500);
-        const scope = a.scope as { type?: 'repo' | 'group'; name?: string } | undefined;
-        const legacyGroup = a.group as string | undefined;
-        const legacyRepo = a.repo as string | undefined;
-        if (scope && (legacyGroup || legacyRepo)) {
-          return { content: [{ type: 'text', text: 'Ambiguous request shape. Use either scope or legacy repo/group, not both.' }] };
-        }
-        if (legacyGroup && legacyRepo) {
-          return { content: [{ type: 'text', text: 'Ambiguous legacy scope. Use either repo or group, not both.' }] };
-        }
-        const normalizedScope = scope?.type && scope.name ? scope : legacyGroup ? { type: 'group' as const, name: legacyGroup } : legacyRepo ? { type: 'repo' as const, name: legacyRepo } : undefined;
-
-        if (normalizedScope?.type === 'group' && normalizedScope.name) {
-          const grp = loadGroup(normalizedScope.name);
-          if (!grp) {
-            return { content: [{ type: 'text', text: `Group "${normalizedScope.name}" not found. Use list_groups to see available groups.` }] };
-          }
-          const { ready } = activeWorkspaceRoot ? { ready: fs.existsSync(getVectorDbPath(activeWorkspaceRoot)) } : { ready: false };
-          const mode = ready ? 'vector' as const : 'bm25' as const;
-          const { perRepo, merged, searchMode, vectorReady } = await queryGroup(grp, query, effectiveLimit + offset, { mode });
-          const paged = merged.slice(offset, offset + effectiveLimit);
-          return {
-            content: [{
-              type: 'text',
-              text: compact({
-                results: paged,
-                perRepo,
-                searchMode,
-                scope: normalizedScope,
-                vectorReady,
-                deprecated: Boolean(legacyGroup),
-                deprecation: legacyGroup ? 'Legacy group parameter is deprecated; use scope.' : undefined,
-                total: merged.length,
-                offset,
-                limit: effectiveLimit,
-                hasMore: offset + effectiveLimit < merged.length,
-              }),
-            }],
-          };
-        }
-
-        const repoGraph = graph;
-        const vdbPath = activeWorkspaceRoot ? getVectorDbPath(activeWorkspaceRoot) : undefined;
         const fetchLimit = Math.min(offset + effectiveLimit, 500);
-        const bm25 = activeBm25 ?? ((!legacyRepo || legacyRepo === repoName) ? (bm25Resolver ? bm25Resolver() : null) : null);
-        const bm25Results = bm25 ? bm25.search(query, fetchLimit * 3) : undefined;
-        const vectorReady = Boolean(vdbPath && fs.existsSync(vdbPath));
-        const requestedMode = vectorReady ? 'vector' : 'bm25';
-        const { results: allResults, searchMode } = await hybridSearch(repoGraph, query, fetchLimit, {
-          vectorDbPath: requestedMode === 'vector' ? vdbPath : undefined,
-          bm25Results: bm25Results ?? undefined,
+        const result = await executeSearchRequest({
+          query: a.query as string | undefined,
+          limit: fetchLimit,
+          mode: (a.mode as SearchMode | undefined) ?? 'auto',
+          scope: a.scope as { type?: 'repo' | 'group'; name?: string } | undefined as { type: 'repo' | 'group'; name: string } | undefined,
+          repo: a.repo as string | undefined,
+          group: a.group as string | undefined,
+        }, {
+          repoName,
+          workspaceRoot: activeWorkspaceRoot,
+          ensureBm25Index: () => activeBm25 ?? ((!a.repo || a.repo === repoName) ? (bm25Resolver ? bm25Resolver() : null) : null),
+          getGraphForRepo: async (requestedRepo) => {
+            if (!requestedRepo || requestedRepo === activeRepoName) return graph;
+            const ctx = await ensureRepoLoaded(requestedRepo, repoName, workspaceRoot, graph);
+            return ctx.graph;
+          },
         });
-        const total = allResults.length;
-        const results = allResults.slice(offset, offset + effectiveLimit);
+        if ('error' in result && result.error) {
+          const msg = result.error.status === 404 && /Group '.*' not found/.test(result.error.message)
+            ? result.error.message.replace(/Group '(.+)' not found/, 'Group "$1" not found. Use list_groups to see available groups.')
+            : result.error.message;
+          return { content: [{ type: 'text', text: msg }] };
+        }
+        if (!('body' in result)) {
+          return { content: [{ type: 'text', text: 'Invalid search result.' }] };
+        }
+
+        const body = result.body;
+        const total = body.total;
+        const results = body.results.slice(offset, offset + effectiveLimit);
         const hasMore = offset + effectiveLimit < total;
 
         const suggestNextTools: unknown[] = [];
         const suggestEnabled = process.env['CODE_INTEL_SUGGEST_NEXT_TOOLS'] === 'true';
         if (suggestEnabled && results.length > 0) {
-          const topName = results[0].name;
-          suggestNextTools.push(
-            { tool: 'inspect', reason: 'Inspect the top result in detail', input: { symbol: topName } },
-            { tool: 'similar_symbols', reason: 'Find symbols similar to the top result', input: { symbol: topName } },
-          );
+          const top = results[0] as { name?: string };
+          if (top.name) {
+            suggestNextTools.push(
+              { tool: 'inspect', reason: 'Inspect the top result in detail', input: { symbol: top.name } },
+              { tool: 'similar_symbols', reason: 'Find symbols similar to the top result', input: { symbol: top.name } },
+            );
+          }
         }
 
         return {
           content: [{
             type: 'text',
             text: compact({
+              ...body,
               results,
-              searchMode: requestedMode === 'vector' ? (searchMode === 'bm25' ? 'bm25' : 'vector') : 'bm25',
-              scope: normalizedScope ?? { type: 'repo', name: activeRepoName },
-              vectorReady,
-              deprecated: Boolean(legacyRepo),
-              deprecation: legacyRepo ? 'Legacy repo parameter is deprecated; use scope.' : undefined,
               total,
               offset,
               limit: effectiveLimit,
@@ -894,6 +903,55 @@ export async function dispatchTool(
               cluster,
               content: node.content?.slice(0, 500),
               ...(suggestEnabled ? { suggested_next_tools: suggestNextTools } : {}),
+            }),
+          }],
+        };
+      }
+
+      // ── context ────────────────────────────────────────────────────────────
+      case 'context': {
+        const symbols = Array.isArray(a.symbols)
+          ? a.symbols.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+          : [];
+        if (symbols.length === 0) {
+          return { content: [{ type: 'text', text: 'Missing symbols. Provide { "symbols": ["..."] }.' }] };
+        }
+
+        const seedLimit = Math.max(1, Math.min((a.limit as number) ?? 10, 10));
+        const requestedIntent = (a.intent as QueryIntent | undefined) ?? 'auto';
+        const queryIntent = requestedIntent === 'auto' ? detectQueryIntent(symbols.join(' ')) : requestedIntent;
+        const maxTokens = Math.min((a.max_tokens as number) ?? 6000, 6000);
+
+        const resolvedSeeds: SeedSymbol[] = [];
+        const resolvedNames: string[] = [];
+        const unresolvedNames: string[] = [];
+        for (const symbol of symbols.slice(0, seedLimit)) {
+          const node = findNodeByName(graph, symbol);
+          if (!node) {
+            unresolvedNames.push(symbol);
+            continue;
+          }
+          resolvedSeeds.push({ nodeId: node.id, refinedScore: 1 });
+          resolvedNames.push(symbol);
+        }
+
+        if (resolvedSeeds.length === 0) {
+          return { content: [{ type: 'text', text: `No symbols resolved for: ${symbols.slice(0, seedLimit).join(', ')}. Try search first.` }] };
+        }
+
+        const doc = build(resolvedSeeds, graph, { queryIntent, maxTokens });
+        return {
+          content: [{
+            type: 'text',
+            text: compact({
+              symbols: resolvedNames,
+              unresolvedSymbols: unresolvedNames,
+              intent: doc.intent,
+              summary: doc.summary,
+              logic: doc.logic,
+              relation: doc.relation,
+              focusCode: doc.focusCode,
+              truncated: doc.truncated,
             }),
           }],
         };
