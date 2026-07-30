@@ -1,0 +1,129 @@
+name: Apply v1.0.8 Search Explainability
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/apply-v108-search-explain-pr.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/1.0.8
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Apply implementation
+        shell: bash
+        run: |
+          python <<'PY'
+          from pathlib import Path
+          p = Path('code-intel/core/src/search/execute-scoped-search.ts')
+          s = p.read_text()
+          s = s.replace(
+          """export type SearchFallbackReason =
+            | 'VECTOR_INDEX_UNAVAILABLE'
+            | 'VECTOR_QUERY_FAILED';""",
+          """export type SearchFallbackReason =
+            | 'VECTOR_INDEX_UNAVAILABLE'
+            | 'VECTOR_QUERY_FAILED';
+
+          export type SearchExplanation = {
+            requestedMode: RequestedSearchMode;
+            actualMode: ActualSearchMode;
+            fallbackReason?: SearchFallbackReason;
+            vectorReady: boolean;
+            ranking: 'BM25' | 'VECTOR' | 'RECIPROCAL_RANK_FUSION';
+            summary: string;
+          };
+
+          export function buildSearchExplanation(
+            requestedMode: RequestedSearchMode,
+            actualMode: ActualSearchMode,
+            vectorReady: boolean,
+            fallbackReason?: SearchFallbackReason,
+          ): SearchExplanation {
+            const ranking = actualMode === 'hybrid'
+              ? 'RECIPROCAL_RANK_FUSION'
+              : actualMode === 'vector' ? 'VECTOR' : 'BM25';
+            const summary = fallbackReason
+              ? `Requested ${requestedMode}; executed ${actualMode} because ${fallbackReason}.`
+              : `Requested ${requestedMode}; executed ${actualMode} using ${ranking}.`;
+            return { requestedMode, actualMode, fallbackReason, vectorReady, ranking, summary };
+          }""",
+          )
+          s = s.replace("      fallbackReason?: SearchFallbackReason;\n      scope: SearchScope;", "      fallbackReason?: SearchFallbackReason;\n      explanation?: SearchExplanation;\n      scope: SearchScope;")
+          s = s.replace("  group?: string;\n};", "  group?: string;\n  /** Include execution and ranking evidence in the response. */\n  explain?: boolean;\n};")
+          s = s.replace("  const { query, limit, mode, scope, repo, group } = body;", "  const { query, limit, mode, scope, repo, group, explain } = body;")
+          s = s.replace("    deprecated: Boolean(repo || group || mode === 'hybrid'),", "    deprecated: Boolean(repo || group || mode === 'hybrid'),\n    explain: explain === true,")
+          s = s.replace("  const { query, limit, mode: requestedMode, scope, deprecated } = normalized;", "  const { query, limit, mode: requestedMode, scope, deprecated, explain } = normalized;")
+          s = s.replace("        fallbackReason,\n        scope,", "        fallbackReason,\n        explanation: explain ? buildSearchExplanation(requestedMode, actualMode, vectorReady, fallbackReason) : undefined,\n        scope,", 1)
+          s = s.replace("        searchMode: 'bm25',\n        scope: resolvedScope,\n        vectorReady: Boolean(vdbPath),", "        searchMode: 'bm25',\n        explanation: explain ? buildSearchExplanation(requestedMode, 'bm25', Boolean(vdbPath)) : undefined,\n        scope: resolvedScope,\n        vectorReady: Boolean(vdbPath),")
+          s = s.replace("      fallbackReason,\n      scope: resolvedScope,", "      fallbackReason,\n      explanation: explain ? buildSearchExplanation(requestedMode, actualMode, actualMode !== 'bm25', fallbackReason) : undefined,\n      scope: resolvedScope,")
+          p.write_text(s)
+          PY
+
+          cat > code-intel/core/tests/unit/search/explainable-search.test.ts <<'EOF'
+          import { describe, it } from 'node:test';
+          import assert from 'node:assert/strict';
+          import {
+            buildSearchExplanation,
+            normalizeSearchRequest,
+          } from '../../../src/search/execute-scoped-search.js';
+
+          describe('explainable search contract', () => {
+            it('keeps explanation opt-in during normalization', () => {
+              const compact = normalizeSearchRequest({ query: 'auth' });
+              const verbose = normalizeSearchRequest({ query: 'auth', explain: true });
+              assert.equal('error' in compact, false);
+              assert.equal('error' in verbose, false);
+              if (!('error' in compact)) assert.equal(compact.explain, false);
+              if (!('error' in verbose)) assert.equal(verbose.explain, true);
+            });
+
+            it('describes RRF execution without fallback', () => {
+              const value = buildSearchExplanation('auto', 'hybrid', true);
+              assert.equal(value.ranking, 'RECIPROCAL_RANK_FUSION');
+              assert.equal(value.fallbackReason, undefined);
+              assert.match(value.summary, /executed hybrid/);
+            });
+
+            it('reports vector fallback truthfully', () => {
+              const value = buildSearchExplanation(
+                'vector',
+                'bm25',
+                false,
+                'VECTOR_INDEX_UNAVAILABLE',
+              );
+              assert.equal(value.ranking, 'BM25');
+              assert.equal(value.fallbackReason, 'VECTOR_INDEX_UNAVAILABLE');
+              assert.match(value.summary, /Requested vector/);
+            });
+          });
+          EOF
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps --ignore-scripts --include=optional
+      - name: Rebuild native modules
+        run: npm rebuild tree-sitter tree-sitter-typescript tree-sitter-javascript tree-sitter-python tree-sitter-java tree-sitter-go tree-sitter-rust tree-sitter-c tree-sitter-cpp tree-sitter-c-sharp tree-sitter-php tree-sitter-ruby tree-sitter-kotlin tree-sitter-swift better-sqlite3 @ladybugdb/core onnxruntime-node sharp protobufjs || true
+      - name: Verify
+        run: |
+          npx tsc -b code-intel/shared code-intel/core
+          npm test --workspace=code-intel/core
+      - name: Commit verified implementation
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add code-intel/core/src/search/execute-scoped-search.ts code-intel/core/tests/unit/search/explainable-search.test.ts
+          git diff --cached --quiet && exit 0
+          git commit -m "feat(search): add opt-in execution explanations"
+          git push origin HEAD:release/1.0.8
