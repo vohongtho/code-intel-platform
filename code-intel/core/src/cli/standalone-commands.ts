@@ -8,6 +8,7 @@ import { CURRENT_SCHEMA_VERSION } from '../migrations/migration-runner.js';
 import { loadGraphFromDB } from '../multi-repo/graph-from-db.js';
 import { buildChangeContext } from '../query/change-context.js';
 import { parseDiffFiles } from '../query/pr-impact.js';
+import { startChangeContextHttp, startChangeContextMcp } from './change-context-transports.js';
 
 function optionValue(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
@@ -69,6 +70,20 @@ async function runChangeContext(args: string[]): Promise<void> {
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 }
 
+async function runChangeContextMcp(args: string[]): Promise<void> {
+  const repoDir = path.resolve(args[0] && !args[0].startsWith('-') ? args[0] : '.');
+  const graph = await loadGraph(repoDir);
+  await startChangeContextMcp({ repoDir, graph });
+}
+
+async function runChangeContextHttp(args: string[]): Promise<void> {
+  const repoDir = path.resolve(args[0] && !args[0].startsWith('-') ? args[0] : '.');
+  const graph = await loadGraph(repoDir);
+  const port = numberOption(args, '--port') ?? 30128;
+  const host = optionValue(args, '--host') ?? '127.0.0.1';
+  startChangeContextHttp({ repoDir, graph }, port, host);
+}
+
 export async function runStandaloneCommand(argv: string[]): Promise<boolean> {
   const [command, ...args] = argv;
   if (command === 'index-status') {
@@ -77,6 +92,14 @@ export async function runStandaloneCommand(argv: string[]): Promise<boolean> {
   }
   if (command === 'change-context') {
     await runChangeContext(args);
+    return true;
+  }
+  if (command === 'change-context-mcp') {
+    await runChangeContextMcp(args);
+    return true;
+  }
+  if (command === 'change-context-http') {
+    await runChangeContextHttp(args);
     return true;
   }
   return false;
