@@ -1,0 +1,121 @@
+name: Apply v1.0.8 Transports
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  apply-transports:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/1.0.8
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Apply HTTP and MCP transports
+        shell: bash
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          server = Path('code-intel/core/src/mcp-server/server.ts')
+          s = server.read_text()
+          s = s.replace(
+            "import { suggestTests } from '../query/suggest-tests.js';",
+            "import { suggestTests } from '../query/suggest-tests.js';\nimport { buildChangeContext } from '../query/change-context.js';\nimport { verifyIndexTrust } from '../storage/index-trust.js';",
+          )
+          tool_anchor = "      // ── query (GQL) ────────────────────────────────────────────────────────"
+          tools = """      {
+        name: 'change_context',
+        description: 'Build a coding-agent change package: blast radius, risk, coverage gaps, test suggestions and token-bounded context.',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            changedFiles: { type: 'array', items: { type: 'string' } },
+            diff: { type: 'string' },
+            maxHops: { type: 'number' },
+            maxTokens: { type: 'number' },
+            ..._tokenProp,
+          },
+        },
+      },
+      {
+        name: 'index_status',
+        description: 'Verify index artifact integrity, generation consistency and source freshness.',
+        inputSchema: { type: 'object' as const, properties: { ..._tokenProp } },
+      },
+
+"""
+          if "name: 'change_context'" not in s:
+            s = s.replace(tool_anchor, tools + tool_anchor)
+          case_anchor = "      // ── similar_symbols ────────────────────────────────────────────────────"
+          cases = """      case 'change_context': {
+        let changedFiles = Array.isArray(a.changedFiles) ? a.changedFiles.filter((value): value is string => typeof value === 'string') : [];
+        if (typeof a.diff === 'string') changedFiles = [...new Set([...changedFiles, ...parseDiffFiles(a.diff)])];
+        if (changedFiles.length === 0) return { content: [{ type: 'text', text: compact({ error: 'Supply changedFiles or diff.' }) }] };
+        return { content: [{ type: 'text', text: compact(buildChangeContext(graph, {
+          changedFiles,
+          maxHops: typeof a.maxHops === 'number' ? a.maxHops : undefined,
+          maxTokens: typeof a.maxTokens === 'number' ? a.maxTokens : undefined,
+        })) }] };
+      }
+      case 'index_status': {
+        if (!workspaceRoot) return { content: [{ type: 'text', text: compact({ error: 'workspaceRoot is unavailable' }) }] };
+        return { content: [{ type: 'text', text: compact(verifyIndexTrust(workspaceRoot)) }] };
+      }
+
+"""
+          if "case 'change_context'" not in s:
+            s = s.replace(case_anchor, cases + case_anchor)
+          server.write_text(s)
+
+          app = Path('code-intel/core/src/http/app.ts')
+          h = app.read_text()
+          h = h.replace(
+            "import { openApiSpec } from './openapi.js';",
+            "import { openApiSpec } from './openapi.js';\nimport { buildChangeContext } from '../query/change-context.js';\nimport { parseDiffFiles } from '../query/pr-impact.js';\nimport { verifyIndexTrust } from '../storage/index-trust.js';",
+          )
+          route_anchor = "  // ── Vector search ───────────────────────────────────────────────────────────"
+          routes = """  app.post('/api/v1/change-context', requireToolScope('search'), (req, res) => {
+    const body = req.body as { changedFiles?: string[]; diff?: string; maxHops?: number; maxTokens?: number };
+    let changedFiles = Array.isArray(body.changedFiles) ? body.changedFiles : [];
+    if (body.diff) changedFiles = [...new Set([...changedFiles, ...parseDiffFiles(body.diff)])];
+    if (changedFiles.length === 0) {
+      res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: 'Supply changedFiles or diff' } });
+      return;
+    }
+    res.json(buildChangeContext(graph, { changedFiles, maxHops: body.maxHops, maxTokens: body.maxTokens }));
+  });
+
+  app.get('/api/v1/index-status', requireToolScope('search'), (_req, res) => {
+    if (!workspaceRoot) {
+      res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: 'workspaceRoot is unavailable' } });
+      return;
+    }
+    res.json(verifyIndexTrust(workspaceRoot));
+  });
+
+"""
+          if "'/api/v1/change-context'" not in h:
+            h = h.replace(route_anchor, routes + route_anchor)
+          app.write_text(h)
+          PY
+      - run: npm ci --legacy-peer-deps --ignore-scripts --include=optional
+      - run: npm rebuild tree-sitter tree-sitter-typescript tree-sitter-javascript tree-sitter-python tree-sitter-java tree-sitter-go tree-sitter-rust tree-sitter-c tree-sitter-cpp tree-sitter-c-sharp tree-sitter-php tree-sitter-ruby tree-sitter-kotlin tree-sitter-swift better-sqlite3 @ladybugdb/core onnxruntime-node sharp protobufjs || true
+      - name: Verify
+        run: |
+          npx tsc -b code-intel/shared code-intel/core code-intel/web
+          npm test --workspace=code-intel/core
+      - name: Commit verified transports
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add code-intel/core/src/mcp-server/server.ts code-intel/core/src/http/app.ts
+          git diff --cached --quiet && exit 0
+          git commit -m 'feat(transports): expose change context and index status'
+          git push origin HEAD:release/1.0.8
