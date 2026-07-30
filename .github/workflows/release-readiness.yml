@@ -1,0 +1,60 @@
+name: Release Readiness
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps --ignore-scripts --include=optional
+      - name: Rebuild required native modules
+        run: npm rebuild tree-sitter tree-sitter-typescript tree-sitter-javascript tree-sitter-python tree-sitter-java tree-sitter-go tree-sitter-rust tree-sitter-c tree-sitter-cpp tree-sitter-c-sharp tree-sitter-php tree-sitter-ruby tree-sitter-kotlin tree-sitter-swift @ladybugdb/core onnxruntime-node sharp protobufjs || true
+      - name: Verify release metadata
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const pkg = JSON.parse(fs.readFileSync('code-intel/core/package.json', 'utf8'));
+          const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+          const locked = lock.packages?.['code-intel/core']?.version;
+          if (pkg.version !== '1.0.8') throw new Error(`Expected package version 1.0.8, got ${pkg.version}`);
+          if (locked !== pkg.version) throw new Error(`package-lock core version ${locked} != package version ${pkg.version}`);
+          NODE
+      - name: Build distributable
+        run: npm run build --workspace=code-intel/core
+      - name: Validate npm package
+        run: npm run validate:dist --workspace=code-intel/core
+      - name: CLI version smoke test
+        run: test "$(node code-intel/core/dist/cli/main.js --version)" = "1.0.8"
+      - name: Atomic analyze and trust smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$(mktemp -d)"
+          mkdir -p "$repo/src"
+          printf 'export function hello(name: string) { return `Hello ${name}`; }\n' > "$repo/src/hello.ts"
+          node code-intel/core/dist/cli/main.js analyze --skip-git --skip-embeddings "$repo"
+          test -f "$repo/.code-intel/current.json"
+          node code-intel/core/dist/cli/main.js index-status "$repo" > "$repo/status.json"
+          node --input-type=module - "$repo/status.json" <<'NODE'
+          import fs from 'node:fs';
+          const status = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          if (status.state !== 'ready') throw new Error(`Expected ready index, got ${status.state}`);
+          NODE
+          node code-intel/core/dist/cli/main.js analyze --force --skip-git --skip-embeddings "$repo"
+          node code-intel/core/dist/cli/main.js index-status "$repo" > "$repo/status-after-force.json"
+      - name: Security gate
+        run: npm audit --audit-level=high
