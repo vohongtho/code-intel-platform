@@ -16,6 +16,30 @@ export type SearchFallbackReason =
   | 'VECTOR_INDEX_UNAVAILABLE'
   | 'VECTOR_QUERY_FAILED';
 
+export type SearchExplanation = {
+  requestedMode: RequestedSearchMode;
+  actualMode: ActualSearchMode;
+  fallbackReason?: SearchFallbackReason;
+  vectorReady: boolean;
+  ranking: 'BM25' | 'VECTOR' | 'RECIPROCAL_RANK_FUSION';
+  summary: string;
+};
+
+export function buildSearchExplanation(
+  requestedMode: RequestedSearchMode,
+  actualMode: ActualSearchMode,
+  vectorReady: boolean,
+  fallbackReason?: SearchFallbackReason,
+): SearchExplanation {
+  const ranking = actualMode === 'hybrid'
+    ? 'RECIPROCAL_RANK_FUSION'
+    : actualMode === 'vector' ? 'VECTOR' : 'BM25';
+  const summary = fallbackReason
+    ? `Requested ${requestedMode}; executed ${actualMode} because ${fallbackReason}.`
+    : `Requested ${requestedMode}; executed ${actualMode} using ${ranking}.`;
+  return { requestedMode, actualMode, fallbackReason, vectorReady, ranking, summary };
+}
+
 export type SearchExecResult =
   | { error: { status: number; message: string; hint?: string } }
   | {
@@ -26,6 +50,7 @@ export type SearchExecResult =
       actualMode: ActualSearchMode;
       searchMode: ActualSearchMode;
       fallbackReason?: SearchFallbackReason;
+      explanation?: SearchExplanation;
       scope: SearchScope;
       vectorReady: boolean;
       deprecated: boolean;
@@ -44,6 +69,8 @@ export type SearchRequest = {
   scope?: SearchScope;
   repo?: string;
   group?: string;
+  /** Include execution and ranking evidence in the response. */
+  explain?: boolean;
 };
 
 function normalizeRequestedMode(mode: SearchMode | undefined): RequestedSearchMode {
@@ -52,7 +79,7 @@ function normalizeRequestedMode(mode: SearchMode | undefined): RequestedSearchMo
 }
 
 export function normalizeSearchRequest(body: SearchRequest) {
-  const { query, limit, mode, scope, repo, group } = body;
+  const { query, limit, mode, scope, repo, group, explain } = body;
   if (!query) {
     return {
       error: {
@@ -87,6 +114,7 @@ export function normalizeSearchRequest(body: SearchRequest) {
     mode: normalizeRequestedMode(mode),
     scope: normalizedScope,
     deprecated: Boolean(repo || group || mode === 'hybrid'),
+    explain: explain === true,
   } as const;
 }
 
@@ -114,7 +142,7 @@ export async function executeSearchRequest(
     return { error: normalized.error };
   }
 
-  const { query, limit, mode: requestedMode, scope, deprecated } = normalized;
+  const { query, limit, mode: requestedMode, scope, deprecated, explain } = normalized;
   const endpointDeprecated = extra.forceDeprecated || Boolean(extra.endpoint);
   const deprecatedFlag = deprecated || endpointDeprecated;
   const deprecation = deprecationFor({ deprecated: deprecatedFlag }, extra.endpoint);
@@ -144,6 +172,7 @@ export async function executeSearchRequest(
         actualMode,
         searchMode: actualMode,
         fallbackReason,
+        explanation: explain ? buildSearchExplanation(requestedMode, actualMode, vectorReady, fallbackReason) : undefined,
         scope,
         vectorReady,
         deprecated: deprecatedFlag,
@@ -174,6 +203,7 @@ export async function executeSearchRequest(
         requestedMode,
         actualMode: 'bm25',
         searchMode: 'bm25',
+        explanation: explain ? buildSearchExplanation(requestedMode, 'bm25', Boolean(vdbPath)) : undefined,
         scope: resolvedScope,
         vectorReady: Boolean(vdbPath),
         deprecated: deprecatedFlag,
@@ -202,6 +232,7 @@ export async function executeSearchRequest(
       actualMode,
       searchMode: actualMode,
       fallbackReason,
+      explanation: explain ? buildSearchExplanation(requestedMode, actualMode, actualMode !== 'bm25', fallbackReason) : undefined,
       scope: resolvedScope,
       vectorReady: actualMode !== 'bm25',
       deprecated: deprecatedFlag,
