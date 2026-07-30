@@ -4,7 +4,7 @@ on:
     branches: [main]
   workflow_dispatch:
 permissions:
-  contents: write
+  contents: read
 jobs:
   export:
     runs-on: ubuntu-latest
@@ -19,109 +19,3 @@ jobs:
           name: code-intel-source
           path: /tmp/code-intel-source.tar.gz
           retention-days: 1
-
-  apply-change-context:
-    if: github.actor != 'github-actions[bot]'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: release/1.0.8
-          fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - name: Apply MCP transport and tests
-        run: |
-          python <<'PY'
-          from pathlib import Path
-          p=Path('code-intel/core/src/mcp-server/server.ts')
-          s=p.read_text()
-          s=s.replace("import { suggestTests } from '../query/suggest-tests.js';", "import { suggestTests } from '../query/suggest-tests.js';\nimport { buildChangeContext } from '../query/change-context.js';")
-          marker="""      // ── query (GQL) ────────────────────────────────────────────────────────"""
-          tool="""      {
-        name: 'change_context',
-        description: 'Build one complete coding-agent change package from changed files or a unified diff: impact, risk, coverage gaps, test suggestions, and a token-bounded context document.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            changedFiles: { type: 'array', items: { type: 'string' }, description: 'Changed file paths' },
-            diff: { type: 'string', description: 'Raw unified diff; changed files are extracted automatically' },
-            maxHops: { type: 'number', description: 'Blast-radius depth (default: 3, max: 10)' },
-            maxTokens: { type: 'number', description: 'Hard context token limit (128-6000)' },
-            ..._tokenProp,
-          },
-        },
-      },
-
-"""
-          if "name: 'change_context'" not in s:
-            s=s.replace(marker, tool+marker)
-          case_marker="""      // ── similar_symbols ────────────────────────────────────────────────────"""
-          case="""      case 'change_context': {
-        let changedFiles: string[] = (a.changedFiles as string[]) ?? [];
-        if (a.diff && typeof a.diff === 'string') {
-          changedFiles = [...new Set([...changedFiles, ...parseDiffFiles(a.diff)])];
-        }
-        if (changedFiles.length === 0) {
-          return { content: [{ type: 'text', text: compact({ error: 'No changed files provided. Supply changedFiles or diff.' }) }] };
-        }
-        const result = buildChangeContext(graph, {
-          changedFiles,
-          maxHops: a.maxHops as number | undefined,
-          maxTokens: a.maxTokens as number | undefined,
-        });
-        return { content: [{ type: 'text', text: compact(result) }] };
-      }
-
-"""
-          if "case 'change_context'" not in s:
-            s=s.replace(case_marker, case+case_marker)
-          s=s.replace("  'detect_changes', 'query'", "  'detect_changes', 'change_context', 'query'")
-          p.write_text(s)
-          PY
-          cat > code-intel/core/tests/unit/query/change-context.test.ts <<'EOF'
-          import { describe, it } from 'node:test';
-          import assert from 'node:assert/strict';
-          import { createKnowledgeGraph } from '../../../src/graph/knowledge-graph.js';
-          import { buildChangeContext } from '../../../src/query/change-context.js';
-
-          describe('buildChangeContext', () => {
-            it('returns impact, bounded context and test suggestions in one result', () => {
-              const graph = createKnowledgeGraph();
-              graph.addNode({ id: 'service', kind: 'function', name: 'createUser', filePath: 'src/user.ts', content: 'export function createUser() { return saveUser(); }' });
-              graph.addNode({ id: 'repo', kind: 'function', name: 'saveUser', filePath: 'src/repo.ts', content: 'export function saveUser() { return true; }' });
-              graph.addNode({ id: 'controller', kind: 'function', name: 'handleUser', filePath: 'src/controller.ts', content: 'export function handleUser() { return createUser(); }' });
-              graph.addEdge({ id: 'service-repo', source: 'service', target: 'repo', kind: 'calls' });
-              graph.addEdge({ id: 'controller-service', source: 'controller', target: 'service', kind: 'calls' });
-              const result = buildChangeContext(graph, { changedFiles: ['src/user.ts'], maxTokens: 256 });
-              assert.deepEqual(result.changedFiles, ['src/user.ts']);
-              assert.equal(result.summary.changedSymbolCount, 1);
-              assert.ok(result.summary.impactedSymbolCount >= 1);
-              assert.ok((result.context.blockTokens?.total ?? Infinity) <= 256);
-              assert.equal(result.testSuggestions[0]?.symbol, 'createUser');
-            });
-
-            it('normalizes and deduplicates changed paths', () => {
-              const graph = createKnowledgeGraph();
-              const result = buildChangeContext(graph, { changedFiles: ['src\\user.ts', 'src/user.ts', ''] });
-              assert.deepEqual(result.changedFiles, ['src/user.ts']);
-              assert.equal(result.summary.highestRisk, 'NONE');
-            });
-          });
-          EOF
-      - run: npm ci --legacy-peer-deps --ignore-scripts --include=optional
-      - run: npm rebuild tree-sitter tree-sitter-typescript tree-sitter-javascript tree-sitter-python tree-sitter-java tree-sitter-go tree-sitter-rust tree-sitter-c tree-sitter-cpp tree-sitter-c-sharp tree-sitter-php tree-sitter-ruby tree-sitter-kotlin tree-sitter-swift better-sqlite3 @ladybugdb/core onnxruntime-node sharp protobufjs || true
-      - name: Verify
-        run: |
-          npx tsc -b code-intel/shared code-intel/core
-          npm test --workspace=code-intel/core
-      - name: Commit verified implementation
-        run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add code-intel/core/src/mcp-server/server.ts code-intel/core/tests/unit/query/change-context.test.ts
-          git diff --cached --quiet && exit 0
-          git commit -m 'feat(change-context): add MCP transport and tests'
-          git push origin HEAD:release/1.0.8
