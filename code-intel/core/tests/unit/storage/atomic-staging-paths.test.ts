@@ -6,13 +6,26 @@ import path from 'node:path';
 import { getDbPath, getVectorDbPath, saveMetadata } from '../../../src/storage/metadata.js';
 import { getBm25DbPath } from '../../../src/search/bm25-index.js';
 import { createIndexGeneration, publishIndexGeneration } from '../../../src/storage/index-generation.js';
-import { seedIndexGeneration } from '../../../src/cli/atomic-analyze.js';
+import { resolveAnalyzeWorkspaceRoot, seedIndexGeneration } from '../../../src/cli/atomic-analyze.js';
 
 const original = process.env['CODE_INTEL_INDEX_STAGING_DIR'];
 
 afterEach(() => {
   if (original === undefined) delete process.env['CODE_INTEL_INDEX_STAGING_DIR'];
   else process.env['CODE_INTEL_INDEX_STAGING_DIR'] = original;
+});
+
+describe('atomic analyze argument parsing', () => {
+  it('resolves a repository path after boolean and value options', () => {
+    assert.equal(resolveAnalyzeWorkspaceRoot(['analyze', '--force', '/tmp/repo'], '/cwd'), '/tmp/repo');
+    assert.equal(resolveAnalyzeWorkspaceRoot(['analyze', '--name', 'api', './repo'], '/cwd'), '/cwd/repo');
+    assert.equal(resolveAnalyzeWorkspaceRoot(['analyze', './repo', '--force'], '/cwd'), '/cwd/repo');
+  });
+
+  it('does not mistake option values for the repository path', () => {
+    assert.equal(resolveAnalyzeWorkspaceRoot(['analyze', '--llm-model', 'gpt-4o-mini'], '/cwd'), '/cwd');
+    assert.equal(resolveAnalyzeWorkspaceRoot(['analyze', '--name=api', './repo'], '/cwd'), '/cwd/repo');
+  });
 });
 
 describe('atomic staging artifact routing', () => {
