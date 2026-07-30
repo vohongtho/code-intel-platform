@@ -11,6 +11,18 @@ export interface HybridSearchOptions {
   vectorLimit?: number;  // results to fetch from vector before RRF (default: 50)
   /** Pre-computed BM25 results (from Bm25Index). If supplied, skips linear textSearch. */
   bm25Results?: SearchResult[];
+  /** Include per-result lexical/vector/RRF evidence. */
+  explainResults?: boolean;
+}
+
+export interface SearchScoreEvidence {
+  lexicalScore?: number;
+  vectorScore?: number;
+  bm25Rank?: number;
+  vectorRank?: number;
+  bm25RrfContribution?: number;
+  vectorRrfContribution?: number;
+  finalScore: number;
 }
 
 export interface HybridSearchResult {
@@ -21,6 +33,7 @@ export interface HybridSearchResult {
   score: number;
   snippet?: string;
   searchMode: 'bm25' | 'vector' | 'hybrid';
+  evidence?: SearchScoreEvidence;
 }
 
 export async function hybridSearch(
@@ -29,67 +42,100 @@ export async function hybridSearch(
   limit: number,
   options: HybridSearchOptions = {},
 ): Promise<{ results: HybridSearchResult[]; searchMode: 'bm25' | 'vector' | 'hybrid' }> {
-  const { vectorDbPath, bm25Limit = 50, vectorLimit = 50, bm25Results: precomputedBm25 } = options;
+  const {
+    vectorDbPath,
+    bm25Limit = 50,
+    vectorLimit = 50,
+    bm25Results: precomputedBm25,
+    explainResults = false,
+  } = options;
 
-  // Use pre-computed BM25 results if supplied; otherwise fall back to linear textSearch
   const bm25Promise = precomputedBm25
     ? Promise.resolve(precomputedBm25)
     : Promise.resolve(textSearch(graph, query, bm25Limit));
 
-  // Determine if vector search is available
   const hasVectorDb = Boolean(vectorDbPath && fs.existsSync(vectorDbPath));
 
   if (!hasVectorDb) {
-    // BM25-only path
     const bm25Results = (await bm25Promise)
       .filter((result) => !isDefaultExcludedSearchPath(result.filePath))
       .sort(compareResults);
     return {
-      results: bm25Results.slice(0, limit).map((r) => ({ ...r, searchMode: 'bm25' as const })),
+      results: bm25Results.slice(0, limit).map((result, rank) => ({
+        ...result,
+        searchMode: 'bm25' as const,
+        evidence: explainResults
+          ? { lexicalScore: result.score, bm25Rank: rank + 1, finalScore: result.score }
+          : undefined,
+      })),
       searchMode: 'bm25',
     };
   }
 
-  // Run BM25 + vector search in parallel
   const vectorPromise = runVectorSearch(vectorDbPath!, query, vectorLimit);
   const [bm25Results, vectorResults] = await Promise.all([bm25Promise, vectorPromise]);
 
   if (vectorResults === null || vectorResults.length === 0) {
-    // Vector search failed or returned nothing — fall back to BM25
     const filteredBm25 = bm25Results
       .filter((result) => !isDefaultExcludedSearchPath(result.filePath))
       .sort(compareResults);
     return {
-      results: filteredBm25.slice(0, limit).map((r) => ({ ...r, searchMode: 'bm25' as const })),
+      results: filteredBm25.slice(0, limit).map((result, rank) => ({
+        ...result,
+        searchMode: 'bm25' as const,
+        evidence: explainResults
+          ? { lexicalScore: result.score, bm25Rank: rank + 1, finalScore: result.score }
+          : undefined,
+      })),
       searchMode: 'bm25',
     };
   }
 
-  // Convert vector hits to SearchResult format for RRF
-  const vectorAsSearchResults: SearchResult[] = vectorResults.map((h) => ({
-    nodeId: h.nodeId,
-    name: h.name,
-    kind: h.kind,
-    filePath: h.filePath,
-    score: h.score,
-    snippet: graph.getNode(h.nodeId)?.content?.slice(0, 200),
+  const vectorAsSearchResults: SearchResult[] = vectorResults.map((hit) => ({
+    nodeId: hit.nodeId,
+    name: hit.name,
+    kind: hit.kind,
+    filePath: hit.filePath,
+    score: hit.score,
+    snippet: graph.getNode(hit.nodeId)?.content?.slice(0, 200),
   }));
 
-  // Merge with Reciprocal Rank Fusion
   const merged = reciprocalRankFusion(bm25Results, vectorAsSearchResults)
     .filter((result) => !isDefaultExcludedSearchPath(result.filePath))
     .sort(compareResults);
 
+  const bm25ById = new Map(
+    bm25Results.map((result, rank) => [result.nodeId, { score: result.score, rank: rank + 1 }]),
+  );
+  const vectorById = new Map(
+    vectorAsSearchResults.map((result, rank) => [result.nodeId, { score: result.score, rank: rank + 1 }]),
+  );
+  const RRF_K = 60;
+
   return {
-    results: merged.slice(0, limit).map((r) => ({ ...r, searchMode: 'hybrid' as const })),
+    results: merged.slice(0, limit).map((result) => {
+      const lexical = bm25ById.get(result.nodeId);
+      const vector = vectorById.get(result.nodeId);
+      return {
+        ...result,
+        searchMode: 'hybrid' as const,
+        evidence: explainResults
+          ? {
+            lexicalScore: lexical?.score,
+            vectorScore: vector?.score,
+            bm25Rank: lexical?.rank,
+            vectorRank: vector?.rank,
+            bm25RrfContribution: lexical ? 1 / (RRF_K + lexical.rank) : undefined,
+            vectorRrfContribution: vector ? 1 / (RRF_K + vector.rank) : undefined,
+            finalScore: result.score,
+          }
+          : undefined,
+      };
+    }),
     searchMode: 'hybrid',
   };
 }
 
-/**
- * Run vector search against the given db path. Returns null on any error so
- * the caller can fall back gracefully to BM25-only results.
- */
 async function runVectorSearch(
   vectorDbPath: string,
   query: string,
@@ -105,7 +151,6 @@ async function runVectorSearch(
       return null;
     }
 
-    // Embed the query using the same model used for node embeddings
     const embedder = await getEmbedder();
     const out = await embedder(query, { pooling: 'mean', normalize: true });
     const queryEmbedding = Array.from(out.data);
