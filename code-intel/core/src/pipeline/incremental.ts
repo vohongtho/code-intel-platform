@@ -98,7 +98,13 @@ export function buildMtimeSnapshot(
 export interface IncrementalDecision {
   /** Whether to run incrementally (true) or do a full re-analysis (false) */
   incremental: boolean;
-  /** Files to re-parse (only set when incremental === true) */
+  /** Files to re-parse (absolute paths) */
+  changedExistingFiles?: string[];
+  /** Files removed since the previous successful analyze (relative paths) */
+  deletedFiles?: string[];
+  /** Total currently scanned files */
+  totalFiles?: number;
+  /** Back-compat alias for callers not yet migrated */
   changedFiles?: string[];
   /** Reason for falling back to full analysis (when incremental === false) */
   fallbackReason?: string;
@@ -124,33 +130,46 @@ export function decideIncremental(
   storedMtimes: Record<string, number> | undefined,
 ): IncrementalDecision {
   const total = allFilePaths.length;
+  const currentRelPaths = allFilePaths.map((p) => path.relative(workspaceRoot, p));
+  const currentRelSet = new Set(currentRelPaths);
+  const deletedFiles = Object.keys(storedMtimes ?? {}).filter((rel) => !currentRelSet.has(rel));
+
+  const finalizeIncremental = (changedExistingFiles: string[], source: 'git' | 'mtime'): IncrementalDecision => {
+    const changedWork = changedExistingFiles.length + deletedFiles.length;
+    if (total > 0 && changedWork / total > 0.2) {
+      return {
+        incremental: false,
+        fallbackReason: `${source}: changed files (${changedExistingFiles.length}) + deleted files (${deletedFiles.length}) > 20% of total (${total})`,
+        totalFiles: total,
+      };
+    }
+    Logger.info(`[incremental] ${source}: ${changedExistingFiles.length} changed files, ${deletedFiles.length} deleted files out of ${total}`);
+    return {
+      incremental: true,
+      changedExistingFiles,
+      deletedFiles,
+      changedFiles: changedExistingFiles,
+      totalFiles: total,
+    };
+  };
 
   // ── Try git first ──────────────────────────────────────────────────────────
   if (prevCommitHash) {
     const changed = getChangedFilesSince(workspaceRoot, prevCommitHash);
     if (changed !== null) {
-      // Map relative paths back to absolute (keep only paths that exist in our scan set)
-      const scanSet = new Set(allFilePaths.map((p) => path.relative(workspaceRoot, p)));
-      const changedInScan = changed.filter((rel) => scanSet.has(rel)).map((rel) => path.join(workspaceRoot, rel));
-
-      if (total > 0 && changedInScan.length / total > 0.2) {
-        return { incremental: false, fallbackReason: `changed files (${changedInScan.length}) > 20% of total (${total})` };
-      }
-      Logger.info(`[incremental] git: ${changedInScan.length} changed files out of ${total}`);
-      return { incremental: true, changedFiles: changedInScan };
+      const changedExistingFiles = changed
+        .filter((rel) => currentRelSet.has(rel))
+        .map((rel) => path.join(workspaceRoot, rel));
+      return finalizeIncremental(changedExistingFiles, 'git');
     }
     Logger.warn('[incremental] git diff failed, trying mtime fallback');
   }
 
   // ── mtime fallback ─────────────────────────────────────────────────────────
   if (storedMtimes && Object.keys(storedMtimes).length > 0) {
-    const changed = filterChangedByMtime(allFilePaths, workspaceRoot, storedMtimes);
-    if (total > 0 && changed.length / total > 0.2) {
-      return { incremental: false, fallbackReason: `mtime: changed files (${changed.length}) > 20% of total (${total})` };
-    }
-    Logger.info(`[incremental] mtime: ${changed.length} changed files out of ${total}`);
-    return { incremental: true, changedFiles: changed };
+    const changedExistingFiles = filterChangedByMtime(allFilePaths, workspaceRoot, storedMtimes);
+    return finalizeIncremental(changedExistingFiles, 'mtime');
   }
 
-  return { incremental: false, fallbackReason: 'no previous commit hash and no stored mtimes' };
+  return { incremental: false, fallbackReason: 'no previous commit hash and no stored mtimes', totalFiles: total };
 }

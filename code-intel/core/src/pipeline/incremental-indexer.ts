@@ -14,14 +14,14 @@ import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
 import { DbManager } from '../storage/db-manager.js';
 import { removeNodesForFile, upsertNodes } from '../storage/graph-loader.js';
 import { runPipeline } from './orchestrator.js';
-import { parsePhase } from './phases/parse-phase.js';
-import { resolvePhase } from './phases/resolve-phase.js';
+import { structurePhase, parsePhase, resolvePhase } from './phases/index.js';
 import type { PipelineContext } from './types.js';
 import Logger from '../shared/logger.js';
 import { Bm25Index, getBm25DbPath } from '../search/bm25-index.js';
 
 export interface PatchResult {
   filesProcessed: number;
+  deletedFiles: number;
   nodesRemoved: number;
   nodesAdded: number;
   duration: number;
@@ -39,15 +39,15 @@ export class IncrementalIndexer {
   }
 
   /**
-   * Patch the graph for a list of changed absolute file paths.
+   * Patch the graph for changed absolute file paths and deleted relative paths.
    * Non-blocking for HTTP API reads (pure in-memory + async DB).
    */
-  async patchGraph(changedFiles: string[]): Promise<PatchResult> {
+  async patchGraph(changedFiles: string[], deletedFiles: string[] = []): Promise<PatchResult> {
     const start = Date.now();
     const { graph, workspaceRoot, dbPath } = this;
 
-    if (changedFiles.length === 0) {
-      return { filesProcessed: 0, nodesRemoved: 0, nodesAdded: 0, duration: 0 };
+    if (changedFiles.length === 0 && deletedFiles.length === 0) {
+      return { filesProcessed: 0, deletedFiles: 0, nodesRemoved: 0, nodesAdded: 0, duration: 0 };
     }
 
     // ── 1. Remove stale nodes from in-memory graph ────────────────────────────
@@ -63,9 +63,13 @@ export class IncrementalIndexer {
     }
 
     const nodeIdsToRemove = new Set<string>();
+    const affectedRelPaths = new Set<string>(deletedFiles);
     for (const absPath of changedFiles) {
-      const relPath = path.relative(workspaceRoot, absPath);
+      affectedRelPaths.add(path.relative(workspaceRoot, absPath));
+    }
+    for (const relPath of affectedRelPaths) {
       for (const id of nodesByFilePath.get(relPath) ?? []) nodeIdsToRemove.add(id);
+      const absPath = path.join(workspaceRoot, relPath);
       for (const id of nodesByFilePath.get(absPath) ?? []) nodeIdsToRemove.add(id);
     }
     for (const id of nodeIdsToRemove) {
@@ -78,8 +82,7 @@ export class IncrementalIndexer {
       try {
         const db = new DbManager(dbPath);
         await db.init();
-        for (const absPath of changedFiles) {
-          const relPath = path.relative(workspaceRoot, absPath);
+        for (const relPath of affectedRelPaths) {
           await removeNodesForFile(relPath, db);
         }
         db.close();
@@ -110,7 +113,7 @@ export class IncrementalIndexer {
         async execute() { return { status: 'completed' as const, duration: 0 }; },
       };
 
-      await runPipeline([noopScan, parsePhase, resolvePhase], context);
+      await runPipeline([noopScan, structurePhase, parsePhase, resolvePhase], context);
     }
 
     const nodesAdded = Math.max(0, graph.size.nodes - (nodesBeforeParse - nodesRemoved));
@@ -120,9 +123,8 @@ export class IncrementalIndexer {
       try {
         const db = new DbManager(dbPath);
         await db.init();
-        const changedRelPaths = new Set(changedFiles.map((f) => path.relative(workspaceRoot, f)));
         const nodesToUpsert = [...graph.allNodes()].filter(
-          (n) => changedRelPaths.has(n.filePath) || changedRelPaths.has(path.relative(workspaceRoot, n.filePath)),
+          (n) => affectedRelPaths.has(n.filePath) || affectedRelPaths.has(path.relative(workspaceRoot, n.filePath)),
         );
         await upsertNodes(nodesToUpsert, db);
         db.close();
@@ -132,7 +134,7 @@ export class IncrementalIndexer {
           const bm25DbPath = getBm25DbPath(workspaceRoot);
           if (fs.existsSync(bm25DbPath)) {
             const bm25 = new Bm25Index(bm25DbPath);
-            bm25.updateNodes(nodesToUpsert);
+            bm25.updateNodes(nodesToUpsert, [...affectedRelPaths]);
             Logger.info(`[incremental] BM25 index updated: ${nodesToUpsert.length} nodes`);
           }
         } catch (bm25Err) {
@@ -144,10 +146,11 @@ export class IncrementalIndexer {
     }
 
     const duration = Date.now() - start;
-    Logger.info(`[incremental] patch: ${changedFiles.length} files, -${nodesRemoved} nodes, +${nodesAdded} nodes, ${duration}ms`);
+    Logger.info(`[incremental] patch: ${changedFiles.length} changed files, ${deletedFiles.length} deleted files, -${nodesRemoved} nodes, +${nodesAdded} nodes, ${duration}ms`);
 
     return {
       filesProcessed: changedFiles.length,
+      deletedFiles: deletedFiles.length,
       nodesRemoved,
       nodesAdded,
       duration,

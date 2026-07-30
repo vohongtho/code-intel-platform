@@ -107,6 +107,23 @@ describe('CLI analyze sticky embeddings', () => {
     assert.equal(loadMetadata(repoDir)?.embeddings?.status, 'ready');
   });
 
+  it('zero-change analyze with --embeddings preserves existing vector.db', () => {
+    const repoDir = mkRepo('sticky-zero-change-explicit');
+    runCli(repoDir, ['--embeddings']);
+
+    const vdbPath = getVectorDbPath(repoDir);
+    const before = fs.statSync(vdbPath).mtimeMs;
+
+    const out = runCli(repoDir, ['--embeddings']);
+    const after = fs.statSync(vdbPath).mtimeMs;
+
+    assert.match(out.stdout, /Auto-incremental:/);
+    assert.match(out.stdout, /Embeddings: enabled/);
+    assert.match(out.stdout, /Embeddings: preserved existing vector index \(zero-change incremental run\)/);
+    assert.equal(after, before, 'second --embeddings run should preserve vector.db when nothing changed');
+    assert.equal(loadMetadata(repoDir)?.embeddings?.status, 'ready');
+  });
+
   it('force analyze rebuilds remembered embeddings without explicit flag', () => {
     const repoDir = mkRepo('sticky-force');
     runCli(repoDir, ['--embeddings']);

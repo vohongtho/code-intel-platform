@@ -445,6 +445,9 @@ Sticky embeddings behavior:
 - The first successful `code-intel analyze --embeddings` run stores the repo preference in `.code-intel/meta.json`.
 - Later `code-intel analyze`, `code-intel analyze --incremental`, and `code-intel analyze --force` runs auto-enable embeddings for that repo unless you pass `--skip-embeddings`.
 - Plain `code-intel analyze` now auto-attempts incremental graph reindexing when valid prior `.code-intel/meta.json` exists and incremental safety checks pass; otherwise it falls back to full analysis.
+- Successful incremental runs preserve full-repository stats in `.code-intel/meta.json`; a second no-change analyze refreshes metadata without zeroing `graph.db` or `bm25.db`.
+- A second `code-intel analyze --embeddings` run with no source changes now preserves the existing `vector.db` instead of rebuilding it; only changed or deleted files trigger incremental vector updates when the stored embedding fingerprint is still compatible.
+- Deleted files are removed from the next successful index snapshot, and `code-intel status` always reports full-repository node, edge, and file counts rather than changed-file subsets.
 - If `vector.db` is missing, stale, corrupted, or incompatible with the current embedding fingerprint, `code-intel analyze` rebuilds the full vector index automatically.
 - `--skip-embeddings` does not forget the repo preference; it skips vectors for that run and marks remembered embeddings stale until the next normal analyze.
 - Previously indexed repos with only a legacy `vector.db` upgrade in place on the next analyze; no manual migration command is required.

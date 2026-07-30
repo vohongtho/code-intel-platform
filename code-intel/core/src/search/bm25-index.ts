@@ -335,9 +335,9 @@ export class Bm25Index {
    * Only terms that overlap with the changed nodes are rewritten.
    * Works even if `load()` was not called (reads affected terms directly from DB).
    */
-  updateNodes(nodes: CodeNode[]): void {
+  updateNodes(nodes: CodeNode[], deletedFilePaths: string[] = []): void {
     if (!fs.existsSync(this.dbPath)) return;
-    if (nodes.length === 0) return;
+    if (nodes.length === 0 && deletedFilePaths.length === 0) return;
 
     this.searchCache.clear();
 
@@ -356,6 +356,14 @@ export class Bm25Index {
 
     const db = new Database(this.dbPath);
     db.pragma('journal_mode = WAL');
+
+    if (deletedFilePaths.length > 0) {
+      const uniqueDeletedFilePaths = [...new Set(deletedFilePaths)];
+      const staleRows = db.prepare(
+        `SELECT node_id FROM bm25_nodemeta WHERE file_path IN (${uniqueDeletedFilePaths.map(() => '?').join(', ')})`,
+      ).all(...uniqueDeletedFilePaths) as { node_id: string }[];
+      for (const row of staleRows) changedIds.add(row.node_id);
+    }
 
     // Load existing postings for all terms that are either:
     //  a) associated with changed nodes (so we can remove old entries), OR
@@ -416,11 +424,19 @@ export class Bm25Index {
           upsertPosting.run(term, JSON.stringify(postings));
         }
       }
+      for (const nodeId of changedIds) {
+        db.prepare('DELETE FROM bm25_doclen WHERE node_id = ?').run(nodeId);
+        db.prepare('DELETE FROM bm25_nodemeta WHERE node_id = ?').run(nodeId);
+      }
       for (const node of nodes) {
         const terms = tokenize(nodeToDoc(node));
         upsertDoclen.run(node.id, terms.length);
         upsertNodeMeta.run(node.id, node.name, node.kind, node.filePath, node.content?.slice(0, 200) ?? null);
       }
+      const metaDocCount = (db.prepare('SELECT COUNT(*) AS cnt FROM bm25_doclen').get() as { cnt: number }).cnt;
+      const metaAvgdl = (db.prepare('SELECT AVG(doclen) AS avgdl FROM bm25_doclen').get() as { avgdl: number | null }).avgdl ?? 1;
+      db.prepare('INSERT OR REPLACE INTO bm25_meta VALUES (?, ?)').run('docCount', String(metaDocCount));
+      db.prepare('INSERT OR REPLACE INTO bm25_meta VALUES (?, ?)').run('avgdl', String(metaAvgdl || 1));
     })();
     db.close();
 
@@ -429,6 +445,10 @@ export class Bm25Index {
       for (const [term, postings] of termsToRewrite) {
         if (postings.length === 0) this.invertedIndex.delete(term);
         else this.invertedIndex.set(term, postings);
+      }
+      for (const nodeId of changedIds) {
+        this.docLengths.delete(nodeId);
+        this.nodeMeta.delete(nodeId);
       }
       for (const node of nodes) {
         const terms = tokenize(nodeToDoc(node));
@@ -440,6 +460,10 @@ export class Bm25Index {
           snippet: node.content?.slice(0, 200),
         });
       }
+      this.docCount = this.docLengths.size;
+      this.avgdl = this.docCount > 0
+        ? [...this.docLengths.values()].reduce((a, b) => a + b, 0) / this.docCount
+        : 1;
     }
   }
 }

@@ -6,6 +6,15 @@ All notable changes to this project are documented in this file.
 
 ## [1.0.7] - 2026-07-29
 
+### 🧭 Incremental analyze state consistency
+
+- Fixed incremental `code-intel analyze` so plain auto-incremental and explicit `--incremental` runs preserve full-repository graph state instead of persisting changed-file-only or zero-node results.
+- Added deletion-aware incremental decision output in `code-intel/core/src/pipeline/incremental.ts` (`decideIncremental`) and fresh full-workspace `lastAnalyzedMtimes` publication, so removed paths no longer linger in metadata.
+- Updated `code-intel/core/src/cli/app.ts` (`analyzeWorkspace`) to load the previously published graph before patching, skip graph/BM25 rebuilds on zero-change incremental runs, keep `code-intel status` counters truthful for the full repository, and preserve an existing healthy `vector.db` on repeated no-change `code-intel analyze --embeddings` runs instead of rebuilding vectors.
+- Extended `code-intel/core/src/pipeline/incremental-indexer.ts` (`IncrementalIndexer.patchGraph`) and `code-intel/core/src/search/bm25-index.ts` (`Bm25Index.updateNodes`) so changed files and deleted paths share one removal/update contract across graph DB and BM25 state.
+- Added CLI regression coverage in `code-intel/core/tests/integration/cli/analyze-incremental-consistency.test.ts` and `code-intel/core/tests/integration/cli/analyze-embeddings.test.ts` for no-change preservation, deletion-safe fallback cleanup, repeated `--embeddings` zero-change preservation, and zero-change remembered-embeddings behavior.
+- Security check: `code-intel scan --severity high --format json` still reports pre-existing HIGH findings (24 current total, including the long-standing git-shell use in `incremental.ts`); no new HIGH finding was introduced by this change's touched persistence paths.
+
 ### 🔍 MCP search mode + context tool
 
 - Added MCP `search.mode` support with `auto | bm25 | vector`, preserving existing default behavior when omitted while allowing callers to force BM25-only search or prefer vector search with BM25 fallback.
