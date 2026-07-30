@@ -324,7 +324,9 @@ describe('Dynamic budget + intent presets — B.5', () => {
     const seeds = Array.from({ length: 20 }, (_, i) => ({ nodeId: `n${i}`, refinedScore: 1 }));
     const doc = build(seeds, g, { maxTokens: 2000 });
     const counts = measureBlocks(doc);
-    assert.ok(counts.total <= 2200, `total ${counts.total} should be close to 2000 budget`);
+    assert.ok(counts.total <= 2000, `total ${counts.total} must not exceed 2000 budget`);
+    assert.equal(doc.blockTokens?.total, counts.total);
+    assert.equal(doc.maxTokens, 2000);
   });
 
   it('B.5.2: intent=code → focusCode gets large budget', () => {

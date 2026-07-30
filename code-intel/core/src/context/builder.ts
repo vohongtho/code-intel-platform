@@ -16,6 +16,7 @@
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
 import type { CodeNode } from '../shared/index.js';
 import { estimateTokens } from './token-counter.js';
+import { enforceContextBudget, normalizeContextTokenBudget, trimTextToTokenBudget, type ContextBlockName } from './budget.js';
 
 // ── Public types ───────────────────────────────────────────────────────────────
 
@@ -42,12 +43,16 @@ export interface ContextDocument {
   logic: string;
   relation: string;
   focusCode: string;
-  /** True if FOCUS CODE was trimmed due to budget exhaustion. */
+  /** True when any block was shortened or omitted. */
   truncated: boolean;
   /** Detected or user-supplied intent (for observability). */
   intent: QueryIntent;
-  /** Per-block token counts (filled by measureBlocks). */
+  /** Normalized hard limit applied to the complete document. */
+  maxTokens?: number;
+  /** Per-block token counts after all trimming. */
   blockTokens?: { summary: number; logic: number; relation: number; focusCode: number; total: number };
+  /** Stable block names whose content was shortened or omitted. */
+  truncatedBlocks?: ContextBlockName[];
 }
 
 // ── Budget presets (B.5.2) ─────────────────────────────────────────────────────
@@ -407,59 +412,44 @@ export function build(
   graph: KnowledgeGraph,
   options: BuilderOptions = {},
 ): ContextDocument {
-  const maxTokens = options.maxTokens ?? 6000;
+  const maxTokens = normalizeContextTokenBudget(options.maxTokens);
   const signatureOnlyThreshold = options.signatureOnlyThreshold ?? 0.3;
-
-  // Detect intent from external caller (set by askQuestion) or default auto
   const intent: QueryIntent = options.queryIntent ?? 'auto';
-  const budgets = BUDGET_PRESETS[intent];
-
-  // Resolve seed nodes (skip missing)
-  const nodes = seeds
-    .map((s) => graph.getNode(s.nodeId))
-    .filter((n): n is CodeNode => n !== undefined);
-
+  const preset = BUDGET_PRESETS[intent];
+  const nodes = seeds.map((seed) => graph.getNode(seed.nodeId)).filter((node): node is CodeNode => node !== undefined);
   const dedup = new DedupeRegistry();
-
-  // ── B.5.1: Dynamic budget surplus → FOCUS CODE ──────────────────────────────
+  const truncatedBlocks = new Set<ContextBlockName>();
   let available = maxTokens;
+  const presetTotal = preset.summary + preset.logic + preset.relation + preset.focusCode;
+  const scale = Math.min(1, maxTokens / presetTotal);
 
-  // SUMMARY
-  const summaryText = buildSummaryBlock(nodes, graph, dedup);
-  const summaryToks = estimateTokens(summaryText);
-  const summaryUsed = Math.min(summaryToks, Math.min(budgets.summary, available));
-  available -= summaryUsed;
+  const summaryFit = trimTextToTokenBudget(buildSummaryBlock(nodes, graph, dedup), Math.min(available, Math.floor(preset.summary * scale)));
+  if (summaryFit.truncated) truncatedBlocks.add('summary');
+  available -= estimateTokens(summaryFit.text);
 
-  // LOGIC
-  const logicText = buildLogicBlock(nodes, graph, dedup);
-  const logicToks = estimateTokens(logicText);
-  const logicBudget = Math.min(budgets.logic, Math.floor(available * 0.35));
-  const logicUsed = Math.min(logicToks, logicBudget);
-  available -= logicUsed;
+  const logicFit = trimTextToTokenBudget(buildLogicBlock(nodes, graph, dedup), Math.min(available, Math.floor(preset.logic * scale)));
+  if (logicFit.truncated) truncatedBlocks.add('logic');
+  available -= estimateTokens(logicFit.text);
 
-  // RELATION
-  const relationText = buildRelationBlock(nodes, graph, dedup);
-  const relationToks = estimateTokens(relationText);
-  const relationBudget = Math.min(budgets.relation, Math.floor(available * 0.35));
-  const relationUsed = Math.min(relationToks, relationBudget);
-  available -= relationUsed;
+  const relationFit = trimTextToTokenBudget(buildRelationBlock(nodes, graph, dedup), Math.min(available, Math.floor(preset.relation * scale)));
+  if (relationFit.truncated) truncatedBlocks.add('relation');
+  available -= estimateTokens(relationFit.text);
 
-  // FOCUS CODE gets all remaining budget (surplus from earlier blocks included)
-  const focusBudget = available;
-  const { text: focusText, truncated } = buildFocusCodeBlock(
-    seeds,
-    nodes,
-    dedup,
-    signatureOnlyThreshold,
-    focusBudget,
-  );
-
+  const focus = buildFocusCodeBlock(seeds, nodes, dedup, signatureOnlyThreshold, Math.max(0, available));
+  if (focus.truncated) truncatedBlocks.add('focusCode');
+  const enforced = enforceContextBudget({
+    summary: summaryFit.text,
+    logic: logicFit.text,
+    relation: relationFit.text,
+    focusCode: focus.text,
+  }, maxTokens);
+  for (const block of enforced.truncatedBlocks) truncatedBlocks.add(block);
   return {
-    summary: summaryText,
-    logic: logicText,
-    relation: relationText,
-    focusCode: focusText,
-    truncated,
+    ...enforced.blocks,
+    truncated: truncatedBlocks.size > 0,
     intent,
+    maxTokens,
+    blockTokens: enforced.blockTokens,
+    truncatedBlocks: [...truncatedBlocks].sort(),
   };
 }
