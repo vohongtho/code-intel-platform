@@ -1,5 +1,5 @@
 /**
- * Query module — re-exports for GQL parser, executor, and saved queries.
+ * Query module — re-exports for GQL parser, executor, saved queries, and change analysis.
  */
 
 export {
@@ -33,3 +33,10 @@ export {
   queryExists,
   type SavedQueryInfo,
 } from './saved-queries.js';
+
+export {
+  buildChangeContext,
+  type ChangeContextOptions,
+  type ChangeContextResult,
+  type ChangeContextTestSuggestion,
+} from './change-context.js';
