@@ -54,6 +54,8 @@ export function getPublishedGenerationDir(repoDir: string): string | null {
 }
 
 export function resolvePublishedArtifactPath(repoDir: string, artifact: IndexArtifactName): string {
+  const staging = process.env['CODE_INTEL_INDEX_STAGING_DIR']?.trim();
+  if (staging) return path.join(path.resolve(staging), artifact);
   const generationDir = getPublishedGenerationDir(repoDir);
   if (generationDir) return path.join(generationDir, artifact);
   return path.join(indexDir(repoDir), artifact);
