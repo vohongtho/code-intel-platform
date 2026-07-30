@@ -4,7 +4,7 @@ on:
     branches: [main]
   workflow_dispatch:
 permissions:
-  contents: write
+  contents: read
 jobs:
   export:
     runs-on: ubuntu-latest
@@ -19,40 +19,3 @@ jobs:
           name: code-intel-source
           path: /tmp/code-intel-source.tar.gz
           retention-days: 1
-
-  sync-release-lockfile:
-    if: github.actor != 'github-actions[bot]'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: release/1.0.8
-          fetch-depth: 0
-      - name: Synchronize workspace package version
-        run: |
-          node --input-type=module <<'NODE'
-          import fs from 'node:fs';
-          const file = 'package-lock.json';
-          const lock = JSON.parse(fs.readFileSync(file, 'utf8'));
-          const core = lock.packages?.['code-intel/core'];
-          if (!core) throw new Error('Missing code-intel/core workspace package in package-lock.json');
-          core.version = '1.0.8';
-          fs.writeFileSync(file, `${JSON.stringify(lock, null, 2)}\n`);
-          NODE
-      - name: Verify lockfile consistency
-        run: |
-          npm ci --legacy-peer-deps --ignore-scripts
-          node --input-type=module <<'NODE'
-          import fs from 'node:fs';
-          const pkg = JSON.parse(fs.readFileSync('code-intel/core/package.json', 'utf8'));
-          const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
-          if (lock.packages['code-intel/core'].version !== pkg.version) throw new Error('Package version mismatch');
-          NODE
-      - name: Commit synchronized lockfile
-        run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add package-lock.json
-          git diff --cached --quiet && exit 0
-          git commit -m 'chore(release): synchronize v1.0.8 lockfile metadata'
-          git push origin HEAD:release/1.0.8
