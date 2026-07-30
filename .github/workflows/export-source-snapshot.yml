@@ -13,9 +13,9 @@ jobs:
         with:
           fetch-depth: 0
       - name: Create source archive
-        run: tar --exclude=.git --exclude=node_modules -czf code-intel-source.tar.gz .
+        run: tar --exclude=.git --exclude=node_modules -czf /tmp/code-intel-source.tar.gz .
       - uses: actions/upload-artifact@v4
         with:
           name: code-intel-source
-          path: code-intel-source.tar.gz
+          path: /tmp/code-intel-source.tar.gz
           retention-days: 1
