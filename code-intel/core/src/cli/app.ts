@@ -46,6 +46,7 @@ import {
   buildMtimeSnapshot,
 } from '../pipeline/incremental.js';
 import { loadGraphFromDB } from '../multi-repo/graph-from-db.js';
+import { IncrementalIndexer } from '../pipeline/incremental-indexer.js';
 import {
   loadGroup,
   saveGroup,
@@ -554,7 +555,11 @@ async function analyzeWorkspace(targetPath: string, options?: {
 
   // ── Incremental mode: explicit or auto for plain analyze ───────────────────
   let isIncremental = false;
-  let incrementalChangedFiles: string[] | undefined;
+  let incrementalChangedFiles: string[] = [];
+  let incrementalDeletedFiles: string[] = [];
+  let scannedFilePaths: string[] = [];
+  let zeroChangeIncremental = false;
+  let fullIndexGraph: KnowledgeGraph | null = null;
   const analyzeMode = resolveAnalyzeMode({
     explicitIncremental: options?.incremental,
     force: options?.force,
@@ -563,22 +568,41 @@ async function analyzeWorkspace(targetPath: string, options?: {
   if (analyzeMode.attemptIncremental) {
     const prevMeta = previousMetadata;
     const scanResult = await runPipeline([scanPhase], context);
-    if (scanResult.success && context.filePaths.length > 0) {
+    scannedFilePaths = [...context.filePaths];
+    if (scanResult.success) {
       const decision = decideIncremental(
         workspaceRoot,
-        context.filePaths,
+        scannedFilePaths,
         prevMeta?.commitHash,
         prevMeta?.lastAnalyzedMtimes,
       );
-      if (decision.incremental && decision.changedFiles !== undefined) {
-        isIncremental = true;
-        incrementalChangedFiles = decision.changedFiles;
-        if (!options?.silent) {
-          const label = analyzeMode.source === 'auto' ? 'Auto-incremental' : 'Incremental';
-          console.log(`  ◈ ${label}: ${incrementalChangedFiles.length} changed file(s) of ${context.filePaths.length} total`);
+      if (decision.incremental) {
+        const dbPath = getDbPath(workspaceRoot);
+        if (fs.existsSync(dbPath)) {
+          fullIndexGraph = activeGraph;
+          const db = new DbManager(dbPath, true);
+          await db.init();
+          await loadGraphFromDB(fullIndexGraph, db);
+          db.close();
+          activeGraph = fullIndexGraph;
+          context.graph = fullIndexGraph;
+          isIncremental = true;
+          incrementalChangedFiles = decision.changedExistingFiles ?? [];
+          incrementalDeletedFiles = decision.deletedFiles ?? [];
+          if (!options?.silent) {
+            const label = analyzeMode.source === 'auto' ? 'Auto-incremental' : 'Incremental';
+            console.log(`  ◈ ${label}: ${incrementalChangedFiles.length} changed file(s), ${incrementalDeletedFiles.length} deleted file(s) of ${decision.totalFiles ?? scannedFilePaths.length} total`);
+          }
+          Logger.info(`[incremental] re-parsing ${incrementalChangedFiles.length} files; deleting ${incrementalDeletedFiles.length} files`);
+          zeroChangeIncremental = incrementalChangedFiles.length === 0 && incrementalDeletedFiles.length === 0;
+          context.filePaths = incrementalChangedFiles;
+        } else {
+          if (!options?.silent && analyzeMode.source === 'auto') {
+            console.log('  ◈ Auto-incremental unavailable: existing graph.db missing');
+          }
+          Logger.info('[incremental] fallback: existing graph.db missing');
+          context.filePaths = [];
         }
-        Logger.info(`[incremental] re-parsing ${incrementalChangedFiles.length} files`);
-        context.filePaths = incrementalChangedFiles;
       } else {
         if (!options?.silent) {
           if (analyzeMode.source === 'auto') {
@@ -609,7 +633,9 @@ async function analyzeWorkspace(targetPath: string, options?: {
   const phases = isIncremental
     ? [noopScanPhase, structurePhase, chosenParsePhase, chosenResolvePhase, clusterPhase, flowPhase, summarizePhase]
     : [scanPhase, structurePhase, chosenParsePhase, chosenResolvePhase, clusterPhase, flowPhase, summarizePhase];
-  const result = await runPipeline(phases, context);
+  const result = zeroChangeIncremental
+    ? await runPipeline([noopScanPhase], context)
+    : await runPipeline(phases, context);
 
   // ── Epic 4: --profile: write profile.json + phase timing table + bottleneck warn ──
   if (options?.profile) {
@@ -673,48 +699,15 @@ async function analyzeWorkspace(targetPath: string, options?: {
     console.log('');
   }
 
-  // ── After incremental pipeline: remove stale nodes from DB for changed files ─
-  if (isIncremental && incrementalChangedFiles && incrementalChangedFiles.length > 0) {
-    const dbPath = getDbPath(workspaceRoot);
-    if (fs.existsSync(dbPath)) {
-      try {
-        const db = new DbManager(dbPath);
-        await db.init();
-        for (const absPath of incrementalChangedFiles) {
-          const rel = path.relative(workspaceRoot, absPath);
-          await removeNodesForFile(rel, db);
-        }
-        // Re-insert updated nodes from the in-memory graph (changed files only)
-        const { upsertNodes: upsertNodesBatch } = await import('../storage/graph-loader.js');
-        const changedRelPaths = new Set(
-          incrementalChangedFiles.map((f) => path.relative(workspaceRoot, f)),
-        );
-        const nodesToUpsert = [...graph.allNodes()].filter(
-          (n) => changedRelPaths.has(n.filePath),
-        );
-        await upsertNodesBatch(nodesToUpsert, db);
-        db.close();
-        if (!options?.silent) {
-          console.log(`  ✓ Incremental DB patch: ${nodesToUpsert.length} nodes updated`);
-        }
-      } catch (err) {
-        Logger.warn(`Incremental DB patch failed: ${err instanceof Error ? err.message : err}`);
-      }
-    }
+  if (isIncremental && fullIndexGraph && !zeroChangeIncremental) {
+    const indexer = new IncrementalIndexer(fullIndexGraph, workspaceRoot, getDbPath(workspaceRoot));
+    await indexer.patchGraph(incrementalChangedFiles, incrementalDeletedFiles);
   }
 
-  // Build mtime snapshot for all analyzed files (used on next incremental run)
-  const allAnalyzedPaths = isIncremental
-    ? incrementalChangedFiles ?? []
-    : context.filePaths;
-  const newMtimes = buildMtimeSnapshot(allAnalyzedPaths, workspaceRoot);
-  // Merge with previous mtimes when incremental (so unchanged files keep their stored mtime)
-  let mergedMtimes: Record<string, number> | undefined;
-  if (isIncremental) {
-    mergedMtimes = { ...(previousMetadata?.lastAnalyzedMtimes ?? {}), ...newMtimes };
-  } else {
-    mergedMtimes = newMtimes;
-  }
+  // Build mtime snapshot for all currently scanned files (used on next incremental run)
+  const snapshotSourcePaths = isIncremental ? scannedFilePaths : context.filePaths;
+  const newMtimes = buildMtimeSnapshot(snapshotSourcePaths, workspaceRoot);
+  const mergedMtimes: Record<string, number> | undefined = newMtimes;
 
   // Get current commit hash for git-based incremental on the next run
   const currentCommitHash = getCurrentCommitHash(workspaceRoot) ?? undefined;
@@ -729,87 +722,107 @@ async function analyzeWorkspace(targetPath: string, options?: {
   }
   const repoName = existingByPath?.name ?? requestedRepoName ?? path.basename(workspaceRoot);
 
+  const indexedGraph = fullIndexGraph ?? activeGraph;
+  const indexedFileCount = isIncremental ? snapshotSourcePaths.length : context.filePaths.length;
+
   const savedRepo = upsertRepo({
     id: existingByPath?.id,
     name: repoName,
     path: workspaceRoot,
     indexedAt: new Date().toISOString(),
     stats: {
-      nodes: graph.size.nodes,
-      edges: graph.size.edges,
-      files: context.filePaths.length,
+      nodes: indexedGraph.size.nodes,
+      edges: indexedGraph.size.edges,
+      files: indexedFileCount,
     },
   });
 
   // Persist graph to LadybugDB — atomic swap: write to graph.db.new then rename
   let graphPersisted = false;
-  startSpinner('Persisting graph to DB');
-  try {
-    const dbPath = getDbPath(workspaceRoot);
-    const dbPathNew = `${dbPath}.new`;
-    // Clean up any previous failed .new file
-    const newStaleFiles = [
-      dbPathNew,
-      `${dbPathNew}-shm`, `${dbPathNew}-wal`,
-      `${dbPathNew}.shm`, `${dbPathNew}.wal`,
-    ];
-    for (const f of newStaleFiles) {
-      try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* ignore */ }
-    }
-    // Write to the .new file
-    const db = new DbManager(dbPathNew);
-    await db.init();
-    const { nodeCount, edgeCount } = await loadGraphToDB(graph, db);
-    db.close();
-    // Atomic swap: remove old DB files, rename .new → live
-    const staleFiles = [
-      dbPath,
-      `${dbPath}-shm`, `${dbPath}-wal`,
-      `${dbPath}.shm`, `${dbPath}.wal`,
-    ];
-    for (const f of staleFiles) {
-      try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* ignore */ }
-    }
-    // Rename .new WAL/SHM companions (skip the main db path itself)
-    for (const f of newStaleFiles) {
-      if (f === dbPathNew) continue; // handled below
-      if (fs.existsSync(f)) {
-        const dest = f.replace(dbPathNew, dbPath);
-        try { fs.renameSync(f, dest); } catch { /* ignore */ }
+  const shouldPersistGraph = !isIncremental || incrementalChangedFiles.length > 0 || incrementalDeletedFiles.length > 0;
+  if (shouldPersistGraph) {
+    startSpinner('Persisting graph to DB');
+    try {
+      const dbPath = getDbPath(workspaceRoot);
+      const dbPathNew = `${dbPath}.new`;
+      const newStaleFiles = [
+        dbPathNew,
+        `${dbPathNew}-shm`, `${dbPathNew}-wal`,
+        `${dbPathNew}.shm`, `${dbPathNew}.wal`,
+      ];
+      for (const f of newStaleFiles) {
+        try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* ignore */ }
       }
+      const db = new DbManager(dbPathNew);
+      await db.init();
+      const { nodeCount, edgeCount } = await loadGraphToDB(indexedGraph, db);
+      db.close();
+      const staleFiles = [
+        dbPath,
+        `${dbPath}-shm`, `${dbPath}-wal`,
+        `${dbPath}.shm`, `${dbPath}.wal`,
+      ];
+      for (const f of staleFiles) {
+        try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* ignore */ }
+      }
+      for (const f of newStaleFiles) {
+        if (f === dbPathNew) continue;
+        if (fs.existsSync(f)) {
+          const dest = f.replace(dbPathNew, dbPath);
+          try { fs.renameSync(f, dest); } catch { /* ignore */ }
+        }
+      }
+      fs.renameSync(dbPathNew, dbPath);
+      graphPersisted = true;
+      stopSpinner();
+      Logger.info(`DB persisted: ${nodeCount} nodes, ${edgeCount} edges`);
+      if (!options?.silent) {
+        console.log(`  ✓ DB: ${nodeCount} nodes, ${edgeCount} edges persisted`);
+      }
+    } catch (err) {
+      stopSpinner();
+      Logger.warn(`DB persist failed: ${err instanceof Error ? err.message : err}`);
     }
-    // Rename main db (may be a file or a directory depending on LadybugDB version)
-    fs.renameSync(dbPathNew, dbPath);
+  } else {
     graphPersisted = true;
-    stopSpinner();
-    Logger.info(`DB persisted: ${nodeCount} nodes, ${edgeCount} edges`);
-    if (!options?.silent) {
-      console.log(`  ✓ DB: ${nodeCount} nodes, ${edgeCount} edges persisted`);
-    }
-  } catch (err) {
-    stopSpinner();
-    Logger.warn(`DB persist failed: ${err instanceof Error ? err.message : err}`);
+    Logger.info('DB persist skipped: zero-change incremental run');
+    if (!options?.silent) console.log('  ✓ DB: preserved existing graph (zero-change incremental run)');
   }
 
-  // BM25 pre-built inverted index (always built, regardless of embedding flag)
-  startSpinner('Building BM25 inverted index');
-  try {
-    const { Bm25Index, getBm25DbPath } = await import('../search/bm25-index.js');
-    const bm25 = new Bm25Index(getBm25DbPath(workspaceRoot));
-    bm25.build(graph);
-    stopSpinner();
-    if (!options?.silent) console.log(`  ✓ BM25 index built`);
-  } catch (err) {
-    stopSpinner();
-    Logger.warn(`BM25 index build failed: ${err instanceof Error ? err.message : err}`);
+  // BM25 pre-built inverted index
+  const shouldPersistBm25 = !isIncremental || incrementalChangedFiles.length > 0 || incrementalDeletedFiles.length > 0;
+  if (shouldPersistBm25) {
+    startSpinner('Building BM25 inverted index');
+    try {
+      const { Bm25Index, getBm25DbPath } = await import('../search/bm25-index.js');
+      const bm25 = new Bm25Index(getBm25DbPath(workspaceRoot));
+      bm25.build(indexedGraph);
+      stopSpinner();
+      if (!options?.silent) console.log(`  ✓ BM25 index built`);
+    } catch (err) {
+      stopSpinner();
+      Logger.warn(`BM25 index build failed: ${err instanceof Error ? err.message : err}`);
+    }
+  } else {
+    Logger.info('BM25 rebuild skipped: zero-change incremental run');
+    if (!options?.silent) console.log('  ✓ BM25: preserved existing index (zero-change incremental run)');
   }
 
   // Vector embeddings (explicit or remembered per repo)
-  const incrementalEmbeddingPaths = isIncremental && incrementalChangedFiles && incrementalChangedFiles.length > 0
-    ? incrementalChangedFiles.map((f) => path.relative(workspaceRoot, f))
+  const incrementalEmbeddingPaths = isIncremental && (incrementalChangedFiles.length > 0 || incrementalDeletedFiles.length > 0)
+    ? [
+      ...incrementalChangedFiles.map((f) => path.relative(workspaceRoot, f)),
+      ...incrementalDeletedFiles,
+    ]
     : null;
-  const shouldForceFullEmbeddingRebuild = !incrementalEmbeddingPaths
-    || shouldRebuildEmbeddings({ metadata: previousMetadata, runtime: runtimeEmbeddingMetadata, hasVectorDb: fs.existsSync(vectorDbPath) });
+  const hasVectorDb = fs.existsSync(vectorDbPath);
+  const embeddingsNeedRebuild = shouldRebuildEmbeddings({ metadata: previousMetadata, runtime: runtimeEmbeddingMetadata, hasVectorDb });
+  const skipEmbeddingWork = embeddingMode.enabled
+    && zeroChangeIncremental
+    && hasVectorDb
+    && !embeddingsNeedRebuild;
+  const shouldForceFullEmbeddingRebuild = !skipEmbeddingWork
+    && (!incrementalEmbeddingPaths || embeddingsNeedRebuild);
   const useIncrementalEmbeddings = Boolean(incrementalEmbeddingPaths && !shouldForceFullEmbeddingRebuild);
   let embeddingMetadataForSave = previousMetadata?.embeddings;
   let embeddingBuildFailed = false;
@@ -821,57 +834,64 @@ async function analyzeWorkspace(targetPath: string, options?: {
         ? 'auto-enabled from legacy vector index'
         : 'enabled';
     if (!options?.silent) console.log(`  ◈ Embeddings: ${embeddingModeLabel}`);
-    startSpinner('Building vector embeddings');
-    try {
-      const { embedNodes } = await import('../search/embedder.js');
-      const { VectorIndex } = await import('../search/vector-index.js');
 
-      if (!useIncrementalEmbeddings) {
-        if (!options?.silent && previousMetadata?.embeddings?.status === 'stale') {
-          console.log('  ◈ Embeddings: stale state detected, rebuilding full vector index');
-        } else if (!options?.silent && previousMetadata?.embeddings
-          && previousMetadata.embeddings.model !== runtimeEmbeddingMetadata.model) {
-          console.log(`  ◈ Embeddings: fingerprint changed from ${previousMetadata.embeddings.model} to ${runtimeEmbeddingMetadata.model}, rebuilding full vector index`);
-        } else if (!options?.silent && !fs.existsSync(vectorDbPath)) {
-          console.log('  ◈ Embeddings: vector.db missing, rebuilding full vector index');
-        }
-        const staleVdb = [vectorDbPath, `${vectorDbPath}-shm`, `${vectorDbPath}-wal`];
-        for (const f of staleVdb) {
-          try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* ignore */ }
-        }
-      }
-
-      const idx = new VectorIndex(vectorDbPath);
-      await idx.init();
-      const nodes = await embedNodes(graph, {
-        filePaths: useIncrementalEmbeddings ? incrementalEmbeddingPaths ?? undefined : undefined,
-        onProgress: (done, total) => {
-          if (!options?.silent) {
-            stopSpinner();
-            renderBar('vector', done, total);
-            if (done >= total) clearBar();
-          }
-        },
-      });
-      stopSpinner();
-
-      if (useIncrementalEmbeddings) {
-        const deleted = await idx.deleteByFilePaths(incrementalEmbeddingPaths!);
-        const upserted = await idx.upsertIndex(nodes);
-        Logger.info(`Embeddings updated incrementally: -${deleted}, +${upserted}`);
-        if (!options?.silent) console.log(`  ✓ Embeddings: ${upserted} vectors updated incrementally`);
-      } else {
-        Logger.info(`Embeddings built: ${nodes.length} vectors`);
-        await idx.buildIndex(nodes);
-        if (!options?.silent) console.log(`  ✓ Embeddings: ${nodes.length} vectors built`);
-      }
-      idx.close();
+    if (skipEmbeddingWork) {
+      Logger.info('Embeddings rebuild skipped: zero-change incremental run');
+      if (!options?.silent) console.log('  ✓ Embeddings: preserved existing vector index (zero-change incremental run)');
       embeddingMetadataForSave = runtimeEmbeddingMetadata;
-    } catch (err) {
-      stopSpinner();
-      embeddingBuildFailed = true;
-      embeddingMetadataForSave = buildEmbeddingMetadata('stale');
-      Logger.warn(`Embeddings failed: ${err instanceof Error ? err.message : err}`);
+    } else {
+      startSpinner(useIncrementalEmbeddings ? 'Updating vector embeddings' : 'Building vector embeddings');
+      try {
+        const { embedNodes } = await import('../search/embedder.js');
+        const { VectorIndex } = await import('../search/vector-index.js');
+
+        if (!useIncrementalEmbeddings) {
+          if (!options?.silent && previousMetadata?.embeddings?.status === 'stale') {
+            console.log('  ◈ Embeddings: stale state detected, rebuilding full vector index');
+          } else if (!options?.silent && previousMetadata?.embeddings
+            && previousMetadata.embeddings.model !== runtimeEmbeddingMetadata.model) {
+            console.log(`  ◈ Embeddings: fingerprint changed from ${previousMetadata.embeddings.model} to ${runtimeEmbeddingMetadata.model}, rebuilding full vector index`);
+          } else if (!options?.silent && !hasVectorDb) {
+            console.log('  ◈ Embeddings: vector.db missing, rebuilding full vector index');
+          }
+          const staleVdb = [vectorDbPath, `${vectorDbPath}-shm`, `${vectorDbPath}-wal`];
+          for (const f of staleVdb) {
+            try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* ignore */ }
+          }
+        }
+
+        const idx = new VectorIndex(vectorDbPath);
+        await idx.init();
+        const nodes = await embedNodes(indexedGraph, {
+          filePaths: useIncrementalEmbeddings ? incrementalEmbeddingPaths ?? undefined : undefined,
+          onProgress: (done, total) => {
+            if (!options?.silent) {
+              stopSpinner();
+              renderBar('vector', done, total);
+              if (done >= total) clearBar();
+            }
+          },
+        });
+        stopSpinner();
+
+        if (useIncrementalEmbeddings) {
+          const deleted = await idx.deleteByFilePaths(incrementalEmbeddingPaths!);
+          const upserted = await idx.upsertIndex(nodes);
+          Logger.info(`Embeddings updated incrementally: -${deleted}, +${upserted}`);
+          if (!options?.silent) console.log(`  ✓ Embeddings: ${upserted} vectors updated incrementally`);
+        } else {
+          Logger.info(`Embeddings built: ${nodes.length} vectors`);
+          await idx.buildIndex(nodes);
+          if (!options?.silent) console.log(`  ✓ Embeddings: ${nodes.length} vectors built`);
+        }
+        idx.close();
+        embeddingMetadataForSave = runtimeEmbeddingMetadata;
+      } catch (err) {
+        stopSpinner();
+        embeddingBuildFailed = true;
+        embeddingMetadataForSave = buildEmbeddingMetadata('stale');
+        Logger.warn(`Embeddings failed: ${err instanceof Error ? err.message : err}`);
+      }
     }
   } else if (!options?.silent) {
     console.log(embeddingMode.remembered
@@ -895,9 +915,9 @@ async function analyzeWorkspace(targetPath: string, options?: {
       parser: context.parserUsed ?? 'regex',
       embeddings: embeddingMetadataForSave ?? (embeddingBuildFailed ? buildEmbeddingMetadata('stale') : undefined),
       stats: {
-        nodes: graph.size.nodes,
-        edges: graph.size.edges,
-        files: context.filePaths.length,
+        nodes: indexedGraph.size.nodes,
+        edges: indexedGraph.size.edges,
+        files: indexedFileCount,
         duration: result.totalDuration,
       },
     });
@@ -909,9 +929,9 @@ async function analyzeWorkspace(targetPath: string, options?: {
     try {
       const agentTargets = await getOrCreateAgentTargets(workspaceRoot, options?.silent ?? false);
       writeContextFiles(workspaceRoot, repoName, {
-        nodes: graph.size.nodes,
-        edges: graph.size.edges,
-        files: context.filePaths.length,
+        nodes: indexedGraph.size.nodes,
+        edges: indexedGraph.size.edges,
+        files: indexedFileCount,
         duration: result.totalDuration,
       }, agentTargets);
       stopSpinner();
@@ -931,9 +951,9 @@ async function analyzeWorkspace(targetPath: string, options?: {
   if (!options?.silent) {
     const dur = result.totalDuration;
     const durStr = dur >= 1000 ? `${(dur / 1000).toFixed(1)}s` : `${dur}ms`;
-    console.log(`\n  ✅  Done in ${durStr}  —  ${graph.size.nodes} nodes · ${graph.size.edges} edges · ${context.filePaths.length} files`);
+    console.log(`\n  ✅  Done in ${durStr}  —  ${indexedGraph.size.nodes} nodes · ${indexedGraph.size.edges} edges · ${indexedFileCount} files`);
   }
-  Logger.info(`analyze complete: ${graph.size.nodes} nodes, ${graph.size.edges} edges, ${context.filePaths.length} files, ${result.totalDuration}ms`);
+  Logger.info(`analyze complete: ${indexedGraph.size.nodes} nodes, ${indexedGraph.size.edges} edges, ${indexedFileCount} files, ${result.totalDuration}ms`);
 
   // Auto-sync groups containing this repo (unless --no-group-sync)
   if (!options?.noGroupSync) {
@@ -963,7 +983,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
     }
   }
 
-  return { graph: activeGraph, result, repoName: savedRepo.name, workspaceRoot };
+  return { graph: indexedGraph, result, repoName: savedRepo.name, workspaceRoot };
 }
 
 // ─── 0. init ─────────────────────────────────────────────────────────────────

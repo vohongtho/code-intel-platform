@@ -4,6 +4,25 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.0.7] - 2026-07-29
+
+### 🧭 Incremental analyze state consistency
+
+- Fixed incremental `code-intel analyze` so plain auto-incremental and explicit `--incremental` runs preserve full-repository graph state instead of persisting changed-file-only or zero-node results.
+- Added deletion-aware incremental decision output in `code-intel/core/src/pipeline/incremental.ts` (`decideIncremental`) and fresh full-workspace `lastAnalyzedMtimes` publication, so removed paths no longer linger in metadata.
+- Updated `code-intel/core/src/cli/app.ts` (`analyzeWorkspace`) to load the previously published graph before patching, skip graph/BM25 rebuilds on zero-change incremental runs, keep `code-intel status` counters truthful for the full repository, and preserve an existing healthy `vector.db` on repeated no-change `code-intel analyze --embeddings` runs instead of rebuilding vectors.
+- Extended `code-intel/core/src/pipeline/incremental-indexer.ts` (`IncrementalIndexer.patchGraph`) and `code-intel/core/src/search/bm25-index.ts` (`Bm25Index.updateNodes`) so changed files and deleted paths share one removal/update contract across graph DB and BM25 state.
+- Added CLI regression coverage in `code-intel/core/tests/integration/cli/analyze-incremental-consistency.test.ts` and `code-intel/core/tests/integration/cli/analyze-embeddings.test.ts` for no-change preservation, deletion-safe fallback cleanup, repeated `--embeddings` zero-change preservation, and zero-change remembered-embeddings behavior.
+- Security check: `code-intel scan --severity high --format json` still reports pre-existing HIGH findings (24 current total, including the long-standing git-shell use in `incremental.ts`); no new HIGH finding was introduced by this change's touched persistence paths.
+
+### 🔍 MCP search mode + context tool
+
+- Added MCP `search.mode` support with `auto | bm25 | vector`, preserving existing default behavior when omitted while allowing callers to force BM25-only search or prefer vector search with BM25 fallback.
+- Routed MCP `search` through the same shared scoped-search executor used by HTTP by extracting `code-intel/core/src/search/execute-scoped-search.ts` and wiring both `code-intel/core/src/http/app.ts` and `code-intel/core/src/mcp-server/server.ts` to it, closing the MCP gap left after scoped-search unification.
+- Added MCP `context` tool as a thin wrapper around `code-intel/core/src/context/builder.ts`, exposing structured `summary`, `logic`, `relation`, `focusCode`, and `truncated` fields for one or more resolved seed symbols with `intent` and `max_tokens` controls.
+- Added MCP regression coverage in `code-intel/core/tests/unit/mcp-server/search-tool.test.ts` and `code-intel/core/tests/unit/mcp-server/context-tool.test.ts` for explicit search modes, default-mode parity, partial/total unresolved context seeds, explicit intent, and token-budget clamping.
+- Affected files and symbols include `code-intel/core/src/search/execute-scoped-search.ts` (`executeSearchRequest`, `normalizeSearchRequest`), `code-intel/core/src/http/app.ts` (`createApp` scoped search handlers), `code-intel/core/src/mcp-server/server.ts` (`createMcpServer`, `dispatchTool`, MCP `search`, MCP `context`), `code-intel/core/src/context/builder.ts` (`build`, `detectQueryIntent`), `code-intel/core/tests/unit/mcp-server/search-tool.test.ts`, and `code-intel/core/tests/unit/mcp-server/context-tool.test.ts`.
+
 ## [1.0.6] - 2026-07-27
 
 ### 🔎 Scoped search unification

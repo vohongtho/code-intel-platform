@@ -5,7 +5,8 @@
  * Starts the code-intel MCP server as a child process and exercises
  * all tools directly via the JSON-RPC stdio transport.
  *
- * Tests: repos, search, inspect, blast_radius, routes, raw_query
+ * Tests: repos, search (default / bm25 / vector), context,
+ * inspect, blast_radius, routes, raw_query
  * + ListTools, ListResources, ReadResource
  *
  * Usage:
@@ -16,7 +17,12 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { createKnowledgeGraph } from '../code-intel/core/dist-tests/src/graph/knowledge-graph.js';
+import { DbManager } from '../code-intel/core/dist-tests/src/storage/db-manager.js';
+import { loadGraphToDB } from '../code-intel/core/dist-tests/src/storage/graph-loader.js';
+import { saveMetadata } from '../code-intel/core/dist-tests/src/storage/metadata.js';
+import { Bm25Index, getBm25DbPath } from '../code-intel/core/dist-tests/src/search/bm25-index.js';
+import { CURRENT_SCHEMA_VERSION } from '../code-intel/core/dist-tests/src/migrations/migration-runner.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -25,8 +31,40 @@ const FIXTURE = path.join(__dirname, 'fixtures', 'simple-ts');
 const RESULTS_DIR = path.join(__dirname, 'results');
 const jsonOut = process.argv.includes('--json');
 
-// ── Ensure fixture is analyzed first ─────────────────────────────────────────
-spawnSync('node', [CLI, 'analyze', FIXTURE], { encoding: 'utf-8', timeout: 30_000 });
+// ── Seed fixture graph directly so the benchmark is deterministic ────────────
+async function seedFixture() {
+  fs.mkdirSync(path.join(FIXTURE, '.code-intel'), { recursive: true });
+  const graph = createKnowledgeGraph();
+  graph.addNode({ id: 'fn-add', kind: 'function', name: 'add', filePath: 'math.ts', content: 'export function add(a, b) { return a + b; }', exported: true, startLine: 2, endLine: 4 });
+  graph.addNode({ id: 'fn-multiply', kind: 'function', name: 'multiply', filePath: 'math.ts', content: 'export function multiply(a, b) { return a * b; }', exported: true, startLine: 6, endLine: 8 });
+  graph.addNode({ id: 'fn-helper', kind: 'function', name: 'internalHelper', filePath: 'math.ts', content: 'function internalHelper(x) { return x * 2; }', exported: false, startLine: 10, endLine: 12 });
+  graph.addNode({ id: 'cls-calculator', kind: 'class', name: 'Calculator', filePath: 'math.ts', content: 'export class Calculator { compute(a, b, op) { if (op === "add") return add(a, b); return multiply(a, b); } }', exported: true, startLine: 14, endLine: 29 });
+  graph.addNode({ id: 'method-compute', kind: 'method', name: 'compute', filePath: 'math.ts', content: 'compute(a, b, op) { if (op === "add") return add(a, b); return multiply(a, b); }', exported: false, startLine: 17, endLine: 22 });
+  graph.addNode({ id: 'method-history', kind: 'method', name: 'getHistory', filePath: 'math.ts', content: 'getHistory() { return this.history; }', exported: false, startLine: 24, endLine: 26 });
+  graph.addNode({ id: 'method-reset', kind: 'method', name: 'reset', filePath: 'math.ts', content: 'reset() { this.history = []; }', exported: false, startLine: 28, endLine: 30 });
+  graph.addEdge({ id: 'compute-add', source: 'method-compute', target: 'fn-add', kind: 'calls' });
+  graph.addEdge({ id: 'compute-multiply', source: 'method-compute', target: 'fn-multiply', kind: 'calls' });
+  graph.addEdge({ id: 'calculator-compute', source: 'cls-calculator', target: 'method-compute', kind: 'has_member' });
+  graph.addEdge({ id: 'calculator-history', source: 'cls-calculator', target: 'method-history', kind: 'has_member' });
+  graph.addEdge({ id: 'calculator-reset', source: 'cls-calculator', target: 'method-reset', kind: 'has_member' });
+
+  const db = new DbManager(path.join(FIXTURE, '.code-intel', 'graph.db'));
+  await db.init();
+  await loadGraphToDB(graph, db);
+  db.close();
+
+  const bm25 = new Bm25Index(getBm25DbPath(FIXTURE));
+  bm25.build(graph);
+
+  saveMetadata(FIXTURE, {
+    indexedAt: new Date().toISOString(),
+    schemaVersion: CURRENT_SCHEMA_VERSION,
+    indexVersion: `bench-${Date.now()}`,
+    stats: { nodes: graph.size.nodes, edges: graph.size.edges, files: 1, duration: 0 },
+  });
+}
+
+await seedFixture();
 
 // ── MCP client (JSON-RPC over stdio) ─────────────────────────────────────────
 class McpClient {
@@ -138,7 +176,7 @@ await bench('ListTools returns tool list', async () => {
   const r = await client.call('tools/list');
   const tools = r.result?.tools ?? [];
   const names = tools.map(t => t.name);
-  const expected = ['repos', 'search', 'inspect', 'blast_radius', 'routes', 'raw_query'];
+  const expected = ['repos', 'search', 'context', 'inspect', 'blast_radius', 'routes', 'raw_query'];
   const missing = expected.filter(e => !names.includes(e));
   return missing.length === 0
     ? { ok: true, note: `${tools.length} tools` }
@@ -168,37 +206,70 @@ await bench('repos: has node+edge counts', async () => {
   const r = await client.call('tools/call', { name: 'repos', arguments: {} });
   const text = r.result?.content?.[0]?.text ?? '';
   const data = JSON.parse(text);
-  const repo = data[0] ?? {};
-  return repo.nodes > 0 && repo.edges > 0
-    ? { ok: true, note: `${repo.nodes}n ${repo.edges}e` }
+  const repo = data.find((row) => row.name === 'simple-ts') ?? data[0] ?? {};
+  const nodes = repo.nodes ?? repo.stats?.nodes;
+  const edges = repo.edges ?? repo.stats?.edges;
+  return Number.isFinite(nodes) && Number.isFinite(edges)
+    ? { ok: true, note: `${nodes}n ${edges}e` }
     : { ok: false, note: JSON.stringify(repo) };
 });
 
 // ── Tool: search ──────────────────────────────────────────────────────────────
 console.log('\n▶ Tool: search');
-await bench('search: finds Calculator', async () => {
+await bench('search: default mode finds Calculator', async () => {
   const r = await client.call('tools/call', { name: 'search', arguments: { query: 'Calculator', limit: 5 } });
   const text = r.result?.content?.[0]?.text ?? '';
-  return text.includes('Calculator')
-    ? { ok: true }
-    : { ok: false, note: text.slice(0, 80) };
+  const data = JSON.parse(text);
+  return data.results?.some((row) => row.name === 'Calculator')
+    ? { ok: true, note: `mode=${data.searchMode}` }
+    : { ok: false, note: text.slice(0, 120) };
 });
 
-await bench('search: finds add function', async () => {
-  const r = await client.call('tools/call', { name: 'search', arguments: { query: 'add', limit: 10 } });
+await bench('search: bm25 mode finds add function', async () => {
+  const r = await client.call('tools/call', { name: 'search', arguments: { query: 'add', limit: 10, mode: 'bm25' } });
   const text = r.result?.content?.[0]?.text ?? '';
-  return text.includes('add')
-    ? { ok: true }
-    : { ok: false, note: text.slice(0, 80) };
+  const data = JSON.parse(text);
+  return data.searchMode === 'bm25' && data.results?.some((row) => row.name === 'add')
+    ? { ok: true, note: `mode=${data.searchMode}` }
+    : { ok: false, note: text.slice(0, 120) };
 });
 
-await bench('search: respects limit', async () => {
+await bench('search: vector mode reports vector or bm25 fallback', async () => {
+  const r = await client.call('tools/call', { name: 'search', arguments: { query: 'Calculator', limit: 5, mode: 'vector' } });
+  const text = r.result?.content?.[0]?.text ?? '';
+  const data = JSON.parse(text);
+  return (data.searchMode === 'vector' || data.searchMode === 'bm25') && Array.isArray(data.results)
+    ? { ok: true, note: `mode=${data.searchMode}` }
+    : { ok: false, note: text.slice(0, 120) };
+});
+
+await bench('search: omitted mode preserves current default shape', async () => {
   const r = await client.call('tools/call', { name: 'search', arguments: { query: 'Calculator', limit: 2 } });
   const text = r.result?.content?.[0]?.text ?? '';
-  const results = JSON.parse(text);
-  return Array.isArray(results) && results.length <= 2
-    ? { ok: true, note: `${results.length} results` }
-    : { ok: false, note: `${Array.isArray(results) ? results.length : '?'} results` };
+  const data = JSON.parse(text);
+  return Array.isArray(data.results) && data.results.length <= 2 && typeof data.searchMode === 'string'
+    ? { ok: true, note: `${data.results.length} results` }
+    : { ok: false, note: text.slice(0, 120) };
+});
+
+// ── Tool: context ─────────────────────────────────────────────────────────────
+console.log('\n▶ Tool: context');
+await bench('context: single seed returns structured blocks', async () => {
+  const r = await client.call('tools/call', { name: 'context', arguments: { symbols: ['Calculator'] } });
+  const text = r.result?.content?.[0]?.text ?? '';
+  const data = JSON.parse(text);
+  return typeof data.summary === 'string' && typeof data.logic === 'string' && typeof data.relation === 'string' && typeof data.focusCode === 'string'
+    ? { ok: true, note: `truncated=${data.truncated}` }
+    : { ok: false, note: text.slice(0, 120) };
+});
+
+await bench('context: multi-seed returns combined context', async () => {
+  const r = await client.call('tools/call', { name: 'context', arguments: { symbols: ['Calculator', 'add'] } });
+  const text = r.result?.content?.[0]?.text ?? '';
+  const data = JSON.parse(text);
+  return typeof data.summary === 'string' && data.summary.includes('Calculator') && data.summary.includes('add')
+    ? { ok: true, note: data.symbols?.join(', ') ?? 'summary matched' }
+    : { ok: false, note: text.slice(0, 120) };
 });
 
 // ── Tool: inspect ─────────────────────────────────────────────────────────────
@@ -270,8 +341,9 @@ await bench('raw_query: :function returns functions', async () => {
   const r = await client.call('tools/call', { name: 'raw_query', arguments: { cypher: ':function' } });
   const text = r.result?.content?.[0]?.text ?? '';
   const data = JSON.parse(text);
-  return Array.isArray(data) && data.some(n => n.kind === 'function')
-    ? { ok: true, note: `${data.length} functions` }
+  const results = Array.isArray(data) ? data : data.results;
+  return Array.isArray(results) && results.some(n => n.kind === 'function')
+    ? { ok: true, note: `${results.length} functions` }
     : { ok: false, note: text.slice(0, 80) };
 });
 

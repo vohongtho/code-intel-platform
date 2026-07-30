@@ -10,9 +10,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
 import { isLazyGraph } from '../graph/lazy-knowledge-graph.js';
-import { textSearch } from '../search/text-search.js';
-import { hybridSearch } from '../search/hybrid-search.js';
 import { Bm25Index, getBm25DbPath } from '../search/bm25-index.js';
+import { executeSearchRequest, type SearchMode, type SearchScope } from '../search/execute-scoped-search.js';
 import { DbManager, getDbPath, getVectorDbPath } from '../storage/index.js';
 import { loadMetadata, shouldRebuildEmbeddings } from '../storage/metadata.js';
 import { VectorIndex } from '../search/vector-index.js';
@@ -880,28 +879,6 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     return gg ?? graph;
   }
 
-  type SearchMode = 'bm25' | 'vector' | 'hybrid';
-  type SearchScope = { type: 'repo' | 'group'; name: string };
-
-  function normalizeSearchRequest(body: { query?: string; limit?: number; mode?: SearchMode; scope?: SearchScope; repo?: string; group?: string }) {
-    const { query, limit, mode, scope, repo, group } = body;
-    if (!query) return { error: { status: 400, message: 'Missing query', hint: 'Provide { "query": "..." } in request body' } } as const;
-    if (scope && (repo || group)) return { error: { status: 400, message: 'Ambiguous request shape', hint: 'Use either scope or legacy repo/group fields, not both' } } as const;
-    if (repo && group) return { error: { status: 400, message: 'Ambiguous legacy scope', hint: 'Use either repo or group, not both' } } as const;
-    const normalizedScope = scope ?? (group ? { type: 'group' as const, name: group } : repo ? { type: 'repo' as const, name: repo } : undefined);
-    return {
-      query,
-      limit: limit ?? 20,
-      mode: mode ?? 'hybrid',
-      scope: normalizedScope,
-      deprecated: Boolean(repo || group),
-    } as const;
-  }
-
-  function deprecationFor(req: { deprecated?: boolean }, endpoint?: string): string | undefined {
-    if (!req.deprecated && !endpoint) return undefined;
-    return endpoint ? `${endpoint} is deprecated; use POST /api/v1/search with { query, limit, mode, scope }.` : 'Legacy repo/group request shape is deprecated; use { query, limit, mode, scope }.';
-  }
 
   // ── Graph download ──────────────────────────────────────────────────────────
   app.get('/api/v1/graph/:repo', requireRepoAccess((req) => {
@@ -976,71 +953,16 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     });
   });
 
-  type SearchExecResult =
-    | { error: { status: number; message: string; hint?: string } }
-    | { body: { results: unknown[]; perRepo?: unknown[]; searchMode: SearchMode | string; scope: SearchScope; vectorReady?: boolean; deprecated: boolean; deprecation?: string; total: number; offset: number; limit: number; hasMore: boolean } };
-
-  async function executeSearchRequest(body: { query?: string; limit?: number; mode?: SearchMode; scope?: SearchScope; repo?: string; group?: string }, extra: { endpoint?: string; forceDeprecated?: boolean } = {}): Promise<SearchExecResult> {
-    const normalized = normalizeSearchRequest(body);
-    if ('error' in normalized && normalized.error) {
-      return { error: normalized.error };
-    }
-
-    const { query, limit, mode, scope, deprecated } = normalized;
-    const endpointDeprecated = extra.forceDeprecated || Boolean(extra.endpoint);
-    const deprecatedFlag = deprecated || endpointDeprecated;
-    const deprecation = deprecationFor({ deprecated: deprecatedFlag }, extra.endpoint);
-
-    if (scope?.type === 'group') {
-      const grp = loadGroup(scope.name);
-      if (!grp) {
-        return { error: { status: 404, message: `Group '${scope.name}' not found`, hint: 'Use /api/v1/groups to list available groups' } } as const;
-      }
-      const { perRepo, merged, searchMode, vectorReady } = await queryGroup(grp, query, limit, { mode });
-      return {
-        body: {
-          results: merged,
-          perRepo,
-          searchMode,
-          scope,
-          vectorReady,
-          deprecated: deprecatedFlag,
-          deprecation,
-          total: merged.length,
-          offset: 0,
-          limit,
-          hasMore: false,
-        },
-      } as const;
-    }
-
-    const requestedRepo = scope?.type === 'repo' ? scope.name : undefined;
-    const g = await getGraphForRepo(requestedRepo);
-    const resolvedScope = scope ?? { type: 'repo' as const, name: requestedRepo ?? repoName };
-    const repoEntry = requestedRepo && requestedRepo !== repoName
-      ? loadRegistry().find((r) => r.id === requestedRepo || r.name === requestedRepo || r.path === requestedRepo)
-      : null;
-    const vdbPath = repoEntry ? getVectorDbPath(repoEntry.path) : (workspaceRoot ? getVectorDbPath(workspaceRoot) : undefined);
-    const bm25 = (!requestedRepo || requestedRepo === repoName) ? ensureBm25Index() : null;
-    const bm25Results = bm25 ? bm25.search(query, limit * 3) : null;
-
-    if (mode === 'bm25') {
-      const results = (bm25Results ?? textSearch(g, query, limit)).slice(0, limit);
-      return { body: { results, searchMode: 'bm25', scope: resolvedScope, deprecated: deprecatedFlag, deprecation, total: results.length, offset: 0, limit, hasMore: false } } as const;
-    }
-
-    const { results, searchMode } = await hybridSearch(g, query, limit, {
-      vectorDbPath: vdbPath,
-      bm25Results: bm25Results ?? undefined,
-    });
-    const finalMode = mode === 'vector' ? (searchMode === 'bm25' ? 'bm25' : 'vector') : searchMode;
-    return { body: { results, searchMode: finalMode, scope: resolvedScope, vectorReady: searchMode !== 'bm25', deprecated: deprecatedFlag, deprecation, total: results.length, offset: 0, limit, hasMore: false } } as const;
-  }
 
   // ── Search ──────────────────────────────────────────────────────────────────
   app.post('/api/v1/search', requireToolScope('search'), async (req, res) => {
     try {
-      const result = await executeSearchRequest(req.body as { query?: string; limit?: number; mode?: SearchMode; scope?: SearchScope; repo?: string; group?: string });
+      const result = await executeSearchRequest(req.body as { query?: string; limit?: number; mode?: SearchMode; scope?: SearchScope; repo?: string; group?: string }, {
+        repoName,
+        workspaceRoot,
+        ensureBm25Index,
+        getGraphForRepo,
+      });
       if ('error' in result && result.error) {
         res.status(result.error.status).json({ error: { code: result.error.status === 404 ? ErrorCodes.NOT_FOUND : ErrorCodes.INVALID_REQUEST, message: result.error.message, hint: result.error.hint } });
         return;
@@ -1055,7 +977,12 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
   // ── Vector search ───────────────────────────────────────────────────────────
   app.post('/api/v1/vector-search', requireToolScope('search'), async (req, res) => {
     try {
-      const result = await executeSearchRequest({ ...(req.body as Record<string, unknown>), mode: 'vector' } as { query?: string; limit?: number; mode?: SearchMode; scope?: SearchScope; repo?: string; group?: string }, { endpoint: '/api/v1/vector-search', forceDeprecated: true });
+      const result = await executeSearchRequest({ ...(req.body as Record<string, unknown>), mode: 'vector' } as { query?: string; limit?: number; mode?: SearchMode; scope?: SearchScope; repo?: string; group?: string }, {
+        repoName,
+        workspaceRoot,
+        ensureBm25Index,
+        getGraphForRepo,
+      }, { endpoint: '/api/v1/vector-search', forceDeprecated: true });
       if ('error' in result && result.error) {
         res.status(result.error.status).json({ error: { code: result.error.status === 404 ? ErrorCodes.NOT_FOUND : ErrorCodes.INVALID_REQUEST, message: result.error.message, hint: result.error.hint } });
         return;
@@ -1449,6 +1376,11 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
         limit: (req.body as { limit?: number }).limit,
         mode: (req.body as { mode?: SearchMode }).mode ?? 'hybrid',
         scope: { type: 'group', name: groupName },
+      }, {
+        repoName,
+        workspaceRoot,
+        ensureBm25Index,
+        getGraphForRepo,
       }, { endpoint: '/api/v1/groups/:name/search', forceDeprecated: true });
       if ('error' in result && result.error) {
         res.status(result.error.status).json({ error: { code: result.error.status === 404 ? ErrorCodes.NOT_FOUND : ErrorCodes.INVALID_REQUEST, message: result.error.message, hint: result.error.hint } });

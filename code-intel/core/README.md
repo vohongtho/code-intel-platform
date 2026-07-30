@@ -445,6 +445,9 @@ Sticky embeddings behavior:
 - The first successful `code-intel analyze --embeddings` run stores the repo preference in `.code-intel/meta.json`.
 - Later `code-intel analyze`, `code-intel analyze --incremental`, and `code-intel analyze --force` runs auto-enable embeddings for that repo unless you pass `--skip-embeddings`.
 - Plain `code-intel analyze` now auto-attempts incremental graph reindexing when valid prior `.code-intel/meta.json` exists and incremental safety checks pass; otherwise it falls back to full analysis.
+- Successful incremental runs preserve full-repository stats in `.code-intel/meta.json`; a second no-change analyze refreshes metadata without zeroing `graph.db` or `bm25.db`.
+- A second `code-intel analyze --embeddings` run with no source changes now preserves the existing `vector.db` instead of rebuilding it; only changed or deleted files trigger incremental vector updates when the stored embedding fingerprint is still compatible.
+- Deleted files are removed from the next successful index snapshot, and `code-intel status` always reports full-repository node, edge, and file counts rather than changed-file subsets.
 - If `vector.db` is missing, stale, corrupted, or incompatible with the current embedding fingerprint, `code-intel analyze` rebuilds the full vector index automatically.
 - `--skip-embeddings` does not forget the repo preference; it skips vectors for that run and marks remembered embeddings stale until the next normal analyze.
 - Previously indexed repos with only a legacy `vector.db` upgrade in place on the next analyze; no manual migration command is required.
@@ -536,8 +539,8 @@ code-intel group status <name>                                             # Aud
 | `GET`  | `/api/v1/health` | Server status, graph size, watcher state |
 | `GET`  | `/api/v1/repos` | List indexed repos |
 | `GET`  | `/api/v1/graph/:repo` | Full graph (nodes + edges) |
-| `POST` | `/api/v1/search` | BM25 / hybrid text + vector search |
-| `POST` | `/api/v1/vector-search` | Semantic vector search |
+| `POST` | `/api/v1/search` | Canonical scoped search (`query`, `limit`, `mode`, `scope`) with repo/group targeting |
+| `POST` | `/api/v1/vector-search` | Deprecated compatibility alias for vector mode; returns resolved scope/mode metadata |
 | `GET`  | `/api/v1/vector-status` | Vector index ready/building status |
 | `GET`  | `/api/v1/nodes/:id` | Node detail (callers, callees, imports, etc.) |
 | `POST` | `/api/v1/blast-radius` | Impact analysis |
@@ -560,8 +563,9 @@ All tools are available to any MCP-capable editor (Claude Desktop, Claude Code, 
 |------|-------|-------------|
 | `repos` | _(none)_ | List all indexed repositories with path, indexedAt, and node/edge counts |
 | `overview` | _(none)_ | Repository summary: total nodes/edges + full breakdown by kind. **Use this first** to understand the codebase shape. |
-| `search` | `query` (string), `limit` (number, default 20) | BM25 / hybrid keyword + semantic search across all symbols |
+| `search` | `query` (string), `limit` (number, default 10), `mode` (`auto`\|`bm25`\|`vector`, default `auto`), `scope` (object, optional), legacy `repo`/`group` during migration | Scoped search with MCP default behavior matching HTTP: hybrid/semantic when vector is ready, BM25 otherwise; explicit `mode` can force BM25 or prefer vector with BM25 fallback |
 | `inspect` | `symbol_name` (string) | 360° view of a symbol: definition, callers, callees, imports, heritage (extends/implements), members, cluster, and source preview |
+| `context` | `symbols` (string[]), `intent` (`code`\|`callers`\|`architecture`\|`auto`, default `auto`), `max_tokens` (number, default/server max 6000), `limit` (number, default 10) | Token-budgeted deep context for one or more symbols: returns `summary`, `logic`, `relation`, `focusCode`, and `truncated` from the shared context builder |
 | `blast_radius` | `target` (string), `direction` (`callers`\|`callees`\|`both`), `max_hops` (number, default 5) | Impact analysis: traverse the call/import graph to find all affected symbols. Returns a `riskLevel` (LOW / MEDIUM / HIGH). |
 | `file_symbols` | `file_path` (string, partial match) | List all symbols defined in a file, ordered by line number. Avoids having to read raw source. |
 | `find_path` | `from` (string), `to` (string), `max_hops` (number, default 8) | Find the shortest call/import path between two symbols via BFS. |
@@ -684,14 +688,14 @@ Test all MCP tools directly over the JSON-RPC stdio transport:
 npm run bench:mcp
 ```
 
-Latest results (16 cases, TypeScript fixture):
+Latest results (19 cases, TypeScript fixture):
 
 | Metric | Result |
 |--------|--------|
-| **Score** | 16/16 (100%) |
-| **Avg tool latency** | 39ms/call |
+| **Score** | 19/19 (100%) |
+| **Avg tool latency** | 9ms/call |
 
-Tools tested: `repos`, `search`, `inspect`, `blast_radius`, `routes`, `raw_query` + `ListTools`, `ListResources`, `ReadResource`
+Tools tested: `repos`, `search` (default / `bm25` / `vector`), `context`, `inspect`, `blast_radius`, `routes`, `raw_query` + `ListTools`, `ListResources`, `ReadResource`
 
 ---
 
