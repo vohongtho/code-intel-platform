@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { runStandaloneCommand } from './standalone-commands.js';
+import { runAtomicAnalyze } from './atomic-analyze.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -17,6 +18,11 @@ if (process.argv.length === 3 && (arg === '--version' || arg === '-V')) {
 
 if (await runStandaloneCommand(process.argv.slice(2))) {
   process.exit(process.exitCode ?? 0);
+}
+
+if (arg === 'analyze' && process.env['CODE_INTEL_ATOMIC_CHILD'] !== '1') {
+  const status = runAtomicAnalyze(process.argv.slice(2), new URL(import.meta.url));
+  process.exit(status);
 }
 
 const appUrl = new URL('./app.js', import.meta.url);
