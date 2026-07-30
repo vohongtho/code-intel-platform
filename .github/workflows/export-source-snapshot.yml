@@ -4,7 +4,7 @@ on:
     branches: [main]
   workflow_dispatch:
 permissions:
-  contents: write
+  contents: read
 jobs:
   export:
     runs-on: ubuntu-latest
@@ -19,57 +19,3 @@ jobs:
           name: code-intel-source
           path: /tmp/code-intel-source.tar.gz
           retention-days: 1
-
-  fix-bm25-staging:
-    if: github.actor != 'github-actions[bot]'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: release/1.0.8
-          fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - name: Route BM25 through atomic staging and published generation
-        run: |
-          python <<'PY'
-          from pathlib import Path
-          p = Path('code-intel/core/src/search/bm25-index.ts')
-          s = p.read_text()
-          anchor = "import Logger from '../shared/logger.js';"
-          if "resolvePublishedArtifactPath" not in s:
-              s = s.replace(anchor, anchor + "\nimport { resolvePublishedArtifactPath } from '../storage/index-generation.js';")
-          old = "export function getBm25DbPath(workspaceRoot: string): string {\n  return path.join(workspaceRoot, '.code-intel', 'bm25.db');\n}"
-          new = "export function getBm25DbPath(workspaceRoot: string): string {\n  const stagingDir = process.env['CODE_INTEL_INDEX_STAGING_DIR'];\n  if (stagingDir) return path.join(stagingDir, 'bm25.db');\n  return resolvePublishedArtifactPath(workspaceRoot, 'bm25.db');\n}"
-          if old not in s:
-              raise SystemExit('Expected BM25 path helper not found')
-          p.write_text(s.replace(old, new))
-          PY
-      - name: Add BM25 staging regression coverage
-        run: |
-          python <<'PY'
-          from pathlib import Path
-          p = Path('code-intel/core/tests/unit/storage/atomic-staging-paths.test.ts')
-          s = p.read_text()
-          marker = "    assert.equal(getBm25DbPath(repo), path.join(staging, 'bm25.db'));"
-          if marker not in s:
-              raise SystemExit('Expected BM25 assertion missing')
-          # Existing assertion becomes the regression guard once resolver is corrected.
-          p.write_text(s)
-          PY
-      - name: Verify
-        run: |
-          npm ci --legacy-peer-deps --ignore-scripts --include=optional
-          npm rebuild tree-sitter tree-sitter-typescript tree-sitter-javascript tree-sitter-python tree-sitter-java tree-sitter-go tree-sitter-rust tree-sitter-c tree-sitter-cpp tree-sitter-c-sharp tree-sitter-php tree-sitter-ruby tree-sitter-kotlin tree-sitter-swift @ladybugdb/core onnxruntime-node sharp protobufjs || true
-          npx tsc -b code-intel/shared code-intel/core
-          npm test --workspace=code-intel/core
-      - name: Commit verified fix
-        run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add code-intel/core/src/search/bm25-index.ts
-          git diff --cached --quiet && exit 0
-          git commit -m 'fix(index): route BM25 through atomic generation staging'
-          git push origin HEAD:release/1.0.8
