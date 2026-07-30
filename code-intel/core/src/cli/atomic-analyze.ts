@@ -6,14 +6,31 @@ import {
   abortIndexGeneration,
   createIndexGeneration,
   publishIndexGeneration,
+  resolvePublishedArtifactPath,
+  type IndexArtifactName,
+  type IndexGeneration,
 } from '../storage/index-generation.js';
 import { loadMetadata, type IndexMetadata } from '../storage/metadata.js';
 
 function targetPathFromArgs(args: string[]): string {
   const analyzeIndex = args.indexOf('analyze');
   if (analyzeIndex < 0) return process.cwd();
-  const candidate = args.slice(analyzeIndex + 1).find((value) => !value.startsWith('-'));
-  return path.resolve(candidate ?? '.');
+  const positional = args[analyzeIndex + 1];
+  return path.resolve(positional && !positional.startsWith('-') ? positional : '.');
+}
+
+export function seedIndexGeneration(repoDir: string, generation: IndexGeneration): void {
+  const artifacts: IndexArtifactName[] = ['graph.db', 'bm25.db', 'vector.db', 'meta.json'];
+  for (const artifact of artifacts) {
+    const source = resolvePublishedArtifactPath(repoDir, artifact);
+    if (!fs.existsSync(source)) continue;
+    const target = path.join(generation.stagingDir, artifact);
+    fs.copyFileSync(source, target);
+    for (const suffix of ['-wal', '-shm']) {
+      const sidecar = `${source}${suffix}`;
+      if (fs.existsSync(sidecar)) fs.copyFileSync(sidecar, `${target}${suffix}`);
+    }
+  }
 }
 
 /**
@@ -25,6 +42,8 @@ export function runAtomicAnalyze(args: string[], binUrl: URL): number {
   const generation = createIndexGeneration(workspaceRoot);
   const previous = loadMetadata(workspaceRoot);
   const childArgs = [...args];
+
+  seedIndexGeneration(workspaceRoot, generation);
 
   if (
     previous?.embeddings?.enabled
