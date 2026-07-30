@@ -65,8 +65,18 @@ function getMetaDir(repoDir: string): string {
   return path.join(repoDir, META_DIRNAME);
 }
 
+function stagingDir(): string | null {
+  const value = process.env['CODE_INTEL_INDEX_STAGING_DIR']?.trim();
+  return value ? path.resolve(value) : null;
+}
+
+function writableArtifactPath(repoDir: string, artifact: 'graph.db' | 'vector.db' | 'meta.json'): string {
+  const staging = stagingDir();
+  return staging ? path.join(staging, artifact) : resolvePublishedArtifactPath(repoDir, artifact);
+}
+
 export function saveMetadata(repoDir: string, metadata: IndexMetadata): void {
-  const target = resolvePublishedArtifactPath(repoDir, META_FILE);
+  const target = writableArtifactPath(repoDir, META_FILE);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   const tmp = `${target}.tmp-${process.pid}-${Date.now()}`;
   fs.writeFileSync(tmp, JSON.stringify(metadata, null, 2));
@@ -74,20 +84,26 @@ export function saveMetadata(repoDir: string, metadata: IndexMetadata): void {
 }
 
 export function loadMetadata(repoDir: string): IndexMetadata | null {
-  try {
-    const data = fs.readFileSync(resolvePublishedArtifactPath(repoDir, META_FILE), 'utf-8');
-    return JSON.parse(data) as IndexMetadata;
-  } catch {
-    return null;
+  const staging = stagingDir();
+  const candidates = staging
+    ? [path.join(staging, META_FILE), resolvePublishedArtifactPath(repoDir, META_FILE)]
+    : [resolvePublishedArtifactPath(repoDir, META_FILE)];
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(fs.readFileSync(candidate, 'utf-8')) as IndexMetadata;
+    } catch {
+      // Continue to the next compatible location.
+    }
   }
+  return null;
 }
 
 export function getDbPath(repoDir: string): string {
-  return resolvePublishedArtifactPath(repoDir, 'graph.db');
+  return writableArtifactPath(repoDir, 'graph.db');
 }
 
 export function getVectorDbPath(repoDir: string): string {
-  return resolvePublishedArtifactPath(repoDir, 'vector.db');
+  return writableArtifactPath(repoDir, 'vector.db');
 }
 
 export function resolveEmbeddingMode(args: {
@@ -154,11 +170,14 @@ function statToken(filePath: string): string {
 }
 
 export function computeIndexVersion(repoDir: string, schemaVersion: number, indexedAt: string): string {
-  const files = [
-    resolvePublishedArtifactPath(repoDir, 'graph.db'),
-    resolvePublishedArtifactPath(repoDir, 'bm25.db'),
-    resolvePublishedArtifactPath(repoDir, 'vector.db'),
-  ].map(statToken);
+  const staging = stagingDir();
+  const files = staging
+    ? ['graph.db', 'bm25.db', 'vector.db'].map((name) => path.join(staging, name)).map(statToken)
+    : [
+        resolvePublishedArtifactPath(repoDir, 'graph.db'),
+        resolvePublishedArtifactPath(repoDir, 'bm25.db'),
+        resolvePublishedArtifactPath(repoDir, 'vector.db'),
+      ].map(statToken);
   return crypto.createHash('sha256').update(JSON.stringify({ schemaVersion, indexedAt, files })).digest('hex');
 }
 
