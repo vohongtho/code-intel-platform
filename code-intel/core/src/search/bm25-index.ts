@@ -21,6 +21,7 @@ import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
 import type { CodeNode } from '../shared/index.js';
 import type { SearchResult } from './text-search.js';
 import Logger from '../shared/logger.js';
+import { resolvePublishedArtifactPath } from '../storage/index-generation.js';
 
 // ── BM25 hyperparameters ──────────────────────────────────────────────────────
 const K1 = 1.2;
@@ -471,5 +472,7 @@ export class Bm25Index {
 // ── Path helper ───────────────────────────────────────────────────────────────
 
 export function getBm25DbPath(workspaceRoot: string): string {
-  return path.join(workspaceRoot, '.code-intel', 'bm25.db');
+  const stagingDir = process.env['CODE_INTEL_INDEX_STAGING_DIR'];
+  if (stagingDir) return path.join(stagingDir, 'bm25.db');
+  return resolvePublishedArtifactPath(workspaceRoot, 'bm25.db');
 }
