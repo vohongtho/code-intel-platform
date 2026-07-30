@@ -81,3 +81,4 @@ jobs:
           git diff --cached --quiet && exit 0
           git commit -m 'feat(mcp): add change_context tool'
           git push origin HEAD:release/1.0.8
+# trigger: 2
