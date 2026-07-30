@@ -69,7 +69,7 @@ export type SearchRequest = {
   scope?: SearchScope;
   repo?: string;
   group?: string;
-  /** Include execution and ranking evidence in the response. */
+  /** Include execution, ranking, and per-result score evidence. */
   explain?: boolean;
 };
 
@@ -107,7 +107,12 @@ export function normalizeSearchRequest(body: SearchRequest) {
       },
     } as const;
   }
-  const normalizedScope = scope ?? (group ? { type: 'group' as const, name: group } : repo ? { type: 'repo' as const, name: repo } : undefined);
+  const normalizedScope = scope
+    ?? (group
+      ? { type: 'group' as const, name: group }
+      : repo
+        ? { type: 'repo' as const, name: repo }
+        : undefined);
   return {
     query,
     limit: limit ?? 20,
@@ -172,7 +177,9 @@ export async function executeSearchRequest(
         actualMode,
         searchMode: actualMode,
         fallbackReason,
-        explanation: explain ? buildSearchExplanation(requestedMode, actualMode, vectorReady, fallbackReason) : undefined,
+        explanation: explain
+          ? buildSearchExplanation(requestedMode, actualMode, vectorReady, fallbackReason)
+          : undefined,
         scope,
         vectorReady,
         deprecated: deprecatedFlag,
@@ -186,26 +193,42 @@ export async function executeSearchRequest(
   }
 
   const requestedRepo = scope?.type === 'repo' ? scope.name : undefined;
-  const g = await deps.getGraphForRepo(requestedRepo);
+  const graph = await deps.getGraphForRepo(requestedRepo);
   const resolvedScope = scope ?? { type: 'repo' as const, name: requestedRepo ?? deps.repoName };
   const repoEntry = requestedRepo && requestedRepo !== deps.repoName
-    ? loadRegistry().find((r) => r.id === requestedRepo || r.name === requestedRepo || r.path === requestedRepo)
+    ? loadRegistry().find((repo) => repo.id === requestedRepo || repo.name === requestedRepo || repo.path === requestedRepo)
     : null;
-  const vdbPath = repoEntry ? getVectorDbPath(repoEntry.path) : (deps.workspaceRoot ? getVectorDbPath(deps.workspaceRoot) : undefined);
+  const vectorDbPath = repoEntry
+    ? getVectorDbPath(repoEntry.path)
+    : deps.workspaceRoot
+      ? getVectorDbPath(deps.workspaceRoot)
+      : undefined;
   const bm25 = (!requestedRepo || requestedRepo === deps.repoName) ? deps.ensureBm25Index() : null;
   const bm25Results = bm25 ? bm25.search(query, limit * 3) : null;
 
   if (requestedMode === 'bm25') {
-    const results = (bm25Results ?? textSearch(g, query, limit)).slice(0, limit);
+    const compactResults = (bm25Results ?? textSearch(graph, query, limit)).slice(0, limit);
+    const results = compactResults.map((result, rank) => explain
+      ? {
+        ...result,
+        evidence: {
+          lexicalScore: result.score,
+          bm25Rank: rank + 1,
+          finalScore: result.score,
+        },
+      }
+      : result);
     return {
       body: {
         results,
         requestedMode,
         actualMode: 'bm25',
         searchMode: 'bm25',
-        explanation: explain ? buildSearchExplanation(requestedMode, 'bm25', Boolean(vdbPath)) : undefined,
+        explanation: explain
+          ? buildSearchExplanation(requestedMode, 'bm25', Boolean(vectorDbPath))
+          : undefined,
         scope: resolvedScope,
-        vectorReady: Boolean(vdbPath),
+        vectorReady: Boolean(vectorDbPath),
         deprecated: deprecatedFlag,
         deprecation,
         total: results.length,
@@ -216,9 +239,10 @@ export async function executeSearchRequest(
     } as const;
   }
 
-  const { results, searchMode } = await hybridSearch(g, query, limit, {
-    vectorDbPath: vdbPath,
+  const { results, searchMode } = await hybridSearch(graph, query, limit, {
+    vectorDbPath,
     bm25Results: bm25Results ?? undefined,
+    explainResults: explain,
   });
   const actualMode = searchMode as ActualSearchMode;
   const fallbackReason = actualMode === 'bm25'
@@ -232,7 +256,9 @@ export async function executeSearchRequest(
       actualMode,
       searchMode: actualMode,
       fallbackReason,
-      explanation: explain ? buildSearchExplanation(requestedMode, actualMode, actualMode !== 'bm25', fallbackReason) : undefined,
+      explanation: explain
+        ? buildSearchExplanation(requestedMode, actualMode, actualMode !== 'bm25', fallbackReason)
+        : undefined,
       scope: resolvedScope,
       vectorReady: actualMode !== 'bm25',
       deprecated: deprecatedFlag,
