@@ -144,11 +144,11 @@ jobs:
             /** Detected or user-supplied intent (for observability). */
             intent: QueryIntent;
             /** Normalized hard limit applied to the complete document. */
-            maxTokens: number;
+            maxTokens?: number;
             /** Per-block token counts after all trimming. */
-            blockTokens: { summary: number; logic: number; relation: number; focusCode: number; total: number };
+            blockTokens?: { summary: number; logic: number; relation: number; focusCode: number; total: number };
             /** Stable block names whose content was shortened or omitted. */
-            truncatedBlocks: ContextBlockName[];""",
+            truncatedBlocks?: ContextBlockName[];""",
           )
           start = s.index('export function build(')
           build = """export function build(
@@ -203,7 +203,7 @@ jobs:
           test = Path('code-intel/core/tests/unit/context/builder.test.ts')
           t = test.read_text().replace(
               "assert.ok(counts.total <= 2200, `total ${counts.total} should be close to 2000 budget`);",
-              "assert.ok(counts.total <= 2000, `total ${counts.total} must not exceed 2000 budget`);\n    assert.equal(doc.blockTokens.total, counts.total);\n    assert.equal(doc.maxTokens, 2000);",
+              "assert.ok(counts.total <= 2000, `total ${counts.total} must not exceed 2000 budget`);\n    assert.equal(doc.blockTokens?.total, counts.total);\n    assert.equal(doc.maxTokens, 2000);",
           )
           test.write_text(t)
           PY
