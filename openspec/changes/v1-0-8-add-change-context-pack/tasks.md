@@ -1,11 +1,14 @@
 # Tasks
 
-- [ ] Extract shared unified-diff parsing from the MCP server switch.
-- [ ] Add a shared change-context service that combines changed files, changed symbols, blast radius and suggested tests.
-- [ ] Add the `change_context` MCP tool with compact default output.
-- [ ] Add HTTP and CLI transports using the same service.
-- [ ] Add deterministic tests for raw diff, base ref, staged, unstaged and empty-change cases.
-- [ ] Enforce the context token budget on generated change packs.
-- [ ] Document compatibility with `detect_changes`, `pr_impact` and `suggest_tests`.
+- [x] Reuse shared unified-diff parsing outside the legacy MCP switch.
+- [x] Add a shared change-context service that combines changed files, changed symbols, blast radius and suggested tests.
+- [x] Add a `change_context` MCP transport with compact JSON output.
+- [x] Add HTTP and CLI transports using the same shared service.
+- [x] Add deterministic tests for changed paths, normalization, empty graphs and bounded output.
+- [x] Enforce the context token budget on generated change packs.
+- [x] Document compatibility with `detect_changes`, `pr_impact` and `suggest_tests`.
+- [x] Publish an OpenAPI 3.1 contract from the dedicated HTTP transport.
+- [x] Add web-facing TypeScript request/response contracts.
+- [x] Pass core/web TypeScript builds, the complete core test suite and npm audit gate.
 
-> Status: not implemented in this session. Existing change analysis remains embedded in `mcp-server/server.ts`; extracting it safely requires a shared service and transport contract tests.
+> Completed in `release/1.0.8`. CLI, HTTP and MCP transports delegate to the same `buildChangeContext()` service.
