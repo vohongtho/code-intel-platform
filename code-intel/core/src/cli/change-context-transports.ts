@@ -13,6 +13,45 @@ export interface ChangeContextTransportDeps {
   graph: KnowledgeGraph;
 }
 
+export const changeContextOpenApi = {
+  openapi: '3.1.0',
+  info: { title: 'Code Intel Change Context API', version: '1.0.8' },
+  paths: {
+    '/health': {
+      get: { summary: 'Transport health', responses: { '200': { description: 'Healthy' } } },
+    },
+    '/api/v1/index-status': {
+      get: { summary: 'Verify index integrity and freshness', responses: { '200': { description: 'Index trust result' } } },
+    },
+    '/api/v1/change-context': {
+      post: {
+        summary: 'Build a coding-agent change context package',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  changedFiles: { type: 'array', items: { type: 'string' } },
+                  diff: { type: 'string' },
+                  maxHops: { type: 'number', minimum: 1, maximum: 10 },
+                  maxTokens: { type: 'number', minimum: 128, maximum: 6000 },
+                  maxChangedSymbols: { type: 'number', minimum: 1, maximum: 100 },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': { description: 'Change context result' },
+          '400': { description: 'Invalid request' },
+        },
+      },
+    },
+  },
+} as const;
+
 function normalizeChangedFiles(value: unknown, diff: unknown): string[] {
   const files = Array.isArray(value)
     ? value.filter((item): item is string => typeof item === 'string')
@@ -89,6 +128,7 @@ export function startChangeContextHttp(
   app.use(express.json({ limit: '5mb' }));
 
   app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'code-intel-change-context', version: '1.0.8' }));
+  app.get('/openapi.json', (_req, res) => res.json(changeContextOpenApi));
   app.get('/api/v1/index-status', (_req, res) => res.json(verifyIndexTrust(deps.repoDir)));
   app.post('/api/v1/change-context', (req, res) => {
     try {
