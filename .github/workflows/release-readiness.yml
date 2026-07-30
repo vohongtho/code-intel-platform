@@ -52,9 +52,21 @@ jobs:
           node --input-type=module - "$repo/status.json" <<'NODE'
           import fs from 'node:fs';
           const status = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-          if (status.state !== 'ready') throw new Error(`Expected ready index, got ${status.state}`);
+          if (status.state !== 'trusted' || status.trusted !== true || status.fresh !== true) {
+            throw new Error(`Expected trusted and fresh index, got ${JSON.stringify(status)}`);
+          }
           NODE
+          before="$(node -e "const fs=require('fs');process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],'utf8')).generationId)" "$repo/.code-intel/current.json")"
           node code-intel/core/dist/cli/main.js analyze --force --skip-git --skip-embeddings "$repo"
           node code-intel/core/dist/cli/main.js index-status "$repo" > "$repo/status-after-force.json"
+          after="$(node -e "const fs=require('fs');process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],'utf8')).generationId)" "$repo/.code-intel/current.json")"
+          test "$before" != "$after"
+          node --input-type=module - "$repo/status-after-force.json" <<'NODE'
+          import fs from 'node:fs';
+          const status = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          if (status.state !== 'trusted' || status.trusted !== true || status.fresh !== true) {
+            throw new Error(`Expected trusted index after force analysis, got ${JSON.stringify(status)}`);
+          }
+          NODE
       - name: Security gate
         run: npm audit --audit-level=high
