@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import {
   abortIndexGeneration,
@@ -33,7 +34,7 @@ export function runAtomicAnalyze(args: string[], binUrl: URL): number {
     childArgs.push('--embeddings');
   }
 
-  const child = spawnSync(process.execPath, [path.fileURLToPath(binUrl), ...childArgs], {
+  const child = spawnSync(process.execPath, [fileURLToPath(binUrl), ...childArgs], {
     stdio: 'inherit',
     env: {
       ...process.env,
