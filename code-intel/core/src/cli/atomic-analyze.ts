@@ -12,11 +12,33 @@ import {
 } from '../storage/index-generation.js';
 import { loadMetadata, type IndexMetadata } from '../storage/metadata.js';
 
-function targetPathFromArgs(args: string[]): string {
+const ANALYZE_VALUE_OPTIONS = new Set([
+  '--name', '--llm-provider', '--llm-model', '--llm-base-url', '--llm-api-key',
+  '--llm-batch-size', '--llm-max-nodes', '--max-memory',
+]);
+const ANALYZE_VARIADIC_OPTIONS = new Set(['--skip-folders', '--skip-files']);
+
+export function resolveAnalyzeWorkspaceRoot(args: string[], cwd = process.cwd()): string {
   const analyzeIndex = args.indexOf('analyze');
-  if (analyzeIndex < 0) return process.cwd();
-  const positional = args[analyzeIndex + 1];
-  return path.resolve(positional && !positional.startsWith('-') ? positional : '.');
+  if (analyzeIndex < 0) return cwd;
+  for (let i = analyzeIndex + 1; i < args.length; i += 1) {
+    const token = args[i]!;
+    if (token === '--') {
+      const positional = args[i + 1];
+      return path.resolve(cwd, positional ?? '.');
+    }
+    if (!token.startsWith('-')) return path.resolve(cwd, token);
+    const optionName = token.split('=', 1)[0]!;
+    if (token.includes('=')) continue;
+    if (ANALYZE_VALUE_OPTIONS.has(optionName)) {
+      i += 1;
+      continue;
+    }
+    if (ANALYZE_VARIADIC_OPTIONS.has(optionName)) {
+      while (i + 1 < args.length && !args[i + 1]!.startsWith('-')) i += 1;
+    }
+  }
+  return cwd;
 }
 
 export function seedIndexGeneration(repoDir: string, generation: IndexGeneration): void {
@@ -38,7 +60,7 @@ export function seedIndexGeneration(repoDir: string, generation: IndexGeneration
  * publish it by swapping current.json only after the child exits successfully.
  */
 export function runAtomicAnalyze(args: string[], binUrl: URL): number {
-  const workspaceRoot = targetPathFromArgs(args);
+  const workspaceRoot = resolveAnalyzeWorkspaceRoot(args);
   const generation = createIndexGeneration(workspaceRoot);
   const previous = loadMetadata(workspaceRoot);
   const childArgs = [...args];
