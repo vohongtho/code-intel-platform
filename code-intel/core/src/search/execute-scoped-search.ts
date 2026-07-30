@@ -8,7 +8,13 @@ import { loadGroup } from '../multi-repo/group-registry.js';
 import { queryGroup } from '../multi-repo/group-query.js';
 
 export type SearchMode = 'auto' | 'bm25' | 'vector' | 'hybrid';
+export type RequestedSearchMode = 'auto' | 'bm25' | 'vector';
+export type ActualSearchMode = 'bm25' | 'vector' | 'hybrid';
 export type SearchScope = { type: 'repo' | 'group'; name: string };
+
+export type SearchFallbackReason =
+  | 'VECTOR_INDEX_UNAVAILABLE'
+  | 'VECTOR_QUERY_FAILED';
 
 export type SearchExecResult =
   | { error: { status: number; message: string; hint?: string } }
@@ -16,9 +22,12 @@ export type SearchExecResult =
     body: {
       results: unknown[];
       perRepo?: unknown[];
-      searchMode: SearchMode | string;
+      requestedMode: RequestedSearchMode;
+      actualMode: ActualSearchMode;
+      searchMode: ActualSearchMode;
+      fallbackReason?: SearchFallbackReason;
       scope: SearchScope;
-      vectorReady?: boolean;
+      vectorReady: boolean;
       deprecated: boolean;
       deprecation?: string;
       total: number;
@@ -36,6 +45,11 @@ export type SearchRequest = {
   repo?: string;
   group?: string;
 };
+
+function normalizeRequestedMode(mode: SearchMode | undefined): RequestedSearchMode {
+  if (!mode || mode === 'hybrid') return 'auto';
+  return mode;
+}
 
 export function normalizeSearchRequest(body: SearchRequest) {
   const { query, limit, mode, scope, repo, group } = body;
@@ -70,9 +84,9 @@ export function normalizeSearchRequest(body: SearchRequest) {
   return {
     query,
     limit: limit ?? 20,
-    mode: mode ?? 'hybrid',
+    mode: normalizeRequestedMode(mode),
     scope: normalizedScope,
-    deprecated: Boolean(repo || group),
+    deprecated: Boolean(repo || group || mode === 'hybrid'),
   } as const;
 }
 
@@ -80,7 +94,7 @@ export function deprecationFor(req: { deprecated?: boolean }, endpoint?: string)
   if (!req.deprecated && !endpoint) return undefined;
   return endpoint
     ? `${endpoint} is deprecated; use POST /api/v1/search with { query, limit, mode, scope }.`
-    : 'Legacy repo/group request shape is deprecated; use { query, limit, mode, scope }.';
+    : 'Legacy repo/group request shape or hybrid mode is deprecated; use { query, limit, mode: auto|bm25|vector, scope }.';
 }
 
 export type ExecuteScopedSearchDeps = {
@@ -100,7 +114,7 @@ export async function executeSearchRequest(
     return { error: normalized.error };
   }
 
-  const { query, limit, mode, scope, deprecated } = normalized;
+  const { query, limit, mode: requestedMode, scope, deprecated } = normalized;
   const endpointDeprecated = extra.forceDeprecated || Boolean(extra.endpoint);
   const deprecatedFlag = deprecated || endpointDeprecated;
   const deprecation = deprecationFor({ deprecated: deprecatedFlag }, extra.endpoint);
@@ -116,13 +130,20 @@ export async function executeSearchRequest(
         },
       } as const;
     }
-    const groupMode = mode === 'auto' ? 'hybrid' : mode;
+    const groupMode = requestedMode === 'auto' ? 'hybrid' : requestedMode;
     const { perRepo, merged, searchMode, vectorReady } = await queryGroup(grp, query, limit, { mode: groupMode });
+    const actualMode = searchMode as ActualSearchMode;
+    const fallbackReason = requestedMode !== 'bm25' && actualMode === 'bm25'
+      ? 'VECTOR_INDEX_UNAVAILABLE' as const
+      : undefined;
     return {
       body: {
         results: merged,
         perRepo,
-        searchMode,
+        requestedMode,
+        actualMode,
+        searchMode: actualMode,
+        fallbackReason,
         scope,
         vectorReady,
         deprecated: deprecatedFlag,
@@ -144,15 +165,17 @@ export async function executeSearchRequest(
   const vdbPath = repoEntry ? getVectorDbPath(repoEntry.path) : (deps.workspaceRoot ? getVectorDbPath(deps.workspaceRoot) : undefined);
   const bm25 = (!requestedRepo || requestedRepo === deps.repoName) ? deps.ensureBm25Index() : null;
   const bm25Results = bm25 ? bm25.search(query, limit * 3) : null;
-  const effectiveMode = mode === 'auto' ? 'hybrid' : mode;
 
-  if (effectiveMode === 'bm25') {
+  if (requestedMode === 'bm25') {
     const results = (bm25Results ?? textSearch(g, query, limit)).slice(0, limit);
     return {
       body: {
         results,
+        requestedMode,
+        actualMode: 'bm25',
         searchMode: 'bm25',
         scope: resolvedScope,
+        vectorReady: Boolean(vdbPath),
         deprecated: deprecatedFlag,
         deprecation,
         total: results.length,
@@ -167,13 +190,20 @@ export async function executeSearchRequest(
     vectorDbPath: vdbPath,
     bm25Results: bm25Results ?? undefined,
   });
-  const finalMode = effectiveMode === 'vector' ? (searchMode === 'bm25' ? 'bm25' : 'vector') : searchMode;
+  const actualMode = searchMode as ActualSearchMode;
+  const fallbackReason = actualMode === 'bm25'
+    ? 'VECTOR_INDEX_UNAVAILABLE' as const
+    : undefined;
+
   return {
     body: {
       results,
-      searchMode: finalMode,
+      requestedMode,
+      actualMode,
+      searchMode: actualMode,
+      fallbackReason,
       scope: resolvedScope,
-      vectorReady: searchMode !== 'bm25',
+      vectorReady: actualMode !== 'bm25',
       deprecated: deprecatedFlag,
       deprecation,
       total: results.length,
