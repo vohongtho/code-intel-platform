@@ -4,6 +4,30 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.0.8] - 2026-07-31
+
+### 🧭 Correctness-first incremental analysis
+
+- Detects committed, staged, unstaged, untracked, mtime-changed, and deleted paths together.
+- Prevents partial incremental publication from losing cross-file `calls`, `imports`, `extends`, `implements`, clusters, flows, or generated metadata.
+- Keeps the zero-change fast path; any non-empty changed/deleted set performs a clean full graph rebuild in v1.0.8.
+- Adds unchanged caller/importer/inheritor regression coverage and canonical graph equivalence against a forced clean rebuild.
+
+### 🔍 Truthful vector fallback reporting
+
+- Hybrid search records vector status as `unavailable`, `failed`, `empty`, or `success`.
+- Missing, unbuilt, or empty vector execution maps to `VECTOR_INDEX_UNAVAILABLE`.
+- Vector execution exceptions map to `VECTOR_QUERY_FAILED`.
+- Adds fallback contract regression tests.
+
+### 🗃️ Atomic index and release safety
+
+- Adds atomic graph/BM25/vector/metadata generation publication with rollback safety.
+- Adds index trust/freshness diagnostics, strict whole-document token budgeting, and Change Context Pack transports.
+- Release Readiness validates package metadata, distributable build, npm pack, CLI version, atomic publication, trusted index state, dirty-tree handling, canonical graph equivalence, and security audit.
+
+---
+
 ## [1.0.7] - 2026-07-29
 
 ### 🧭 Incremental analyze state consistency

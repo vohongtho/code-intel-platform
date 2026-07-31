@@ -1,6 +1,6 @@
 # Code Intelligence Platform
 
-[![npm version](https://img.shields.io/badge/npm-v1.0.4-blue)](https://www.npmjs.com/package/@vohongtho.infotech/code-intel)
+[![npm version](https://img.shields.io/badge/npm-v1.0.8-blue)](https://www.npmjs.com/package/@vohongtho.infotech/code-intel)
 
 A static code analysis platform that builds a **Knowledge Graph** from your source code and makes it explorable through a Web UI, HTTP API, CLI, and MCP server.
 
@@ -16,7 +16,7 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 - **Source Code Preview** — click any node to open syntax-highlighted source at the exact line; "Open in editor" (`vscode://`) button
 - **Query Console** — web UI panel with GQL editor, sortable results table, query history, and example queries
 - **AI-Generated Symbol Summaries** — optional `--summarize` flag generates 1-2 sentence summaries per symbol via OpenAI, Anthropic, or Ollama; cached by code hash
-- **Hybrid Search (BM25 + Vector RRF)** — Reciprocal Rank Fusion of keyword + semantic search; `searchMode: 'bm25' | 'vector' | 'hybrid'` in response
+- **Hybrid Search (BM25 + Vector RRF)** — Reciprocal Rank Fusion with truthful `requestedMode`, `actualMode`, and `searchMode`. Fallback reports `VECTOR_INDEX_UNAVAILABLE` for missing/unbuilt/empty vector state and `VECTOR_QUERY_FAILED` for vector execution errors.
 - **Semantic Vector Search** — embeddings via `all-MiniLM-L6-v2`; enriched with summaries when available
 - **Code AI Chat** — grounded assistant that cites source files in every answer
 - **File Watcher & Auto-Reindex** — `code-intel watch` detects file saves and patches the live graph within ~1 second; WebSocket push notifies connected clients
@@ -29,7 +29,7 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 - **Deprecated API Detection** — `code-intel deprecated` finds usages of `@deprecated` JSDoc, `@Deprecated` (Java), `#[deprecated]` (Rust), and built-in Node.js deprecated APIs
 - **CLI** — analyze, serve, watch, query, search, inspect, impact, health commands with animated `█░` progress bars and braille spinners
 - **Multi-language** — TypeScript, JavaScript, Python, Java, Go, C, C++, C#, Rust, PHP, Ruby, Swift, Kotlin, Dart, HTML (15 languages via tree-sitter AST)
-- **Incremental Analysis** — `--incremental` flag re-parses only git-changed/mtime-changed files; 10k-file repo with 3 changes: 288ms
+- **Correctness-First Incremental Analysis** _(v1.0.8)_ — detects committed, staged, unstaged, untracked, mtime-changed, and deleted files. Zero-change runs keep the fast path; any non-empty change set performs a clean full graph rebuild so cross-file `calls`, `imports`, `extends`, `implements`, clusters, and flows cannot be lost.
 - **Parallel Analysis** — `--parallel` flag runs parse + resolve phases on worker threads for large repos
 - **AI Context Files** — auto-generates `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `.cursor/rules/code-intel.mdc`, `.kiro/steering/code-intel.md`, `.clinerules`, `.windsurfrules`, `.kilocode/rules/code-intel-rules.md`, and `.agents/rules/code-intel-rules.md` after every analysis — supporting Amp, Claude Code, Codex, Copilot, Cursor, Aider, Gemini, Kiro, Trae, Hermes, Factory, OpenCode, Pi, Antigravity, OpenClaw, Cline, Windsurf, Kilo Code, and more
 - **Agent Hook System** _(v1.0.2)_ — `code-intel setup` installs PreToolUse hooks for all major AI agents; when an agent runs `grep MyClass src/`, the `code-intel-hook` binary (~10KB, ~50ms startup) silently rewrites it to `code-intel search "MyClass"` — saving ~3,000 tokens per lookup; supports Claude Code, Cursor, Gemini CLI, GitHub Copilot (VS Code + CLI), OpenCode, OpenClaw; rules files for Cline/Roo Code, Windsurf, Kilo Code, Antigravity, Codex CLI
@@ -76,13 +76,13 @@ npm install -g @vohongtho.infotech/code-intel
 
 > **Default secret storage:** the CLI stores secrets in the encrypted `.code-intel/.secrets` file backend. No OS keychain package is required for the default install.
 >
-> **Upgrade note for v1.0.4:** After upgrading, re-build the local index before comparing results or using `serve`/`status` against old data:
+> **Upgrade note for v1.0.8:** Run a forced analysis once after upgrading to publish the atomic generation layout and refresh all graph-derived relationships:
 >
 > ```bash
 > code-intel analyze --force
 > ```
 >
-> This refreshes `.code-intel/graph.db` and `.code-intel/meta.json`. Comparing fresh CLI behavior against stale indexes can look like a regression when it is only old index state.
+> This publishes `.code-intel/current.json` plus a trusted generation containing graph, BM25, optional vector data, and metadata. Changed/deleted source sets use a correctness-first full rebuild; only zero-change runs keep the incremental fast path.
 >
 > **Upgrade note for sticky embeddings:** if a repo was previously indexed with semantic search, the next `code-intel analyze` will detect legacy `vector.db` state, normalize `.code-intel/meta.json`, and keep embeddings up to date automatically. Older CLI builds may ignore the remembered preference until upgraded, but they should continue to tolerate the extra metadata fields.
 
