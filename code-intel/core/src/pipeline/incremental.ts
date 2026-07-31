@@ -119,19 +119,25 @@ export function decideIncremental(
   ): IncrementalDecision => {
     const deduplicated = [...new Set(changedExistingFiles.map((file) => path.resolve(file)))].sort();
     const changedWork = deduplicated.length + deletedFiles.length;
-    if (total > 0 && changedWork / total > 0.2) {
+
+    // v1.0.8 correctness gate: removing changed/deleted nodes cascades incoming
+    // cross-file relationships. Until dependency-closure re-resolution is available,
+    // any non-empty change set must use a clean full rebuild. This preserves calls,
+    // imports, heritage edges, clusters and flows. The zero-change fast path remains.
+    if (changedWork > 0) {
       return {
         incremental: false,
-        fallbackReason: `${source}: changed files (${deduplicated.length}) + deleted files (${deletedFiles.length}) > 20% of total (${total})`,
+        fallbackReason: `${source}: correctness-first full rebuild required for ${deduplicated.length} changed and ${deletedFiles.length} deleted file(s)`,
         totalFiles: total,
       };
     }
-    Logger.info(`[incremental] ${source}: ${deduplicated.length} changed files, ${deletedFiles.length} deleted files out of ${total}`);
+
+    Logger.info(`[incremental] ${source}: no source changes detected out of ${total}`);
     return {
       incremental: true,
-      changedExistingFiles: deduplicated,
-      deletedFiles,
-      changedFiles: deduplicated,
+      changedExistingFiles: [],
+      deletedFiles: [],
+      changedFiles: [],
       totalFiles: total,
     };
   };
