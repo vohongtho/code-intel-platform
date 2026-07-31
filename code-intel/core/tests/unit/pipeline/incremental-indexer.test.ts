@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { createKnowledgeGraph } from '../../../src/graph/knowledge-graph.js';
+import { createKnowledgeGraph, KnowledgeGraph } from '../../../src/graph/knowledge-graph.js';
 import { IncrementalIndexer } from '../../../src/pipeline/incremental-indexer.js';
 
 // ─── Helper ──────────────────────────────────────────────────────────────────
