@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   release-readiness:
@@ -14,9 +14,6 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: release/1.0.8
-          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -55,7 +52,9 @@ jobs:
           node --input-type=module - "$repo/status.json" <<'NODE'
           import fs from 'node:fs';
           const status = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-          if (status.state !== 'trusted' || status.trusted !== true || status.fresh !== true) throw new Error(`Expected trusted and fresh index, got ${JSON.stringify(status)}`);
+          if (status.state !== 'trusted' || status.trusted !== true || status.fresh !== true) {
+            throw new Error(`Expected trusted and fresh index, got ${JSON.stringify(status)}`);
+          }
           NODE
           before="$(node -e "const fs=require('fs');process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],'utf8')).generationId)" "$repo/.code-intel/current.json")"
           node code-intel/core/dist/cli/main.js analyze --force --skip-git --skip-embeddings "$repo"
@@ -65,7 +64,9 @@ jobs:
           node --input-type=module - "$repo/status-after-force.json" <<'NODE'
           import fs from 'node:fs';
           const status = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-          if (status.state !== 'trusted' || status.trusted !== true || status.fresh !== true) throw new Error(`Expected trusted index after force analysis, got ${JSON.stringify(status)}`);
+          if (status.state !== 'trusted' || status.trusted !== true || status.fresh !== true) {
+            throw new Error(`Expected trusted index after force analysis, got ${JSON.stringify(status)}`);
+          }
           NODE
       - name: Dirty working-tree incremental and full-rebuild equivalence
         shell: bash
@@ -76,7 +77,9 @@ jobs:
           internal="$GITHUB_WORKSPACE/code-intel/core/dist-tests/src"
           repo="$(mktemp -d)"
           mkdir -p "$repo/src"
-          for i in $(seq 0 9); do printf 'export function BaseSymbol%s() { return %s; }\n' "$i" "$i" > "$repo/src/file$i.ts"; done
+          for i in $(seq 0 9); do
+            printf 'export function BaseSymbol%s() { return %s; }\n' "$i" "$i" > "$repo/src/file$i.ts"
+          done
           git -C "$repo" init -q
           git -C "$repo" config user.email test@example.com
           git -C "$repo" config user.name Test
@@ -89,9 +92,14 @@ jobs:
           node "$cli" analyze --skip-embeddings "$repo"
           after="$(node -e "const fs=require('fs');process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],'utf8')).generationId)" "$repo/.code-intel/current.json")"
           test "$before" != "$after"
-          (cd "$repo" && node "$cli" search "DirtyTrackedSymbol" --json > tracked-search.json && node "$cli" search "DirtyUntrackedSymbol" --json > untracked-search.json)
+          (
+            cd "$repo"
+            node "$cli" search "DirtyTrackedSymbol" --json > tracked-search.json
+            node "$cli" search "DirtyUntrackedSymbol" --json > untracked-search.json
+          )
           grep -q 'DirtyTrackedSymbol' "$repo/tracked-search.json"
           grep -q 'DirtyUntrackedSymbol' "$repo/untracked-search.json"
+
           snapshot_graph() {
             local output="$1"
             REPO="$repo" OUTPUT="$output" INTERNAL="$internal" node --input-type=module <<'NODE'
@@ -109,57 +117,29 @@ jobs:
           await db.init();
           await loadGraphFromDB(graph, db);
           db.close();
-          const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).filter(([key]) => !['createdAt','updatedAt','duration'].includes(key)).sort(([a],[b]) => a.localeCompare(b)).map(([key,item]) => [key, canonical(item)])) : value;
-          const nodes = [...graph.allNodes()].map(canonical).sort((a,b) => String(a.id).localeCompare(String(b.id)));
-          const edges = [...graph.allEdges()].map(canonical).sort((a,b) => String(a.id).localeCompare(String(b.id)));
+          const canonical = (value) => {
+            if (Array.isArray(value)) return value.map(canonical);
+            if (value && typeof value === 'object') {
+              return Object.fromEntries(Object.entries(value)
+                .filter(([key]) => !['createdAt', 'updatedAt', 'duration'].includes(key))
+                .sort(([a], [b]) => a.localeCompare(b))
+                .map(([key, item]) => [key, canonical(item)]));
+            }
+            return value;
+          };
+          const nodes = [...graph.allNodes()]
+            .map(canonical)
+            .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+          const edges = [...graph.allEdges()]
+            .map(canonical)
+            .sort((a, b) => String(a.id).localeCompare(String(b.id)));
           fs.writeFileSync(output, JSON.stringify({ nodes, edges }, null, 2));
           NODE
           }
+
           snapshot_graph "$repo/incremental-graph.json"
           node "$cli" analyze --force --skip-embeddings "$repo"
           snapshot_graph "$repo/full-graph.json"
           cmp "$repo/incremental-graph.json" "$repo/full-graph.json"
       - name: Security gate
         run: npm audit --audit-level=high
-      - name: Patch v1.0.8 documentation
-        shell: bash
-        run: |
-          python <<'PY'
-          from pathlib import Path
-          def one(text, old, new, label):
-              if old not in text: raise SystemExit(f'Expected text not found: {label}')
-              return text.replace(old, new, 1)
-          p=Path('README.md'); s=p.read_text(); s=s.replace('npm-v1.0.4-blue','npm-v1.0.8-blue',1)
-          s=one(s,"- **Hybrid Search (BM25 + Vector RRF)** — Reciprocal Rank Fusion of keyword + semantic search; `searchMode: 'bm25' | 'vector' | 'hybrid'` in response","- **Hybrid Search (BM25 + Vector RRF)** — Reciprocal Rank Fusion with truthful `requestedMode`, `actualMode`, and `searchMode`. Fallback reports `VECTOR_INDEX_UNAVAILABLE` for missing/unbuilt/empty vector state and `VECTOR_QUERY_FAILED` for vector execution errors.",'README search')
-          s=one(s,'- **Incremental Analysis** — `--incremental` flag re-parses only git-changed/mtime-changed files; 10k-file repo with 3 changes: 288ms','- **Correctness-First Incremental Analysis** _(v1.0.8)_ — detects committed, staged, unstaged, untracked, mtime-changed, and deleted files. Zero-change runs keep the fast path; any non-empty change set performs a clean full graph rebuild so cross-file `calls`, `imports`, `extends`, `implements`, clusters, and flows cannot be lost.','README incremental')
-          s=one(s,'> **Upgrade note for v1.0.4:** After upgrading, re-build the local index before comparing results or using `serve`/`status` against old data:','> **Upgrade note for v1.0.8:** Run a forced analysis once after upgrading to publish the atomic generation layout and refresh all graph-derived relationships:','README upgrade')
-          s=one(s,'> This refreshes `.code-intel/graph.db` and `.code-intel/meta.json`. Comparing fresh CLI behavior against stale indexes can look like a regression when it is only old index state.','> This publishes `.code-intel/current.json` plus a trusted generation containing graph, BM25, optional vector data, and metadata. Changed/deleted source sets use a correctness-first full rebuild; only zero-change runs keep the incremental fast path.','README upgrade detail'); p.write_text(s)
-          p=Path('CHANGELOG.md'); s=p.read_text()
-          if '## [1.0.8] - 2026-07-31' not in s:
-              block='''## [1.0.8] - 2026-07-31\n\n### 🧭 Correctness-first incremental analysis\n\n- Detects committed, staged, unstaged, untracked, mtime-changed, and deleted paths together.\n- Prevents partial incremental publication from losing cross-file `calls`, `imports`, `extends`, `implements`, clusters, flows, or generated metadata.\n- Keeps the zero-change fast path; any non-empty changed/deleted set performs a clean full graph rebuild in v1.0.8.\n- Adds unchanged caller/importer/inheritor regression coverage and canonical graph equivalence against a forced clean rebuild.\n\n### 🔍 Truthful vector fallback reporting\n\n- Hybrid search records vector status as `unavailable`, `failed`, `empty`, or `success`.\n- Missing, unbuilt, or empty vector execution maps to `VECTOR_INDEX_UNAVAILABLE`.\n- Vector execution exceptions map to `VECTOR_QUERY_FAILED`.\n- Adds fallback contract regression tests.\n\n### 🗃️ Atomic index and release safety\n\n- Adds atomic graph/BM25/vector/metadata generation publication with rollback safety.\n- Adds index trust/freshness diagnostics, strict whole-document token budgeting, and Change Context Pack transports.\n- Release Readiness validates package metadata, distributable build, npm pack, CLI version, atomic publication, trusted index state, dirty-tree handling, canonical graph equivalence, and security audit.\n\n---\n\n'''
-              s=one(s,'---\n\n## [1.0.7]','---\n\n'+block+'## [1.0.7]','CHANGELOG insertion')
-          p.write_text(s)
-          p=Path('docs/releases/v1.0.8.md'); s=p.read_text(); s=s.replace('stable states: `ready`, `stale`, `corrupt`, `missing` or `legacy`','stable states: `trusted`, `stale`, `corrupt`, `missing` or `legacy`')
-          if '### Correctness-first changed-file handling' not in s:
-              sec='''### Correctness-first changed-file handling\n\nv1.0.8 detects committed, staged, unstaged, untracked, mtime-changed, and deleted source paths. Zero-change runs keep the incremental fast path. Any non-empty changed/deleted source set performs a clean full graph rebuild so unchanged callers, importers, and inheritors are re-resolved and generated clusters/flows are recreated from a clean baseline.\n\nThis intentionally prioritizes correctness over partial-rebuild latency. Release validation requires canonical graph equivalence with a forced clean rebuild.\n\n'''
-              s=one(s,'### Truthful and explainable search\n',sec+'### Truthful and explainable search\n','release section')
-          s=s.replace('- explicit vector fallback reasons;','- explicit fallback reasons: `VECTOR_INDEX_UNAVAILABLE` for missing/unbuilt/empty vector state and `VECTOR_QUERY_FAILED` for execution errors;',1)
-          s=s.replace('- search explanation and score-evidence tests;','- search explanation, score-evidence, and vector fallback contract tests;\n- unchanged caller/importer/inheritor regression coverage;\n- canonical changed-run versus forced-rebuild graph equivalence, including cluster and flow state;',1); p.write_text(s)
-          p=Path('docs/releases/v1.0.8-go-live-checklist.md'); s=p.read_text()
-          s=one(s,'- [ ] Release Readiness passes package build, npm pack, CLI version, atomic analysis, index trust and security gates.','- [ ] Release Readiness passes package build, npm pack, CLI version, atomic analysis, index trust, dirty-tree detection, canonical graph equivalence, and security gates.','checklist gate')
-          if 'unchanged caller/importer/inheritor' not in s: s=one(s,'- [ ] `code-intel/core/package.json` and `package-lock.json` both report `1.0.8` for the core workspace.','- [ ] `code-intel/core/package.json` and `package-lock.json` both report `1.0.8` for the core workspace.\n- [ ] Regression coverage confirms an unchanged caller/importer/inheritor still connects to a changed target.\n- [ ] Search fallback tests distinguish `VECTOR_INDEX_UNAVAILABLE` from `VECTOR_QUERY_FAILED`.','checklist regressions')
-          s=one(s,'- Search reports truthful requested and actual modes.','- Search reports truthful requested and actual modes, with accurate vector fallback reason.\n- Changed/deleted source triggers a correctness-first full graph rebuild; zero-change keeps the fast path.','checklist outcomes')
-          s=one(s,'- [ ] Verify full and incremental analysis both return `state: "trusted"` with `trusted: true`.','- [ ] Verify forced and auto analysis return `state: "trusted"` with `trusted: true`.\n- [ ] Verify zero-change uses the fast path and changed/deleted source uses a clean full rebuild.\n- [ ] Verify calls, imports, extends/implements, clusters, and flows match a forced clean rebuild after changing a shared target.','checklist postdeploy'); p.write_text(s)
-          PY
-          grep -q '## \[1.0.8\] - 2026-07-31' CHANGELOG.md
-          grep -q 'Correctness-First Incremental Analysis' README.md
-          grep -q 'VECTOR_QUERY_FAILED' docs/releases/v1.0.8.md
-          grep -q 'unchanged caller/importer/inheritor' docs/releases/v1.0.8-go-live-checklist.md
-      - name: Commit documentation
-        shell: bash
-        run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add README.md CHANGELOG.md docs/releases/v1.0.8.md docs/releases/v1.0.8-go-live-checklist.md
-          git commit -m 'docs: complete v1.0.8 release documentation'
-          git push origin HEAD:release/1.0.8
