@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.0.9] - 2026-07-31
+
+### 🧠 Incremental vector update correctness
+
+- Decoupled vector update scope from graph execution mode.
+- One-file source changes still use a correctness-first full graph rebuild, but now delete/upsert embeddings only for changed files.
+- Deleted files remove only their own vectors; unchanged vectors are preserved.
+- Zero-change runs preserve the vector database without writes.
+- Full vector rebuilds are limited to first use, `--force`, missing vector storage, stale/incompatible metadata, or unknown change scope.
+- Added exhaustive planner unit tests and CLI regression coverage.
+
+---
+
 ## [1.0.8] - 2026-07-31
 
 ### 🧭 Correctness-first incremental analysis

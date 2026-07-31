@@ -13,14 +13,17 @@ export interface ResolveEmbeddingUpdatePlanArgs {
   embeddingsNeedRebuild: boolean;
 }
 
-/** Resolve vector work independently from graph execution mode. */
+/**
+ * Resolve vector work independently from graph execution mode.
+ * A graph may require a clean full rebuild for relationship correctness while
+ * vectors can still delete/upsert only changed file paths.
+ */
 export function resolveEmbeddingUpdatePlan(args: ResolveEmbeddingUpdatePlanArgs): EmbeddingUpdatePlan {
   if (!args.enabled) return { mode: 'skip', reason: 'disabled' };
   if (args.force) return { mode: 'full', reason: 'forced' };
   if (!args.changeSetKnown) return { mode: 'full', reason: 'change-set-unknown' };
   if (!args.hasVectorDb) return { mode: 'full', reason: 'vector-missing' };
   if (args.embeddingsNeedRebuild) return { mode: 'full', reason: 'fingerprint-or-state-stale' };
-
   const paths = [...new Set([...args.changedPaths, ...args.deletedPaths])].filter(Boolean);
   if (paths.length === 0) return { mode: 'skip', reason: 'no-changes' };
   return { mode: 'incremental', paths };

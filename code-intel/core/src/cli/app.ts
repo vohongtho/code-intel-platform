@@ -34,6 +34,7 @@ import {
 import { startHttpServer } from '../http/app.js';
 import { startMcpStdio } from '../mcp-server/server.js';
 import { textSearch } from '../search/text-search.js';
+import { resolveEmbeddingUpdatePlan } from '../search/embedding-update-plan.js';
 import type { PipelineContext } from '../pipeline/types.js';
 import { saveMetadata, loadMetadata, getDbPath, getVectorDbPath, loadAgentTargets, saveAgentTargets, computeIndexVersion, resolveEmbeddingMode, shouldRebuildEmbeddings, resolveAnalyzeMode, resolveParserForMetadata, type AgentTargetConfig, type AgentTargetSelection, type AgentTargetFormat, type EmbeddingMetadata } from '../storage/metadata.js';
 import { writeContextFiles } from './context-writer.js';
@@ -557,6 +558,11 @@ async function analyzeWorkspace(targetPath: string, options?: {
   let isIncremental = false;
   let incrementalChangedFiles: string[] = [];
   let incrementalDeletedFiles: string[] = [];
+  // Change detection is independent from graph execution mode. A correctness-first
+  // full graph rebuild must still allow vector updates for only changed/deleted files.
+  let detectedChangedFiles: string[] = [];
+  let detectedDeletedFiles: string[] = [];
+  let detectedChangeSetKnown = false;
   let scannedFilePaths: string[] = [];
   let zeroChangeIncremental = false;
   let fullIndexGraph: KnowledgeGraph | null = null;
@@ -576,6 +582,11 @@ async function analyzeWorkspace(targetPath: string, options?: {
         prevMeta?.commitHash,
         prevMeta?.lastAnalyzedMtimes,
       );
+      // Preserve the detected change set even when graph analysis deliberately
+      // falls back to a clean full rebuild for cross-file correctness.
+      detectedChangedFiles = decision.changedExistingFiles ?? [];
+      detectedDeletedFiles = decision.deletedFiles ?? [];
+      detectedChangeSetKnown = true;
       if (decision.incremental) {
         const dbPath = getDbPath(workspaceRoot);
         if (fs.existsSync(dbPath)) {
@@ -587,8 +598,8 @@ async function analyzeWorkspace(targetPath: string, options?: {
           activeGraph = fullIndexGraph;
           context.graph = fullIndexGraph;
           isIncremental = true;
-          incrementalChangedFiles = decision.changedExistingFiles ?? [];
-          incrementalDeletedFiles = decision.deletedFiles ?? [];
+          incrementalChangedFiles = detectedChangedFiles;
+          incrementalDeletedFiles = detectedDeletedFiles;
           removeAffectedNodesFromGraph(fullIndexGraph, workspaceRoot, incrementalChangedFiles, incrementalDeletedFiles);
           if (!options?.silent) {
             const label = analyzeMode.source === 'auto' ? 'Auto-incremental' : 'Incremental';
@@ -805,21 +816,22 @@ async function analyzeWorkspace(targetPath: string, options?: {
   }
 
   // Vector embeddings (explicit or remembered per repo)
-  const incrementalEmbeddingPaths = isIncremental && (incrementalChangedFiles.length > 0 || incrementalDeletedFiles.length > 0)
-    ? [
-      ...incrementalChangedFiles.map((f) => path.relative(workspaceRoot, f)),
-      ...incrementalDeletedFiles,
-    ]
-    : null;
+  // IMPORTANT: vector update scope is based on the detected source change set,
+  // not on whether graph execution is incremental or correctness-first full.
   const hasVectorDb = fs.existsSync(vectorDbPath);
   const embeddingsNeedRebuild = shouldRebuildEmbeddings({ metadata: previousMetadata, runtime: runtimeEmbeddingMetadata, hasVectorDb });
-  const skipEmbeddingWork = embeddingMode.enabled
-    && zeroChangeIncremental
-    && hasVectorDb
-    && !embeddingsNeedRebuild;
-  const shouldForceFullEmbeddingRebuild = !skipEmbeddingWork
-    && (!incrementalEmbeddingPaths || embeddingsNeedRebuild);
-  const useIncrementalEmbeddings = Boolean(incrementalEmbeddingPaths && !shouldForceFullEmbeddingRebuild);
+  const embeddingPlan = resolveEmbeddingUpdatePlan({
+    enabled: embeddingMode.enabled,
+    force: Boolean(options?.force),
+    changeSetKnown: detectedChangeSetKnown,
+    changedPaths: detectedChangedFiles.map((f) => path.relative(workspaceRoot, f)),
+    deletedPaths: detectedDeletedFiles,
+    hasVectorDb,
+    embeddingsNeedRebuild,
+  });
+  const incrementalEmbeddingPaths = embeddingPlan.mode === 'incremental' ? embeddingPlan.paths : null;
+  const skipEmbeddingWork = embeddingPlan.mode === 'skip';
+  const useIncrementalEmbeddings = embeddingPlan.mode === 'incremental';
   let embeddingMetadataForSave = previousMetadata?.embeddings;
   let embeddingBuildFailed = false;
 
