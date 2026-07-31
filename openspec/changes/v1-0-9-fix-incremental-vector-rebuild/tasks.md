@@ -7,3 +7,4 @@
 - [x] Add exhaustive planner unit tests.
 - [x] Add CLI regressions for changed, deleted, and zero-change paths.
 - [x] Bump package metadata and document v1.0.9.
+- [x] Verify the applied patch with build, full tests, distributable package validation, CLI version check, and high/critical audit gate.
