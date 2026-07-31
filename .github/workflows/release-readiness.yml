@@ -110,7 +110,7 @@ jobs:
           const output = process.env.OUTPUT;
           const { createKnowledgeGraph } = await import(pathToFileURL(`${internal}/graph/knowledge-graph.js`));
           const { DbManager } = await import(pathToFileURL(`${internal}/storage/db-manager.js`));
-          const { loadGraphFromDB } = await import(pathToFileURL(`${internal}/storage/graph-loader.js`));
+          const { loadGraphFromDB } = await import(pathToFileURL(`${internal}/multi-repo/graph-from-db.js`));
           const { getDbPath } = await import(pathToFileURL(`${internal}/storage/metadata.js`));
           const graph = createKnowledgeGraph();
           const db = new DbManager(getDbPath(repo), true);
