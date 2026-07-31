@@ -73,7 +73,8 @@ jobs:
         run: |
           set -euo pipefail
           cli="$GITHUB_WORKSPACE/code-intel/core/dist/cli/main.js"
-          dist="$GITHUB_WORKSPACE/code-intel/core/dist"
+          npx tsc -b code-intel/core/tsconfig.test.json
+          internal="$GITHUB_WORKSPACE/code-intel/core/dist-tests/src"
           repo="$(mktemp -d)"
           mkdir -p "$repo/src"
           for i in $(seq 0 9); do
@@ -101,16 +102,16 @@ jobs:
 
           snapshot_graph() {
             local output="$1"
-            REPO="$repo" OUTPUT="$output" DIST="$dist" node --input-type=module <<'NODE'
+            REPO="$repo" OUTPUT="$output" INTERNAL="$internal" node --input-type=module <<'NODE'
           import fs from 'node:fs';
           import { pathToFileURL } from 'node:url';
-          const dist = process.env.DIST;
+          const internal = process.env.INTERNAL;
           const repo = process.env.REPO;
           const output = process.env.OUTPUT;
-          const { createKnowledgeGraph } = await import(pathToFileURL(`${dist}/graph/knowledge-graph.js`));
-          const { DbManager } = await import(pathToFileURL(`${dist}/storage/db-manager.js`));
-          const { loadGraphFromDB } = await import(pathToFileURL(`${dist}/storage/graph-loader.js`));
-          const { getDbPath } = await import(pathToFileURL(`${dist}/storage/metadata.js`));
+          const { createKnowledgeGraph } = await import(pathToFileURL(`${internal}/graph/knowledge-graph.js`));
+          const { DbManager } = await import(pathToFileURL(`${internal}/storage/db-manager.js`));
+          const { loadGraphFromDB } = await import(pathToFileURL(`${internal}/storage/graph-loader.js`));
+          const { getDbPath } = await import(pathToFileURL(`${internal}/storage/metadata.js`));
           const graph = createKnowledgeGraph();
           const db = new DbManager(getDbPath(repo), true);
           await db.init();
