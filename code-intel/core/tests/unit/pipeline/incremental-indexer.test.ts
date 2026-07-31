@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createKnowledgeGraph } from '../../../src/graph/knowledge-graph.js';
-import { IncrementalIndexer } from '../../../src/pipeline/incremental-indexer.js';
+import { IncrementalIndexer, removeAffectedNodesFromGraph } from '../../../src/pipeline/incremental-indexer.js';
 
 const KnowledgeGraph = createKnowledgeGraph().constructor as new () => any;
 
@@ -61,5 +61,20 @@ describe('IncrementalIndexer', () => {
     assert.equal(result.filesProcessed, 2);
     assert.equal(result.nodesRemoved, 2);
     assert.equal(graph.size.nodes, 1);
+  });
+});
+
+
+describe('removeAffectedNodesFromGraph', () => {
+  it('removes changed and deleted file nodes before the main pipeline', () => {
+    const graph = new KnowledgeGraph();
+    graph.addNode({ id: 'a', name: 'a', kind: 'function', filePath: 'src/a.ts' });
+    graph.addNode({ id: 'b', name: 'b', kind: 'function', filePath: 'src/b.ts' });
+    graph.addEdge({ source: 'a', target: 'b', type: 'calls' });
+    const removed = removeAffectedNodesFromGraph(graph, '/repo', ['/repo/src/a.ts'], []);
+    assert.equal(removed, 1);
+    assert.equal(graph.getNode('a'), undefined);
+    assert.ok(graph.getNode('b'));
+    assert.equal([...graph.allEdges()].length, 0);
   });
 });

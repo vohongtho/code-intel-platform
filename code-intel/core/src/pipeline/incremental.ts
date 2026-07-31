@@ -7,7 +7,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import Logger from '../shared/logger.js';
 
 // ─── Git helpers ──────────────────────────────────────────────────────────────
@@ -17,7 +17,7 @@ import Logger from '../shared/logger.js';
  */
 export function getCurrentCommitHash(workspaceRoot: string): string | null {
   try {
-    return execSync('git rev-parse HEAD', { cwd: workspaceRoot, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+    return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: workspaceRoot, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
   } catch {
     return null;
   }
@@ -29,12 +29,21 @@ export function getCurrentCommitHash(workspaceRoot: string): string | null {
  */
 export function getChangedFilesSince(workspaceRoot: string, baseHash: string): string[] | null {
   try {
-    const output = execSync(
-      `git diff --name-only ${baseHash} HEAD`,
-      { cwd: workspaceRoot, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
-    ).trim();
-    if (!output) return [];
-    return output.split('\n').map((f) => f.trim()).filter(Boolean);
+    const tracked = execFileSync('git', ['diff', '--name-only', baseHash, '--'], {
+      cwd: workspaceRoot,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    const untracked = execFileSync('git', ['ls-files', '--others', '--exclude-standard'], {
+      cwd: workspaceRoot,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    return [...new Set(`${tracked}\n${untracked}`
+      .split('\n')
+      .map((file) => file.trim().replace(/\\/g, '/').replace(/^\.\//, ''))
+      .filter(Boolean))]
+      .sort();
   } catch {
     return null;
   }
@@ -134,7 +143,7 @@ export function decideIncremental(
   const currentRelSet = new Set(currentRelPaths);
   const deletedFiles = Object.keys(storedMtimes ?? {}).filter((rel) => !currentRelSet.has(rel));
 
-  const finalizeIncremental = (changedExistingFiles: string[], source: 'git' | 'mtime'): IncrementalDecision => {
+  const finalizeIncremental = (changedExistingFiles: string[], source: 'git' | 'mtime' | 'git+mtime'): IncrementalDecision => {
     const changedWork = changedExistingFiles.length + deletedFiles.length;
     if (total > 0 && changedWork / total > 0.2) {
       return {
@@ -157,10 +166,16 @@ export function decideIncremental(
   if (prevCommitHash) {
     const changed = getChangedFilesSince(workspaceRoot, prevCommitHash);
     if (changed !== null) {
-      const changedExistingFiles = changed
+      const changedRelPaths = new Set(changed);
+      if (storedMtimes && Object.keys(storedMtimes).length > 0) {
+        for (const absPath of filterChangedByMtime(allFilePaths, workspaceRoot, storedMtimes)) {
+          changedRelPaths.add(path.relative(workspaceRoot, absPath).replace(/\\/g, '/'));
+        }
+      }
+      const changedExistingFiles = [...changedRelPaths]
         .filter((rel) => currentRelSet.has(rel))
         .map((rel) => path.join(workspaceRoot, rel));
-      return finalizeIncremental(changedExistingFiles, 'git');
+      return finalizeIncremental(changedExistingFiles, storedMtimes ? 'git+mtime' : 'git');
     }
     Logger.warn('[incremental] git diff failed, trying mtime fallback');
   }
