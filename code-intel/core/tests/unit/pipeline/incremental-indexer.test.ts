@@ -1,7 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { createKnowledgeGraph, KnowledgeGraph } from '../../../src/graph/knowledge-graph.js';
+import { createKnowledgeGraph } from '../../../src/graph/knowledge-graph.js';
 import { IncrementalIndexer } from '../../../src/pipeline/incremental-indexer.js';
+
+const KnowledgeGraph = createKnowledgeGraph().constructor as new () => ReturnType<typeof createKnowledgeGraph>;
 
 // ─── Helper ──────────────────────────────────────────────────────────────────
 
@@ -28,12 +30,9 @@ describe('IncrementalIndexer', () => {
     graph.addNode({ id: 'fn2', kind: 'function', name: 'bar', filePath: 'src/b.ts' });
     assert.equal(graph.size.nodes, 2);
 
-    // Point to a non-existent dbPath so DB ops are skipped gracefully
     const indexer = new IncrementalIndexer(graph, '/', '/__nonexistent__/graph.db');
-    // Use absolute path that maps to the relative filePath
     const result = await indexer.patchGraph(['/src/a.ts']);
 
-    // fn1 should be removed (filePath matches), fn2 should remain
     assert.equal(result.filesProcessed, 1);
     assert.equal(result.nodesRemoved, 1);
     assert.equal(graph.size.nodes, 1);
@@ -73,6 +72,6 @@ describe('IncrementalIndexer', () => {
 
     assert.equal(result.filesProcessed, 2);
     assert.equal(result.nodesRemoved, 2);
-    assert.equal(graph.size.nodes, 1); // only c1 remains
+    assert.equal(graph.size.nodes, 1);
   });
 });
