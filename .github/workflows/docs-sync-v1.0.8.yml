@@ -1,0 +1,165 @@
+name: Sync v1.0.8 Documentation
+
+on:
+  push:
+    branches: [release/1.0.8]
+    paths:
+      - .github/workflows/docs-sync-v1.0.8.yml
+
+permissions:
+  contents: write
+
+jobs:
+  sync-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/1.0.8
+          fetch-depth: 0
+
+      - name: Update release documentation
+        shell: bash
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              if old not in text:
+                  raise SystemExit(f"Expected text not found in {label}: {old[:100]!r}")
+              return text.replace(old, new, 1)
+
+          readme_path = Path('README.md')
+          readme = readme_path.read_text()
+          readme = readme.replace(
+              '[![npm version](https://img.shields.io/badge/npm-v1.0.4-blue)]',
+              '[![npm version](https://img.shields.io/badge/npm-v1.0.8-blue)]',
+              1,
+          )
+          readme = replace_once(
+              readme,
+              '- **Incremental Analysis** — `--incremental` flag re-parses only git-changed/mtime-changed files; 10k-file repo with 3 changes: 288ms',
+              '- **Correctness-First Incremental Analysis** _(v1.0.8)_ — detects committed, staged, unstaged, untracked, mtime-changed, and deleted files. Zero-change runs keep the fast path; any non-empty change set performs a clean full graph rebuild so cross-file `calls`, `imports`, `extends`, `implements`, clusters, and flows cannot be lost.',
+              'README incremental feature',
+          )
+          readme = replace_once(
+              readme,
+              '- **Hybrid Search (BM25 + Vector RRF)** — Reciprocal Rank Fusion of keyword + semantic search; `searchMode: \'bm25\' | \'vector\' | \'hybrid\'` in response',
+              '- **Hybrid Search (BM25 + Vector RRF)** — Reciprocal Rank Fusion of keyword + semantic search with truthful `requestedMode`, `actualMode`, and `searchMode`. BM25 fallback reports `VECTOR_INDEX_UNAVAILABLE` for missing/unbuilt/empty vector state and `VECTOR_QUERY_FAILED` for vector execution errors.',
+              'README hybrid search feature',
+          )
+          marker = '> **Upgrade note for v1.0.4:** After upgrading, re-build the local index before comparing results or using `serve`/`status` against old data:'
+          replacement = '> **Upgrade note for v1.0.8:** Run a forced analysis once after upgrading to publish the atomic generation layout and refresh all graph-derived relationships:'
+          readme = replace_once(readme, marker, replacement, 'README upgrade note')
+          old_followup = '> This refreshes `.code-intel/graph.db` and `.code-intel/meta.json`. Comparing fresh CLI behavior against stale indexes can look like a regression when it is only old index state.'
+          new_followup = '> This publishes `.code-intel/current.json` plus a trusted generation containing graph, BM25, optional vector data, and metadata. In v1.0.8, changed/deleted source sets use a correctness-first full rebuild; only zero-change runs use the incremental fast path.'
+          readme = replace_once(readme, old_followup, new_followup, 'README upgrade explanation')
+          readme_path.write_text(readme)
+
+          changelog_path = Path('CHANGELOG.md')
+          changelog = changelog_path.read_text()
+          if '## [1.0.8] - 2026-07-31' not in changelog:
+              section = '''## [1.0.8] - 2026-07-31
+
+### 🧭 Correctness-first incremental analysis
+
+- Fixed dirty working-tree detection so committed, staged, unstaged, untracked, mtime-changed, and deleted paths are considered together.
+- Prevented partial incremental publication from losing cross-file `calls`, `imports`, `extends`, `implements`, flow edges, cluster nodes, or flow nodes.
+- Zero-change runs retain the incremental fast path. Any non-empty changed/deleted source set now performs a clean full graph rebuild in v1.0.8, prioritizing graph correctness over partial-rebuild latency.
+- Added regression coverage with unchanged callers, importers, and inheritors targeting a changed file.
+- Added canonical graph equivalence validation that compares changed-file processing with a forced clean rebuild, including generated nodes and edges.
+
+### 🔍 Truthful vector fallback reporting
+
+- Hybrid search now records vector execution status as `unavailable`, `failed`, `empty`, or `success`.
+- Missing, unbuilt, or empty vector execution maps to `VECTOR_INDEX_UNAVAILABLE`.
+- Vector embedding/index query exceptions map to `VECTOR_QUERY_FAILED`.
+- Added contract regression tests for unavailable and failed vector execution.
+
+### 🗃️ Atomic index and release safety
+
+- Added atomic generation publication for graph, BM25, vector, and metadata artifacts, with previous-generation rollback safety.
+- Added index trust/freshness diagnostics, strict whole-document context token budgeting, and the shared Change Context Pack across CLI, HTTP, and MCP transports.
+- Release Readiness validates package metadata, distributable build, npm pack, CLI version, atomic publication, trusted index state, dirty working-tree handling, canonical graph equivalence, and the high/critical security gate.
+
+---
+
+'''
+              changelog = replace_once(changelog, '---\n\n## [1.0.7]', '---\n\n' + section + '## [1.0.7]', 'CHANGELOG insertion point')
+          changelog_path.write_text(changelog)
+
+          release_path = Path('docs/releases/v1.0.8.md')
+          release = release_path.read_text()
+          release = release.replace('stable states: `ready`, `stale`, `corrupt`, `missing` or `legacy`', 'stable states: `trusted`, `stale`, `corrupt`, `missing` or `legacy`')
+          if '### Correctness-first changed-file handling' not in release:
+              anchor = '### Truthful and explainable search\n'
+              addition = '''### Correctness-first changed-file handling
+
+v1.0.8 detects committed, staged, unstaged, untracked, mtime-changed, and deleted source paths. A zero-change run keeps the incremental fast path. Any non-empty changed/deleted source set performs a clean full graph rebuild so unchanged callers, importers, and inheritors are re-resolved and generated clusters/flows are recreated from a clean baseline.
+
+This intentionally favors correctness over partial-rebuild latency for v1.0.8. Release validation requires the resulting canonical graph to match a forced clean rebuild.
+
+'''
+              release = replace_once(release, anchor, addition + anchor, 'release notes incremental anchor')
+          if '`VECTOR_QUERY_FAILED`' not in release:
+              release = replace_once(
+                  release,
+                  '- explicit vector fallback reasons;',
+                  '- explicit vector fallback reasons: `VECTOR_INDEX_UNAVAILABLE` for missing/unbuilt/empty vector state and `VECTOR_QUERY_FAILED` for vector execution errors;',
+                  'release notes fallback bullet',
+              )
+          release = replace_once(
+              release,
+              '- search explanation and score-evidence tests;',
+              '- search explanation, score-evidence, and vector fallback contract tests;\n- correctness-first changed-file handling with unchanged caller/importer/inheritor regression coverage;\n- canonical changed-run versus forced-rebuild graph equivalence, including generated cluster and flow state;',
+              'release notes validation list',
+          )
+          release_path.write_text(release)
+
+          checklist_path = Path('docs/releases/v1.0.8-go-live-checklist.md')
+          checklist = checklist_path.read_text()
+          checklist = replace_once(
+              checklist,
+              '- [ ] Release Readiness passes package build, npm pack, CLI version, atomic analysis, index trust and security gates.',
+              '- [ ] Release Readiness passes package build, npm pack, CLI version, atomic analysis, index trust, dirty working-tree detection, canonical graph equivalence, and security gates.',
+              'go-live release readiness item',
+          )
+          if 'unchanged caller/importer/inheritor' not in checklist:
+              checklist = replace_once(
+                  checklist,
+                  '- [ ] `code-intel/core/package.json` and `package-lock.json` both report `1.0.8` for the core workspace.',
+                  '- [ ] `code-intel/core/package.json` and `package-lock.json` both report `1.0.8` for the core workspace.\n- [ ] Regression coverage confirms an unchanged caller/importer/inheritor still connects to a changed target after analysis.\n- [ ] Search fallback contract tests distinguish `VECTOR_INDEX_UNAVAILABLE` from `VECTOR_QUERY_FAILED`.',
+                  'go-live regression items',
+              )
+          checklist = replace_once(
+              checklist,
+              '- Search reports truthful requested and actual modes.',
+              '- Search reports truthful requested and actual modes. Missing/unbuilt/empty vectors report `VECTOR_INDEX_UNAVAILABLE`; vector execution errors report `VECTOR_QUERY_FAILED`.\n- A changed or deleted source file triggers a correctness-first full graph rebuild; a zero-change run retains the incremental fast path.',
+              'go-live expected outcomes',
+          )
+          checklist = replace_once(
+              checklist,
+              '- [ ] Verify full and incremental analysis both return `state: "trusted"` with `trusted: true`.',
+              '- [ ] Verify forced and auto analysis return `state: "trusted"` with `trusted: true`.\n- [ ] Verify zero-change auto analysis uses the fast path and any changed/deleted source set uses the correctness-first full rebuild.\n- [ ] Verify calls, imports, extends/implements, clusters, and flows match a forced clean rebuild after changing a shared target file.',
+              'go-live post-deployment checks',
+          )
+          checklist_path.write_text(checklist)
+          PY
+
+      - name: Verify documentation content
+        shell: bash
+        run: |
+          grep -q '## \[1.0.8\] - 2026-07-31' CHANGELOG.md
+          grep -q 'Correctness-First Incremental Analysis' README.md
+          grep -q 'VECTOR_QUERY_FAILED' README.md
+          grep -q 'Correctness-first changed-file handling' docs/releases/v1.0.8.md
+          grep -q 'unchanged caller/importer/inheritor' docs/releases/v1.0.8-go-live-checklist.md
+
+      - name: Commit documentation
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add README.md CHANGELOG.md docs/releases/v1.0.8.md docs/releases/v1.0.8-go-live-checklist.md
+          git commit -m 'docs: complete v1.0.8 release documentation'
+          git push origin HEAD:release/1.0.8
