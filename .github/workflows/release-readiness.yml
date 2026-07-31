@@ -68,11 +68,12 @@ jobs:
             throw new Error(`Expected trusted index after force analysis, got ${JSON.stringify(status)}`);
           }
           NODE
-      - name: Dirty working-tree incremental smoke test
+      - name: Dirty working-tree incremental and full-rebuild equivalence
         shell: bash
         run: |
           set -euo pipefail
           cli="$GITHUB_WORKSPACE/code-intel/core/dist/cli/main.js"
+          dist="$GITHUB_WORKSPACE/code-intel/core/dist"
           repo="$(mktemp -d)"
           mkdir -p "$repo/src"
           for i in $(seq 0 9); do
@@ -97,5 +98,47 @@ jobs:
           )
           grep -q 'DirtyTrackedSymbol' "$repo/tracked-search.json"
           grep -q 'DirtyUntrackedSymbol' "$repo/untracked-search.json"
+
+          snapshot_graph() {
+            local output="$1"
+            REPO="$repo" OUTPUT="$output" DIST="$dist" node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { pathToFileURL } from 'node:url';
+          const dist = process.env.DIST;
+          const repo = process.env.REPO;
+          const output = process.env.OUTPUT;
+          const { createKnowledgeGraph } = await import(pathToFileURL(`${dist}/graph/knowledge-graph.js`));
+          const { DbManager } = await import(pathToFileURL(`${dist}/storage/db-manager.js`));
+          const { loadGraphFromDB } = await import(pathToFileURL(`${dist}/storage/graph-loader.js`));
+          const { getDbPath } = await import(pathToFileURL(`${dist}/storage/metadata.js`));
+          const graph = createKnowledgeGraph();
+          const db = new DbManager(getDbPath(repo), true);
+          await db.init();
+          await loadGraphFromDB(graph, db);
+          db.close();
+          const canonical = (value) => {
+            if (Array.isArray(value)) return value.map(canonical);
+            if (value && typeof value === 'object') {
+              return Object.fromEntries(Object.entries(value)
+                .filter(([key]) => !['createdAt', 'updatedAt', 'duration'].includes(key))
+                .sort(([a], [b]) => a.localeCompare(b))
+                .map(([key, item]) => [key, canonical(item)]));
+            }
+            return value;
+          };
+          const nodes = [...graph.allNodes()]
+            .map(canonical)
+            .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+          const edges = [...graph.allEdges()]
+            .map(canonical)
+            .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+          fs.writeFileSync(output, JSON.stringify({ nodes, edges }, null, 2));
+          NODE
+          }
+
+          snapshot_graph "$repo/incremental-graph.json"
+          node "$cli" analyze --force --skip-embeddings "$repo"
+          snapshot_graph "$repo/full-graph.json"
+          cmp "$repo/incremental-graph.json" "$repo/full-graph.json"
       - name: Security gate
         run: npm audit --audit-level=high
