@@ -35,7 +35,7 @@ import { startHttpServer } from '../http/app.js';
 import { startMcpStdio } from '../mcp-server/server.js';
 import { textSearch } from '../search/text-search.js';
 import type { PipelineContext } from '../pipeline/types.js';
-import { saveMetadata, loadMetadata, getDbPath, getVectorDbPath, loadAgentTargets, saveAgentTargets, computeIndexVersion, resolveEmbeddingMode, shouldRebuildEmbeddings, resolveAnalyzeMode, type AgentTargetConfig, type AgentTargetSelection, type AgentTargetFormat, type EmbeddingMetadata } from '../storage/metadata.js';
+import { saveMetadata, loadMetadata, getDbPath, getVectorDbPath, loadAgentTargets, saveAgentTargets, computeIndexVersion, resolveEmbeddingMode, shouldRebuildEmbeddings, resolveAnalyzeMode, resolveParserForMetadata, type AgentTargetConfig, type AgentTargetSelection, type AgentTargetFormat, type EmbeddingMetadata } from '../storage/metadata.js';
 import { writeContextFiles } from './context-writer.js';
 import { AGENT_OPTIONS, isValidRepoRelativeTargetPath, resolveBuiltinTarget } from './agent-targets.js';
 import { upsertRepo, loadRegistry, findRepoByName, findRepoByPath, renameRepo, relinkRepo, removeRepo } from '../storage/repo-registry.js';
@@ -908,7 +908,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
       indexVersion: computeIndexVersion(workspaceRoot, schemaVersion, indexedAt),
       commitHash: currentCommitHash,
       lastAnalyzedMtimes: mergedMtimes,
-      parser: context.parserUsed ?? 'regex',
+      parser: resolveParserForMetadata(context.parserUsed, previousMetadata),
       embeddings: embeddingMetadataForSave ?? (embeddingBuildFailed ? buildEmbeddingMetadata('stale') : undefined),
       stats: {
         nodes: indexedGraph.size.nodes,

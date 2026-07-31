@@ -13,6 +13,11 @@ All notable changes to this project are documented in this file.
 - Keeps the zero-change fast path; any non-empty changed/deleted set performs a clean full graph rebuild in v1.0.8.
 - Adds unchanged caller/importer/inheritor regression coverage and canonical graph equivalence against a forced clean rebuild.
 
+### 🧩 Parser metadata migration
+
+- Fixed v1.0.7 → v1.0.8 migration/zero-change analysis metadata so a tree-sitter index is not incorrectly rewritten as `parser: regex`; `code-intel serve` now accepts the rebuilt index without requesting another analysis.
+- Legacy indexes that genuinely have `parser: regex` or no parser provenance remain blocked until a real tree-sitter rebuild succeeds.
+
 ### 🔍 Truthful vector fallback reporting
 
 - Hybrid search records vector status as `unavailable`, `failed`, `empty`, or `success`.

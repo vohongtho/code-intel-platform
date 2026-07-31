@@ -149,6 +149,21 @@ export function shouldRebuildEmbeddings(args: {
     || !embeddingFingerprintMatches(args.metadata?.embeddings, args.runtime);
 }
 
+export function resolveParserForMetadata(
+  parserUsed: IndexMetadata['parser'] | undefined,
+  previousMetadata?: IndexMetadata | null,
+): NonNullable<IndexMetadata['parser']> {
+  // A zero-change incremental run and some legacy-generation migration paths do
+  // not execute the parse phase. Preserve the parser provenance already attached
+  // to the published graph instead of incorrectly downgrading it to regex.
+  if (parserUsed) return parserUsed;
+  if (previousMetadata?.parser) return previousMetadata.parser;
+
+  // Metadata created before parser provenance existed came from the old regex
+  // pipeline. Keep it blocked by `serve` until a real parse phase rebuilds it.
+  return 'regex';
+}
+
 export function resolveAnalyzeMode(args: {
   explicitIncremental?: boolean;
   force?: boolean;
