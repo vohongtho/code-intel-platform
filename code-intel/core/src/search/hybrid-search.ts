@@ -6,12 +6,10 @@ import { VectorIndex } from './vector-index.js';
 import { getEmbedder } from './embedder.js';
 
 export interface HybridSearchOptions {
-  vectorDbPath?: string; // path to vector.db; if absent → BM25 only
-  bm25Limit?: number;    // results to fetch from BM25 before RRF (default: 50)
-  vectorLimit?: number;  // results to fetch from vector before RRF (default: 50)
-  /** Pre-computed BM25 results (from Bm25Index). If supplied, skips linear textSearch. */
+  vectorDbPath?: string;
+  bm25Limit?: number;
+  vectorLimit?: number;
   bm25Results?: SearchResult[];
-  /** Include per-result lexical/vector/RRF evidence. */
   explainResults?: boolean;
 }
 
@@ -36,12 +34,18 @@ export interface HybridSearchResult {
   evidence?: SearchScoreEvidence;
 }
 
+export type VectorExecutionStatus = 'unavailable' | 'failed' | 'empty' | 'success';
+
 export async function hybridSearch(
   graph: KnowledgeGraph,
   query: string,
   limit: number,
   options: HybridSearchOptions = {},
-): Promise<{ results: HybridSearchResult[]; searchMode: 'bm25' | 'vector' | 'hybrid' }> {
+): Promise<{
+  results: HybridSearchResult[];
+  searchMode: 'bm25' | 'vector' | 'hybrid';
+  vectorStatus: VectorExecutionStatus;
+}> {
   const {
     vectorDbPath,
     bm25Limit = 50,
@@ -69,13 +73,14 @@ export async function hybridSearch(
           : undefined,
       })),
       searchMode: 'bm25',
+      vectorStatus: 'unavailable',
     };
   }
 
-  const vectorPromise = runVectorSearch(vectorDbPath!, query, vectorLimit);
-  const [bm25Results, vectorResults] = await Promise.all([bm25Promise, vectorPromise]);
+  const vectorResult = await runVectorSearch(vectorDbPath!, query, vectorLimit);
+  const bm25Results = await bm25Promise;
 
-  if (vectorResults === null || vectorResults.length === 0) {
+  if (vectorResult.status !== 'success') {
     const filteredBm25 = bm25Results
       .filter((result) => !isDefaultExcludedSearchPath(result.filePath))
       .sort(compareResults);
@@ -88,10 +93,11 @@ export async function hybridSearch(
           : undefined,
       })),
       searchMode: 'bm25',
+      vectorStatus: vectorResult.status,
     };
   }
 
-  const vectorAsSearchResults: SearchResult[] = vectorResults.map((hit) => ({
+  const vectorAsSearchResults: SearchResult[] = vectorResult.hits.map((hit) => ({
     nodeId: hit.nodeId,
     name: hit.name,
     kind: hit.kind,
@@ -133,6 +139,7 @@ export async function hybridSearch(
       };
     }),
     searchMode: 'hybrid',
+    vectorStatus: 'success',
   };
 }
 
@@ -140,25 +147,27 @@ async function runVectorSearch(
   vectorDbPath: string,
   query: string,
   topK: number,
-): Promise<Array<{ nodeId: string; name: string; kind: string; filePath: string; score: number }> | null> {
+): Promise<
+  | { status: 'success'; hits: Array<{ nodeId: string; name: string; kind: string; filePath: string; score: number }> }
+  | { status: 'unavailable' | 'failed' | 'empty' }
+> {
+  let idx: VectorIndex | null = null;
   try {
-    const idx = new VectorIndex(vectorDbPath);
+    idx = new VectorIndex(vectorDbPath);
     await idx.init();
 
     const built = await idx.isBuilt();
-    if (!built) {
-      idx.close();
-      return null;
-    }
+    if (!built) return { status: 'unavailable' };
 
     const embedder = await getEmbedder();
     const out = await embedder(query, { pooling: 'mean', normalize: true });
     const queryEmbedding = Array.from(out.data);
-
     const hits = await idx.search(queryEmbedding, topK);
-    idx.close();
-    return hits;
+    if (hits.length === 0) return { status: 'empty' };
+    return { status: 'success', hits };
   } catch {
-    return null;
+    return { status: 'failed' };
+  } finally {
+    idx?.close();
   }
 }
