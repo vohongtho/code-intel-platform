@@ -3,17 +3,13 @@ import assert from 'node:assert/strict';
 import { createKnowledgeGraph } from '../../../src/graph/knowledge-graph.js';
 import { IncrementalIndexer } from '../../../src/pipeline/incremental-indexer.js';
 
-const KnowledgeGraph = createKnowledgeGraph().constructor as new () => ReturnType<typeof createKnowledgeGraph>;
-
-// ─── Helper ──────────────────────────────────────────────────────────────────
+const KnowledgeGraph = createKnowledgeGraph().constructor as new () => any;
 
 function makeGraph() {
-  const graph = createKnowledgeGraph();
-  return graph;
+  return createKnowledgeGraph();
 }
 
 describe('IncrementalIndexer', () => {
-
   it('returns zero counts for empty changedFiles', async () => {
     const graph = makeGraph();
     const indexer = new IncrementalIndexer(graph, '/workspace', '/workspace/.code-intel/graph.db');
@@ -28,27 +24,21 @@ describe('IncrementalIndexer', () => {
     const graph = makeGraph();
     graph.addNode({ id: 'fn1', kind: 'function', name: 'foo', filePath: 'src/a.ts' });
     graph.addNode({ id: 'fn2', kind: 'function', name: 'bar', filePath: 'src/b.ts' });
-    assert.equal(graph.size.nodes, 2);
-
     const indexer = new IncrementalIndexer(graph, '/', '/__nonexistent__/graph.db');
     const result = await indexer.patchGraph(['/src/a.ts']);
-
     assert.equal(result.filesProcessed, 1);
     assert.equal(result.nodesRemoved, 1);
     assert.equal(graph.size.nodes, 1);
-    const remaining = [...graph.allNodes()];
-    assert.equal(remaining[0]?.id, 'fn2');
+    assert.equal([...graph.allNodes()][0]?.id, 'fn2');
   });
 
   it('removes ALL nodes for a given file', async () => {
     const graph = makeGraph();
     graph.addNode({ id: 'n1', kind: 'function', name: 'a', filePath: 'src/x.ts' });
-    graph.addNode({ id: 'n2', kind: 'class',    name: 'B', filePath: 'src/x.ts' });
+    graph.addNode({ id: 'n2', kind: 'class', name: 'B', filePath: 'src/x.ts' });
     graph.addNode({ id: 'n3', kind: 'function', name: 'c', filePath: 'src/y.ts' });
-
     const indexer = new IncrementalIndexer(graph, '/', '/__nonexistent__/graph.db');
     const result = await indexer.patchGraph(['/src/x.ts']);
-
     assert.equal(result.nodesRemoved, 2);
     assert.equal(graph.size.nodes, 1);
     assert.ok(graph.getNode('n3') !== undefined);
@@ -66,10 +56,8 @@ describe('IncrementalIndexer', () => {
     graph.addNode({ id: 'a1', kind: 'function', name: 'a1', filePath: 'src/a.ts' });
     graph.addNode({ id: 'b1', kind: 'function', name: 'b1', filePath: 'src/b.ts' });
     graph.addNode({ id: 'c1', kind: 'function', name: 'c1', filePath: 'src/c.ts' });
-
     const indexer = new IncrementalIndexer(graph, '/', '/__nonexistent__/graph.db');
     const result = await indexer.patchGraph(['/src/a.ts', '/src/b.ts']);
-
     assert.equal(result.filesProcessed, 2);
     assert.equal(result.nodesRemoved, 2);
     assert.equal(graph.size.nodes, 1);
