@@ -1,0 +1,9 @@
+schema: spec-driven
+metadata:
+  release: 1.0.8
+  priority: P0
+  owner_area: retrieval-and-context
+  depends_on:
+    - v1-0-8-stabilize-incremental-index
+  blocks:
+    - v1-0-8-add-change-context-pack

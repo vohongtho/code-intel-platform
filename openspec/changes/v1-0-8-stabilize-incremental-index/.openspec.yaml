@@ -1,0 +1,9 @@
+schema: spec-driven
+metadata:
+  release: 1.0.8
+  priority: P0
+  owner_area: analysis-and-storage
+  depends_on: []
+  blocks:
+    - v1-0-8-trusted-retrieval-contracts
+    - v1-0-8-add-change-context-pack

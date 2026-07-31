@@ -1,0 +1,55 @@
+schema: spec-driven
+
+context: |
+  Project: Code Intelligence Platform
+  Release target: v1.0.8
+  Source baseline: release/1.0.7
+
+  Runtime and language:
+  - Node.js >= 22
+  - TypeScript 5.x
+  - ESM modules with explicit .js import suffixes
+  - npm workspaces
+
+  Major components:
+  - code-intel/core: CLI, analysis pipeline, graph, search, HTTP API, MCP server
+  - code-intel/web: React web client
+  - code-intel/shared: shared graph types
+  - LadybugDB: persisted knowledge graph
+  - SQLite: BM25 and vector indexes
+  - tree-sitter: source parsing
+
+  Engineering constraints:
+  - Correctness takes precedence over micro-optimizing incremental derived phases.
+  - A successful incremental analysis must be observably equivalent to full analysis.
+  - Do not mutate the currently published graph, BM25, vector, or metadata generation before all required replacement artifacts validate.
+  - Use execFile/execFileSync argument arrays for Git commands; never interpolate a ref into a shell command.
+  - Preserve backward compatibility for public CLI, HTTP, MCP, and web contracts.
+  - Default MCP responses must remain compact; verbose explanation is opt-in.
+  - No new runtime dependency without a documented design decision and package audit.
+  - Tests must be deterministic and may not depend on the developer's global Git configuration.
+  - Every new public field must be documented in MCP schemas, OpenAPI, web types, README, and tests.
+  - Every failure-path test must reopen persisted artifacts rather than asserting only in-memory counters.
+  - Do not modify generated dist or dist-tests output.
+
+rules:
+  proposal:
+    - State the user-visible correctness problem and why v1.0.8 must solve it.
+    - Separate in-scope behavior, explicit non-goals, compatibility, migration, and release risk.
+    - List affected capabilities and dependencies on other v1.0.8 changes.
+  specs:
+    - Use ADDED, MODIFIED, or REMOVED requirement sections.
+    - Every requirement must contain at least one GIVEN/WHEN/THEN scenario.
+    - Describe verifiable behavior, not file-level implementation details.
+    - Include error, fallback, migration, and compatibility scenarios.
+  design:
+    - Begin with the observed v1.0.7 control flow.
+    - Name exact modules, exported types, functions, and ownership boundaries.
+    - Include alternatives considered, failure semantics, migration, observability, and test strategy.
+    - Define invariants and response contracts precisely.
+  tasks:
+    - Use unchecked Markdown checkboxes.
+    - Name every source and test file that will be created or modified.
+    - Name exact symbols to add, remove, split, or replace.
+    - State test assertions and acceptance evidence for each implementation task.
+    - Keep documentation, migration, package validation, and performance gates explicit.

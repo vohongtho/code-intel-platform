@@ -1,0 +1,9 @@
+schema: spec-driven
+metadata:
+  release: 1.0.8
+  priority: P1
+  owner_area: agent-workflows
+  depends_on:
+    - v1-0-8-stabilize-incremental-index
+    - v1-0-8-trusted-retrieval-contracts
+  blocks: []

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { resolvePublishedArtifactPath } from './index-generation.js';
 
 const META_DIRNAME = '.code-intel';
 const META_FILE = 'meta.json';
@@ -31,11 +32,10 @@ export interface ResolvedAnalyzeMode {
 export interface IndexMetadata {
   indexedAt: string;
   schemaVersion?: number;
-  indexVersion?: string;   // UUID, bumped on every successful analysis
+  indexVersion?: string;
+  generationId?: string;
   commitHash?: string;
-  /** Parser used during analysis: 'tree-sitter' | 'regex' */
   parser?: 'tree-sitter' | 'regex';
-  /** mtime (ms since epoch) for each indexed file path (relative to workspace root) */
   lastAnalyzedMtimes?: Record<string, number>;
   embeddings?: EmbeddingMetadata;
   stats: {
@@ -65,30 +65,45 @@ function getMetaDir(repoDir: string): string {
   return path.join(repoDir, META_DIRNAME);
 }
 
+function stagingDir(): string | null {
+  const value = process.env['CODE_INTEL_INDEX_STAGING_DIR']?.trim();
+  return value ? path.resolve(value) : null;
+}
+
+function writableArtifactPath(repoDir: string, artifact: 'graph.db' | 'vector.db' | 'meta.json'): string {
+  const staging = stagingDir();
+  return staging ? path.join(staging, artifact) : resolvePublishedArtifactPath(repoDir, artifact);
+}
+
 export function saveMetadata(repoDir: string, metadata: IndexMetadata): void {
-  const metaDir = getMetaDir(repoDir);
-  fs.mkdirSync(metaDir, { recursive: true });
-  const target = path.join(metaDir, META_FILE);
+  const target = writableArtifactPath(repoDir, META_FILE);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
   const tmp = `${target}.tmp-${process.pid}-${Date.now()}`;
   fs.writeFileSync(tmp, JSON.stringify(metadata, null, 2));
   fs.renameSync(tmp, target);
 }
 
 export function loadMetadata(repoDir: string): IndexMetadata | null {
-  try {
-    const data = fs.readFileSync(path.join(getMetaDir(repoDir), META_FILE), 'utf-8');
-    return JSON.parse(data);
-  } catch {
-    return null;
+  const staging = stagingDir();
+  const candidates = staging
+    ? [path.join(staging, META_FILE), resolvePublishedArtifactPath(repoDir, META_FILE)]
+    : [resolvePublishedArtifactPath(repoDir, META_FILE)];
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(fs.readFileSync(candidate, 'utf-8')) as IndexMetadata;
+    } catch {
+      // Continue to the next compatible location.
+    }
   }
+  return null;
 }
 
 export function getDbPath(repoDir: string): string {
-  return path.join(getMetaDir(repoDir), 'graph.db');
+  return writableArtifactPath(repoDir, 'graph.db');
 }
 
 export function getVectorDbPath(repoDir: string): string {
-  return path.join(getMetaDir(repoDir), 'vector.db');
+  return writableArtifactPath(repoDir, 'vector.db');
 }
 
 export function resolveEmbeddingMode(args: {
@@ -134,6 +149,21 @@ export function shouldRebuildEmbeddings(args: {
     || !embeddingFingerprintMatches(args.metadata?.embeddings, args.runtime);
 }
 
+export function resolveParserForMetadata(
+  parserUsed: IndexMetadata['parser'] | undefined,
+  previousMetadata?: IndexMetadata | null,
+): NonNullable<IndexMetadata['parser']> {
+  // A zero-change incremental run and some legacy-generation migration paths do
+  // not execute the parse phase. Preserve the parser provenance already attached
+  // to the published graph instead of incorrectly downgrading it to regex.
+  if (parserUsed) return parserUsed;
+  if (previousMetadata?.parser) return previousMetadata.parser;
+
+  // Metadata created before parser provenance existed came from the old regex
+  // pipeline. Keep it blocked by `serve` until a real parse phase rebuilds it.
+  return 'regex';
+}
+
 export function resolveAnalyzeMode(args: {
   explicitIncremental?: boolean;
   force?: boolean;
@@ -148,15 +178,30 @@ export function resolveAnalyzeMode(args: {
 function statToken(filePath: string): string {
   try {
     const stat = fs.statSync(filePath);
-    return `${filePath}:${stat.size}:${stat.mtimeMs}`;
+    return `${path.basename(filePath)}:${stat.size}:${stat.mtimeMs}`;
   } catch {
-    return `${filePath}:missing`;
+    return `${path.basename(filePath)}:missing`;
   }
 }
 
 export function computeIndexVersion(repoDir: string, schemaVersion: number, indexedAt: string): string {
-  const root = getMetaDir(repoDir);
-  const files = ['graph.db', 'bm25.db', 'vector.db'].map((name) => statToken(path.join(root, name)));
+  const staging = stagingDir();
+  const files = staging
+    ? ['graph.db', 'bm25.db', 'vector.db'].map((name) => path.join(staging, name)).map(statToken)
+    : [
+        resolvePublishedArtifactPath(repoDir, 'graph.db'),
+        resolvePublishedArtifactPath(repoDir, 'bm25.db'),
+        resolvePublishedArtifactPath(repoDir, 'vector.db'),
+      ].map(statToken);
+  return crypto.createHash('sha256').update(JSON.stringify({ schemaVersion, indexedAt, files })).digest('hex');
+}
+
+export function computeIndexVersionForPaths(
+  schemaVersion: number,
+  indexedAt: string,
+  paths: { graphDbPath: string; bm25DbPath: string; vectorDbPath: string },
+): string {
+  const files = [paths.graphDbPath, paths.bm25DbPath, paths.vectorDbPath].map(statToken);
   return crypto.createHash('sha256').update(JSON.stringify({ schemaVersion, indexedAt, files })).digest('hex');
 }
 

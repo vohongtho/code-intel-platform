@@ -27,6 +27,31 @@ export interface PatchResult {
   duration: number;
 }
 
+export function removeAffectedNodesFromGraph(
+  graph: KnowledgeGraph,
+  workspaceRoot: string,
+  changedFiles: string[],
+  deletedFiles: string[] = [],
+): number {
+  const nodesByFilePath = new Map<string, string[]>();
+  for (const node of graph.allNodes()) {
+    if (!node.filePath) continue;
+    const ids = nodesByFilePath.get(node.filePath);
+    if (ids) ids.push(node.id);
+    else nodesByFilePath.set(node.filePath, [node.id]);
+  }
+  const affectedRelPaths = new Set<string>(deletedFiles);
+  for (const absPath of changedFiles) affectedRelPaths.add(path.relative(workspaceRoot, absPath));
+  const nodeIdsToRemove = new Set<string>();
+  for (const relPath of affectedRelPaths) {
+    for (const id of nodesByFilePath.get(relPath) ?? []) nodeIdsToRemove.add(id);
+    const absPath = path.join(workspaceRoot, relPath);
+    for (const id of nodesByFilePath.get(absPath) ?? []) nodeIdsToRemove.add(id);
+  }
+  for (const id of nodeIdsToRemove) graph.removeNodeCascade(id);
+  return nodeIdsToRemove.size;
+}
+
 export class IncrementalIndexer {
   private readonly graph: KnowledgeGraph;
   private readonly workspaceRoot: string;
@@ -51,31 +76,9 @@ export class IncrementalIndexer {
     }
 
     // ── 1. Remove stale nodes from in-memory graph ────────────────────────────
-    let nodesRemoved = 0;
-
-    // Build a filePath → nodeIds index once to avoid O(F×N) scanning.
-    const nodesByFilePath = new Map<string, string[]>();
-    for (const node of graph.allNodes()) {
-      if (!node.filePath) continue;
-      const ids = nodesByFilePath.get(node.filePath);
-      if (ids) ids.push(node.id);
-      else nodesByFilePath.set(node.filePath, [node.id]);
-    }
-
-    const nodeIdsToRemove = new Set<string>();
+    const nodesRemoved = removeAffectedNodesFromGraph(graph, workspaceRoot, changedFiles, deletedFiles);
     const affectedRelPaths = new Set<string>(deletedFiles);
-    for (const absPath of changedFiles) {
-      affectedRelPaths.add(path.relative(workspaceRoot, absPath));
-    }
-    for (const relPath of affectedRelPaths) {
-      for (const id of nodesByFilePath.get(relPath) ?? []) nodeIdsToRemove.add(id);
-      const absPath = path.join(workspaceRoot, relPath);
-      for (const id of nodesByFilePath.get(absPath) ?? []) nodeIdsToRemove.add(id);
-    }
-    for (const id of nodeIdsToRemove) {
-      graph.removeNodeCascade(id);
-      nodesRemoved++;
-    }
+    for (const absPath of changedFiles) affectedRelPaths.add(path.relative(workspaceRoot, absPath));
 
     // ── 2. Remove stale nodes from DB ─────────────────────────────────────────
     if (fs.existsSync(dbPath)) {

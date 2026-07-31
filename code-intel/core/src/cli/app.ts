@@ -35,7 +35,7 @@ import { startHttpServer } from '../http/app.js';
 import { startMcpStdio } from '../mcp-server/server.js';
 import { textSearch } from '../search/text-search.js';
 import type { PipelineContext } from '../pipeline/types.js';
-import { saveMetadata, loadMetadata, getDbPath, getVectorDbPath, loadAgentTargets, saveAgentTargets, computeIndexVersion, resolveEmbeddingMode, shouldRebuildEmbeddings, resolveAnalyzeMode, type AgentTargetConfig, type AgentTargetSelection, type AgentTargetFormat, type EmbeddingMetadata } from '../storage/metadata.js';
+import { saveMetadata, loadMetadata, getDbPath, getVectorDbPath, loadAgentTargets, saveAgentTargets, computeIndexVersion, resolveEmbeddingMode, shouldRebuildEmbeddings, resolveAnalyzeMode, resolveParserForMetadata, type AgentTargetConfig, type AgentTargetSelection, type AgentTargetFormat, type EmbeddingMetadata } from '../storage/metadata.js';
 import { writeContextFiles } from './context-writer.js';
 import { AGENT_OPTIONS, isValidRepoRelativeTargetPath, resolveBuiltinTarget } from './agent-targets.js';
 import { upsertRepo, loadRegistry, findRepoByName, findRepoByPath, renameRepo, relinkRepo, removeRepo } from '../storage/repo-registry.js';
@@ -46,7 +46,7 @@ import {
   buildMtimeSnapshot,
 } from '../pipeline/incremental.js';
 import { loadGraphFromDB } from '../multi-repo/graph-from-db.js';
-import { IncrementalIndexer } from '../pipeline/incremental-indexer.js';
+import { removeAffectedNodesFromGraph } from '../pipeline/incremental-indexer.js';
 import {
   loadGroup,
   saveGroup,
@@ -589,6 +589,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
           isIncremental = true;
           incrementalChangedFiles = decision.changedExistingFiles ?? [];
           incrementalDeletedFiles = decision.deletedFiles ?? [];
+          removeAffectedNodesFromGraph(fullIndexGraph, workspaceRoot, incrementalChangedFiles, incrementalDeletedFiles);
           if (!options?.silent) {
             const label = analyzeMode.source === 'auto' ? 'Auto-incremental' : 'Incremental';
             console.log(`  ◈ ${label}: ${incrementalChangedFiles.length} changed file(s), ${incrementalDeletedFiles.length} deleted file(s) of ${decision.totalFiles ?? scannedFilePaths.length} total`);
@@ -697,11 +698,6 @@ async function analyzeWorkspace(targetPath: string, options?: {
       console.log(`    ${phaseName.padEnd(nameW)} ${durStr.padStart(durW)}${memStr}`);
     }
     console.log('');
-  }
-
-  if (isIncremental && fullIndexGraph && !zeroChangeIncremental) {
-    const indexer = new IncrementalIndexer(fullIndexGraph, workspaceRoot, getDbPath(workspaceRoot));
-    await indexer.patchGraph(incrementalChangedFiles, incrementalDeletedFiles);
   }
 
   // Build mtime snapshot for all currently scanned files (used on next incremental run)
@@ -912,7 +908,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
       indexVersion: computeIndexVersion(workspaceRoot, schemaVersion, indexedAt),
       commitHash: currentCommitHash,
       lastAnalyzedMtimes: mergedMtimes,
-      parser: context.parserUsed ?? 'regex',
+      parser: resolveParserForMetadata(context.parserUsed, previousMetadata),
       embeddings: embeddingMetadataForSave ?? (embeddingBuildFailed ? buildEmbeddingMetadata('stale') : undefined),
       stats: {
         nodes: indexedGraph.size.nodes,

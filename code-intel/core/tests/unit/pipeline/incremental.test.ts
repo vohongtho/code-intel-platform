@@ -196,3 +196,50 @@ describe('decideIncremental', () => {
     assert.equal(result.changedFiles!.length, 0);
   });
 });
+
+
+describe('dirty working tree detection', () => {
+  it('detects unstaged, staged and untracked files when baseHash equals HEAD', () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-dirty-git-'));
+    try {
+      execSync('git init -q', { cwd: repo });
+      execSync('git config user.email test@example.com', { cwd: repo });
+      execSync('git config user.name Test', { cwd: repo });
+      fs.writeFileSync(path.join(repo, 'unstaged.ts'), 'export const a = 1;');
+      fs.writeFileSync(path.join(repo, 'staged.ts'), 'export const b = 1;');
+      execSync('git add . && git commit -qm initial', { cwd: repo });
+      const base = getCurrentCommitHash(repo)!;
+      fs.writeFileSync(path.join(repo, 'unstaged.ts'), 'export const a = 2;');
+      fs.writeFileSync(path.join(repo, 'staged.ts'), 'export const b = 2;');
+      execSync('git add staged.ts', { cwd: repo });
+      fs.writeFileSync(path.join(repo, 'untracked.ts'), 'export const c = 1;');
+      assert.deepEqual(getChangedFilesSince(repo, base), ['staged.ts', 'unstaged.ts', 'untracked.ts']);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('unions git and mtime evidence', () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-git-mtime-'));
+    try {
+      execSync('git init -q', { cwd: repo });
+      execSync('git config user.email test@example.com', { cwd: repo });
+      execSync('git config user.name Test', { cwd: repo });
+      const files: string[] = [];
+      for (let i = 0; i < 10; i++) {
+        const file = path.join(repo, `file${i}.ts`);
+        fs.writeFileSync(file, `export const v${i} = ${i};`);
+        files.push(file);
+      }
+      execSync('git add . && git commit -qm initial', { cwd: repo });
+      const base = getCurrentCommitHash(repo)!;
+      const mtimes = buildMtimeSnapshot(files, repo);
+      mtimes['file0.ts'] -= 10_000;
+      const result = decideIncremental(repo, files, base, mtimes);
+      assert.equal(result.incremental, true);
+      assert.deepEqual(result.changedExistingFiles, [files[0]]);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});

@@ -7,76 +7,74 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import Logger from '../shared/logger.js';
 
-// ─── Git helpers ──────────────────────────────────────────────────────────────
+function normalizeRelativePath(value: string): string {
+  return value.trim().replace(/\\/g, '/').replace(/^\.\//, '');
+}
 
-/**
- * Returns the current HEAD commit hash, or null if not a git repo / git unavailable.
- */
 export function getCurrentCommitHash(workspaceRoot: string): string | null {
   try {
-    return execSync('git rev-parse HEAD', { cwd: workspaceRoot, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+    return execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: workspaceRoot,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
   } catch {
     return null;
   }
 }
 
-/**
- * Returns relative file paths (from workspaceRoot) that changed between
- * `baseHash` and HEAD. Returns null if git is unavailable or the diff fails.
- */
+/** Returns committed, staged, unstaged and untracked changes relative to baseHash. */
 export function getChangedFilesSince(workspaceRoot: string, baseHash: string): string[] | null {
   try {
-    const output = execSync(
-      `git diff --name-only ${baseHash} HEAD`,
-      { cwd: workspaceRoot, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
-    ).trim();
-    if (!output) return [];
-    return output.split('\n').map((f) => f.trim()).filter(Boolean);
+    const tracked = execFileSync('git', ['diff', '--name-only', baseHash, '--'], {
+      cwd: workspaceRoot,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    const untracked = execFileSync('git', ['ls-files', '--others', '--exclude-standard'], {
+      cwd: workspaceRoot,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    return [...new Set(`${tracked}\n${untracked}`
+      .split('\n')
+      .map(normalizeRelativePath)
+      .filter(Boolean))]
+      .sort();
   } catch {
     return null;
   }
 }
 
-// ─── mtime helpers ────────────────────────────────────────────────────────────
-
-/**
- * Given a list of absolute file paths and a stored mtime map, returns those
- * whose current mtime is NEWER than what was stored (or not stored at all).
- *
- * @param allFilePaths  Absolute paths from the scan phase
- * @param workspaceRoot Used to convert absolute → relative paths for the key
- * @param storedMtimes  The `lastAnalyzedMtimes` from the previous meta.json
- */
 export function filterChangedByMtime(
   allFilePaths: string[],
   workspaceRoot: string,
   storedMtimes: Record<string, number>,
 ): string[] {
+  const normalizedStored = new Map(
+    Object.entries(storedMtimes).map(([key, value]) => [normalizeRelativePath(key), value]),
+  );
   const changed: string[] = [];
   for (const absPath of allFilePaths) {
-    const rel = path.relative(workspaceRoot, absPath);
-    const stored = storedMtimes[rel];
+    const rel = normalizeRelativePath(path.relative(workspaceRoot, absPath));
+    const stored = normalizedStored.get(rel);
     if (stored === undefined) {
-      changed.push(absPath); // new file
+      changed.push(absPath);
       continue;
     }
     try {
       const { mtimeMs } = fs.statSync(absPath);
-      if (mtimeMs > stored) changed.push(absPath);
+      if (mtimeMs !== stored) changed.push(absPath);
     } catch {
-      changed.push(absPath); // stat failed → re-parse to be safe
+      changed.push(absPath);
     }
   }
   return changed;
 }
 
-/**
- * Builds a fresh mtime snapshot for a set of absolute file paths.
- * Returns a Record keyed by path relative to workspaceRoot.
- */
 export function buildMtimeSnapshot(
   filePaths: string[],
   workspaceRoot: string,
@@ -85,7 +83,7 @@ export function buildMtimeSnapshot(
   for (const absPath of filePaths) {
     try {
       const { mtimeMs } = fs.statSync(absPath);
-      snap[path.relative(workspaceRoot, absPath)] = mtimeMs;
+      snap[normalizeRelativePath(path.relative(workspaceRoot, absPath))] = mtimeMs;
     } catch {
       // Unreadable file — skip
     }
@@ -93,36 +91,15 @@ export function buildMtimeSnapshot(
   return snap;
 }
 
-// ─── Incremental mode decision ────────────────────────────────────────────────
-
 export interface IncrementalDecision {
-  /** Whether to run incrementally (true) or do a full re-analysis (false) */
   incremental: boolean;
-  /** Files to re-parse (absolute paths) */
   changedExistingFiles?: string[];
-  /** Files removed since the previous successful analyze (relative paths) */
   deletedFiles?: string[];
-  /** Total currently scanned files */
   totalFiles?: number;
-  /** Back-compat alias for callers not yet migrated */
   changedFiles?: string[];
-  /** Reason for falling back to full analysis (when incremental === false) */
   fallbackReason?: string;
 }
 
-/**
- * Decide whether we can run incrementally, and which files need re-parsing.
- *
- * Falls back to full analysis when:
- *  - no previous commit hash and no stored mtimes
- *  - git is unavailable AND no stored mtimes
- *  - changed files > 20 % of total
- *
- * @param workspaceRoot   Absolute path to workspace
- * @param allFilePaths    All scanned source file paths (absolute)
- * @param prevCommitHash  commitHash from previous meta.json (may be undefined)
- * @param storedMtimes    lastAnalyzedMtimes from previous meta.json (may be undefined)
- */
 export function decideIncremental(
   workspaceRoot: string,
   allFilePaths: string[],
@@ -130,46 +107,68 @@ export function decideIncremental(
   storedMtimes: Record<string, number> | undefined,
 ): IncrementalDecision {
   const total = allFilePaths.length;
-  const currentRelPaths = allFilePaths.map((p) => path.relative(workspaceRoot, p));
+  const currentRelPaths = allFilePaths.map((p) => normalizeRelativePath(path.relative(workspaceRoot, p)));
   const currentRelSet = new Set(currentRelPaths);
-  const deletedFiles = Object.keys(storedMtimes ?? {}).filter((rel) => !currentRelSet.has(rel));
+  const deletedFiles = Object.keys(storedMtimes ?? {})
+    .map(normalizeRelativePath)
+    .filter((rel) => !currentRelSet.has(rel));
 
-  const finalizeIncremental = (changedExistingFiles: string[], source: 'git' | 'mtime'): IncrementalDecision => {
-    const changedWork = changedExistingFiles.length + deletedFiles.length;
-    if (total > 0 && changedWork / total > 0.2) {
+  const finalizeIncremental = (
+    changedExistingFiles: string[],
+    source: 'git' | 'mtime' | 'git+mtime',
+  ): IncrementalDecision => {
+    const deduplicated = [...new Set(changedExistingFiles.map((file) => path.resolve(file)))].sort();
+    const changedWork = deduplicated.length + deletedFiles.length;
+
+    // v1.0.8 correctness gate: removing changed/deleted nodes cascades incoming
+    // cross-file relationships. Until dependency-closure re-resolution is available,
+    // any non-empty change set must use a clean full rebuild. This preserves calls,
+    // imports, heritage edges, clusters and flows. The zero-change fast path remains.
+    if (changedWork > 0) {
       return {
         incremental: false,
-        fallbackReason: `${source}: changed files (${changedExistingFiles.length}) + deleted files (${deletedFiles.length}) > 20% of total (${total})`,
+        fallbackReason: `${source}: correctness-first full rebuild required for ${deduplicated.length} changed and ${deletedFiles.length} deleted file(s)`,
         totalFiles: total,
       };
     }
-    Logger.info(`[incremental] ${source}: ${changedExistingFiles.length} changed files, ${deletedFiles.length} deleted files out of ${total}`);
+
+    Logger.info(`[incremental] ${source}: no source changes detected out of ${total}`);
     return {
       incremental: true,
-      changedExistingFiles,
-      deletedFiles,
-      changedFiles: changedExistingFiles,
+      changedExistingFiles: [],
+      deletedFiles: [],
+      changedFiles: [],
       totalFiles: total,
     };
   };
 
-  // ── Try git first ──────────────────────────────────────────────────────────
   if (prevCommitHash) {
     const changed = getChangedFilesSince(workspaceRoot, prevCommitHash);
     if (changed !== null) {
-      const changedExistingFiles = changed
+      const changedRelPaths = new Set(changed.map(normalizeRelativePath));
+      if (storedMtimes && Object.keys(storedMtimes).length > 0) {
+        for (const absPath of filterChangedByMtime(allFilePaths, workspaceRoot, storedMtimes)) {
+          changedRelPaths.add(normalizeRelativePath(path.relative(workspaceRoot, absPath)));
+        }
+      }
+      const changedExistingFiles = [...changedRelPaths]
         .filter((rel) => currentRelSet.has(rel))
         .map((rel) => path.join(workspaceRoot, rel));
-      return finalizeIncremental(changedExistingFiles, 'git');
+      return finalizeIncremental(changedExistingFiles, storedMtimes ? 'git+mtime' : 'git');
     }
     Logger.warn('[incremental] git diff failed, trying mtime fallback');
   }
 
-  // ── mtime fallback ─────────────────────────────────────────────────────────
   if (storedMtimes && Object.keys(storedMtimes).length > 0) {
-    const changedExistingFiles = filterChangedByMtime(allFilePaths, workspaceRoot, storedMtimes);
-    return finalizeIncremental(changedExistingFiles, 'mtime');
+    return finalizeIncremental(
+      filterChangedByMtime(allFilePaths, workspaceRoot, storedMtimes),
+      'mtime',
+    );
   }
 
-  return { incremental: false, fallbackReason: 'no previous commit hash and no stored mtimes', totalFiles: total };
+  return {
+    incremental: false,
+    fallbackReason: 'no previous commit hash and no stored mtimes',
+    totalFiles: total,
+  };
 }
