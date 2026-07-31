@@ -69,7 +69,6 @@ export type SearchRequest = {
   scope?: SearchScope;
   repo?: string;
   group?: string;
-  /** Include execution, ranking, and per-result score evidence. */
   explain?: boolean;
 };
 
@@ -81,31 +80,13 @@ function normalizeRequestedMode(mode: SearchMode | undefined): RequestedSearchMo
 export function normalizeSearchRequest(body: SearchRequest) {
   const { query, limit, mode, scope, repo, group, explain } = body;
   if (!query) {
-    return {
-      error: {
-        status: 400,
-        message: 'Missing query',
-        hint: 'Provide { "query": "..." } in request body',
-      },
-    } as const;
+    return { error: { status: 400, message: 'Missing query', hint: 'Provide { "query": "..." } in request body' } } as const;
   }
   if (scope && (repo || group)) {
-    return {
-      error: {
-        status: 400,
-        message: 'Ambiguous request shape',
-        hint: 'Use either scope or legacy repo/group fields, not both',
-      },
-    } as const;
+    return { error: { status: 400, message: 'Ambiguous request shape', hint: 'Use either scope or legacy repo/group fields, not both' } } as const;
   }
   if (repo && group) {
-    return {
-      error: {
-        status: 400,
-        message: 'Ambiguous legacy scope',
-        hint: 'Use either repo or group, not both',
-      },
-    } as const;
+    return { error: { status: 400, message: 'Ambiguous legacy scope', hint: 'Use either repo or group, not both' } } as const;
   }
   const normalizedScope = scope
     ?? (group
@@ -143,9 +124,7 @@ export async function executeSearchRequest(
   extra: { endpoint?: string; forceDeprecated?: boolean } = {},
 ): Promise<SearchExecResult> {
   const normalized = normalizeSearchRequest(body);
-  if ('error' in normalized && normalized.error) {
-    return { error: normalized.error };
-  }
+  if ('error' in normalized && normalized.error) return { error: normalized.error };
 
   const { query, limit, mode: requestedMode, scope, deprecated, explain } = normalized;
   const endpointDeprecated = extra.forceDeprecated || Boolean(extra.endpoint);
@@ -155,13 +134,7 @@ export async function executeSearchRequest(
   if (scope?.type === 'group') {
     const grp = loadGroup(scope.name);
     if (!grp) {
-      return {
-        error: {
-          status: 404,
-          message: `Group '${scope.name}' not found`,
-          hint: 'Use /api/v1/groups to list available groups',
-        },
-      } as const;
+      return { error: { status: 404, message: `Group '${scope.name}' not found`, hint: 'Use /api/v1/groups to list available groups' } } as const;
     }
     const groupMode = requestedMode === 'auto' ? 'hybrid' : requestedMode;
     const { perRepo, merged, searchMode, vectorReady } = await queryGroup(grp, query, limit, { mode: groupMode });
@@ -177,9 +150,7 @@ export async function executeSearchRequest(
         actualMode,
         searchMode: actualMode,
         fallbackReason,
-        explanation: explain
-          ? buildSearchExplanation(requestedMode, actualMode, vectorReady, fallbackReason)
-          : undefined,
+        explanation: explain ? buildSearchExplanation(requestedMode, actualMode, vectorReady, fallbackReason) : undefined,
         scope,
         vectorReady,
         deprecated: deprecatedFlag,
@@ -209,14 +180,7 @@ export async function executeSearchRequest(
   if (requestedMode === 'bm25') {
     const compactResults = (bm25Results ?? textSearch(graph, query, limit)).slice(0, limit);
     const results = compactResults.map((result, rank) => explain
-      ? {
-        ...result,
-        evidence: {
-          lexicalScore: result.score,
-          bm25Rank: rank + 1,
-          finalScore: result.score,
-        },
-      }
+      ? { ...result, evidence: { lexicalScore: result.score, bm25Rank: rank + 1, finalScore: result.score } }
       : result);
     return {
       body: {
@@ -224,9 +188,7 @@ export async function executeSearchRequest(
         requestedMode,
         actualMode: 'bm25',
         searchMode: 'bm25',
-        explanation: explain
-          ? buildSearchExplanation(requestedMode, 'bm25', Boolean(vectorDbPath))
-          : undefined,
+        explanation: explain ? buildSearchExplanation(requestedMode, 'bm25', Boolean(vectorDbPath)) : undefined,
         scope: resolvedScope,
         vectorReady: Boolean(vectorDbPath),
         deprecated: deprecatedFlag,
@@ -239,15 +201,18 @@ export async function executeSearchRequest(
     } as const;
   }
 
-  const { results, searchMode } = await hybridSearch(graph, query, limit, {
+  const { results, searchMode, vectorStatus } = await hybridSearch(graph, query, limit, {
     vectorDbPath,
     bm25Results: bm25Results ?? undefined,
     explainResults: explain,
   });
   const actualMode = searchMode as ActualSearchMode;
-  const fallbackReason = actualMode === 'bm25'
-    ? 'VECTOR_INDEX_UNAVAILABLE' as const
+  const fallbackReason: SearchFallbackReason | undefined = actualMode === 'bm25'
+    ? vectorStatus === 'failed'
+      ? 'VECTOR_QUERY_FAILED'
+      : 'VECTOR_INDEX_UNAVAILABLE'
     : undefined;
+  const vectorReady = vectorStatus !== 'unavailable';
 
   return {
     body: {
@@ -256,11 +221,9 @@ export async function executeSearchRequest(
       actualMode,
       searchMode: actualMode,
       fallbackReason,
-      explanation: explain
-        ? buildSearchExplanation(requestedMode, actualMode, actualMode !== 'bm25', fallbackReason)
-        : undefined,
+      explanation: explain ? buildSearchExplanation(requestedMode, actualMode, vectorReady, fallbackReason) : undefined,
       scope: resolvedScope,
-      vectorReady: actualMode !== 'bm25',
+      vectorReady,
       deprecated: deprecatedFlag,
       deprecation,
       total: results.length,
