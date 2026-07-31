@@ -68,5 +68,34 @@ jobs:
             throw new Error(`Expected trusted index after force analysis, got ${JSON.stringify(status)}`);
           }
           NODE
+      - name: Dirty working-tree incremental smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          cli="$GITHUB_WORKSPACE/code-intel/core/dist/cli/main.js"
+          repo="$(mktemp -d)"
+          mkdir -p "$repo/src"
+          for i in $(seq 0 9); do
+            printf 'export function BaseSymbol%s() { return %s; }\n' "$i" "$i" > "$repo/src/file$i.ts"
+          done
+          git -C "$repo" init -q
+          git -C "$repo" config user.email test@example.com
+          git -C "$repo" config user.name Test
+          git -C "$repo" add .
+          git -C "$repo" commit -qm initial
+          node "$cli" analyze --skip-embeddings "$repo"
+          before="$(node -e "const fs=require('fs');process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],'utf8')).generationId)" "$repo/.code-intel/current.json")"
+          printf 'export function DirtyTrackedSymbol() { return 101; }\n' > "$repo/src/file0.ts"
+          printf 'export function DirtyUntrackedSymbol() { return 202; }\n' > "$repo/src/untracked.ts"
+          node "$cli" analyze --skip-embeddings "$repo"
+          after="$(node -e "const fs=require('fs');process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],'utf8')).generationId)" "$repo/.code-intel/current.json")"
+          test "$before" != "$after"
+          (
+            cd "$repo"
+            node "$cli" search "DirtyTrackedSymbol" --json > tracked-search.json
+            node "$cli" search "DirtyUntrackedSymbol" --json > untracked-search.json
+          )
+          grep -q 'DirtyTrackedSymbol' "$repo/tracked-search.json"
+          grep -q 'DirtyUntrackedSymbol' "$repo/untracked-search.json"
       - name: Security gate
         run: npm audit --audit-level=high
