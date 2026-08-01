@@ -14,7 +14,7 @@
     "cliHappyPaths": 29,
     "mcpTools": 31,
     "mcpResources": 3,
-    "mcpProtocolChecks": 1,
+    "mcpProtocolChecks": 2,
     "failures": []
   },
   "workflow": {
