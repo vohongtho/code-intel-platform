@@ -32,12 +32,13 @@ assert(entry.includes('audited-loader.js'), 'entrypoint does not load audited re
 assert(!entry.includes('app-1.0.9.js') && !entry.includes('source-reviewed-reference.js') && !entry.includes('openspec-integration.js'), 'entrypoint still loads legacy patched content');
 
 const expectedLanguages = [
-  'TypeScript', 'JavaScript', 'Python', 'Java', 'Go', 'C', 'C++', 'C#',
-  'Rust', 'PHP', 'Kotlin', 'Ruby', 'Swift', 'Dart', 'HTML',
+  ['TypeScript', 'TypeScript'], ['JavaScript', 'JavaScript'], ['Python', 'Python'], ['Java', 'Java'],
+  ['Go', 'Go'], ['C', 'C'], ['C++', 'Cpp'], ['C#', 'CSharp'], ['Rust', 'Rust'], ['PHP', 'PHP'],
+  ['Kotlin', 'Kotlin'], ['Ruby', 'Ruby'], ['Swift', 'Swift'], ['Dart', 'Dart'], ['HTML', 'HTML'],
 ];
-for (const language of expectedLanguages) {
-  assert(languageRegistry.includes(`label: '${language}'`), `source language missing: ${language}`);
-  assert(guideText.includes(language), `guide language missing: ${language}`);
+for (const [label, enumKey] of expectedLanguages) {
+  assert(languageRegistry.includes(`[Language.${enumKey}]`), `source language missing: ${label}`);
+  assert(guideText.includes(label), `guide language missing: ${label}`);
 }
 
 const listToolsStart = mcp.indexOf('server.setRequestHandler(ListToolsRequestSchema');
