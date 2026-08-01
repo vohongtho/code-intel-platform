@@ -3,29 +3,24 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Versioned documentation for Code Intelligence Platform." />
+    <meta name="description" content="Detailed installation and usage guide for Code Intelligence Platform 1.0.8." />
     <meta name="theme-color" content="#101828" />
-    <title>Code Intelligence Platform — Guide</title>
+    <title>Code Intelligence Platform — User Guide</title>
     <link rel="preconnect" href="https://cdn.jsdelivr.net" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.11.1/styles/github-dark.min.css" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <header class="topbar">
-      <a class="brand" href="/" aria-label="Code Intelligence Platform guide home">
+      <a class="brand" href="/libraries/code-intel-platform/versions/1.0.8/pages/overview" aria-label="Code Intelligence Platform guide home">
         <span class="brand-mark">CI</span>
-        <span>
-          <strong>Code Intelligence Platform</strong>
-          <small>Documentation</small>
-        </span>
+        <span><strong>Code Intelligence Platform</strong><small>Installation & User Guide</small></span>
       </a>
-
       <label class="search" aria-label="Search documentation">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.35-4.35m1.35-5.65a7 7 0 1 1-14 0 7 7 0 0 1 14 0Z"/></svg>
-        <input id="searchInput" type="search" placeholder="Search this guide…" autocomplete="off" />
+        <input id="searchInput" type="search" placeholder="Search installation, MCP, commands…" autocomplete="off" />
         <kbd>/</kbd>
       </label>
-
       <nav class="top-actions" aria-label="External links">
         <a class="button ghost" href="https://www.npmjs.com/package/@vohongtho.infotech/code-intel" target="_blank" rel="noreferrer">npm</a>
         <a class="button primary" href="https://github.com/vohongtho/code-intel-platform" target="_blank" rel="noreferrer">GitHub</a>
@@ -42,33 +37,20 @@
       <aside id="sidebar" class="sidebar">
         <div class="library-card">
           <div class="library-icon">&lt;/&gt;</div>
-          <div>
-            <strong>code-intel-platform</strong>
-            <span>vohongtho</span>
-          </div>
+          <div><strong>code-intel-platform</strong><span>Complete user documentation</span></div>
         </div>
-
-        <label class="field-label" for="versionSelect">Version</label>
-        <select id="versionSelect" class="version-select">
-          <option value="release/1.0.8">1.0.8</option>
-          <option value="main">main (latest)</option>
-        </select>
-
-        <div class="sidebar-heading">
-          <span>Pages</span>
-          <span id="pageCount" class="count">0</span>
-        </div>
+        <label class="field-label" for="versionSelect">Documentation version</label>
+        <select id="versionSelect" class="version-select"><option value="release/1.0.8">1.0.8</option></select>
+        <div class="sidebar-heading"><span>Guide pages</span><span id="pageCount" class="count">0</span></div>
         <nav id="pageNav" class="page-nav" aria-label="Guide pages"></nav>
-
         <div class="sidebar-footer">
-          <span>Source synchronized from GitHub README</span>
-          <a id="sidebarSourceLink" href="https://github.com/vohongtho/code-intel-platform" target="_blank" rel="noreferrer">View repository ↗</a>
+          <span>Step-by-step installation, CLI, Web UI, MCP, quality, security, configuration, and troubleshooting guide.</span>
+          <a id="sidebarSourceLink" href="https://github.com/vohongtho/code-intel-platform/tree/release/1.0.8" target="_blank" rel="noreferrer">View v1.0.8 source ↗</a>
         </div>
       </aside>
 
       <main class="main">
         <div id="searchResults" class="search-results" hidden></div>
-
         <article id="document" class="document" aria-live="polite">
           <div class="document-header">
             <div>
@@ -77,16 +59,11 @@
               <div id="pageMeta" class="page-meta"></div>
             </div>
             <div class="document-actions">
-              <button id="copyMarkdown" class="button ghost" type="button">Copy Markdown</button>
-              <a id="sourceLink" class="button ghost" href="https://github.com/vohongtho/code-intel-platform" target="_blank" rel="noreferrer">Original Source</a>
+              <button id="copyMarkdown" class="button ghost" type="button">Copy Guide</button>
+              <a id="sourceLink" class="button ghost" href="https://github.com/vohongtho/code-intel-platform/tree/release/1.0.8" target="_blank" rel="noreferrer">Source Code</a>
             </div>
           </div>
-          <div id="content" class="markdown-body">
-            <div class="loading-card">
-              <span class="spinner"></span>
-              <p>Loading documentation from GitHub…</p>
-            </div>
-          </div>
+          <div id="content" class="markdown-body"></div>
         </article>
       </main>
 
@@ -98,7 +75,6 @@
 
     <div id="backdrop" class="backdrop" hidden></div>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-
     <script src="https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.11.1/lib/common.min.js"></script>
