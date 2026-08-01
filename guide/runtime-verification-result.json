@@ -11,11 +11,10 @@
   "result": {
     "passed": 65,
     "total": 65,
-    "cliHappyPaths": 27,
+    "cliHappyPaths": 29,
     "mcpTools": 31,
     "mcpResources": 3,
     "mcpProtocolChecks": 1,
-    "httpServerChecks": 1,
     "failures": []
   },
   "workflow": {
