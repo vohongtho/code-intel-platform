@@ -13,6 +13,7 @@ const standalone = read('code-intel/core/src/cli/standalone-commands.ts');
 const mcp = read('code-intel/core/src/mcp-server/server.ts');
 const http = read('code-intel/core/src/http/app.ts');
 const languageRegistry = read('code-intel/core/src/languages/registry.ts');
+const webApp = read('code-intel/web/src/App.tsx');
 const entry = read('guide/v109.html');
 
 const context = vm.createContext({ window: { CODE_INTEL_AUDITED_PAGES: [] } });
@@ -94,22 +95,22 @@ for (const [source, sourceNeedle, guideNeedle] of commandEvidence) {
   assert(guideText.includes(guideNeedle), `guide command missing: ${guideNeedle}`);
 }
 
-const expectedRoutes = [
-  'GET /metrics','GET /health/live','GET /health/ready','GET /health/startup',
-  'POST /api/v1/search','POST /api/v1/vector-search','POST /api/v1/query',
-  'GET  /api/v1/repos','GET  /api/v1/graph/:repo','GET  /api/v1/source',
-  'DELETE /api/v1/groups/:name',
-];
-const routeSourceNeedles = [
-  "app.get('/metrics'", "app.get('/health/live'", "app.get('/health/ready'", "app.get('/health/startup'",
-  "app.post('/api/v1/search'", "app.post('/api/v1/vector-search'", "app.post('/api/v1/query'",
-  "app.get('/api/v1/repos'", "app.get('/api/v1/graph/:repo'", "app.get('/api/v1/source'",
-  "app.delete('/api/v1/groups/:name'",
-];
-routeSourceNeedles.forEach((needle, index) => {
-  assert(http.includes(needle), `HTTP source route missing: ${needle}`);
-  assert(guideText.includes(expectedRoutes[index]), `guide HTTP route missing: ${expectedRoutes[index]}`);
+const sourceRoutes = [...http.matchAll(/app\.(get|post|put|delete)\(\s*'([^']+)'/g)]
+  .map((match) => `${match[1].toUpperCase()} ${match[2]}`);
+const missingRoutePaths = sourceRoutes.filter((route) => {
+  const routePath = route.slice(route.indexOf(' ') + 1);
+  return !guideText.includes(routePath);
 });
+assert(missingRoutePaths.length === 0, `guide missing HTTP routes:\n${missingRoutePaths.join('\n')}`);
+
+const sourceWebRoutes = [...webApp.matchAll(/<Route\s+path="([^"]+)"/g)].map((match) => match[1]);
+const missingWebRoutes = sourceWebRoutes.filter((routePath) => !guideText.includes(routePath));
+assert(missingWebRoutes.length === 0, `guide missing Web UI routes:\n${missingWebRoutes.join('\n')}`);
+
+const commandDeclarations = [
+  ...[...cli.matchAll(/\.command\('([^']+)'\)/g)].map((match) => match[1]),
+  ...[...cli.matchAll(/new Command\('([^']+)'\)/g)].map((match) => match[1]),
+];
 
 const requiredDisclosures = [
   'MCP server metadata: `0.1.0`',
@@ -121,4 +122,4 @@ const requiredDisclosures = [
 ];
 for (const disclosure of requiredDisclosures) assert(guideText.includes(disclosure), `guide disclosure missing: ${disclosure}`);
 
-console.log(`[guide-verify] OK: ${pages.length} pages, ${sourceTools.length} MCP tools, ${expectedLanguages.length} languages`);
+console.log(`[guide-verify] OK: ${pages.length} pages, ${sourceTools.length} MCP tools, ${expectedLanguages.length} languages, ${sourceRoutes.length} HTTP routes, ${sourceWebRoutes.length} Web routes, ${commandDeclarations.length} command declarations`);
