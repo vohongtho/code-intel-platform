@@ -85,3 +85,36 @@
   color: var(--muted);
   font-size: 14px;
 }
+
+.nav-group {
+  margin: 18px 10px 5px;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+}
+
+.nav-group:first-child { margin-top: 4px; }
+
+.search-results {
+  display: grid;
+  gap: 5px;
+}
+
+.search-results button {
+  display: grid;
+  width: 100%;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.search-results button:hover { background: var(--surface); }
+.search-results button strong { font-size: 13px; }
+.search-results button span { color: var(--muted); font-size: 11px; }
