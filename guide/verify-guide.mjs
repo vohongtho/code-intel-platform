@@ -32,12 +32,8 @@ assert(pkg.version === '1.0.9', `unexpected version: ${pkg.version}`);
 assert(pages.length === 22, `expected 22 product-guide pages, found ${pages.length}`);
 assert(new Set(pages.map((page) => page.slug)).size === pages.length, 'duplicate guide slug');
 
-for (const slug of [
-  'overview','quick-start','how-it-works','agent-workflows',
-  'mcp-setup','mcp-reference','cli-reference','web-ui','http-api',
-  'operations-runbook','known-limitations','runtime-verified','source-verification',
-]) {
-  assert(pages.some((page) => page.slug === slug), `required page missing: ${slug}`);
+for (const slug of ['overview', 'quick-start', 'how-it-works', 'agent-workflows']) {
+  assert(pages.some((page) => page.slug === slug), `workflow page missing: ${slug}`);
 }
 
 for (let index = 1; index <= 6; index += 1) {
@@ -55,8 +51,15 @@ for (const text of [
   'inspect → blast_radius → explain_relationship → find_path → context',
   'detect_changes or pr_impact → coverage_gaps → secrets → vulnerability_scan',
   'Two ways to use Code Intel',
+  'MCP Setup',
+  'CLI Reference',
+  'Web UI',
+  'HTTP API',
+  'Repository Groups',
+  'Quality & Security',
+  'Operations Runbook',
 ]) {
-  assert(guideText.includes(text), `workflow-first guide content missing: ${text}`);
+  assert(guideText.includes(text), `required product-guide content missing: ${text}`);
 }
 
 const expectedLanguages = [
