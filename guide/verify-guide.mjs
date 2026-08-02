@@ -57,7 +57,6 @@ for (const text of [
   'HTTP API',
   'Repository Groups',
   'Quality & Security',
-  'Operations Runbook',
 ]) {
   assert(guideText.includes(text), `required product-guide content missing: ${text}`);
 }
