@@ -11,91 +11,66 @@ const pkg = JSON.parse(read('code-intel/core/package.json'));
 const cli = read('code-intel/core/src/cli/app.ts');
 const standalone = read('code-intel/core/src/cli/standalone-commands.ts');
 const mcp = read('code-intel/core/src/mcp-server/server.ts');
-const runtime = read('guide/verify-runtime.mjs');
+const http = read('code-intel/core/src/http/app.ts');
+const languages = read('code-intel/core/src/languages/registry.ts');
+const web = read('code-intel/web/src/App.tsx');
 const entry = read('guide/v109.html');
-const backlog = read('guide/verification-backlog.md');
 
-const context = vm.createContext({ window: { CODE_INTEL_VERIFIED_PAGES: [] } });
-vm.runInContext(read('guide/verified-content.js'), context, { filename: 'verified-content.js' });
-const pages = context.window.CODE_INTEL_VERIFIED_PAGES;
+const context = vm.createContext({ window: { CODE_INTEL_AUDITED_PAGES: [] } });
+for (let index = 1; index <= 6; index += 1) {
+  vm.runInContext(read(`guide/audited-content-${index}.js`), context, {
+    filename: `audited-content-${index}.js`,
+  });
+}
+vm.runInContext(read('guide/product-guide.js'), context, { filename: 'product-guide.js' });
+
+const pages = context.window.CODE_INTEL_AUDITED_PAGES;
 const guideText = pages.map((page) => `${page.title}\n${page.markdown}`).join('\n');
 
 assert(pkg.name === '@vohongtho.infotech/code-intel', `unexpected package: ${pkg.name}`);
 assert(pkg.version === '1.0.9', `unexpected version: ${pkg.version}`);
-assert(pages.length === 6, `expected 6 verified pages, found ${pages.length}`);
+assert(pages.length === 22, `expected 22 product-guide pages, found ${pages.length}`);
 assert(new Set(pages.map((page) => page.slug)).size === pages.length, 'duplicate guide slug');
-assert(entry.includes('verified-content.js'), 'entrypoint does not load verified content');
-assert(entry.includes('verified-loader.js'), 'entrypoint does not load verified loader');
-assert(!entry.includes('audited-content-') && !entry.includes('audited-loader.js'), 'entrypoint still loads non-certified guide content');
-assert(guideText.includes('65 / 65 checks passed'), 'runtime result missing');
-assert(guideText.includes('29 CLI happy paths'), 'CLI runtime count missing');
-assert(guideText.includes('31 / 31 MCP tools'), 'MCP runtime count missing');
 
-const certifiedCli = [
-  'code-intel --version',
-  'code-intel init --yes',
-  'code-intel config validate',
-  'code-intel completion bash',
-  'code-intel analyze /absolute/path/to/repository',
-  'code-intel status /absolute/path/to/repository',
-  'code-intel index-status /absolute/path/to/repository',
-  'code-intel repo list',
-  'code-intel repo show my-repository',
-  'code-intel search "Calculator"',
-  'code-intel inspect Calculator',
-  'code-intel impact add',
-  'code-intel context Calculator',
-  'code-intel query "FIND function LIMIT 10"',
-  'code-intel health /absolute/path/to/repository',
-  'code-intel complexity /absolute/path/to/repository',
-  'code-intel coverage /absolute/path/to/repository',
-  'code-intel secrets /absolute/path/to/repository',
-  'code-intel scan /absolute/path/to/repository',
-  'code-intel deprecated /absolute/path/to/repository',
-  'code-intel clean /absolute/path/to/repository --dry-run',
-  'code-intel group create runtime-group',
-  'code-intel group add',
-  'code-intel group sync runtime-group',
-  'code-intel group status runtime-group',
-  'code-intel group contracts runtime-group',
-  'code-intel group query runtime-group "Calculator"',
-  'code-intel change-context',
-  'code-intel serve /absolute/path/to/repository --port 4789',
-  'code-intel mcp /absolute/path/to/repository',
-];
-for (const command of certifiedCli) {
-  assert(guideText.includes(command), `certified command missing from guide: ${command}`);
-}
-
-const forbiddenGuideText = [
-  'code-intel setup',
-  'code-intel watch',
-  'code-intel stop',
-  'repo rename',
-  'repo relink',
-  'backup restore',
-  'auth login',
-  'keystore set',
-  'change-context-mcp',
-  'change-context-http',
-  'group init-workspace',
-  'code-intel update',
-  'code-intel doctor',
-  'Claude Code',
-  'Codex',
-  'OpenSpec',
-  'Registered but not runtime-certified',
-];
-for (const text of forbiddenGuideText) {
-  assert(!guideText.includes(text), `non-certified instruction leaked into public guide: ${text}`);
-}
-for (const text of [
-  'code-intel setup', 'code-intel watch', 'code-intel stop', 'repo rename', 'repo relink',
-  'backup restore', 'auth login', 'keystore set', 'change-context-mcp',
-  'change-context-http', 'group init-workspace', 'code-intel update', 'code-intel doctor',
-  'Claude Code', 'Codex', 'OpenSpec'
+for (const slug of [
+  'overview','quick-start','installation','how-it-works','analyze',
+  'mcp-setup','integration-status','agent-integration','agent-workflows',
+  'mcp-reference','search-context','cli-reference','web-ui','http-api',
+  'repository-groups','quality-security','config-auth-backup',
+  'openspec-integration','operations-runbook','known-limitations',
+  'runtime-verified','source-verification',
 ]) {
-  assert(backlog.includes(text), `omitted item not tracked in backlog: ${text}`);
+  assert(pages.some((page) => page.slug === slug), `required page missing: ${slug}`);
+}
+
+for (let index = 1; index <= 6; index += 1) {
+  assert(entry.includes(`audited-content-${index}.js`), `entrypoint missing audited-content-${index}.js`);
+}
+assert(entry.includes('product-guide.js'), 'entrypoint missing workflow-first product layer');
+assert(entry.includes('audited-loader.js'), 'entrypoint missing guide loader');
+assert(!entry.includes('verified-content.js') && !entry.includes('verified-loader.js'),
+  'runtime-only entrypoint is still active');
+assert(entry.includes('Agent & Developer Guide'), 'product-guide branding missing');
+
+for (const text of [
+  'Analyze → Connect MCP → Explore → Inspect → Assess impact → Change → Review',
+  'overview → clusters → flows → routes → search → inspect → context',
+  'inspect → blast_radius → explain_relationship → find_path → context',
+  'detect_changes or pr_impact → coverage_gaps → secrets → vulnerability_scan',
+  'Two ways to use Code Intel',
+]) {
+  assert(guideText.includes(text), `workflow-first guide content missing: ${text}`);
+}
+
+const expectedLanguages = [
+  ['TypeScript', 'TypeScript'], ['JavaScript', 'JavaScript'], ['Python', 'Python'],
+  ['Java', 'Java'], ['Go', 'Go'], ['C', 'C'], ['C++', 'Cpp'], ['C#', 'CSharp'],
+  ['Rust', 'Rust'], ['PHP', 'PHP'], ['Kotlin', 'Kotlin'], ['Ruby', 'Ruby'],
+  ['Swift', 'Swift'], ['Dart', 'Dart'], ['HTML', 'HTML'],
+];
+for (const [label, enumKey] of expectedLanguages) {
+  assert(languages.includes(`[Language.${enumKey}]`), `source language missing: ${label}`);
+  assert(guideText.includes(label), `guide language missing: ${label}`);
 }
 
 const listStart = mcp.indexOf('server.setRequestHandler(ListToolsRequestSchema');
@@ -110,30 +85,80 @@ const expectedTools = [
   'similar_symbols','health_report','suggest_tests','cluster_summary','deprecated_usage',
   'complexity_hotspots','coverage_gaps','secrets','vulnerability_scan',
 ];
-assert(JSON.stringify(sourceTools) === JSON.stringify(expectedTools), `MCP tool list changed: ${sourceTools.join(',')}`);
+assert(JSON.stringify(sourceTools) === JSON.stringify(expectedTools),
+  `MCP tool list changed:\n${sourceTools.join(',')}`);
 for (const tool of expectedTools) {
-  assert(guideText.includes(`"name":"${tool}"`), `verified MCP example missing: ${tool}`);
-  assert(runtime.includes(`${tool}:`), `runtime MCP arguments missing: ${tool}`);
+  assert(guideText.includes(`\n${tool}\n`) || guideText.includes(`\`${tool}\``) || guideText.includes(`"${tool}"`),
+    `guide missing MCP tool: ${tool}`);
 }
 
 for (const suffix of ['/overview', '/clusters', '/flows']) {
   assert(mcp.includes(`codeintel://repo/\${repoName}${suffix}`), `source resource missing: ${suffix}`);
-  assert(guideText.includes(`codeintel://repo/<repo-name>${suffix}`), `verified resource missing: ${suffix}`);
+  assert(guideText.includes(`codeintel://repo/<repo-name>${suffix}`), `guide resource missing: ${suffix}`);
 }
 
-for (const sourceNeedle of [
-  ".command('init')", ".command('analyze')", ".command('mcp')", ".command('serve')",
-  ".command('search')", ".command('inspect')", ".command('impact')", ".command('context')",
-  ".command('query')", ".command('health')", ".command('complexity')", ".command('coverage')",
-  ".command('secrets')", ".command('scan')", ".command('deprecated')", ".command('clean')",
-  ".command('group')",
+const commandEvidence = [
+  [cli, ".command('init')", 'code-intel init'],
+  [cli, ".command('setup')", 'code-intel setup'],
+  [cli, ".command('analyze')", 'code-intel analyze'],
+  [cli, ".command('mcp')", 'code-intel mcp'],
+  [cli, ".command('serve')", 'code-intel serve'],
+  [cli, ".command('watch')", 'code-intel watch'],
+  [cli, ".command('repo')", 'code-intel repo list'],
+  [cli, ".command('clean')", 'code-intel clean'],
+  [cli, ".command('search')", 'code-intel search'],
+  [cli, ".command('inspect')", 'code-intel inspect'],
+  [cli, ".command('impact')", 'code-intel impact'],
+  [cli, ".command('group')", 'code-intel group'],
+  [cli, ".command('health')", 'code-intel health'],
+  [cli, ".command('query')", 'code-intel query'],
+  [cli, ".command('complexity')", 'code-intel complexity'],
+  [cli, ".command('coverage')", 'code-intel coverage'],
+  [cli, ".command('secrets')", 'code-intel secrets'],
+  [cli, ".command('scan')", 'code-intel scan'],
+  [cli, ".command('context')", 'code-intel context'],
+  [standalone, "command === 'index-status'", 'code-intel index-status'],
+  [standalone, "command === 'change-context'", 'code-intel change-context'],
+];
+for (const [source, sourceNeedle, guideNeedle] of commandEvidence) {
+  assert(source.includes(sourceNeedle), `source command missing: ${sourceNeedle}`);
+  assert(guideText.includes(guideNeedle), `guide command missing: ${guideNeedle}`);
+}
+
+const sourceRoutes = [...http.matchAll(/app\.(get|post|put|delete)\(\s*'([^']+)'/g)]
+  .map((match) => `${match[1].toUpperCase()} ${match[2]}`);
+const missingRoutes = sourceRoutes.filter((route) => !guideText.includes(route.slice(route.indexOf(' ') + 1)));
+assert(missingRoutes.length === 0, `guide missing HTTP routes:\n${missingRoutes.join('\n')}`);
+
+const webRoutes = [...web.matchAll(/<Route\s+path="([^"]+)"/g)].map((match) => match[1]);
+const missingWebRoutes = webRoutes.filter((route) => !guideText.includes(route));
+assert(missingWebRoutes.length === 0, `guide missing Web routes:\n${missingWebRoutes.join('\n')}`);
+
+for (const text of [
+  'MCP server metadata: `0.1.0`',
+  '`scan --format sarif` tool metadata: `0.8.0`',
+  'npx code-intel mcp .',
+  'does **not** generate Agent Skills',
+  'config.json` is not included',
+  'There is no implemented top-level `code-intel list` command',
+  'There is no CLI `group delete` command',
+  '100% of the published runtime matrix passed',
 ]) {
-  assert(cli.includes(sourceNeedle), `certified CLI source evidence missing: ${sourceNeedle}`);
-}
-for (const sourceNeedle of ["command === 'index-status'", "command === 'change-context'"]) {
-  assert(standalone.includes(sourceNeedle), `certified standalone source evidence missing: ${sourceNeedle}`);
+  assert(guideText.includes(text), `required source-backed disclosure missing: ${text}`);
 }
 
-assert(backlog.includes('This file is intentionally **not loaded by the public guide**'), 'backlog publication boundary missing');
+for (const falseCapability of [
+  'rename_symbol',
+  'gitnexus_rename',
+  'MCP prompts for guided workflows',
+  'generates repo-specific skill files',
+]) {
+  assert(!guideText.includes(falseCapability), `unsupported capability leaked into guide: ${falseCapability}`);
+}
 
-console.log(`[guide-verify] OK: ${pages.length} runtime-only pages, ${certifiedCli.length} certified command forms, ${sourceTools.length} MCP tools, 3 MCP resources`);
+const commandDeclarations = [
+  ...[...cli.matchAll(/\.command\('([^']+)'\)/g)].map((match) => match[1]),
+  ...[...cli.matchAll(/new Command\('([^']+)'\)/g)].map((match) => match[1]),
+];
+
+console.log(`[guide-verify] OK: ${pages.length} workflow-first pages, ${sourceTools.length} MCP tools, ${expectedLanguages.length} languages, ${sourceRoutes.length} HTTP routes, ${webRoutes.length} Web routes, ${commandDeclarations.length} command declarations`);
