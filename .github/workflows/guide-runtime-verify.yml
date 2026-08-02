@@ -1,0 +1,34 @@
+name: Guide Runtime Verification
+on:
+  pull_request:
+    paths:
+      - 'code-intel/**'
+      - 'guide/**'
+      - '.github/workflows/guide-runtime-verify.yml'
+      - 'package.json'
+      - 'package-lock.json'
+
+jobs:
+  verify-runtime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --legacy-peer-deps --ignore-scripts --include=optional
+      - name: Rebuild native modules
+        run: npm rebuild @ladybugdb/core better-sqlite3 @huggingface/transformers --legacy-peer-deps
+      - name: Build package
+        run: npm run build
+      - name: Run CLI and MCP happy-path verification
+        run: node guide/verify-runtime.mjs
+      - name: Upload runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: guide-runtime-verification
+          path: guide/runtime-verification-result.json
+          if-no-files-found: warn

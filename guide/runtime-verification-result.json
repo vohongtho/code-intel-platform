@@ -1,0 +1,25 @@
+{
+  "generatedAt": "2026-08-01T12:25:52Z",
+  "environment": {
+    "sourceBranch": "release/1.0.9",
+    "sourceCommit": "eeb6e0941c73958709ba83f09612693c66d07b8c",
+    "package": "@vohongtho.infotech/code-intel@1.0.9",
+    "operatingSystem": "Ubuntu 24.04",
+    "node": "v24.18.0",
+    "transport": "MCP JSON-RPC over stdio"
+  },
+  "result": {
+    "passed": 65,
+    "total": 65,
+    "cliHappyPaths": 29,
+    "mcpTools": 31,
+    "mcpResources": 3,
+    "mcpProtocolChecks": 2,
+    "failures": []
+  },
+  "workflow": {
+    "name": "Guide Runtime Verification",
+    "runId": 30699635474,
+    "artifactId": 8818390074
+  }
+}
