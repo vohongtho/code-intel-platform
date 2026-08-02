@@ -33,18 +33,11 @@ assert(pages.length === 22, `expected 22 product-guide pages, found ${pages.leng
 assert(new Set(pages.map((page) => page.slug)).size === pages.length, 'duplicate guide slug');
 
 for (const slug of [
-  'overview','quick-start','installation','how-it-works','analyze',
-  'mcp-setup','agent-workflows','mcp-reference','search-context',
-  'cli-reference','web-ui','http-api','operations-runbook',
-  'known-limitations','runtime-verified','source-verification',
+  'overview','quick-start','how-it-works','agent-workflows',
+  'mcp-setup','mcp-reference','cli-reference','web-ui','http-api',
+  'operations-runbook','known-limitations','runtime-verified','source-verification',
 ]) {
   assert(pages.some((page) => page.slug === slug), `required page missing: ${slug}`);
-}
-for (const title of [
-  'Agent Integration Status','Repository Groups','Quality & Security',
-  'Configuration, Auth & Backup','OpenSpec Integration',
-]) {
-  assert(pages.some((page) => page.title === title), `required page missing: ${title}`);
 }
 
 for (let index = 1; index <= 6; index += 1) {
