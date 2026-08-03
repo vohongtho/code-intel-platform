@@ -23,6 +23,20 @@ describe('repository analyze lock', () => {
     }
   });
 
+  it('does not recover a live same-host lock even when the TTL is zero', () => {
+    const root = repo();
+    const first = acquireAnalyzeLock(root);
+    try {
+      assert.throws(
+        () => acquireAnalyzeLock(root, { staleAfterMs: 0 }),
+        AnalysisAlreadyRunningError,
+      );
+    } finally {
+      first.release();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('can be acquired again after release', () => {
     const root = repo();
     try {
@@ -39,7 +53,11 @@ describe('repository analyze lock', () => {
       const lockPath = getAnalyzeLockPath(root);
       fs.mkdirSync(path.dirname(lockPath), { recursive: true });
       fs.writeFileSync(lockPath, JSON.stringify({
-        version: 1, token: 'dead', pid: 2147483647, hostname: os.hostname(), startedAt: '2000-01-01T00:00:00.000Z',
+        version: 1,
+        token: 'dead',
+        pid: 2147483647,
+        hostname: os.hostname(),
+        startedAt: '2000-01-01T00:00:00.000Z',
       }));
       const lock = acquireAnalyzeLock(root);
       assert.notEqual(lock.owner.token, 'dead');
