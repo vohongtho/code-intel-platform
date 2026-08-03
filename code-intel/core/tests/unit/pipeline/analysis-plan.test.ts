@@ -38,7 +38,7 @@ describe('resolveAnalysisPlan', () => {
     } finally { fs.rmSync(value.root, { recursive: true, force: true }); }
   });
 
-  it('seeds only vector.db for a known source change with healthy vectors', () => {
+  it('seeds vector.db and metadata for a known source change with healthy vectors', () => {
     const value = fixture();
     try {
       const plan = resolveAnalysisPlan({ args: ['analyze'], metadata: value.metadata, snapshot: value.snapshot, source: changed });
@@ -46,29 +46,29 @@ describe('resolveAnalysisPlan', () => {
       if (plan.mode !== 'publish') return;
       assert.equal(plan.graph, 'full');
       assert.equal(plan.vector, 'incremental');
-      assert.deepEqual(plan.seedArtifacts, ['vector.db']);
+      assert.deepEqual(plan.seedArtifacts, ['vector.db', 'meta.json']);
     } finally { fs.rmSync(value.root, { recursive: true, force: true }); }
   });
 
-  it('preserves graph and BM25 while rebuilding a missing vector index', () => {
+  it('preserves graph, BM25, and metadata while rebuilding a missing vector index', () => {
     const value = fixture(false);
     try {
       const plan = resolveAnalysisPlan({ args: ['analyze', '--embeddings'], metadata: value.metadata, snapshot: value.snapshot, source: unchanged });
       assert.equal(plan.mode, 'publish');
       if (plan.mode !== 'publish') return;
       assert.equal(plan.vector, 'full');
-      assert.deepEqual(plan.seedArtifacts, ['graph.db', 'bm25.db']);
+      assert.deepEqual(plan.seedArtifacts, ['graph.db', 'bm25.db', 'meta.json']);
     } finally { fs.rmSync(value.root, { recursive: true, force: true }); }
   });
 
-  it('seeds existing artifacts conservatively when change scope is unknown', () => {
+  it('seeds existing artifacts and metadata conservatively when change scope is unknown', () => {
     const value = fixture();
     try {
       const source: SourceChangeState = { kind: 'unknown', changedPaths: [], reason: 'unknown' };
       const plan = resolveAnalysisPlan({ args: ['analyze'], metadata: value.metadata, snapshot: value.snapshot, source });
       assert.equal(plan.mode, 'publish');
       if (plan.mode !== 'publish') return;
-      assert.deepEqual(plan.seedArtifacts, ['graph.db', 'bm25.db', 'vector.db']);
+      assert.deepEqual(plan.seedArtifacts, ['graph.db', 'bm25.db', 'vector.db', 'meta.json']);
     } finally { fs.rmSync(value.root, { recursive: true, force: true }); }
   });
 });
