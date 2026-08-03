@@ -9,6 +9,7 @@ import type { CurrentUser } from '../state/types';
 
 const getConfigMock = vi.fn();
 const saveConfigMock = vi.fn();
+const listEmbeddingModelsMock = vi.fn();
 const logoutMock = vi.fn();
 const vectorStatusMock = vi.fn().mockResolvedValue({ ready: false, building: false });
 
@@ -16,6 +17,7 @@ vi.mock('../api/client', () => ({
   ApiClient: class {
     getConfig = getConfigMock;
     saveConfig = saveConfigMock;
+    listEmbeddingModels = listEmbeddingModelsMock;
     logout = logoutMock;
     vectorStatus = vectorStatusMock;
   },
@@ -35,7 +37,7 @@ const viewerUser: CurrentUser = {
 
 const defaultConfig = {
   llm: { provider: 'ollama', model: 'llama3', apiKey: '', baseUrl: '', batchSize: 20, maxTokensPerSummary: 100 },
-  embeddings: { model: 'all-MiniLM-L6-v2', enabled: false },
+  embeddings: { model: 'Xenova/all-MiniLM-L6-v2', enabled: false },
   analysis: { maxFileSizeKB: 512, ignorePatterns: [], incrementalByDefault: false },
   serve: { defaultPort: 4747, openBrowser: true },
   auth: { mode: 'local' as const },
@@ -89,9 +91,22 @@ describe('SettingsPage routing and save flow', () => {
   beforeEach(() => {
     getConfigMock.mockReset();
     saveConfigMock.mockReset();
+    listEmbeddingModelsMock.mockReset();
     logoutMock.mockReset();
     vectorStatusMock.mockClear();
     getConfigMock.mockResolvedValue({ config: defaultConfig });
+    listEmbeddingModelsMock.mockResolvedValue({
+      defaultModel: 'Xenova/all-MiniLM-L6-v2',
+      models: [{
+        id: 'Xenova/all-MiniLM-L6-v2',
+        label: 'all-MiniLM-L6-v2',
+        provider: 'huggingface-transformers',
+        dimension: 384,
+        dtype: 'q8',
+        maxSequenceLength: 512,
+        description: 'Fast local model',
+      }],
+    });
   });
 
   it('redirects bare /settings to /settings/overview', async () => {
@@ -110,6 +125,15 @@ describe('SettingsPage routing and save flow', () => {
       expect(screen.getByTestId('location')).toHaveTextContent('/settings/llm');
     });
     expect(screen.getByRole('combobox', { name: /provider/i })).toBeInTheDocument();
+  });
+
+
+  it('renders embedding model as a backend-driven pull-down', async () => {
+    renderSettingsRoute('/settings/embeddings', adminUser);
+    const model = await screen.findByRole('combobox', { name: 'Model' });
+    expect(model).toHaveValue('Xenova/all-MiniLM-L6-v2');
+    expect(screen.getByText(/384 dimensions/i)).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Model' })).not.toBeInTheDocument();
   });
 
   it('shows validation errors on failed save for admin', async () => {

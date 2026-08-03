@@ -10,6 +10,7 @@
 
 import { loadConfig, saveConfig, wipeConfig, DEFAULT_CONFIG } from './init-wizard.js';
 import type { CodeIntelConfig } from './init-wizard.js';
+import { DEFAULT_EMBEDDING_MODEL_ID, resolveEmbeddingModel, supportedEmbeddingModelIds } from '../search/embedding-models.js';
 
 // ── Sensitive key patterns (same logic as config-validator.ts) ────────────────
 const SENSITIVE_PATTERNS = [
@@ -92,7 +93,7 @@ export const CONFIG_SCHEMA: Record<string, SchemaField> = {
   'llm.baseUrl':            { type: 'string', default: '', description: 'Base URL for custom OpenAI-compatible API (e.g. http://localhost:1234/v1)' },
   'llm.batchSize':          { type: 'number', minimum: 1, maximum: 100, default: 20, description: 'Concurrent LLM calls per batch' },
   'llm.maxTokensPerSummary':{ type: 'number', minimum: 10, maximum: 2000, default: 100, description: 'Max tokens per AI summary' },
-  'embeddings.model':       { type: 'string', default: 'all-MiniLM-L6-v2', description: 'Embedding model name' },
+  'embeddings.model':       { type: 'string', enum: supportedEmbeddingModelIds(), default: DEFAULT_EMBEDDING_MODEL_ID, description: 'Supported embedding model ID' },
   'embeddings.enabled':     { type: 'boolean', default: false, description: 'Enable vector search' },
   'analysis.maxFileSizeKB': { type: 'number', minimum: 1, maximum: 102400, default: 512, description: 'Skip files larger than this (KB)' },
   'analysis.ignorePatterns':{ type: 'array', default: [], description: 'Glob patterns to ignore during analysis' },
@@ -131,6 +132,15 @@ export function validateConfig(cfg: CodeIntelConfig): ValidationError[] {
       errors.push({ path: dotPath, value, reason: `Expected boolean, got ${typeof value}`, hint: `Set with: code-intel config set ${dotPath} true|false` });
     } else if (schema.type === 'array' && !Array.isArray(value)) {
       errors.push({ path: dotPath, value, reason: `Expected array, got ${typeof value}`, hint: `Set with: code-intel config set ${dotPath} '["pattern1","pattern2"]'` });
+    } else if (dotPath === 'embeddings.model' && typeof value === 'string') {
+      if (!resolveEmbeddingModel(value)) {
+        errors.push({
+          path: dotPath,
+          value,
+          reason: `Unsupported embedding model "${value}". Allowed: ${supportedEmbeddingModelIds().join(', ')}`,
+          hint: `Set with: code-intel config set ${dotPath} ${DEFAULT_EMBEDDING_MODEL_ID}`,
+        });
+      }
     } else if (schema.enum && !schema.enum.includes(value)) {
       errors.push({ path: dotPath, value, reason: `Value "${value}" is not allowed. Allowed: ${schema.enum.join(', ')}`, hint: `Set with: code-intel config set ${dotPath} ${schema.enum[0]}` });
     } else if (schema.minimum !== undefined && typeof value === 'number' && value < schema.minimum) {

@@ -3,7 +3,7 @@ import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
 import { textSearch, reciprocalRankFusion, compareResults, isDefaultExcludedSearchPath } from './text-search.js';
 import type { SearchResult } from './text-search.js';
 import { VectorIndex } from './vector-index.js';
-import { getEmbedder } from './embedder.js';
+import { getConfiguredEmbeddingModel, getEmbedder } from './embedder.js';
 
 export interface HybridSearchOptions {
   vectorDbPath?: string;
@@ -153,13 +153,14 @@ async function runVectorSearch(
 > {
   let idx: VectorIndex | null = null;
   try {
-    idx = new VectorIndex(vectorDbPath);
+    const model = getConfiguredEmbeddingModel();
+    idx = new VectorIndex(vectorDbPath, model.dimension);
     await idx.init();
 
     const built = await idx.isBuilt();
     if (!built) return { status: 'unavailable' };
 
-    const embedder = await getEmbedder();
+    const embedder = await getEmbedder(model);
     const out = await embedder(query, { pooling: 'mean', normalize: true });
     const queryEmbedding = Array.from(out.data);
     const hits = await idx.search(queryEmbedding, topK);

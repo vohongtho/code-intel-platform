@@ -35,6 +35,7 @@ import { startHttpServer } from '../http/app.js';
 import { startMcpStdio } from '../mcp-server/server.js';
 import { textSearch } from '../search/text-search.js';
 import { resolveEmbeddingUpdatePlan } from '../search/embedding-update-plan.js';
+import { getEmbeddingFingerprint } from '../search/embedder.js';
 import type { PipelineContext } from '../pipeline/types.js';
 import { saveMetadata, loadMetadata, getDbPath, getVectorDbPath, loadAgentTargets, saveAgentTargets, computeIndexVersion, resolveEmbeddingMode, shouldRebuildEmbeddings, resolveAnalyzeMode, resolveParserForMetadata, type AgentTargetConfig, type AgentTargetSelection, type AgentTargetFormat, type EmbeddingMetadata } from '../storage/metadata.js';
 import { resolveIndexSnapshot } from '../storage/index-snapshot.js';
@@ -391,9 +392,7 @@ function buildEmbeddingMetadata(status: 'ready' | 'stale'): EmbeddingMetadata {
   return {
     enabled: true,
     status,
-    provider: 'huggingface-transformers',
-    model: 'Xenova/all-MiniLM-L6-v2',
-    dimension: 384,
+    ...getEmbeddingFingerprint(),
   };
 }
 
@@ -870,7 +869,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
           }
         }
 
-        const idx = new VectorIndex(vectorDbPath);
+        const idx = new VectorIndex(vectorDbPath, runtimeEmbeddingMetadata.dimension);
         await idx.init();
         const nodes = await embedNodes(indexedGraph, {
           filePaths: useIncrementalEmbeddings ? incrementalEmbeddingPaths ?? undefined : undefined,

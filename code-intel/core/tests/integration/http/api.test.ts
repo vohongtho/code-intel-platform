@@ -214,6 +214,27 @@ describe('HTTP API — auth routes', () => {
     assert.equal(body.config.llm.apiKey, '');
   });
 
+  it('GET /api/v1/embeddings/models → backend-owned catalog for viewer', async () => {
+    const loginRes = await req(server, {
+      method: 'POST',
+      path: '/auth/login',
+      body: { username: 'viewer', password: 'viewer-pass-123' },
+    });
+    assert.equal(loginRes.status, 200);
+    const cookies = loginRes.headers['set-cookie'] ?? [];
+    const sessionCookie = cookies.map((c) => c.split(';')[0] ?? '').join('; ');
+
+    const res = await req(server, {
+      method: 'GET',
+      path: '/api/v1/embeddings/models',
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(res.status, 200);
+    const body = res.body as { defaultModel: string; models: Array<{ id: string; dimension: number }> };
+    assert.equal(body.defaultModel, 'Xenova/all-MiniLM-L6-v2');
+    assert.ok(body.models.some((model) => model.id === body.defaultModel && model.dimension === 384));
+  });
+
   it('PUT /api/v1/config → 403 for viewer', async () => {
     const loginRes = await req(server, {
       method: 'POST',
@@ -291,8 +312,9 @@ describe('HTTP API — auth routes', () => {
     assert.equal(body.config.llm.provider, 'openai');
     assert.equal(body.config.serve.defaultPort, 4848);
 
-    const stored = JSON.parse(fs.readFileSync(path.join(globalDir, 'config.json'), 'utf-8')) as { llm: { provider: string } };
+    const stored = JSON.parse(fs.readFileSync(path.join(globalDir, 'config.json'), 'utf-8')) as { llm: { provider: string }; embeddings: { model: string } };
     assert.equal(stored.llm.provider, 'openai');
+    assert.equal(stored.embeddings.model, 'Xenova/all-MiniLM-L6-v2');
 
     fs.rmSync(globalDir, { recursive: true, force: true });
     delete process.env['CODE_INTEL_GLOBAL_DIR'];

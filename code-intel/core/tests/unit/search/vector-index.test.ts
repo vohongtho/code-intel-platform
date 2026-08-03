@@ -77,6 +77,29 @@ describe('VectorIndex incremental updates', () => {
     idx.close();
     fs.unlinkSync(dbPath);
   });
+
+  it('rejects vectors that do not match the configured model dimension', async () => {
+    const dbPath = tmpDbPath();
+    const idx = new VectorIndex(dbPath, 3);
+    await idx.init();
+    await assert.rejects(
+      () => idx.buildIndex([makeEmbeddedNode('bad', 'src/bad.ts', 1)]),
+      /dimension 384; expected 3/,
+    );
+    idx.close();
+    fs.unlinkSync(dbPath);
+  });
+
+  it('stores and searches vectors using a non-default dimension', async () => {
+    const dbPath = tmpDbPath();
+    const idx = new VectorIndex(dbPath, 3);
+    await idx.init();
+    await idx.buildIndex([{ id: 'small', name: 'small', kind: 'function', filePath: 'small.ts', text: 'small', embedding: [1, 0, 0] }]);
+    const hits = await idx.search([1, 0, 0], 1);
+    assert.equal(hits[0]?.nodeId, 'small');
+    idx.close();
+    fs.unlinkSync(dbPath);
+  });
 });
 
 describe('collectEmbeddingCandidates', () => {

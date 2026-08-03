@@ -16,6 +16,7 @@ import { DbManager, getDbPath, getVectorDbPath } from '../storage/index.js';
 import { loadMetadata, shouldRebuildEmbeddings } from '../storage/metadata.js';
 import { resolveIndexSnapshot, type IndexSnapshot } from '../storage/index-snapshot.js';
 import { VectorIndex } from '../search/vector-index.js';
+import { DEFAULT_EMBEDDING_MODEL_ID, listEmbeddingModels } from '../search/embedding-models.js';
 // VectorIndex uses the shared SQLite wrapper directly.
 import fs from 'node:fs';
 import { listGroups, loadGroup, saveGroup, deleteGroup, groupExists, addMember, removeMember, loadSyncResult, saveSyncResult } from '../multi-repo/group-registry.js';
@@ -338,7 +339,7 @@ export function createApp(
           try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* ignore */ }
         }
       }
-      const idx = new VectorIndex(vdbPath);
+      const idx = new VectorIndex(vdbPath, runtimeFingerprint.dimension);
       await idx.init();
       const alreadyBuilt = shouldRebuild ? false : await idx.isBuilt();
       if (!alreadyBuilt) {
@@ -780,6 +781,14 @@ export function createApp(
     });
   });
 
+  // ── Embedding model catalog ─────────────────────────────────────────────────
+  app.get('/api/v1/embeddings/models', requireRole('viewer'), (_req: Request, res: Response) => {
+    res.json({
+      models: listEmbeddingModels().map(({ aliases: _aliases, ...model }) => model),
+      defaultModel: DEFAULT_EMBEDDING_MODEL_ID,
+    });
+  });
+
   // ── Global config ────────────────────────────────────────────────────────────
   app.get('/api/v1/config', requireRole('viewer'), (_req: Request, res: Response) => {
     const cfg = loadConfig() ?? DEFAULT_CONFIG;
@@ -817,7 +826,8 @@ export function createApp(
     }
 
     saveConfig(body.config);
-    res.json({ config: maskConfig(body.config) });
+    const saved = loadConfig() ?? body.config;
+    res.json({ config: maskConfig(saved) });
   });
 
   // ── Repos ───────────────────────────────────────────────────────────────────

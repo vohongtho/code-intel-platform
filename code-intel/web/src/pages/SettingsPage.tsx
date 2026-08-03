@@ -1,9 +1,9 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { NavLink, useNavigate, useParams } from 'react-router';
 import { useAppState } from '../state/app-context';
 import { Header } from '../components/shared/Header';
 import { ApiClient, type ConfigValidationError } from '../api/client';
-import type { AppConfig } from '../state/types';
+import type { AppConfig, EmbeddingModelDescriptor } from '../state/types';
 import { SETTINGS_SECTIONS, getSettingsPath, isSettingsSection, type SettingsSection } from '../routing';
 
 const SECTION_LABEL = 'rounded-xl border border-border-subtle bg-surface p-5 space-y-4';
@@ -13,7 +13,7 @@ const LABEL = 'block text-xs font-medium text-text-secondary uppercase tracking-
 
 const DEFAULT_CONFIG: AppConfig = {
   llm: { provider: 'ollama', model: 'llama3', apiKey: '', baseUrl: '', batchSize: 20, maxTokensPerSummary: 100 },
-  embeddings: { model: 'all-MiniLM-L6-v2', enabled: false },
+  embeddings: { model: 'Xenova/all-MiniLM-L6-v2', enabled: false },
   analysis: { maxFileSizeKB: 512, ignorePatterns: [], incrementalByDefault: false },
   serve: { defaultPort: 4747, openBrowser: true },
   auth: { mode: 'local' },
@@ -23,6 +23,8 @@ const DEFAULT_CONFIG: AppConfig = {
 
 export function SettingsPage() {
   const { state, dispatch } = useAppState();
+  const [embeddingModels, setEmbeddingModels] = useState<EmbeddingModelDescriptor[]>([]);
+  const [embeddingModelsError, setEmbeddingModelsError] = useState<string | null>(null);
   const navigate = useNavigate();
   const params = useParams<{ section?: string }>();
   const activeSection: SettingsSection = isSettingsSection(params.section ?? '') ? params.section as SettingsSection : 'overview';
@@ -45,7 +47,14 @@ export function SettingsPage() {
       dispatch({ type: 'SET_CONFIG_ERROR', error: null });
       try {
         const client = new ApiClient(state.serverUrl);
-        const { config } = await client.getConfig();
+        const [{ config }, catalog] = await Promise.all([
+          client.getConfig(),
+          client.listEmbeddingModels().catch((error: unknown) => {
+            setEmbeddingModelsError(error instanceof Error ? error.message : 'Failed to load embedding models');
+            return { models: [] as EmbeddingModelDescriptor[], defaultModel: configFallbackModel() };
+          }),
+        ]);
+        setEmbeddingModels(catalog.models);
         dispatch({ type: 'SET_CONFIG', config });
       } catch (err) {
         dispatch({ type: 'SET_CONFIG_ERROR', error: err instanceof Error ? err.message : 'Failed to load config' });
@@ -59,6 +68,7 @@ export function SettingsPage() {
 
   const config = state.config.current ?? DEFAULT_CONFIG;
   const canEdit = state.currentUser?.role === 'admin';
+  const selectedEmbeddingModel = embeddingModels.find((model) => model.id === config.embeddings.model) ?? null;
 
   const updateConfig = (next: AppConfig) => {
     dispatch({ type: 'UPDATE_CONFIG', config: next });
@@ -177,9 +187,33 @@ export function SettingsPage() {
               {activeSection === 'embeddings' && <section className={SECTION_LABEL}>
                 <h2 className="text-xl font-semibold">Embeddings</h2>
                 <div className="grid md:grid-cols-2 gap-4">
-                  <Field label="Model"><input disabled={!canEdit} className={INPUT} value={config.embeddings.model} onChange={(e) => updateConfig({ ...config, embeddings: { ...config.embeddings, model: e.target.value } })} /></Field>
+                  <Field label="Model">
+                    <select
+                      aria-label="Model"
+                      disabled={!canEdit || embeddingModels.length === 0}
+                      className={INPUT}
+                      value={config.embeddings.model}
+                      onChange={(e) => updateConfig({ ...config, embeddings: { ...config.embeddings, model: e.target.value } })}
+                    >
+                      {!selectedEmbeddingModel && config.embeddings.model && (
+                        <option value={config.embeddings.model}>Unsupported: {config.embeddings.model}</option>
+                      )}
+                      {embeddingModels.map((model) => (
+                        <option key={model.id} value={model.id}>{model.label}</option>
+                      ))}
+                    </select>
+                    {selectedEmbeddingModel && (
+                      <p className="mt-2 text-xs text-text-muted">
+                        {selectedEmbeddingModel.provider} · {selectedEmbeddingModel.dimension} dimensions · {selectedEmbeddingModel.dtype}
+                      </p>
+                    )}
+                    {embeddingModelsError && (
+                      <p className="mt-2 text-xs text-amber-400">{embeddingModelsError}</p>
+                    )}
+                  </Field>
                   <Toggle label="Enabled" checked={config.embeddings.enabled} disabled={!canEdit} onChange={(checked) => updateConfig({ ...config, embeddings: { ...config.embeddings, enabled: checked } })} />
                 </div>
+                <p className="text-xs text-text-muted">Changing the model invalidates the existing vector fingerprint and triggers a full vector rebuild on the next embedding analysis.</p>
               </section>}
 
               {activeSection === 'analysis' && <section className={SECTION_LABEL}>
@@ -238,6 +272,10 @@ export function SettingsPage() {
       </main>
     </div>
   );
+}
+
+function configFallbackModel(): string {
+  return 'Xenova/all-MiniLM-L6-v2';
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {

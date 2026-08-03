@@ -1,5 +1,5 @@
 import type { CodeNode, CodeEdge } from 'code-intel-shared';
-import type { SearchResult, CurrentUser, AppConfig, SearchMode, SearchScope } from '../state/types';
+import type { SearchResult, CurrentUser, AppConfig, SearchMode, SearchScope, EmbeddingModelDescriptor } from '../state/types';
 
 export interface CountGroup {
   key: string;
@@ -138,6 +138,15 @@ export class ApiClient {
     });
     if (!res.ok) return { authenticated: false };
     return res.json() as Promise<AuthStatus>;
+  }
+
+  async listEmbeddingModels(): Promise<{ models: EmbeddingModelDescriptor[]; defaultModel: string }> {
+    const res = await fetch(`${this.baseUrl}/api/v1/embeddings/models`, { credentials: 'include' });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { error?: { message?: string } };
+      throw new Error(body?.error?.message ?? 'Failed to load embedding models');
+    }
+    return res.json() as Promise<{ models: EmbeddingModelDescriptor[]; defaultModel: string }>;
   }
 
   async getConfig(): Promise<{ config: AppConfig }> {

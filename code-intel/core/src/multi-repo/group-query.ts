@@ -13,7 +13,7 @@ import { createKnowledgeGraph } from '../graph/knowledge-graph.js';
 import { loadGraphFromDB } from './graph-from-db.js';
 import { resolveIndexSnapshot } from '../storage/index-snapshot.js';
 import { VectorIndex } from '../search/vector-index.js';
-import { getEmbedder } from '../search/embedder.js';
+import { getConfiguredEmbeddingModel, getEmbedder } from '../search/embedder.js';
 import { hybridSearch } from '../search/hybrid-search.js';
 
 export interface GroupQueryResult {
@@ -110,7 +110,8 @@ export async function queryGroup(
 async function isVectorReady(vectorDbPath: string): Promise<boolean> {
   if (!fs.existsSync(vectorDbPath)) return false;
   try {
-    const idx = new VectorIndex(vectorDbPath);
+    const model = getConfiguredEmbeddingModel();
+    const idx = new VectorIndex(vectorDbPath, model.dimension);
     await idx.init();
     const built = await idx.isBuilt();
     idx.close();
@@ -122,14 +123,15 @@ async function isVectorReady(vectorDbPath: string): Promise<boolean> {
 
 async function runVectorSearch(graph: ReturnType<typeof createKnowledgeGraph>, vectorDbPath: string, query: string, topK: number): Promise<SearchResult[]> {
   try {
-    const idx = new VectorIndex(vectorDbPath);
+    const model = getConfiguredEmbeddingModel();
+    const idx = new VectorIndex(vectorDbPath, model.dimension);
     await idx.init();
     const built = await idx.isBuilt();
     if (!built) {
       idx.close();
       return [];
     }
-    const embedder = await getEmbedder();
+    const embedder = await getEmbedder(model);
     const out = await embedder(query, { pooling: 'mean', normalize: true });
     const hits = await idx.search(Array.from(out.data), topK);
     idx.close();
