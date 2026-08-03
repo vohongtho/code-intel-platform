@@ -1,7 +1,7 @@
 {
   "name": "@vohongtho.infotech/code-intel",
-  "version": "1.0.9",
-  "description": "Static code analysis platform \u2014 builds a Knowledge Graph from source code with Web UI, HTTP API, CLI, and MCP server",
+  "version": "1.0.10",
+  "description": "Static code analysis platform — builds a Knowledge Graph from source code with Web UI, HTTP API, CLI, and MCP server",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",

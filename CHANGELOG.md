@@ -4,6 +4,23 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.0.10] - 2026-08-03
+
+### 🗃️ Generation V2
+
+- Added a true no-op analysis plan that preserves the active generation when source and index state are unchanged.
+- Added repository-level analysis locking, selective artifact seeding, reflink-first cloning, pinned index snapshots, and stale staging cleanup.
+- Changed known source updates to rebuild graph/BM25 while cloning only the healthy vector database required for incremental vector mutation.
+- Updated index trust verification to read graph, BM25, vector, and metadata from one pinned generation snapshot.
+
+### 🤖 Agent-aware setup
+
+- `code-intel setup` now reads `.code-intel/agent-targets.json` and installs only selected-agent global integrations.
+- Setup no longer creates project-scoped `.cursor`, `.github`, `.kilocode`, `.agents`, `.clinerules`, `.windsurfrules`, or `AGENTS.md` files.
+- Added `setup [path]`, `--mcp-only`, `--all-agents`, and `--dry-run` behavior.
+
+---
+
 ## [1.0.9] - 2026-07-31
 
 ### 🧠 Incremental vector update correctness

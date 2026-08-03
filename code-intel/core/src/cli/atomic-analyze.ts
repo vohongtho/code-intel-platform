@@ -4,13 +4,22 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import {
   abortIndexGeneration,
+  cloneGenerationArtifact,
   createIndexGeneration,
   publishIndexGeneration,
-  resolvePublishedArtifactPath,
+  touchIndexGeneration,
+  type ArtifactCloneMode,
   type IndexArtifactName,
   type IndexGeneration,
 } from '../storage/index-generation.js';
-import { loadMetadata, type IndexMetadata } from '../storage/metadata.js';
+import { acquireAnalyzeLock } from '../storage/analyze-lock.js';
+import {
+  getSnapshotArtifactPath,
+  resolveIndexSnapshot,
+  type IndexSnapshot,
+} from '../storage/index-snapshot.js';
+import { planAtomicAnalysis } from '../pipeline/analysis-plan.js';
+import type { IndexMetadata } from '../storage/metadata.js';
 
 const ANALYZE_VALUE_OPTIONS = new Set([
   '--name', '--llm-provider', '--llm-model', '--llm-base-url', '--llm-api-key',
@@ -41,64 +50,107 @@ export function resolveAnalyzeWorkspaceRoot(args: string[], cwd = process.cwd())
   return cwd;
 }
 
-export function seedIndexGeneration(repoDir: string, generation: IndexGeneration): void {
-  const artifacts: IndexArtifactName[] = ['graph.db', 'bm25.db', 'vector.db', 'meta.json'];
-  for (const artifact of artifacts) {
-    const source = resolvePublishedArtifactPath(repoDir, artifact);
-    if (!fs.existsSync(source)) continue;
-    const target = path.join(generation.stagingDir, artifact);
-    fs.copyFileSync(source, target);
-    for (const suffix of ['-wal', '-shm']) {
-      const sidecar = `${source}${suffix}`;
-      if (fs.existsSync(sidecar)) fs.copyFileSync(sidecar, `${target}${suffix}`);
-    }
-  }
+function loadSnapshotMetadata(snapshot: IndexSnapshot | null): IndexMetadata | null {
+  if (!snapshot || !fs.existsSync(snapshot.metadataPath)) return null;
+  try { return JSON.parse(fs.readFileSync(snapshot.metadataPath, 'utf8')) as IndexMetadata; } catch { return null; }
 }
 
-/**
- * Run the existing analyze command against an isolated staging directory and
- * publish it by swapping current.json only after the child exits successfully.
- */
-export function runAtomicAnalyze(args: string[], binUrl: URL): number {
-  const workspaceRoot = resolveAnalyzeWorkspaceRoot(args);
-  const generation = createIndexGeneration(workspaceRoot);
-  const previous = loadMetadata(workspaceRoot);
-  const childArgs = [...args];
-
-  seedIndexGeneration(workspaceRoot, generation);
-
-  if (
-    previous?.embeddings?.enabled
-    && !childArgs.includes('--embeddings')
-    && !childArgs.includes('--skip-embeddings')
-  ) {
-    childArgs.push('--embeddings');
+export function seedIndexGeneration(
+  repoDir: string,
+  generation: IndexGeneration,
+  snapshot: IndexSnapshot | null = resolveIndexSnapshot(repoDir),
+  artifacts: IndexArtifactName[] = ['graph.db', 'bm25.db', 'vector.db'],
+): Partial<Record<IndexArtifactName, ArtifactCloneMode>> {
+  const modes: Partial<Record<IndexArtifactName, ArtifactCloneMode>> = {};
+  if (!snapshot) return modes;
+  for (const artifact of artifacts) {
+    if (artifact === 'meta.json') continue;
+    const source = getSnapshotArtifactPath(snapshot, artifact);
+    if (!fs.existsSync(source)) continue;
+    const target = path.join(generation.stagingDir, artifact);
+    modes[artifact] = cloneGenerationArtifact(source, target);
   }
+  touchIndexGeneration(generation);
+  return modes;
+}
 
-  const child = spawnSync(process.execPath, [fileURLToPath(binUrl), ...childArgs], {
+function runChild(args: string[], binUrl: URL, extraEnv: NodeJS.ProcessEnv = {}): number {
+  const child = spawnSync(process.execPath, [fileURLToPath(binUrl), ...args], {
     stdio: 'inherit',
     env: {
       ...process.env,
+      ...extraEnv,
       CODE_INTEL_ATOMIC_CHILD: '1',
-      CODE_INTEL_INDEX_STAGING_DIR: generation.stagingDir,
     },
   });
+  return child.status ?? 1;
+}
 
-  if (child.status !== 0) {
-    abortIndexGeneration(generation);
-    return child.status ?? 1;
-  }
-
+/**
+ * Run analyze against an isolated staging directory and publish only after all
+ * required artifacts validate. A repository lock serializes analyze processes.
+ */
+export function runAtomicAnalyze(args: string[], binUrl: URL): number {
+  const workspaceRoot = resolveAnalyzeWorkspaceRoot(args);
+  let lock: ReturnType<typeof acquireAnalyzeLock> | null = null;
   try {
-    const metadata = JSON.parse(fs.readFileSync(generation.metadataPath, 'utf8')) as IndexMetadata;
-    metadata.generationId = generation.generationId;
-    publishIndexGeneration(workspaceRoot, generation, metadata, {
-      vectorRequired: Boolean(metadata.embeddings?.enabled && metadata.embeddings.status === 'ready'),
+    const snapshot = resolveIndexSnapshot(workspaceRoot);
+    lock = acquireAnalyzeLock(workspaceRoot, {
+      baseGenerationId: snapshot && !snapshot.legacy ? snapshot.generationId : undefined,
     });
-    return 0;
+    const previous = loadSnapshotMetadata(snapshot);
+    const plan = planAtomicAnalysis(workspaceRoot, args, previous, snapshot);
+
+    if (plan.mode === 'passthrough') {
+      return runChild(args, binUrl);
+    }
+    if (plan.mode === 'noop') {
+      console.log('  ✓ No source or index changes detected');
+      console.log(`  ✓ Active generation preserved: ${snapshot?.generationId ?? 'legacy'}`);
+      return 0;
+    }
+
+    const generation = createIndexGeneration(workspaceRoot, undefined, {
+      baseGenerationId: snapshot && !snapshot.legacy ? snapshot.generationId : undefined,
+    });
+    lock.update({ stagingGenerationId: generation.generationId });
+    seedIndexGeneration(workspaceRoot, generation, snapshot, plan.seedArtifacts);
+    const childArgs = [...args];
+
+    if (
+      previous?.embeddings?.enabled
+      && !childArgs.includes('--embeddings')
+      && !childArgs.includes('--skip-embeddings')
+    ) {
+      childArgs.push('--embeddings');
+    }
+
+    const childStatus = runChild(childArgs, binUrl, {
+      CODE_INTEL_INDEX_STAGING_DIR: generation.stagingDir,
+      CODE_INTEL_ANALYSIS_PLAN: JSON.stringify(plan),
+    });
+    if (childStatus !== 0) {
+      abortIndexGeneration(generation);
+      return childStatus;
+    }
+
+    try {
+      touchIndexGeneration(generation);
+      const metadata = JSON.parse(fs.readFileSync(generation.metadataPath, 'utf8')) as IndexMetadata;
+      metadata.generationId = generation.generationId;
+      publishIndexGeneration(workspaceRoot, generation, metadata, {
+        vectorRequired: Boolean(metadata.embeddings?.enabled && metadata.embeddings.status === 'ready'),
+      });
+      return 0;
+    } catch (error) {
+      abortIndexGeneration(generation);
+      console.error(`Atomic index publication failed: ${error instanceof Error ? error.message : String(error)}`);
+      return 1;
+    }
   } catch (error) {
-    abortIndexGeneration(generation);
-    console.error(`Atomic index publication failed: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(error instanceof Error ? error.message : String(error));
     return 1;
+  } finally {
+    lock?.release();
   }
 }
