@@ -70,7 +70,7 @@ jobs:
             code-intel/core/dist-tests/tests/unit/search/vector-index.test.js \
             code-intel/core/dist-tests/tests/unit/cli/config-manager-embedding-model.test.js
       - name: Run web selector test
-        run: npm run test --workspace=code-intel/web -- --run code-intel/web/src/pages/SettingsPage.test.tsx
+        run: npm run test --workspace=code-intel/web -- --run src/pages/SettingsPage.test.tsx
       - name: Commit validated implementation
         shell: bash
         run: |
