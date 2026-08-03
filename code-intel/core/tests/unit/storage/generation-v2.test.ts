@@ -18,18 +18,21 @@ function write(pathname: string, value: string): void { fs.mkdirSync(path.dirnam
 const metadata = { indexedAt: '2026-08-03T00:00:00.000Z', schemaVersion: 8, indexVersion: 'v', parser: 'tree-sitter', embeddings: { enabled: true, status: 'ready', provider: 'x', model: 'x', dimension: 3 }, stats: { nodes: 1, edges: 0, files: 1, duration: 1 } };
 
 describe('Generation V2 storage', () => {
-  it('clones only requested seed artifacts', () => {
+  it('clones only requested vector and metadata seed artifacts', () => {
     const root = tempRepo();
     try {
       const current = createIndexGeneration(root, 'g1');
       write(current.graphDbPath, 'graph'); write(current.bm25DbPath, 'bm25'); write(current.vectorDbPath, 'vector');
       publishIndexGeneration(root, current, metadata, { vectorRequired: true });
       const next = createIndexGeneration(root, 'g2', { baseGenerationId: 'g1' });
-      const modes = seedIndexGeneration(root, next, resolveIndexSnapshot(root), ['vector.db']);
+      const modes = seedIndexGeneration(root, next, resolveIndexSnapshot(root), ['vector.db', 'meta.json']);
       assert.ok(fs.existsSync(next.vectorDbPath));
+      assert.ok(fs.existsSync(next.metadataPath));
       assert.equal(fs.existsSync(next.graphDbPath), false);
       assert.equal(fs.existsSync(next.bm25DbPath), false);
       assert.ok(modes['vector.db'] === 'copy' || modes['vector.db'] === 'reflink');
+      assert.ok(modes['meta.json'] === 'copy' || modes['meta.json'] === 'reflink');
+      assert.equal(JSON.parse(fs.readFileSync(next.metadataPath, 'utf8')).generationId, 'g1');
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
 
@@ -52,7 +55,7 @@ describe('Generation V2 storage', () => {
       const active = createIndexGeneration(root, 'active');
       const old = '2000-01-01T00:00:00.000Z';
       fs.writeFileSync(path.join(stale.stagingDir, 'staging.json'), JSON.stringify({ version: 1, generationId: 'stale', pid: 1, hostname: 'x', createdAt: old, lastActivityAt: old }));
-      const removed = cleanupStaleStaging(root, { staleAfterMs: 1, activeGenerationId: 'active', nowMs: Date.now() });
+      const removed = cleanupStaleStaging(root, { staleAfterMs: 60_000, activeGenerationId: 'active', nowMs: Date.now() });
       assert.deepEqual(removed, ['stale']);
       assert.equal(fs.existsSync(stale.stagingDir), false);
       assert.equal(fs.existsSync(recent.stagingDir), true);
