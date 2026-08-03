@@ -41,6 +41,7 @@ jobs:
           exec(compile(script, 'implement-generation-v2.py', 'exec'))
           Path('.github/workflows/implement-generation-v2-pr.yml').unlink()
           PY
+          git checkout -- .github/workflows/release-readiness.yml
 
       - name: Set package version
         run: npm version 1.0.10 --workspace=code-intel/core --no-git-tag-version
