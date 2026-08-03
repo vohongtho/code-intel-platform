@@ -64,11 +64,20 @@ function canRecoverStaleLock(
   staleAfterMs: number,
 ): boolean {
   const age = (() => {
-    try { return Date.now() - fs.statSync(lockPath).mtimeMs; } catch { return Number.POSITIVE_INFINITY; }
+    try {
+      return Date.now() - fs.statSync(lockPath).mtimeMs;
+    } catch {
+      return Number.POSITIVE_INFINITY;
+    }
   })();
+
+  // Malformed locks are recoverable only after a conservative TTL.
   if (!owner) return age >= staleAfterMs;
+
+  // A local process that is still alive always owns its lock, regardless of age.
+  // Cross-host ownership cannot be verified safely and therefore fails closed.
   if (owner.hostname !== os.hostname()) return false;
-  return !processAlive(owner.pid) || age >= staleAfterMs;
+  return !processAlive(owner.pid);
 }
 
 function atomicRewrite(lockPath: string, owner: AnalyzeLockOwner): void {
@@ -100,19 +109,23 @@ export function acquireAnalyzeLock(
     };
     try {
       const fd = fs.openSync(lockPath, 'wx', 0o600);
-      try { fs.writeFileSync(fd, `${JSON.stringify(owner, null, 2)}\n`, 'utf8'); } finally { fs.closeSync(fd); }
+      try {
+        fs.writeFileSync(fd, `${JSON.stringify(owner, null, 2)}\n`, 'utf8');
+      } finally {
+        fs.closeSync(fd);
+      }
       return {
         lockPath,
         owner,
         update(patch) {
-const current = readOwner(lockPath);
-if (!current || current.token !== owner.token) return;
-Object.assign(owner, patch);
-atomicRewrite(lockPath, owner);
+          const current = readOwner(lockPath);
+          if (!current || current.token !== owner.token) return;
+          Object.assign(owner, patch);
+          atomicRewrite(lockPath, owner);
         },
         release() {
-const current = readOwner(lockPath);
-if (current?.token === owner.token) fs.rmSync(lockPath, { force: true });
+          const current = readOwner(lockPath);
+          if (current?.token === owner.token) fs.rmSync(lockPath, { force: true });
         },
       };
     } catch (error) {
