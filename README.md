@@ -17,7 +17,7 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 - **Query Console** — web UI panel with GQL editor, sortable results table, query history, and example queries
 - **AI-Generated Symbol Summaries** — optional `--summarize` flag generates 1-2 sentence summaries per symbol via OpenAI, Anthropic, or Ollama; cached by code hash
 - **Hybrid Search (BM25 + Vector RRF)** — Reciprocal Rank Fusion with truthful `requestedMode`, `actualMode`, and `searchMode`. Fallback reports `VECTOR_INDEX_UNAVAILABLE` for missing/unbuilt/empty vector state and `VECTOR_QUERY_FAILED` for vector execution errors.
-- **Semantic Vector Search** — embeddings via `all-MiniLM-L6-v2`; enriched with summaries when available
+- **Semantic Vector Search** — embeddings via backend-authoritative model catalog; default `Xenova/all-MiniLM-L6-v2`; enriched with summaries when available
 - **Code AI Chat** — grounded assistant that cites source files in every answer
 - **File Watcher & Auto-Reindex** — `code-intel watch` detects file saves and patches the live graph within ~1 second; WebSocket push notifies connected clients
 - **Code Health** — `code-intel health` reports dead code, circular dependencies (Tarjan SCC), god nodes, orphan files, and a 0–100 health score
@@ -252,7 +252,7 @@ Then open **http://localhost:4747** in your browser — the Web UI auto-connects
 
 If no admin account exists yet, the first-run setup screen appears. The login and bootstrap forms include eye-icon password visibility toggles, and the username input placeholder reads `User Name`.
 
-Authenticated users can open **Settings** from the profile menu in the Web UI to inspect global server configuration. Admin users can edit routed settings sections for LLM, embeddings, analysis, server, authentication, updates, and telemetry. These settings are server-global and complement the CLI flows (`code-intel init` and `code-intel config *`) rather than replacing editor/MCP setup.
+Authenticated users can open **Settings** from the profile menu in the Web UI to inspect global server configuration. Admin users can edit routed settings sections for LLM, embeddings, analysis, server, authentication, updates, and telemetry. The Embeddings Model control is a backend-driven selector populated from `GET /api/v1/embeddings/models`, not a free-text field. Unsupported legacy values render as disabled recovery options until replaced with a supported model. These settings are server-global and complement the CLI flows (`code-intel init` and `code-intel config *`) rather than replacing editor/MCP setup.
 
 ### After analysis
 

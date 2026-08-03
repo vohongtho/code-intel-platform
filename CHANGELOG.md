@@ -21,16 +21,11 @@ All notable changes to this project are documented in this file.
 
 ### 🧠 Embedding model selector
 
-- Replaced the free-text embedding model setting with a backend-owned model catalog and Web UI pull-down.
-- Runtime model loading, vector dimension, fingerprint validation, and rebuild decisions now use the selected catalog descriptor.
-- Preserved migration compatibility for the legacy `all-MiniLM-L6-v2` model alias.
-
-### 🔐 Persistent remembered sessions
-
-- Replaced the process-local session `Map` with hashed records in the users SQLite database.
-- Remember-me logins use a 12-hour TTL and now survive `code-intel serve` restarts; normal sessions retain the configurable 8-hour default.
-- Logout, password reset, user disable, and user deletion revoke server-side sessions, while current roles are resolved on every request.
-- Older cookies require one re-login because raw cookie tokens are never imported or persisted during migration.
+- Added backend embedding model registry with canonical `Xenova/all-MiniLM-L6-v2` default, legacy short-ID normalization, and availability reporting without triggering model downloads.
+- Added authenticated `GET /api/v1/embeddings/models` plus Web client catalog loading and structured malformed-response handling.
+- Replaced the Settings Embeddings Model free-text input with a disabled-aware selector that shows canonical model metadata and unsupported legacy values.
+- Config validation now rejects unknown or unavailable embedding models when embeddings are enabled and persists the canonical ID.
+- Embedding runtime, fingerprint metadata, and vector-index rebuild decisions now derive model ID and dimension from the selected descriptor.
 
 ---
 

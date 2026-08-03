@@ -13,7 +13,6 @@ import { Database, type SqliteDatabase } from '../shared/sqlite.js';
 import type { EmbeddedNode } from './embedder.js';
 
 const EMBED_TABLE = 'embed_nodes';
-const DEFAULT_EMBED_DIM = 384;
 
 interface CachedRow {
   nodeId:    string;
@@ -25,15 +24,14 @@ interface CachedRow {
 
 export class VectorIndex {
   private sqlitePath: string;
+  private dimension: number;
   private db: SqliteDatabase | null = null;
   /** In-memory cache — populated after buildIndex() or first search() */
   private cache: CachedRow[] | null = null;
 
-  constructor(sqlitePath: string, private readonly dimension = DEFAULT_EMBED_DIM) {
-    if (!Number.isInteger(dimension) || dimension <= 0) {
-      throw new Error(`Invalid embedding dimension: ${dimension}`);
-    }
+  constructor(sqlitePath: string, dimension = 384) {
     this.sqlitePath = sqlitePath;
+    this.dimension = dimension;
   }
 
   async init(): Promise<void> {
@@ -48,23 +46,13 @@ export class VectorIndex {
         file_path TEXT NOT NULL,
         text      TEXT NOT NULL,
         embedding BLOB NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS embed_meta (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-      );
+      )
     `);
-    const stored = this.db.prepare(`SELECT value FROM embed_meta WHERE key = 'dimension'`).get() as { value?: string } | undefined;
-    if (stored?.value && Number(stored.value) !== this.dimension) {
-      throw new Error(`Vector index dimension ${stored.value} does not match configured model dimension ${this.dimension}`);
-    }
-    this.db.prepare(`INSERT OR REPLACE INTO embed_meta (key, value) VALUES ('dimension', ?)`).run(String(this.dimension));
   }
 
   async buildIndex(nodes: EmbeddedNode[]): Promise<void> {
     if (!this.db) throw new Error('VectorIndex not initialized');
 
-    this._validateDimensions(nodes);
     this.db.exec(`DELETE FROM ${EMBED_TABLE}`);
     this._insertMany(nodes);
     this.cache = nodes.map((n) => this._toCachedRow(n));
@@ -90,7 +78,6 @@ export class VectorIndex {
   async upsertIndex(nodes: EmbeddedNode[]): Promise<number> {
     if (!this.db) throw new Error('VectorIndex not initialized');
     if (nodes.length === 0) return 0;
-    this._validateDimensions(nodes);
 
     this._insertMany(nodes);
 
@@ -111,9 +98,6 @@ export class VectorIndex {
       this.cache = this._loadCache();
     }
 
-    if (queryEmbedding.length !== this.dimension) {
-      throw new Error(`Query embedding dimension ${queryEmbedding.length} does not match vector index dimension ${this.dimension}`);
-    }
     const query = new Float32Array(queryEmbedding);
     const qNorm = norm(query);
 
@@ -162,25 +146,8 @@ export class VectorIndex {
       name:      row.name,
       kind:      row.kind,
       filePath:  row.file_path,
-      embedding: this._decodeEmbedding(row.embedding),
+      embedding: new Float32Array(row.embedding.buffer, row.embedding.byteOffset, this.dimension),
     }));
-  }
-
-  private _decodeEmbedding(value: Buffer): Float32Array {
-    const expectedBytes = this.dimension * Float32Array.BYTES_PER_ELEMENT;
-    if (value.byteLength !== expectedBytes) {
-      throw new Error(`Stored embedding has ${value.byteLength} bytes; expected ${expectedBytes}`);
-    }
-    return new Float32Array(value.buffer, value.byteOffset, this.dimension);
-  }
-
-  private _validateDimensions(nodes: EmbeddedNode[]): void {
-    const invalid = nodes.find((node) => node.embedding.length !== this.dimension);
-    if (invalid) {
-      throw new Error(
-        `Embedding for ${invalid.id} has dimension ${invalid.embedding.length}; expected ${this.dimension}`,
-      );
-    }
   }
 
   private _insertMany(items: EmbeddedNode[]): void {

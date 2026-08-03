@@ -16,7 +16,6 @@ import { DbManager, getDbPath, getVectorDbPath } from '../storage/index.js';
 import { loadMetadata, shouldRebuildEmbeddings } from '../storage/metadata.js';
 import { resolveIndexSnapshot, type IndexSnapshot } from '../storage/index-snapshot.js';
 import { VectorIndex } from '../search/vector-index.js';
-import { DEFAULT_EMBEDDING_MODEL_ID, listEmbeddingModels } from '../search/embedding-models.js';
 // VectorIndex uses the shared SQLite wrapper directly.
 import fs from 'node:fs';
 import { listGroups, loadGroup, saveGroup, deleteGroup, groupExists, addMember, removeMember, loadSyncResult, saveSyncResult } from '../multi-repo/group-registry.js';
@@ -37,14 +36,10 @@ import {
   buildSessionCookie,
   clearSessionCookie,
   createSession,
-  deleteSession,
-  countActiveSessions,
-  parseCookies,
-  SESSION_COOKIE_NAME,
   verifyPassword,
+  sessionStore,
 } from '../auth/middleware.js';
 import { getOrCreateUsersDB } from '../auth/users-db.js';
-import { getOrCreateSessionStore } from '../auth/session-store.js';
 import type { Role } from '../auth/users-db.js';
 import { getOrCreateJobsDB } from '../jobs/jobs-db.js';
 import type { JobStatus } from '../jobs/jobs-db.js';
@@ -62,7 +57,8 @@ import {
   refreshOIDCToken,
 } from '../auth/oidc.js';
 import { loadConfig, saveConfig, DEFAULT_CONFIG, type CodeIntelConfig } from '../cli/init-wizard.js';
-import { maskConfig, validateConfig } from '../cli/config-manager.js';
+import { maskConfig, normalizeConfigEmbeddingModel, validateConfig } from '../cli/config-manager.js';
+import { getDefaultEmbeddingModel, getEmbeddingModel, getEmbeddingModelCatalog } from '../search/embedding-model-registry.js';
 import {
   metricsRegistry,
   httpRequestsTotal,
@@ -152,16 +148,6 @@ export function createApp(
 ): express.Application {
   const app = express();
   const startupSnapshot = pinnedSnapshot ?? (workspaceRoot ? resolveIndexSnapshot(workspaceRoot) : null);
-  const shouldInitializeSessionStore =
-    process.env['NODE_ENV'] !== 'test' || Boolean(process.env['CODE_INTEL_USERS_DB_PATH']);
-  if (shouldInitializeSessionStore) {
-    try {
-      getOrCreateSessionStore();
-    } catch (error) {
-      Logger.warn('[auth] Persistent session store failed to initialize; session authentication will fail closed',
-        error instanceof Error ? error.message : String(error));
-    }
-  }
 
   // Trust proxy (for correct IP detection behind nginx/caddy)
   app.set('trust proxy', 1);
@@ -346,19 +332,22 @@ export function createApp(
       const { embedNodes, getEmbeddingFingerprint } = await import('../search/embedder.js');
       const vdbPath = startupSnapshot?.vectorDbPath ?? getVectorDbPath(workspaceRoot);
       const meta = startupSnapshot ? loadMetadata(startupSnapshot) : loadMetadata(workspaceRoot);
-      const runtimeFingerprint = getEmbeddingFingerprint();
+      const config = normalizeConfigEmbeddingModel(loadConfig() ?? DEFAULT_CONFIG);
+      const descriptor = getEmbeddingModel(config.embeddings.model) ?? getDefaultEmbeddingModel();
+      const runtimeFingerprint = getEmbeddingFingerprint({ descriptor });
       const shouldRebuild = shouldRebuildEmbeddings({ metadata: meta, runtime: runtimeFingerprint, hasVectorDb: fs.existsSync(vdbPath) });
       if (shouldRebuild) {
         for (const f of [vdbPath, `${vdbPath}-shm`, `${vdbPath}-wal`]) {
           try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* ignore */ }
         }
       }
-      const idx = new VectorIndex(vdbPath, runtimeFingerprint.dimension);
+      const idx = new VectorIndex(vdbPath, descriptor.dimension);
       await idx.init();
       const alreadyBuilt = shouldRebuild ? false : await idx.isBuilt();
       if (!alreadyBuilt) {
         Logger.info('  [vector] Building embeddings…');
         const nodes = await embedNodes(graph, {
+          model: descriptor,
           onProgress: (done, total) => {
             if (done % 50 === 0 || done === total) process.stdout.write(`\r  [vector] ${done}/${total}`);
           },
@@ -395,7 +384,7 @@ export function createApp(
       // Update live gauges before scrape
       pipelineNodesTotal.set({ repo: repoName }, graph.size.nodes);
       pipelineEdgesTotal.set({ repo: repoName }, graph.size.edges);
-      activeSessionsTotal.set(shouldInitializeSessionStore ? countActiveSessions() : 0);
+      activeSessionsTotal.set(sessionStore.size);
       const output = await metricsRegistry.metrics();
       res.set('Content-Type', metricsRegistry.contentType);
       res.end(output);
@@ -472,22 +461,9 @@ export function createApp(
       return;
     }
     const user = db.createUser(username, password, 'admin');
-    try {
-      const { sessionId, ttlMs } = createSession({ id: user.id, username: user.username, role: user.role });
-      res.setHeader('Set-Cookie', buildSessionCookie(sessionId, ttlMs));
-      res.status(201).json({ user: { id: user.id, username: user.username, role: user.role } });
-    } catch (error) {
-      Logger.error('[auth] Failed to persist bootstrap session', error);
-      res.status(503).json({
-        error: {
-          code: ErrorCodes.INTERNAL_ERROR,
-          message: 'Authentication session storage is unavailable',
-          hint: 'Retry after the local authentication database is available',
-          requestId: req.requestId,
-          timestamp: new Date().toISOString(),
-        },
-      });
-    }
+    const { sessionId, ttlMs } = createSession({ id: user.id, username: user.username, role: user.role });
+    res.setHeader('Set-Cookie', buildSessionCookie(sessionId, ttlMs));
+    res.status(201).json({ user: { id: user.id, username: user.username, role: user.role } });
   });
 
   app.post('/auth/login', async (req: Request, res: Response) => {
@@ -539,51 +515,14 @@ export function createApp(
       return;
     }
 
-    try {
-      const { sessionId, ttlMs } = createSession(
-        { id: user.id, username: user.username, role: user.role },
-        rememberMe === true,
-      );
-      db.logAccess(user.id, '/auth/login', 'login', 'allow', req.ip ?? 'unknown');
-      authAttemptsTotal.inc({ method: 'local', outcome: 'success' });
-      res.setHeader('Set-Cookie', buildSessionCookie(sessionId, ttlMs));
-      res.json({ user: { id: user.id, username: user.username, role: user.role } });
-    } catch (error) {
-      Logger.error('[auth] Failed to persist login session', error);
-      db.logAccess(user.id, '/auth/login', 'login', 'deny', req.ip ?? 'unknown');
-      authAttemptsTotal.inc({ method: 'local', outcome: 'failure' });
-      res.status(503).json({
-        error: {
-          code: ErrorCodes.INTERNAL_ERROR,
-          message: 'Authentication session storage is unavailable',
-          hint: 'Retry after the local authentication database is available',
-          requestId: req.requestId,
-          timestamp: new Date().toISOString(),
-        },
-      });
-    }
+    const { sessionId, ttlMs } = createSession({ id: user.id, username: user.username, role: user.role }, rememberMe === true);
+    db.logAccess(user.id, '/auth/login', 'login', 'allow', req.ip ?? 'unknown');
+    authAttemptsTotal.inc({ method: 'local', outcome: 'success' });
+    res.setHeader('Set-Cookie', buildSessionCookie(sessionId, ttlMs));
+    res.json({ user: { id: user.id, username: user.username, role: user.role } });
   });
 
   app.post('/auth/logout', (req: Request, res: Response) => {
-    const rawToken = parseCookies(req.headers['cookie'] ?? '')[SESSION_COOKIE_NAME];
-    if (rawToken) {
-      try {
-        deleteSession(rawToken);
-      } catch (error) {
-        Logger.warn('[auth] Persistent session revocation failed during logout',
-          error instanceof Error ? error.message : String(error));
-        res.status(503).json({
-          error: {
-            code: ErrorCodes.INTERNAL_ERROR,
-            message: 'Logout could not revoke the server-side session',
-            hint: 'Retry logout after the local authentication database is available',
-            requestId: req.requestId,
-            timestamp: new Date().toISOString(),
-          },
-        });
-        return;
-      }
-    }
     res.setHeader('Set-Cookie', clearSessionCookie());
     res.json({ message: 'Logged out successfully' });
   });
@@ -845,18 +784,14 @@ export function createApp(
     });
   });
 
-  // ── Embedding model catalog ─────────────────────────────────────────────────
-  app.get('/api/v1/embeddings/models', requireRole('viewer'), (_req: Request, res: Response) => {
-    res.json({
-      models: listEmbeddingModels().map(({ aliases: _aliases, ...model }) => model),
-      defaultModel: DEFAULT_EMBEDDING_MODEL_ID,
-    });
-  });
-
   // ── Global config ────────────────────────────────────────────────────────────
   app.get('/api/v1/config', requireRole('viewer'), (_req: Request, res: Response) => {
-    const cfg = loadConfig() ?? DEFAULT_CONFIG;
+    const cfg = normalizeConfigEmbeddingModel(loadConfig() ?? DEFAULT_CONFIG);
     res.json({ config: maskConfig(cfg) });
+  });
+
+  app.get('/api/v1/embeddings/models', requireRole('viewer'), (_req: Request, res: Response) => {
+    res.json(getEmbeddingModelCatalog());
   });
 
   app.put('/api/v1/config', requireRole('admin'), (req: Request, res: Response) => {
@@ -874,7 +809,8 @@ export function createApp(
       return;
     }
 
-    const errors = validateConfig(body.config);
+    const normalizedConfig = normalizeConfigEmbeddingModel(body.config);
+    const errors = validateConfig(normalizedConfig);
     if (errors.length > 0) {
       res.status(400).json({
         error: {
@@ -889,9 +825,8 @@ export function createApp(
       return;
     }
 
-    saveConfig(body.config);
-    const saved = loadConfig() ?? body.config;
-    res.json({ config: maskConfig(saved) });
+    saveConfig(normalizedConfig);
+    res.json({ config: maskConfig(normalizedConfig) });
   });
 
   // ── Repos ───────────────────────────────────────────────────────────────────

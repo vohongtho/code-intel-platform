@@ -210,8 +210,32 @@ describe('HTTP API — auth routes', () => {
       headers: { Cookie: sessionCookie },
     });
     assert.equal(res.status, 200);
-    const body = res.body as { config: { llm: { apiKey: string } } };
+    const body = res.body as { config: { llm: { apiKey: string }, embeddings: { model: string } } };
     assert.equal(body.config.llm.apiKey, '');
+    assert.equal(body.config.embeddings.model, 'Xenova/all-MiniLM-L6-v2');
+  });
+
+  it('GET /api/v1/embeddings/models → 200 for viewer without loading pipeline', async () => {
+    const loginRes = await req(server, {
+      method: 'POST',
+      path: '/auth/login',
+      body: { username: 'viewer', password: 'viewer-pass-123' },
+    });
+    assert.equal(loginRes.status, 200);
+    const cookies = loginRes.headers['set-cookie'] ?? [];
+    const sessionCookie = cookies.map((c) => c.split(';')[0] ?? '').join('; ');
+
+    const res = await req(server, {
+      method: 'GET',
+      path: '/api/v1/embeddings/models',
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(res.status, 200);
+    const body = res.body as { defaultModel: string; models: Array<{ id: string; default: boolean; available: boolean }> };
+    assert.equal(body.defaultModel, 'Xenova/all-MiniLM-L6-v2');
+    assert.equal(body.models[0]?.id, 'Xenova/all-MiniLM-L6-v2');
+    assert.equal(body.models[0]?.default, true);
+    assert.equal(typeof body.models[0]?.available, 'boolean');
   });
 
   it('GET /api/v1/embeddings/models → backend-owned catalog for viewer', async () => {
@@ -248,7 +272,7 @@ describe('HTTP API — auth routes', () => {
     const res = await req(server, {
       method: 'PUT',
       path: '/api/v1/config',
-      body: { config: { llm: { provider: 'ollama', model: 'llama3', apiKey: '', batchSize: 20, maxTokensPerSummary: 100 }, embeddings: { model: 'all-MiniLM-L6-v2', enabled: false }, analysis: { maxFileSizeKB: 512, ignorePatterns: [], incrementalByDefault: false }, serve: { defaultPort: 4747, openBrowser: true }, auth: { mode: 'local' }, updates: { checkOnStartup: true, intervalHours: 24 }, telemetry: { enabled: false } } },
+      body: { config: { llm: { provider: 'ollama', model: 'llama3', apiKey: '', batchSize: 20, maxTokensPerSummary: 100 }, embeddings: { model: 'Xenova/all-MiniLM-L6-v2', enabled: false }, analysis: { maxFileSizeKB: 512, ignorePatterns: [], incrementalByDefault: false }, serve: { defaultPort: 4747, openBrowser: true }, auth: { mode: 'local' }, updates: { checkOnStartup: true, intervalHours: 24 }, telemetry: { enabled: false } } },
       headers: { Cookie: sessionCookie },
     });
     assert.equal(res.status, 403);
@@ -267,7 +291,7 @@ describe('HTTP API — auth routes', () => {
     const res = await req(server, {
       method: 'PUT',
       path: '/api/v1/config',
-      body: { config: { llm: { provider: 'bad', model: 'llama3', apiKey: '', batchSize: 20, maxTokensPerSummary: 100 }, embeddings: { model: 'all-MiniLM-L6-v2', enabled: false }, analysis: { maxFileSizeKB: 512, ignorePatterns: [], incrementalByDefault: false }, serve: { defaultPort: 4747, openBrowser: true }, auth: { mode: 'local' }, updates: { checkOnStartup: true, intervalHours: 24 }, telemetry: { enabled: false } } },
+      body: { config: { llm: { provider: 'bad', model: 'llama3', apiKey: '', batchSize: 20, maxTokensPerSummary: 100 }, embeddings: { model: 'Xenova/all-MiniLM-L6-v2', enabled: false }, analysis: { maxFileSizeKB: 512, ignorePatterns: [], incrementalByDefault: false }, serve: { defaultPort: 4747, openBrowser: true }, auth: { mode: 'local' }, updates: { checkOnStartup: true, intervalHours: 24 }, telemetry: { enabled: false } } },
       headers: { Cookie: sessionCookie },
     });
     assert.equal(res.status, 400);
@@ -337,6 +361,7 @@ describe('HTTP API — protected routes require auth', () => {
 
   const protectedRoutes: Array<{ method: string; path: string; body?: unknown }> = [
     { method: 'GET', path: '/api/v1/repos' },
+    { method: 'GET', path: '/api/v1/embeddings/models' },
     { method: 'POST', path: '/api/v1/search', body: { query: 'test' } },
     { method: 'GET', path: '/api/v1/flows' },
     { method: 'GET', path: '/api/v1/clusters' },

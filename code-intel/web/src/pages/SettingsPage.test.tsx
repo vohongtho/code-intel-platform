@@ -91,9 +91,9 @@ describe('SettingsPage routing and save flow', () => {
   beforeEach(() => {
     getConfigMock.mockReset();
     saveConfigMock.mockReset();
-    listEmbeddingModelsMock.mockReset();
     logoutMock.mockReset();
     vectorStatusMock.mockClear();
+    listEmbeddingModelsMock.mockReset();
     getConfigMock.mockResolvedValue({ config: defaultConfig });
     listEmbeddingModelsMock.mockResolvedValue({
       defaultModel: 'Xenova/all-MiniLM-L6-v2',
@@ -103,8 +103,8 @@ describe('SettingsPage routing and save flow', () => {
         provider: 'huggingface-transformers',
         dimension: 384,
         dtype: 'q8',
-        maxSequenceLength: 512,
-        description: 'Fast local model',
+        default: true,
+        available: true,
       }],
     });
   });
@@ -127,15 +127,6 @@ describe('SettingsPage routing and save flow', () => {
     expect(screen.getByRole('combobox', { name: /provider/i })).toBeInTheDocument();
   });
 
-
-  it('renders embedding model as a backend-driven pull-down', async () => {
-    renderSettingsRoute('/settings/embeddings', adminUser);
-    const model = await screen.findByRole('combobox', { name: 'Model' });
-    expect(model).toHaveValue('Xenova/all-MiniLM-L6-v2');
-    expect(screen.getByText(/384 dimensions/i)).toBeInTheDocument();
-    expect(screen.queryByRole('textbox', { name: 'Model' })).not.toBeInTheDocument();
-  });
-
   it('shows validation errors on failed save for admin', async () => {
     saveConfigMock.mockRejectedValue(Object.assign(new Error('Config validation failed'), {
       validationErrors: [{ path: 'llm.provider', reason: 'Value "bad" is not allowed.', hint: 'Set a valid provider' }],
@@ -152,6 +143,19 @@ describe('SettingsPage routing and save flow', () => {
   it('renders read-only save state for viewer', async () => {
     renderSettingsRoute('/settings/server', viewerUser);
     expect(await screen.findByText('Read-only for this role.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /save changes/i })).toBeDisabled();
+  });
+
+  it('renders embeddings model as select, not text input', async () => {
+    renderSettingsRoute('/settings/embeddings', adminUser);
+    expect(await screen.findByRole('combobox', { name: /model/i })).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: /model/i })).not.toBeInTheDocument();
+  });
+
+  it('renders unsupported legacy model option and blocks saving when enabled', async () => {
+    getConfigMock.mockResolvedValue({ config: { ...defaultConfig, embeddings: { model: 'legacy-model', enabled: true } } });
+    renderSettingsRoute('/settings/embeddings', adminUser);
+    expect(await screen.findAllByText(/Unsupported legacy model: legacy-model/i)).toHaveLength(2);
     expect(screen.getByRole('button', { name: /save changes/i })).toBeDisabled();
   });
 });

@@ -272,6 +272,46 @@ export const openApiSpec = {
         },
       },
     },
+    '/embeddings/models': {
+      get: {
+        tags: ['Search'],
+        summary: 'List backend-supported embedding models',
+        responses: {
+          '200': {
+            description: 'Embedding model catalog',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    defaultModel: { type: 'string' },
+                    models: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          id: { type: 'string' },
+                          label: { type: 'string' },
+                          provider: { type: 'string' },
+                          dimension: { type: 'integer' },
+                          dtype: { type: 'string' },
+                          default: { type: 'boolean' },
+                          available: { type: 'boolean' },
+                          unavailableReason: { type: 'string' },
+                          description: { type: 'string' },
+                        },
+                        required: ['id', 'label', 'provider', 'dimension', 'dtype', 'default', 'available'],
+                      },
+                    },
+                  },
+                  required: ['models', 'defaultModel'],
+                },
+              },
+            },
+          },
+        },
+      },
+    },
     '/source': {
       get: {
         tags: ['Files'],

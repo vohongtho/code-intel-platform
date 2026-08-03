@@ -1,5 +1,5 @@
 import type { CodeNode, CodeEdge } from 'code-intel-shared';
-import type { SearchResult, CurrentUser, AppConfig, SearchMode, SearchScope, EmbeddingModelDescriptor } from '../state/types';
+import type { SearchResult, CurrentUser, AppConfig, SearchMode, SearchScope, EmbeddingModelCatalog } from '../state/types';
 
 export interface CountGroup {
   key: string;
@@ -140,15 +140,6 @@ export class ApiClient {
     return res.json() as Promise<AuthStatus>;
   }
 
-  async listEmbeddingModels(): Promise<{ models: EmbeddingModelDescriptor[]; defaultModel: string }> {
-    const res = await fetch(`${this.baseUrl}/api/v1/embeddings/models`, { credentials: 'include' });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({})) as { error?: { message?: string } };
-      throw new Error(body?.error?.message ?? 'Failed to load embedding models');
-    }
-    return res.json() as Promise<{ models: EmbeddingModelDescriptor[]; defaultModel: string }>;
-  }
-
   async getConfig(): Promise<{ config: AppConfig }> {
     const res = await fetch(`${this.baseUrl}/api/v1/config`, { credentials: 'include' });
     if (!res.ok) {
@@ -173,6 +164,19 @@ export class ApiClient {
       throw error;
     }
     return res.json() as Promise<{ config: AppConfig }>;
+  }
+
+  async listEmbeddingModels(): Promise<EmbeddingModelCatalog> {
+    const res = await fetch(`${this.baseUrl}/api/v1/embeddings/models`, { credentials: 'include' });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { error?: { message?: string } };
+      throw new Error(body?.error?.message ?? 'Failed to load embedding models');
+    }
+    const data = await res.json() as Partial<EmbeddingModelCatalog>;
+    if (!Array.isArray(data.models) || typeof data.defaultModel !== 'string') {
+      throw new Error('Malformed embedding model catalog response');
+    }
+    return data as EmbeddingModelCatalog;
   }
 
   // ── Graph & repos ──────────────────────────────────────────────────────────

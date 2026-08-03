@@ -1,13 +1,8 @@
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
-import { loadConfig } from '../cli/init-wizard.js';
-import {
-  DEFAULT_EMBEDDING_MODEL_ID,
-  resolveEmbeddingModel,
-  type EmbeddingModelDescriptor,
-} from './embedding-models.js';
+import { getDefaultEmbeddingModel, type EmbeddingModelDescriptor } from './embedding-model-registry.js';
 
 export const EMBEDDING_PROVIDER = 'huggingface-transformers';
-export const EMBEDDING_MODEL = DEFAULT_EMBEDDING_MODEL_ID;
+export const EMBEDDING_MODEL = 'Xenova/all-MiniLM-L6-v2';
 export const EMBEDDING_DIMENSION = 384;
 
 export interface EmbeddedNode {
@@ -19,55 +14,56 @@ export interface EmbeddedNode {
   embedding: number[];
 }
 
-type FeatureExtractionPipeline = (
-  text: string | string[],
-  opts: Record<string, unknown>,
-) => Promise<{ data: Float32Array }>;
-
-const pipelineInstances = new Map<string, FeatureExtractionPipeline>();
-
-export function getConfiguredEmbeddingModel(): EmbeddingModelDescriptor {
-  const configured = loadConfig()?.embeddings.model;
-  const model = resolveEmbeddingModel(configured);
-  if (!model) {
-    throw new Error(
-      `Unsupported embedding model "${configured}". Choose a supported model in Settings > Embeddings.`,
-    );
-  }
-  return model;
+export interface EmbeddingFingerprint {
+  provider: string;
+  model: string;
+  dimension: number;
 }
 
-export async function getEmbedder(
-  model: EmbeddingModelDescriptor = getConfiguredEmbeddingModel(),
-): Promise<FeatureExtractionPipeline> {
-  const existing = pipelineInstances.get(model.id);
-  if (existing) return existing;
+export interface EmbeddingRuntimeConfig {
+  descriptor: EmbeddingModelDescriptor;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type EmbeddingPipeline = (text: string | string[], opts: Record<string, unknown>) => Promise<{ data: Float32Array }>;
+
+const pipelineCache = new Map<string, EmbeddingPipeline>();
+
+function getPipelineCacheKey(descriptor: EmbeddingModelDescriptor): string {
+  return `${descriptor.id}:${descriptor.dtype}`;
+}
+
+function resolveRuntimeConfig(config?: Partial<EmbeddingRuntimeConfig>): EmbeddingRuntimeConfig {
+  return { descriptor: config?.descriptor ?? getDefaultEmbeddingModel() };
+}
+
+export async function getEmbedder(config?: Partial<EmbeddingRuntimeConfig>): Promise<EmbeddingPipeline> {
+  const { descriptor } = resolveRuntimeConfig(config);
+  const cacheKey = getPipelineCacheKey(descriptor);
+  const cached = pipelineCache.get(cacheKey);
+  if (cached) return cached;
 
   let pipeline: (typeof import('@huggingface/transformers'))['pipeline'];
   try {
     ({ pipeline } = await import('@huggingface/transformers'));
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(
-      `Vector embeddings unavailable: install optional dependency @huggingface/transformers (${msg})`,
-    );
+    throw new Error(`Vector embeddings unavailable: install optional dependency @huggingface/transformers (${msg})`);
   }
-
+  // dtype:'q8' loads the int8-quantized ONNX weights — ~2-4× faster on CPU,
+  // negligible quality difference for code-symbol embeddings.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const instance = (await pipeline('feature-extraction', model.id, {
-    dtype: model.dtype,
-  } as any)) as unknown as FeatureExtractionPipeline;
-  pipelineInstances.set(model.id, instance);
-  return instance;
+  const embedder = (await pipeline('feature-extraction', descriptor.id, { dtype: descriptor.dtype } as any)) as unknown as EmbeddingPipeline;
+  pipelineCache.set(cacheKey, embedder);
+  return embedder;
 }
 
-export function getEmbeddingFingerprint(
-  model: EmbeddingModelDescriptor = getConfiguredEmbeddingModel(),
-) {
+export function getEmbeddingFingerprint(config?: Partial<EmbeddingRuntimeConfig>): EmbeddingFingerprint {
+  const { descriptor } = resolveRuntimeConfig(config);
   return {
-    provider: model.provider,
-    model: model.id,
-    dimension: model.dimension,
+    provider: descriptor.provider,
+    model: descriptor.id,
+    dimension: descriptor.dimension,
   };
 }
 
@@ -90,48 +86,44 @@ export function collectEmbeddingCandidates(
 
 export async function embedNodes(
   graph: KnowledgeGraph,
-  opts: {
-    batchSize?: number;
-    onProgress?: (done: number, total: number) => void;
-    filePaths?: Iterable<string>;
-    model?: EmbeddingModelDescriptor;
-  } = {},
+  opts: { batchSize?: number; onProgress?: (done: number, total: number) => void; filePaths?: Iterable<string>; model?: EmbeddingModelDescriptor } = {},
 ): Promise<EmbeddedNode[]> {
-  const { batchSize = 64, onProgress, filePaths } = opts;
-  const model = opts.model ?? getConfiguredEmbeddingModel();
+  // Larger batch = fewer forward passes = faster overall
+  const { batchSize = 64, onProgress, filePaths, model } = opts;
+
+  // Collect candidates — skip cluster/directory/flow to save time
   const candidates = collectEmbeddingCandidates(graph, filePaths);
-  const embedder = await getEmbedder(model);
+
+  const descriptor = model ?? getDefaultEmbeddingModel();
+  const embedder = await getEmbedder({ descriptor });
   const results: EmbeddedNode[] = [];
 
   for (let i = 0; i < candidates.length; i += batchSize) {
     const batch = candidates.slice(i, i + batchSize);
-    const texts = batch.map((candidate) => candidate.text);
+    const texts = batch.map((c) => c.text);
+
+    // ── True batch inference ──────────────────────────────────────────────────
+    // Pass the entire texts array in one forward pass instead of N sequential
+    // calls.  The pipeline returns a flat Float32Array of shape [B * EMBED_DIM].
     const out = await embedder(texts, { pooling: 'mean', normalize: true });
 
-    const expectedLength = batch.length * model.dimension;
-    if (out.data.length < expectedLength) {
-      throw new Error(
-        `Embedding model ${model.id} returned ${out.data.length} values; expected at least ${expectedLength}.`,
-      );
-    }
-
     for (let j = 0; j < batch.length; j++) {
-      const start = j * model.dimension;
-      const embedding = Array.from(out.data.subarray(start, start + model.dimension));
-      const candidate = batch[j]!;
+      const start = j * descriptor.dimension;
+      // subarray() gives a view (no copy) into the underlying buffer
+      const embedding = Array.from(out.data.subarray(start, start + descriptor.dimension));
+      if (embedding.length !== descriptor.dimension) {
+        throw new Error(`Embedding dimension mismatch for ${descriptor.id}: expected ${descriptor.dimension}, got ${embedding.length}`);
+      }
+      const candidate = batch[j];
+
+      // Mark the node with embeddingSource so callers know which path was used
       const graphNode = graph.getNode(candidate.id);
       if (graphNode) {
         if (!graphNode.metadata) (graphNode as { metadata: Record<string, unknown> }).metadata = {};
         graphNode.metadata!['embeddingSource'] = candidate.embeddingSource;
       }
-      results.push({
-        id: candidate.id,
-        name: candidate.name,
-        kind: candidate.kind,
-        filePath: candidate.filePath,
-        text: candidate.text,
-        embedding,
-      });
+
+      results.push({ id: candidate.id, name: candidate.name, kind: candidate.kind, filePath: candidate.filePath, text: candidate.text, embedding });
     }
 
     onProgress?.(Math.min(i + batchSize, candidates.length), candidates.length);
@@ -145,10 +137,12 @@ export function buildText(node: { name: string; kind: string; filePath: string; 
   const summary = node.metadata?.summary as string | undefined;
 
   if (summary) {
+    // Summary-based text: "[{kind}] {name}\n{signature}\n{summary}" capped at 512
     const text = `[${node.kind}] ${node.name}\n${sig ?? ''}\n${summary}`.slice(0, 512);
     return { text, embeddingSource: 'summary' };
   }
 
+  // Code-based fallback (original behaviour)
   const parts: string[] = [`${node.kind} ${node.name}`];
   if (sig) parts.push(sig);
   if (node.content) parts.push(node.content.slice(0, 256));

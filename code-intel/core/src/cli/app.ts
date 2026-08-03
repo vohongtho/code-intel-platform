@@ -35,7 +35,7 @@ import { startHttpServer } from '../http/app.js';
 import { startMcpStdio } from '../mcp-server/server.js';
 import { textSearch } from '../search/text-search.js';
 import { resolveEmbeddingUpdatePlan } from '../search/embedding-update-plan.js';
-import { getEmbeddingFingerprint } from '../search/embedder.js';
+import { getDefaultEmbeddingModel, getEmbeddingModel, normalizeEmbeddingModelId } from '../search/embedding-model-registry.js';
 import type { PipelineContext } from '../pipeline/types.js';
 import { saveMetadata, loadMetadata, getDbPath, getVectorDbPath, loadAgentTargets, saveAgentTargets, computeIndexVersion, resolveEmbeddingMode, shouldRebuildEmbeddings, resolveAnalyzeMode, resolveParserForMetadata, type AgentTargetConfig, type AgentTargetSelection, type AgentTargetFormat, type EmbeddingMetadata } from '../storage/metadata.js';
 import { resolveIndexSnapshot } from '../storage/index-snapshot.js';
@@ -388,11 +388,14 @@ async function getOrCreateAgentTargets(workspaceRoot: string, silent = false): P
   return [];
 }
 
-function buildEmbeddingMetadata(status: 'ready' | 'stale'): EmbeddingMetadata {
+function buildEmbeddingMetadata(status: 'ready' | 'stale', modelId?: string): EmbeddingMetadata {
+  const descriptor = getEmbeddingModel(normalizeEmbeddingModelId(modelId ?? getDefaultEmbeddingModel().id)) ?? getDefaultEmbeddingModel();
   return {
     enabled: true,
     status,
-    ...getEmbeddingFingerprint(),
+    provider: descriptor.provider,
+    model: descriptor.id,
+    dimension: descriptor.dimension,
   };
 }
 
@@ -465,7 +468,9 @@ async function analyzeWorkspace(targetPath: string, options?: {
 
   const previousMetadata = loadMetadata(workspaceRoot);
   const vectorDbPath = getVectorDbPath(workspaceRoot);
-  const runtimeEmbeddingMetadata = buildEmbeddingMetadata('ready');
+  const loadedConfig = loadConfig();
+  const configuredEmbeddingModelId = normalizeEmbeddingModelId(loadedConfig?.embeddings.model ?? getDefaultEmbeddingModel().id);
+  const runtimeEmbeddingMetadata = buildEmbeddingMetadata('ready', configuredEmbeddingModelId);
   const embeddingMode = resolveEmbeddingMode({
     explicitEnable: options?.embeddings,
     explicitSkip: options?.skipEmbeddings,
@@ -871,7 +876,9 @@ async function analyzeWorkspace(targetPath: string, options?: {
 
         const idx = new VectorIndex(vectorDbPath, runtimeEmbeddingMetadata.dimension);
         await idx.init();
+        const descriptor = getEmbeddingModel(runtimeEmbeddingMetadata.model) ?? getDefaultEmbeddingModel();
         const nodes = await embedNodes(indexedGraph, {
+          model: descriptor,
           filePaths: useIncrementalEmbeddings ? incrementalEmbeddingPaths ?? undefined : undefined,
           onProgress: (done, total) => {
             if (!options?.silent) {

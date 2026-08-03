@@ -62,15 +62,24 @@ export interface GraphLoadProgress {
   phase: 'edges' | 'nodes'; // what we're currently fetching
 }
 
-
 export interface EmbeddingModelDescriptor {
   id: string;
   label: string;
   provider: 'huggingface-transformers';
   dimension: number;
   dtype: 'q8' | 'fp32';
-  maxSequenceLength: number;
-  description: string;
+  default: boolean;
+  description?: string;
+}
+
+export interface EmbeddingModelAvailability extends EmbeddingModelDescriptor {
+  available: boolean;
+  unavailableReason?: string;
+}
+
+export interface EmbeddingModelCatalog {
+  models: EmbeddingModelAvailability[];
+  defaultModel: string;
 }
 
 export interface AppConfig {

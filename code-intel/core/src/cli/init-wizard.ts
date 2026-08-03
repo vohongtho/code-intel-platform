@@ -16,7 +16,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { execSync } from 'node:child_process';
-import { DEFAULT_EMBEDDING_MODEL_ID, normalizeEmbeddingModelId } from '../search/embedding-models.js';
 
 // ── Paths ────────────────────────────────────────────────────────────────────
 function getGlobalDir(): string {
@@ -82,7 +81,7 @@ export const DEFAULT_CONFIG: CodeIntelConfig = {
     maxTokensPerSummary: 100,
   },
   embeddings: {
-    model: DEFAULT_EMBEDDING_MODEL_ID,
+    model: 'Xenova/all-MiniLM-L6-v2',
     enabled: false,
   },
   analysis: {
@@ -118,29 +117,17 @@ export function configExists(): boolean {
 export function loadConfig(): CodeIntelConfig | null {
   if (!configExists()) return null;
   try {
-    const config = JSON.parse(fs.readFileSync(getConfigPath(), 'utf-8')) as CodeIntelConfig;
-    config.embeddings = {
-      ...config.embeddings,
-      model: normalizeEmbeddingModelId(config.embeddings?.model),
-    };
-    return config;
+    return JSON.parse(fs.readFileSync(getConfigPath(), 'utf-8')) as CodeIntelConfig;
   } catch {
     return null;
   }
 }
 
 export function saveConfig(cfg: CodeIntelConfig): void {
-  const normalized: CodeIntelConfig = {
-    ...cfg,
-    embeddings: {
-      ...cfg.embeddings,
-      model: normalizeEmbeddingModelId(cfg.embeddings?.model),
-    },
-  };
   const globalDir = getGlobalDir();
   const configPath = getConfigPath();
   fs.mkdirSync(globalDir, { recursive: true });
-  fs.writeFileSync(configPath, JSON.stringify(normalized, null, 2) + '\n', 'utf-8');
+  fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2) + '\n', 'utf-8');
 }
 
 export function wipeConfig(): void {
