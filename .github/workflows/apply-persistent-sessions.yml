@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - .github/patches/persistent-session.small*
+      - .github/patches/persistent-session*
       - .github/workflows/apply-persistent-sessions.yml
 
 permissions:
@@ -25,7 +25,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - name: Reconstruct and apply patch
+      - name: Reconstruct and apply patches
         shell: bash
         run: |
           set -euo pipefail
@@ -50,6 +50,7 @@ jobs:
           2820155b886f004c0f58a6cae8eda19ee6c3cde7d028df41d069ddc39881aa86  .github/patches/persistent-session.small17
           0eb57528b4db66750c3c9d90f5ce912c4be38041fb047fb475f5d48bcb7d8ffb  .github/patches/persistent-session.small18
           3c2ab68dc63a8e4605cc51320bf4c13a2de8f45400e56e240120190a794c118d  .github/patches/persistent-session.small19
+          ed7fdf8bb69ce10c2b7b57cea6cbd12a54fb0dd61b137a73dcc43c7af6af8e33  .github/patches/persistent-session-fix.small00
           EOF
           sha256sum -c /tmp/chunks.sha256
           cat .github/patches/persistent-session.small{00..19} > /tmp/persistent-sessions.patch.gz.b64
@@ -58,8 +59,14 @@ jobs:
           echo '42f493cdddc329698502d095b283567d1d90790c1127b9f9469b66ff6a06ea28  /tmp/persistent-sessions.patch' | sha256sum -c -
           git apply --check /tmp/persistent-sessions.patch
           git apply /tmp/persistent-sessions.patch
+          base64 -d .github/patches/persistent-session-fix.small00 | gzip -d > /tmp/persistent-session-fix.patch
+          echo '5b016889fbfcd569a80b608ae912eaec11bf84942e4c771e1c90f6ee64076a36  /tmp/persistent-session-fix.patch' | sha256sum -c -
+          git apply --check /tmp/persistent-session-fix.patch
+          git apply /tmp/persistent-session-fix.patch
       - name: Install dependencies
         run: npm ci --legacy-peer-deps --ignore-scripts --include=optional
+      - name: Rebuild Ladybug native module
+        run: npm rebuild @ladybugdb/core
       - name: Typecheck core
         run: npm run typecheck --workspace=code-intel/core
       - name: Compile core tests
@@ -80,7 +87,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm -f .github/patches/persistent-session.small*
+          rm -f .github/patches/persistent-session*
           rm -f .github/workflows/apply-persistent-sessions.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
