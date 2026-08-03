@@ -30,7 +30,7 @@ jobs:
           const pkg = JSON.parse(fs.readFileSync('code-intel/core/package.json', 'utf8'));
           const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
           const locked = lock.packages?.['code-intel/core']?.version;
-          if (pkg.version !== '1.0.8') throw new Error(`Expected package version 1.0.8, got ${pkg.version}`);
+          if (pkg.version !== '1.0.9') throw new Error(`Expected package version 1.0.9, got ${pkg.version}`);
           if (locked !== pkg.version) throw new Error(`package-lock core version ${locked} != package version ${pkg.version}`);
           NODE
       - name: Build distributable
@@ -38,7 +38,7 @@ jobs:
       - name: Validate npm package
         run: npm run validate:dist --workspace=code-intel/core
       - name: CLI version smoke test
-        run: test "$(node code-intel/core/dist/cli/main.js --version)" = "1.0.8"
+        run: test "$(node code-intel/core/dist/cli/main.js --version)" = "1.0.9"
       - name: Atomic analyze and trust smoke test
         shell: bash
         run: |
@@ -141,5 +141,7 @@ jobs:
           node "$cli" analyze --force --skip-embeddings "$repo"
           snapshot_graph "$repo/full-graph.json"
           cmp "$repo/incremental-graph.json" "$repo/full-graph.json"
+      - name: Incremental embeddings regression
+        run: npm test --workspace=code-intel/core -- --test-name-pattern="embeddings|EmbeddingUpdatePlan"
       - name: Security gate
         run: npm audit --audit-level=high

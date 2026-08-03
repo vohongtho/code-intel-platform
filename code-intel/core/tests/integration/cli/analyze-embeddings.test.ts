@@ -107,6 +107,36 @@ describe('CLI analyze sticky embeddings', () => {
     assert.equal(loadMetadata(repoDir)?.embeddings?.status, 'ready');
   });
 
+  it('rebuilds graph but updates vectors only for one changed file', () => {
+    const repoDir = mkRepo('sticky-one-file-vector-update');
+    runCli(repoDir, ['--embeddings']);
+    fs.writeFileSync(path.join(repoDir, 'src', 'index.ts'), [
+      'export function greet(name: string) {',
+      '  return `incremental vector ${name}`;',
+      '}',
+      '',
+      'export function welcome() {',
+      '  return greet("one-file");',
+      '}',
+      '',
+    ].join('\n'));
+    const out = runCli(repoDir, []);
+    assert.match(out.stdout, /Falling back to full analysis: changes-detected/);
+    assert.match(out.stdout, /Embeddings: \d+ vectors updated incrementally/);
+    assert.doesNotMatch(out.stdout, /Embeddings: \d+ vectors built/);
+    assert.equal(loadMetadata(repoDir)?.embeddings?.status, 'ready');
+  });
+
+  it('removes vectors only for one deleted file', () => {
+    const repoDir = mkRepo('sticky-one-file-vector-delete');
+    runCli(repoDir, ['--embeddings']);
+    fs.rmSync(path.join(repoDir, 'src', 'extra-1.ts'));
+    const out = runCli(repoDir, []);
+    assert.match(out.stdout, /Embeddings: \d+ vectors updated incrementally/);
+    assert.doesNotMatch(out.stdout, /Embeddings: \d+ vectors built/);
+    assert.equal(loadMetadata(repoDir)?.embeddings?.status, 'ready');
+  });
+
   it('zero-change analyze with --embeddings preserves existing vector.db', () => {
     const repoDir = mkRepo('sticky-zero-change-explicit');
     runCli(repoDir, ['--embeddings']);
