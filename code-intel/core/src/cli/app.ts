@@ -39,6 +39,7 @@ import type { PipelineContext } from '../pipeline/types.js';
 import { saveMetadata, loadMetadata, getDbPath, getVectorDbPath, loadAgentTargets, saveAgentTargets, computeIndexVersion, resolveEmbeddingMode, shouldRebuildEmbeddings, resolveAnalyzeMode, resolveParserForMetadata, type AgentTargetConfig, type AgentTargetSelection, type AgentTargetFormat, type EmbeddingMetadata } from '../storage/metadata.js';
 import { writeContextFiles } from './context-writer.js';
 import { AGENT_OPTIONS, isValidRepoRelativeTargetPath, resolveBuiltinTarget } from './agent-targets.js';
+import { resolveSetupPlan, type SetupPlan } from './setup-plan.js';
 import { upsertRepo, loadRegistry, findRepoByName, findRepoByPath, renameRepo, relinkRepo, removeRepo } from '../storage/repo-registry.js';
 import { DbManager, loadGraphToDB, removeNodesForFile } from '../storage/index.js';
 import {
@@ -1626,215 +1627,146 @@ function installGeminiHook(): HookInstallResult {
 }
 
 // ─── 1. setup ────────────────────────────────────────────────────────────────
+type SetupIntegrationResult = HookInstallResult & { integration: string };
+
+function printSetupSelection(plan: SetupPlan): void {
+  console.log(`  Repository: ${plan.repositoryRoot}`);
+  console.log(`  Selection: ${plan.selectionStatus}`);
+  if (plan.selectedAgents.length > 0) {
+    console.log(`  Selected agents: ${plan.selectedAgents.join(', ')}`);
+  }
+  if (plan.unknownAgents.length > 0) {
+    console.log(`  Unknown agent IDs skipped: ${plan.unknownAgents.join(', ')}`);
+  }
+  if (plan.reason) console.log(`  Note: ${plan.reason}`);
+}
+
 program
   .command('setup')
-  .description('Configure MCP server for your editors (one-time setup)')
+  .description('Configure MCP and selected-agent global integrations')
+  .argument('[path]', 'Repository whose saved agent selection should be used', '.')
   .option('--completion', 'Auto-install shell completion for the detected shell')
+  .option('--all-agents', 'Install every supported global integration (never project rules files)')
+  .option('--mcp-only', 'Configure MCP without installing agent hooks or plugins')
+  .option('--dry-run', 'Print the setup plan without writing files')
   .addHelpText('after', `
-  Configure the code-intel MCP server for Claude Desktop, VS Code, or any
-  editor that supports the Model Context Protocol.
-
-  Auto-writes to ~/.config/claude/claude_desktop_config.json when available.
+  Setup reads <repo>/.code-intel/agent-targets.json, which is created by
+  code-intel analyze. Project-scoped instruction files remain owned by analyze.
 
   Examples:
     $ code-intel setup
-    $ code-intel setup --completion    Auto-install shell completion
+    $ code-intel setup ./services/api
+    $ code-intel setup --mcp-only
+    $ code-intel setup --all-agents
+    $ code-intel setup --dry-run
+    $ code-intel setup --completion
 `)
-  .action((opts: { completion?: boolean }) => {
+  .action((targetPath: string, opts: {
+    completion?: boolean;
+    allAgents?: boolean;
+    mcpOnly?: boolean;
+    dryRun?: boolean;
+  }) => {
     if (opts.completion) {
-      autoInstallCompletion();
+      if (opts.dryRun) {
+        console.log('  Dry run: shell completion would be installed.');
+      } else {
+        autoInstallCompletion();
+      }
       return;
     }
 
-    const configDir = process.env.HOME ? `${process.env.HOME}/.config/claude` : null;
-
+    const plan = resolveSetupPlan(targetPath, { allAgents: opts.allAgents });
     console.log('\n  ◈  Code Intelligence — MCP Setup\n');
-    console.log('  Add the following to your editor MCP configuration:\n');
+    printSetupSelection(plan);
 
     const mcpConfig = {
       mcpServers: {
         'code-intel': {
-          command: 'npx',
-          args: ['code-intel', 'mcp', '.'],
+command: 'npx',
+args: ['code-intel', 'mcp', '.'],
         },
       },
     };
 
-    console.log('  Claude Desktop / Claude Code  (~/.config/claude/claude_desktop_config.json)');
+    if (opts.dryRun) {
+      console.log('\n  MCP: would configure code-intel');
+      console.log(`  Global integrations: ${opts.mcpOnly ? '(skipped by --mcp-only)' : plan.integrations.join(', ') || '(none)'}`);
+      console.log('  Project instruction files: no writes (managed by code-intel analyze)\n');
+      if (plan.selectionStatus === 'invalid') process.exitCode = 1;
+      return;
+    }
+
+    console.log('\n  Add the following to your editor MCP configuration:\n');
     console.log('  ' + JSON.stringify(mcpConfig, null, 2).split('\n').join('\n  '));
 
+    const configDir = process.env.HOME ? path.join(process.env.HOME, '.config', 'claude') : null;
     if (configDir) {
-      const configFile = `${configDir}/claude_desktop_config.json`;
+      const configFile = path.join(configDir, 'claude_desktop_config.json');
       try {
         let existing: Record<string, unknown> = {};
         if (fs.existsSync(configFile)) {
-          existing = JSON.parse(fs.readFileSync(configFile, 'utf-8')) as Record<string, unknown>;
+existing = JSON.parse(fs.readFileSync(configFile, 'utf-8')) as Record<string, unknown>;
         }
         const merged = {
-          ...existing,
-          mcpServers: {
-            ...(existing.mcpServers as Record<string, unknown> ?? {}),
-            ...mcpConfig.mcpServers,
-          },
+...existing,
+mcpServers: {
+  ...(existing.mcpServers as Record<string, unknown> ?? {}),
+  ...mcpConfig.mcpServers,
+},
         };
         fs.mkdirSync(configDir, { recursive: true });
-        fs.writeFileSync(configFile, JSON.stringify(merged, null, 2) + '\n', 'utf-8');
-        console.log(`\n  ✅  Written to ${configFile}`);
-      } catch (err) {
-        Logger.warn(`\n  ⚠   Could not auto-write config: ${err instanceof Error ? err.message : err}`);
-        console.log('  Please add the config above manually.');
+        const tmp = `${configFile}.tmp-${process.pid}-${Date.now()}`;
+        fs.writeFileSync(tmp, JSON.stringify(merged, null, 2) + '\n', 'utf-8');
+        fs.renameSync(tmp, configFile);
+        console.log(`\n  ✅  MCP configuration written to ${configFile}`);
+      } catch (error) {
+        Logger.warn(`Could not write MCP configuration: ${error instanceof Error ? error.message : String(error)}`);
+        console.log('  Please add the MCP configuration manually.');
       }
     }
 
-    console.log('\n  VS Code / Cursor — add to .vscode/mcp.json in your project:');
-    console.log('  ' + JSON.stringify({ servers: { 'code-intel': { type: 'stdio', command: 'npx', args: ['code-intel', 'mcp', '.'] } } }, null, 2).split('\n').join('\n  '));
-    console.log('\n  To verify in VS Code: open Command Palette → "MCP: List Servers" and confirm code-intel is Running.');
-    console.log('\n  Next: run `code-intel analyze` inside your project to build the knowledge graph.\n');
-
-    // ── Install Claude Code PreToolUse hook ────────────────────────────────
-    const hookResult = installClaudeHook();
-    if (hookResult.result === 'installed') {
-      const backupPath = path.join(os.homedir(), '.claude', 'settings.json.bak');
-      console.log('\n  ✅  Claude Code hook installed');
-      console.log('     grep/rg/cat on source files → code-intel search/inspect');
-      if (fs.existsSync(backupPath)) {
-        console.log(`     Backup: ${backupPath}`);
-      }
-      console.log('\n  ↺  Restart Claude Code for the hook to take effect.');
-    } else if (hookResult.result === 'already-present') {
-      console.log('\n  ✅  Claude Code hook already installed');
-    } else {
-      Logger.warn(`\n  ⚠   Claude Code hook skipped: ${hookResult.reason}`);
-      console.log('\n  Add manually to ~/.claude/settings.json under hooks.PreToolUse[]:');
-      console.log('  (insert as the FIRST entry so it runs before any existing hooks)\n');
-      console.log('  ' + JSON.stringify({
-        matcher: 'Bash',
-        hooks: [{ type: 'command', command: CODE_INTEL_HOOK_CMD }],
-      }, null, 2).split('\n').join('\n  '));
+    if (opts.mcpOnly) {
+      console.log('\n  ◈  Setup complete (MCP only).\n');
+      return;
     }
 
-    // ── Install Cursor hook ─────────────────────────────────────────────────
-    const cursorResult = installCursorHook();
-    if (cursorResult.result === 'installed') {
-      console.log('\n  ✅  Cursor hook installed');
-      console.log('     grep/rg/cat on source files → code-intel search/inspect');
-    } else if (cursorResult.result === 'already-present') {
-      console.log('\n  ✅  Cursor hook already installed');
-    } else {
-      console.log(`\n  ℹ   Cursor hook skipped: ${cursorResult.reason}`);
+    if (plan.selectionStatus === 'missing') {
+      console.log('\n  ℹ  No saved agent selection found.');
+      console.log('     Run `code-intel analyze` in this repository, then rerun `code-intel setup`.\n');
+      return;
+    }
+    if (plan.selectionStatus === 'invalid') {
+      console.error(`\n  ✗  Invalid agent selection: ${plan.reason ?? plan.selectionPath}`);
+      console.error('     Agent integrations were not installed.\n');
+      process.exitCode = 1;
+      return;
     }
 
-    // ── Install Gemini CLI hook ─────────────────────────────────────────────
-    const geminiResult = installGeminiHook();
-    if (geminiResult.result === 'installed') {
-      console.log('\n  ✅  Gemini CLI hook installed');
-      console.log('     grep/rg/cat on source files → code-intel search/inspect');
-    } else if (geminiResult.result === 'already-present') {
-      console.log('\n  ✅  Gemini CLI hook already installed');
-    } else {
-      console.log(`\n  ℹ   Gemini CLI hook skipped: ${geminiResult.reason}`);
+    const results: SetupIntegrationResult[] = [];
+    const run = (
+      integration: SetupPlan['integrations'][number],
+      installer: () => HookInstallResult,
+    ): void => {
+      if (!plan.integrations.includes(integration)) return;
+      results.push({ integration, ...installer() });
+    };
+
+    run('claude-hook', installClaudeHook);
+    run('cursor-hook', installCursorHook);
+    run('gemini-hook', installGeminiHook);
+    run('opencode-plugin', installOpenCodePlugin);
+
+    console.log('\n  Agent integrations:');
+    if (results.length === 0) console.log('  ℹ  No selected agent has a supported global integration.');
+    for (const result of results) {
+      const icon = result.result === 'installed' || result.result === 'already-present' ? '✅' : 'ℹ';
+      const detail = result.result === 'skipped' ? `: ${result.reason}` : '';
+      console.log(`  ${icon}  ${result.integration}: ${result.result}${detail}`);
     }
 
-    // ── Install GitHub Copilot hook (project-scoped) ────────────────────────
-    const copilotResult = installCopilotHook(process.cwd());
-    if (copilotResult.result === 'installed') {
-      console.log('\n  ✅  GitHub Copilot hook installed (.github/hooks/code-intel-rewrite.json)');
-      console.log('     grep/rg/cat on source files → code-intel search/inspect');
-    } else if (copilotResult.result === 'already-present') {
-      console.log('\n  ✅  GitHub Copilot hook already installed');
-    } else {
-      console.log(`\n  ℹ   GitHub Copilot hook skipped: ${copilotResult.reason}`);
-    }
-
-    // ── Install OpenCode plugin ─────────────────────────────────────────────
-    const openCodeResult = installOpenCodePlugin();
-    if (openCodeResult.result === 'installed') {
-      console.log('\n  ✅  OpenCode plugin installed (~/.config/opencode/plugins/code-intel.ts)');
-      console.log('     grep/rg/cat on source files → code-intel search/inspect');
-    } else if (openCodeResult.result === 'already-present') {
-      console.log('\n  ✅  OpenCode plugin already installed');
-    } else {
-      console.log(`\n  ℹ   OpenCode plugin skipped: ${openCodeResult.reason}`);
-    }
-
-    // ── Install OpenClaw plugin ─────────────────────────────────────────────
-    const openClawResult = installOpenClawPlugin();
-    if (openClawResult.result === 'installed') {
-      console.log('\n  ✅  OpenClaw plugin installed (~/.openclaw/extensions/code-intel/)');
-      console.log('     grep/rg/cat on source files → code-intel search/inspect');
-    } else if (openClawResult.result === 'already-present') {
-      console.log('\n  ✅  OpenClaw plugin already installed');
-    } else {
-      console.log(`\n  ℹ   OpenClaw plugin skipped: ${openClawResult.reason}`);
-    }
-
-    // ── Prompt-level rules files (project-scoped) ───────────────────────────
-    // These agents don't have programmatic hook APIs — we write rules files
-    // to well-known locations that the agents auto-load.
-    console.log('\n  ─── Prompt-level agents (rules files) ─────────────────────────────────');
-
-    const cwd = process.cwd();
-
-    // Cline / Roo Code → .clinerules
-    const clineResult = installRulesFile(path.join(cwd, '.clinerules'), 'Cline');
-    if (clineResult.result === 'installed') {
-      console.log('  ✅  Cline/Roo Code rules installed (.clinerules)');
-    } else if (clineResult.result === 'already-present') {
-      console.log('  ✅  Cline/Roo Code rules already present (.clinerules)');
-    } else {
-      console.log(`  ℹ   Cline/Roo Code rules skipped: ${clineResult.reason}`);
-    }
-
-    // Windsurf → .windsurfrules
-    const windsurfResult = installRulesFile(path.join(cwd, '.windsurfrules'), 'Windsurf');
-    if (windsurfResult.result === 'installed') {
-      console.log('  ✅  Windsurf rules installed (.windsurfrules)');
-    } else if (windsurfResult.result === 'already-present') {
-      console.log('  ✅  Windsurf rules already present (.windsurfrules)');
-    } else {
-      console.log(`  ℹ   Windsurf rules skipped: ${windsurfResult.reason}`);
-    }
-
-    // Kilo Code → .kilocode/rules/code-intel-rules.md
-    const kiloResult = installRulesFile(
-      path.join(cwd, '.kilocode', 'rules', 'code-intel-rules.md'),
-      'Kilo Code',
-    );
-    if (kiloResult.result === 'installed') {
-      console.log('  ✅  Kilo Code rules installed (.kilocode/rules/code-intel-rules.md)');
-    } else if (kiloResult.result === 'already-present') {
-      console.log('  ✅  Kilo Code rules already present');
-    } else {
-      console.log(`  ℹ   Kilo Code rules skipped: ${kiloResult.reason}`);
-    }
-
-    // Google Antigravity → .agents/rules/code-intel-rules.md
-    const antigravityResult = installRulesFile(
-      path.join(cwd, '.agents', 'rules', 'code-intel-rules.md'),
-      'Antigravity',
-    );
-    if (antigravityResult.result === 'installed') {
-      console.log('  ✅  Google Antigravity rules installed (.agents/rules/code-intel-rules.md)');
-    } else if (antigravityResult.result === 'already-present') {
-      console.log('  ✅  Google Antigravity rules already present');
-    } else {
-      console.log(`  ℹ   Google Antigravity rules skipped: ${antigravityResult.reason}`);
-    }
-
-    // Codex CLI → AGENTS.md (append block if not already present)
-    // Note: context-writer.ts already writes AGENTS.md on `analyze`.
-    // setup adds the rules to any existing AGENTS.md in cwd.
-    const codexResult = installRulesFile(path.join(cwd, 'AGENTS.md'), 'Codex');
-    if (codexResult.result === 'installed') {
-      console.log('  ✅  Codex CLI rules appended (AGENTS.md)');
-    } else if (codexResult.result === 'already-present') {
-      console.log('  ✅  Codex CLI rules already present (AGENTS.md)');
-    } else {
-      console.log(`  ℹ   Codex CLI rules skipped: ${codexResult.reason}`);
-    }
-
-    console.log('\n  ─────────────────────────────────────────────────────────────────────');
-    console.log('\n  ◈  Setup complete. Run `code-intel analyze` to build the knowledge graph.\n');
+    console.log('\n  Project instruction files were not modified; they remain managed by `code-intel analyze`.');
+    console.log('\n  ◈  Setup complete.\n');
   });
 
 // ─── 2. analyze ──────────────────────────────────────────────────────────────
