@@ -10,6 +10,7 @@ import {
   loadCurrentGenerationManifest,
   resolvePublishedArtifactPath,
   migrateLegacyIndexToGeneration,
+  normalizeIndexGenerationManifest,
 } from '../../../src/storage/index-generation.js';
 
 function tempRepo(): string {
@@ -81,6 +82,58 @@ describe('index generation publication', () => {
       assert.equal(fs.readFileSync(path.join(legacyDir, 'graph.db'), 'utf8'), 'legacy-graph');
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+
+describe('index generation manifest compatibility', () => {
+  it('normalizes a v1 manifest without rewriting its compatibility fields', () => {
+    const manifest = normalizeIndexGenerationManifest({
+      generationId: 'g-v1',
+      publishedAt: '2026-08-03T00:00:00.000Z',
+      artifacts: ['graph.db', 'bm25.db', 'meta.json'],
+    });
+    assert.deepEqual(manifest, {
+      version: undefined,
+      generationId: 'g-v1',
+      publishedAt: '2026-08-03T00:00:00.000Z',
+      artifacts: ['graph.db', 'bm25.db', 'meta.json'],
+    });
+  });
+
+  it('publishes v2 details while retaining v1-compatible top-level fields', () => {
+    const root = tempRepo();
+    try {
+      const generation = createIndexGeneration(root, 'g-v2');
+      write(generation.graphDbPath, 'graph');
+      write(generation.bm25DbPath, 'bm25');
+      const manifest = publishIndexGeneration(root, generation, {
+        ...metadata,
+        schemaVersion: 8,
+        parser: 'tree-sitter',
+      });
+      assert.equal(manifest.version, 2);
+      assert.equal(manifest.generationId, 'g-v2');
+      assert.ok(manifest.artifacts.includes('graph.db'));
+      if (manifest.version === 2) {
+        assert.equal(manifest.schemaVersion, 8);
+        assert.equal(manifest.parser, 'tree-sitter');
+        assert.ok((manifest.artifactDetails?.['graph.db']?.size ?? 0) > 0);
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects unsafe generation identifiers', () => {
+    for (const generationId of ['../escape', '/absolute', 'nested/path', 'nested\\path', 'bad\0id']) {
+      assert.equal(normalizeIndexGenerationManifest({
+        version: 2,
+        generationId,
+        publishedAt: '2026-08-03T00:00:00.000Z',
+        artifacts: ['graph.db'],
+      }), null);
     }
   });
 });

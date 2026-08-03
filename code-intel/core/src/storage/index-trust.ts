@@ -90,7 +90,7 @@ export function verifyIndexTrust(repoDir: string): IndexTrustResult {
     if (artifact.exists && artifact.size === 0) reasons.push(`${name.toUpperCase()}_ARTIFACT_EMPTY`);
   }
 
-  const legacy = paths.legacy || metadata.schemaVersion === undefined || metadata.indexVersion === undefined;
+  const legacy = metadata.schemaVersion === undefined || metadata.indexVersion === undefined;
   if (legacy) reasons.push('LEGACY_METADATA');
 
   if (!legacy && metadata.schemaVersion !== undefined && metadata.indexVersion) {

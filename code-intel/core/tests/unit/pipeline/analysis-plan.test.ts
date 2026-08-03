@@ -14,7 +14,7 @@ function fixture(vector = true): { root: string; snapshot: IndexSnapshot; metada
   for (const file of ['graph.db', 'bm25.db', 'meta.json']) fs.writeFileSync(path.join(dir, file), file);
   if (vector) fs.writeFileSync(path.join(dir, 'vector.db'), 'vector');
   const snapshot: IndexSnapshot = {
-    repositoryRoot: root, generationId: 'g1', generationDir: dir, legacy: false, manifest: null,
+    repositoryRoot: root, generationId: 'g1', generationDir: dir, legacy: false, manifestVersion: 2, manifest: null,
     graphDbPath: path.join(dir, 'graph.db'), bm25DbPath: path.join(dir, 'bm25.db'),
     vectorDbPath: path.join(dir, 'vector.db'), metadataPath: path.join(dir, 'meta.json'),
   };

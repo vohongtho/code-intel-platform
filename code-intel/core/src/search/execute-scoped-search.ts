@@ -111,11 +111,18 @@ export function deprecationFor(req: { deprecated?: boolean }, endpoint?: string)
     : 'Legacy repo/group request shape or hybrid mode is deprecated; use { query, limit, mode: auto|bm25|vector, scope }.';
 }
 
+export interface RepoSearchContext {
+  graph: KnowledgeGraph;
+  bm25Index: Bm25Index | null;
+  vectorDbPath?: string;
+}
+
 export type ExecuteScopedSearchDeps = {
   repoName: string;
   workspaceRoot?: string;
   ensureBm25Index: () => Bm25Index | null;
   getGraphForRepo: (requestedRepo: string | undefined) => Promise<KnowledgeGraph>;
+  getRepoSearchContext?: (requestedRepo: string | undefined) => Promise<RepoSearchContext>;
 };
 
 export async function executeSearchRequest(
@@ -164,17 +171,21 @@ export async function executeSearchRequest(
   }
 
   const requestedRepo = scope?.type === 'repo' ? scope.name : undefined;
-  const graph = await deps.getGraphForRepo(requestedRepo);
   const resolvedScope = scope ?? { type: 'repo' as const, name: requestedRepo ?? deps.repoName };
+  const searchContext = deps.getRepoSearchContext
+    ? await deps.getRepoSearchContext(requestedRepo)
+    : null;
+  const graph = searchContext?.graph ?? await deps.getGraphForRepo(requestedRepo);
   const repoEntry = requestedRepo && requestedRepo !== deps.repoName
     ? loadRegistry().find((repo) => repo.id === requestedRepo || repo.name === requestedRepo || repo.path === requestedRepo)
     : null;
-  const vectorDbPath = repoEntry
+  const vectorDbPath = searchContext?.vectorDbPath ?? (repoEntry
     ? getVectorDbPath(repoEntry.path)
     : deps.workspaceRoot
       ? getVectorDbPath(deps.workspaceRoot)
-      : undefined;
-  const bm25 = (!requestedRepo || requestedRepo === deps.repoName) ? deps.ensureBm25Index() : null;
+      : undefined);
+  const bm25 = searchContext?.bm25Index
+    ?? ((!requestedRepo || requestedRepo === deps.repoName) ? deps.ensureBm25Index() : null);
   const bm25Results = bm25 ? bm25.search(query, limit * 3) : null;
 
   if (requestedMode === 'bm25') {

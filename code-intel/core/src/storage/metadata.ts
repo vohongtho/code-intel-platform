@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { resolvePublishedArtifactPath } from './index-generation.js';
+import type { IndexSnapshot } from './index-snapshot.js';
 
 const META_DIRNAME = '.code-intel';
 const META_FILE = 'meta.json';
@@ -61,6 +62,12 @@ export interface AgentTargetSelection {
   targets: Record<string, AgentTargetConfig>;
 }
 
+type IndexLocation = string | IndexSnapshot;
+
+function isSnapshot(value: IndexLocation): value is IndexSnapshot {
+  return typeof value !== 'string';
+}
+
 function getMetaDir(repoDir: string): string {
   return path.join(repoDir, META_DIRNAME);
 }
@@ -83,11 +90,20 @@ export function saveMetadata(repoDir: string, metadata: IndexMetadata): void {
   fs.renameSync(tmp, target);
 }
 
-export function loadMetadata(repoDir: string): IndexMetadata | null {
+export function loadMetadataFromSnapshot(snapshot: IndexSnapshot): IndexMetadata | null {
+  try {
+    return JSON.parse(fs.readFileSync(snapshot.metadataPath, 'utf-8')) as IndexMetadata;
+  } catch {
+    return null;
+  }
+}
+
+export function loadMetadata(location: IndexLocation): IndexMetadata | null {
+  if (isSnapshot(location)) return loadMetadataFromSnapshot(location);
   const staging = stagingDir();
   const candidates = staging
-    ? [path.join(staging, META_FILE), resolvePublishedArtifactPath(repoDir, META_FILE)]
-    : [resolvePublishedArtifactPath(repoDir, META_FILE)];
+    ? [path.join(staging, META_FILE), resolvePublishedArtifactPath(location, META_FILE)]
+    : [resolvePublishedArtifactPath(location, META_FILE)];
   for (const candidate of candidates) {
     try {
       return JSON.parse(fs.readFileSync(candidate, 'utf-8')) as IndexMetadata;
@@ -98,12 +114,12 @@ export function loadMetadata(repoDir: string): IndexMetadata | null {
   return null;
 }
 
-export function getDbPath(repoDir: string): string {
-  return writableArtifactPath(repoDir, 'graph.db');
+export function getDbPath(location: IndexLocation): string {
+  return isSnapshot(location) ? location.graphDbPath : writableArtifactPath(location, 'graph.db');
 }
 
-export function getVectorDbPath(repoDir: string): string {
-  return writableArtifactPath(repoDir, 'vector.db');
+export function getVectorDbPath(location: IndexLocation): string {
+  return isSnapshot(location) ? location.vectorDbPath : writableArtifactPath(location, 'vector.db');
 }
 
 export function resolveEmbeddingMode(args: {
@@ -184,15 +200,17 @@ function statToken(filePath: string): string {
   }
 }
 
-export function computeIndexVersion(repoDir: string, schemaVersion: number, indexedAt: string): string {
-  const staging = stagingDir();
-  const files = staging
-    ? ['graph.db', 'bm25.db', 'vector.db'].map((name) => path.join(staging, name)).map(statToken)
-    : [
-        resolvePublishedArtifactPath(repoDir, 'graph.db'),
-        resolvePublishedArtifactPath(repoDir, 'bm25.db'),
-        resolvePublishedArtifactPath(repoDir, 'vector.db'),
-      ].map(statToken);
+export function computeIndexVersion(location: IndexLocation, schemaVersion: number, indexedAt: string): string {
+  const staging = isSnapshot(location) ? null : stagingDir();
+  const files = isSnapshot(location)
+    ? [location.graphDbPath, location.bm25DbPath, location.vectorDbPath].map(statToken)
+    : staging
+      ? ['graph.db', 'bm25.db', 'vector.db'].map((name) => path.join(staging, name)).map(statToken)
+      : [
+          resolvePublishedArtifactPath(location, 'graph.db'),
+          resolvePublishedArtifactPath(location, 'bm25.db'),
+          resolvePublishedArtifactPath(location, 'vector.db'),
+        ].map(statToken);
   return crypto.createHash('sha256').update(JSON.stringify({ schemaVersion, indexedAt, files })).digest('hex');
 }
 

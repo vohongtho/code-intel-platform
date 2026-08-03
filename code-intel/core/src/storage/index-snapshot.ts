@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   getCurrentManifestPath,
-  loadCurrentGenerationManifest,
+  getGenerationsDir,
+  normalizeIndexGenerationManifest,
   type IndexArtifactName,
   type IndexGenerationManifest,
 } from './index-generation.js';
@@ -12,6 +13,7 @@ export interface IndexSnapshot {
   generationId: string;
   generationDir: string;
   legacy: boolean;
+  manifestVersion: 1 | 2 | null;
   manifest: IndexGenerationManifest | null;
   graphDbPath: string;
   bm25DbPath: string;
@@ -19,11 +21,35 @@ export interface IndexSnapshot {
   metadataPath: string;
 }
 
+export class IndexSnapshotError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'IndexSnapshotError';
+  }
+}
+
 function isSafeGenerationId(value: string): boolean {
   return value.length > 0
+    && !value.includes('\0')
     && value !== '.'
     && value !== '..'
+    && !path.isAbsolute(value)
+    && !value.includes('/')
+    && !value.includes('\\')
     && path.basename(value) === value;
+}
+
+function isContainedPath(parent: string, candidate: string): boolean {
+  const relative = path.relative(parent, candidate);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function safeRealPath(candidate: string): string | null {
+  try {
+    return fs.realpathSync(candidate);
+  } catch {
+    return null;
+  }
 }
 
 function buildSnapshot(
@@ -38,6 +64,7 @@ function buildSnapshot(
     generationId,
     generationDir,
     legacy,
+    manifestVersion: manifest?.version ?? (manifest ? 1 : null),
     manifest,
     graphDbPath: path.join(generationDir, 'graph.db'),
     bm25DbPath: path.join(generationDir, 'bm25.db'),
@@ -46,31 +73,63 @@ function buildSnapshot(
   });
 }
 
+function resolveStagingSnapshot(repositoryRoot: string, stagingValue: string): IndexSnapshot | null {
+  const generationRoot = getGenerationsDir(repositoryRoot);
+  const generationRootReal = safeRealPath(generationRoot);
+  const generationDir = path.resolve(stagingValue);
+  const generationDirReal = safeRealPath(generationDir);
+  if (!generationRootReal || !generationDirReal || !isContainedPath(generationRootReal, generationDirReal)) return null;
+  const name = path.basename(generationDirReal).replace(/^\.staging-/, '');
+  if (!isSafeGenerationId(name)) return null;
+  return buildSnapshot(repositoryRoot, name, generationDirReal, false, null);
+}
+
+function readManifestOnce(repositoryRoot: string): IndexGenerationManifest | null {
+  try {
+    const raw = fs.readFileSync(getCurrentManifestPath(repositoryRoot), 'utf8');
+    return normalizeIndexGenerationManifest(JSON.parse(raw) as unknown);
+  } catch {
+    return null;
+  }
+}
+
+function resolvePublishedSnapshot(repositoryRoot: string): IndexSnapshot | null {
+  const manifest = readManifestOnce(repositoryRoot);
+  if (!manifest || !isSafeGenerationId(manifest.generationId)) return null;
+
+  const generationRoot = getGenerationsDir(repositoryRoot);
+  const generationRootReal = safeRealPath(generationRoot);
+  const generationDir = path.join(generationRoot, manifest.generationId);
+  const generationDirReal = safeRealPath(generationDir);
+  if (!generationRootReal || !generationDirReal || !isContainedPath(generationRootReal, generationDirReal)) return null;
+  if (!fs.statSync(generationDirReal).isDirectory()) return null;
+  return buildSnapshot(repositoryRoot, manifest.generationId, generationDirReal, false, manifest);
+}
+
+function resolveLegacySnapshot(repositoryRoot: string): IndexSnapshot | null {
+  const legacyDir = path.join(repositoryRoot, '.code-intel');
+  const repositoryReal = safeRealPath(repositoryRoot);
+  const legacyReal = safeRealPath(legacyDir);
+  if (!repositoryReal || !legacyReal || !isContainedPath(repositoryReal, legacyReal)) return null;
+  const legacyArtifacts: IndexArtifactName[] = ['graph.db', 'bm25.db', 'vector.db', 'meta.json'];
+  if (!legacyArtifacts.some((artifact) => fs.existsSync(path.join(legacyReal, artifact)))) return null;
+  return buildSnapshot(repositoryRoot, 'legacy', legacyReal, true, null);
+}
+
 export function resolveIndexSnapshot(repoDir: string): IndexSnapshot | null {
   const repositoryRoot = path.resolve(repoDir);
+  if (!fs.existsSync(repositoryRoot) || !fs.statSync(repositoryRoot).isDirectory()) return null;
+
   const staging = process.env['CODE_INTEL_INDEX_STAGING_DIR']?.trim();
-  if (staging) {
-    const generationDir = path.resolve(staging);
-    if (fs.existsSync(generationDir)) {
-      const name = path.basename(generationDir).replace(/^\.staging-/, '');
-      return buildSnapshot(repositoryRoot, name || 'staging', generationDir, false, null);
-    }
-  }
+  if (staging) return resolveStagingSnapshot(repositoryRoot, staging);
 
-  const manifest = loadCurrentGenerationManifest(repositoryRoot);
-  if (manifest && isSafeGenerationId(manifest.generationId)) {
-    const generationDir = path.join(repositoryRoot, '.code-intel', 'generations', manifest.generationId);
-    if (fs.existsSync(generationDir) && fs.statSync(generationDir).isDirectory()) {
-      return buildSnapshot(repositoryRoot, manifest.generationId, generationDir, false, manifest);
-    }
-  }
+  return resolvePublishedSnapshot(repositoryRoot) ?? resolveLegacySnapshot(repositoryRoot);
+}
 
-  const legacyDir = path.join(repositoryRoot, '.code-intel');
-  const legacyArtifacts: IndexArtifactName[] = ['graph.db', 'bm25.db', 'vector.db', 'meta.json'];
-  if (legacyArtifacts.some((artifact) => fs.existsSync(path.join(legacyDir, artifact)))) {
-    return buildSnapshot(repositoryRoot, 'legacy', legacyDir, true, null);
-  }
-  return null;
+export function requireIndexSnapshot(repoDir: string): IndexSnapshot {
+  const snapshot = resolveIndexSnapshot(repoDir);
+  if (!snapshot) throw new IndexSnapshotError(`No safe index snapshot is available for ${path.resolve(repoDir)}`);
+  return snapshot;
 }
 
 export function getSnapshotArtifactPath(
@@ -87,5 +146,6 @@ export function getSnapshotArtifactPath(
 
 export function snapshotStillCurrent(snapshot: IndexSnapshot): boolean {
   if (snapshot.legacy) return !fs.existsSync(getCurrentManifestPath(snapshot.repositoryRoot));
-  return loadCurrentGenerationManifest(snapshot.repositoryRoot)?.generationId === snapshot.generationId;
+  const current = readManifestOnce(snapshot.repositoryRoot);
+  return current?.generationId === snapshot.generationId;
 }

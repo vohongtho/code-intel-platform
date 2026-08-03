@@ -10,9 +10,10 @@ import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
 import { Bm25Index, getBm25DbPath } from '../search/bm25-index.js';
 import { executeSearchRequest, type SearchMode } from '../search/execute-scoped-search.js';
 import { build, detectQueryIntent, type QueryIntent, type SeedSymbol } from '../context/builder.js';
-import { getVectorDbPath, getDbPath } from '../storage/index.js';
+import { getVectorDbPath } from '../storage/index.js';
 import { loadRegistry } from '../storage/repo-registry.js';
 import { loadMetadata } from '../storage/metadata.js';
+import { resolveIndexSnapshot, type IndexSnapshot } from '../storage/index-snapshot.js';
 import {
   listGroups,
   loadGroup,
@@ -43,20 +44,26 @@ function compact(obj: unknown): string {
   return JSON.stringify(obj, (_key, value) => (value === null || value === undefined ? undefined : value));
 }
 
-export function createMcpServer(graph: KnowledgeGraph, repoName: string, workspaceRoot?: string): Server {
+export function createMcpServer(
+  graph: KnowledgeGraph,
+  repoName: string,
+  workspaceRoot?: string,
+  pinnedSnapshot?: IndexSnapshot | null,
+): Server {
   const server = new Server(
     { name: 'code-intel', version: '0.1.0' },
     { capabilities: { tools: {}, resources: {} } },
   );
 
   // ── Pre-built BM25 index (faster than linear textSearch for large graphs) ──
+  const startupSnapshot = pinnedSnapshot ?? (workspaceRoot ? resolveIndexSnapshot(workspaceRoot) : null);
   let bm25Index: Bm25Index | null = null;
 
   function ensureBm25Index(): Bm25Index | null {
     if (bm25Index) return bm25Index;
     if (!workspaceRoot) return null;
     try {
-      const idx = new Bm25Index(getBm25DbPath(workspaceRoot));
+      const idx = new Bm25Index(getBm25DbPath(startupSnapshot ?? workspaceRoot));
       idx.load();
       bm25Index = idx;
       return bm25Index;
@@ -615,8 +622,11 @@ type LoadedRepoGraph = {
   path: string;
   indexVersion: string;
   schemaVersion: number;
+  generationId: string;
+  snapshot: IndexSnapshot | null;
   graph: KnowledgeGraph;
   bm25Index: Bm25Index | null;
+  vectorDbPath?: string;
 };
 
 const repoGraphCache = new Map<string, LoadedRepoGraph>();
@@ -642,10 +652,16 @@ function resolveRepo(repo: string | undefined, defaultRepo: string, defaultPath:
   return defaultPath ? { id: defaultPath, name: defaultRepo, path: defaultPath } : null;
 }
 
-async function loadRepoGraph(resolved: { id: string; name: string; path: string }, indexVersion: string, schemaVersion: number): Promise<LoadedRepoGraph> {
-  const dbPath = getDbPath(resolved.path);
-  if (!fs.existsSync(dbPath)) throw new Error(`Graph DB not found for repo "${resolved.name}" at ${dbPath}`);
-  const db = new DbManager(dbPath, true);
+async function loadRepoGraph(
+  resolved: { id: string; name: string; path: string },
+  snapshot: IndexSnapshot,
+  indexVersion: string,
+  schemaVersion: number,
+): Promise<LoadedRepoGraph> {
+  if (!fs.existsSync(snapshot.graphDbPath)) {
+    throw new Error(`Graph DB not found for repo "${resolved.name}" at ${snapshot.graphDbPath}`);
+  }
+  const db = new DbManager(snapshot.graphDbPath, true);
   await db.init();
   const graph = createKnowledgeGraph();
   try {
@@ -656,42 +672,84 @@ async function loadRepoGraph(resolved: { id: string; name: string; path: string 
 
   let bm25Index: Bm25Index | null = null;
   try {
-    const idx = new Bm25Index(getBm25DbPath(resolved.path));
+    const idx = new Bm25Index(snapshot.bm25DbPath);
     idx.load();
     bm25Index = idx;
   } catch {
     bm25Index = null;
   }
 
-  return { id: resolved.id, repo: resolved.name, path: resolved.path, indexVersion, schemaVersion, graph, bm25Index };
+  return {
+    id: resolved.id,
+    repo: resolved.name,
+    path: resolved.path,
+    indexVersion,
+    schemaVersion,
+    generationId: snapshot.generationId,
+    snapshot,
+    graph,
+    bm25Index,
+    vectorDbPath: snapshot.vectorDbPath,
+  };
 }
 
-async function ensureRepoLoaded(repo: string | undefined, defaultRepo: string, defaultPath: string | undefined, fallbackGraph: KnowledgeGraph): Promise<LoadedRepoGraph> {
+async function ensureRepoLoaded(
+  repo: string | undefined,
+  defaultRepo: string,
+  defaultPath: string | undefined,
+  fallbackGraph: KnowledgeGraph,
+): Promise<LoadedRepoGraph> {
   const resolved = resolveRepo(repo, defaultRepo, defaultPath);
   if (!resolved) {
-    return { id: defaultPath ?? defaultRepo, repo: repo ?? defaultRepo, path: defaultPath ?? '', indexVersion: 'memory', schemaVersion: CURRENT_SCHEMA_VERSION, graph: fallbackGraph, bm25Index: null };
+    return {
+      id: defaultPath ?? defaultRepo,
+      repo: repo ?? defaultRepo,
+      path: defaultPath ?? '',
+      indexVersion: 'memory',
+      schemaVersion: CURRENT_SCHEMA_VERSION,
+      generationId: 'memory',
+      snapshot: null,
+      graph: fallbackGraph,
+      bm25Index: null,
+    };
   }
 
-  const meta = loadMetadata(resolved.path);
+  const snapshot = resolveIndexSnapshot(resolved.path);
+  const meta = snapshot ? loadMetadata(snapshot) : null;
   const schemaVersion = meta?.schemaVersion ?? CURRENT_SCHEMA_VERSION;
   if (schemaVersion > CURRENT_SCHEMA_VERSION) {
     throw new Error(`Unsupported schemaVersion ${schemaVersion} for repo "${resolved.name}". Re-run code-intel analyze or upgrade the MCP server.`);
   }
 
-  const indexVersion = meta?.indexVersion ?? meta?.indexedAt ?? 'legacy';
-  const dbPath = getDbPath(resolved.path);
-  if (!fs.existsSync(dbPath)) {
-    return { id: resolved.id, repo: resolved.name, path: resolved.path, indexVersion: 'memory', schemaVersion, graph: fallbackGraph, bm25Index: null };
+  const indexVersion = meta?.indexVersion ?? meta?.indexedAt ?? snapshot?.generationId ?? 'legacy';
+  if (!snapshot || !fs.existsSync(snapshot.graphDbPath)) {
+    return {
+      id: resolved.id,
+      repo: resolved.name,
+      path: resolved.path,
+      indexVersion: 'memory',
+      schemaVersion,
+      generationId: snapshot?.generationId ?? 'memory',
+      snapshot,
+      graph: fallbackGraph,
+      bm25Index: null,
+      vectorDbPath: snapshot?.vectorDbPath,
+    };
   }
 
   const key = repoCacheKey(resolved.id, resolved.path);
   const cached = repoGraphCache.get(key);
-  if (cached?.indexVersion === indexVersion && cached.schemaVersion === schemaVersion && cached.path === resolved.path) return cached;
+  if (
+    cached?.indexVersion === indexVersion
+    && cached.schemaVersion === schemaVersion
+    && cached.path === resolved.path
+    && cached.generationId === snapshot.generationId
+  ) return cached;
 
   const existing = repoReloads.get(key);
   if (existing) return existing;
 
-  const loading = loadRepoGraph(resolved, indexVersion, schemaVersion)
+  const loading = loadRepoGraph(resolved, snapshot, indexVersion, schemaVersion)
     .then((loaded) => {
       repoGraphCache.set(key, loaded);
       return loaded;
@@ -722,12 +780,16 @@ export async function dispatchTool(
   let activeRepoName = repoName;
   let activeWorkspaceRoot = workspaceRoot;
   let activeBm25: Bm25Index | null | undefined;
+  let activeVectorDbPath: string | undefined;
+  let activeContext: LoadedRepoGraph | null = null;
   if (GRAPH_BACKED_TOOLS.has(name) || name === 'search') {
     const ctx = await graphContext(a, repoName, workspaceRoot, graph);
+    activeContext = ctx;
     graph = ctx.graph;
     activeRepoName = ctx.repo;
     activeWorkspaceRoot = ctx.path || workspaceRoot;
     activeBm25 = ctx.bm25Index;
+    activeVectorDbPath = ctx.vectorDbPath;
   }
 
   switch (name) {
@@ -802,6 +864,16 @@ export async function dispatchTool(
             if (!requestedRepo || requestedRepo === activeRepoName) return graph;
             const ctx = await ensureRepoLoaded(requestedRepo, repoName, workspaceRoot, graph);
             return ctx.graph;
+          },
+          getRepoSearchContext: async (requestedRepo) => {
+            const ctx = !requestedRepo || requestedRepo === activeRepoName
+              ? activeContext ?? await ensureRepoLoaded(requestedRepo, repoName, workspaceRoot, graph)
+              : await ensureRepoLoaded(requestedRepo, repoName, workspaceRoot, graph);
+            return {
+              graph: ctx.graph,
+              bm25Index: ctx.bm25Index,
+              vectorDbPath: ctx.vectorDbPath ?? activeVectorDbPath,
+            };
           },
         });
         if ('error' in result && result.error) {
@@ -1677,11 +1749,16 @@ function registerResources(server: Server, graph: KnowledgeGraph, repoName: stri
   });
 }
 
-export async function startMcpStdio(graph: KnowledgeGraph, repoName: string, workspaceRoot?: string): Promise<void> {
+export async function startMcpStdio(
+  graph: KnowledgeGraph,
+  repoName: string,
+  workspaceRoot?: string,
+  pinnedSnapshot?: IndexSnapshot | null,
+): Promise<void> {
   if (process.env['CODE_INTEL_TOKEN']) {
     process.stderr.write('[code-intel] CODE_INTEL_TOKEN is configured — all tool calls must include { "_token": "<value>" } in their arguments.\n');
   }
-  const server = createMcpServer(graph, repoName, workspaceRoot);
+  const server = createMcpServer(graph, repoName, workspaceRoot, pinnedSnapshot);
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }

@@ -3,7 +3,6 @@
  * Search execution across all repos in a group.
  * Loads each repo's graph, runs scoped search, and merges via RRF.
  */
-import path from 'node:path';
 import fs from 'node:fs';
 import type { RepoGroup } from './types.js';
 import type { SearchResult } from '../search/text-search.js';
@@ -12,7 +11,7 @@ import { findRepoById, loadRegistry } from '../storage/repo-registry.js';
 import { DbManager } from '../storage/db-manager.js';
 import { createKnowledgeGraph } from '../graph/knowledge-graph.js';
 import { loadGraphFromDB } from './graph-from-db.js';
-import { getVectorDbPath } from '../storage/index.js';
+import { resolveIndexSnapshot } from '../storage/index-snapshot.js';
 import { VectorIndex } from '../search/vector-index.js';
 import { getEmbedder } from '../search/embedder.js';
 import { hybridSearch } from '../search/hybrid-search.js';
@@ -46,8 +45,9 @@ export async function queryGroup(
     const regEntry = member.repoId ? findRepoById(member.repoId, registry) : registry.find((r) => r.name === member.registryName);
     if (!regEntry) continue;
 
-    const dbPath = path.join(regEntry.path, '.code-intel', 'graph.db');
-    if (!fs.existsSync(dbPath)) continue;
+    const snapshot = resolveIndexSnapshot(regEntry.path);
+    if (!snapshot || !fs.existsSync(snapshot.graphDbPath)) continue;
+    const dbPath = snapshot.graphDbPath;
 
     const graph = createKnowledgeGraph();
     const db = new DbManager(dbPath, true);
@@ -60,7 +60,7 @@ export async function queryGroup(
       continue;
     }
 
-    const vectorDbPath = getVectorDbPath(regEntry.path);
+    const vectorDbPath = snapshot.vectorDbPath;
     const vectorReady = await isVectorReady(vectorDbPath);
     if (vectorReady) anyVectorReady = true;
 

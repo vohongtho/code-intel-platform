@@ -12,13 +12,30 @@ export const DEFAULT_STALE_STAGING_MS = 24 * 60 * 60 * 1000;
 export type IndexArtifactName = 'graph.db' | 'bm25.db' | 'vector.db' | 'meta.json';
 export type ArtifactCloneMode = 'reflink' | 'copy';
 
-export interface IndexGenerationManifest {
-  version?: 1 | 2;
+export interface IndexArtifactDetails {
+  size: number;
+  required: boolean;
+}
+
+export interface IndexGenerationManifestV1 {
+  version?: 1;
+  generationId: string;
+  publishedAt: string;
+  artifacts: IndexArtifactName[];
+}
+
+export interface IndexGenerationManifestV2 {
+  version: 2;
   generationId: string;
   publishedAt: string;
   baseGenerationId?: string;
+  schemaVersion?: number;
+  parser?: 'tree-sitter' | 'regex';
   artifacts: IndexArtifactName[];
+  artifactDetails?: Partial<Record<IndexArtifactName, IndexArtifactDetails>>;
 }
+
+export type IndexGenerationManifest = IndexGenerationManifestV1 | IndexGenerationManifestV2;
 
 export interface IndexGeneration {
   generationId: string;
@@ -53,8 +70,53 @@ export function getCurrentManifestPath(repoDir: string): string {
   return path.join(getIndexDir(repoDir), CURRENT_FILE);
 }
 
-function safeGenerationId(value: string): boolean {
-  return value.length > 0 && value !== '.' && value !== '..' && path.basename(value) === value;
+export function safeGenerationId(value: string): boolean {
+  return value.length > 0
+    && !value.includes('\0')
+    && value !== '.'
+    && value !== '..'
+    && !path.isAbsolute(value)
+    && !value.includes('/')
+    && !value.includes('\\')
+    && path.basename(value) === value;
+}
+
+function isArtifactName(value: unknown): value is IndexArtifactName {
+  return typeof value === 'string'
+    && ['graph.db', 'bm25.db', 'vector.db', 'meta.json'].includes(value);
+}
+
+export function normalizeIndexGenerationManifest(value: unknown): IndexGenerationManifest | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const candidate = value as Record<string, unknown>;
+  if (typeof candidate.generationId !== 'string' || !safeGenerationId(candidate.generationId)) return null;
+  if (typeof candidate.publishedAt !== 'string' || !Number.isFinite(Date.parse(candidate.publishedAt))) return null;
+  if (!Array.isArray(candidate.artifacts) || !candidate.artifacts.every(isArtifactName)) return null;
+
+  if (candidate.version === undefined || candidate.version === 1) {
+    return {
+      version: candidate.version as 1 | undefined,
+      generationId: candidate.generationId,
+      publishedAt: candidate.publishedAt,
+      artifacts: [...new Set(candidate.artifacts as IndexArtifactName[])],
+    };
+  }
+  if (candidate.version !== 2) return null;
+  if (candidate.baseGenerationId !== undefined
+    && (typeof candidate.baseGenerationId !== 'string' || !safeGenerationId(candidate.baseGenerationId))) return null;
+  if (candidate.parser !== undefined && candidate.parser !== 'tree-sitter' && candidate.parser !== 'regex') return null;
+  if (candidate.schemaVersion !== undefined && !Number.isInteger(candidate.schemaVersion)) return null;
+
+  return {
+    version: 2,
+    generationId: candidate.generationId,
+    publishedAt: candidate.publishedAt,
+    baseGenerationId: candidate.baseGenerationId as string | undefined,
+    schemaVersion: candidate.schemaVersion as number | undefined,
+    parser: candidate.parser as 'tree-sitter' | 'regex' | undefined,
+    artifacts: [...new Set(candidate.artifacts as IndexArtifactName[])],
+    artifactDetails: candidate.artifactDetails as IndexGenerationManifestV2['artifactDetails'],
+  };
 }
 
 function atomicWriteJson(filePath: string, value: unknown): void {
@@ -66,10 +128,9 @@ function atomicWriteJson(filePath: string, value: unknown): void {
 
 export function loadCurrentGenerationManifest(repoDir: string): IndexGenerationManifest | null {
   try {
-    const value = JSON.parse(fs.readFileSync(getCurrentManifestPath(repoDir), 'utf8')) as IndexGenerationManifest;
-    if (!safeGenerationId(value.generationId) || !Array.isArray(value.artifacts)) return null;
-    if (!value.artifacts.every((artifact) => ['graph.db', 'bm25.db', 'vector.db', 'meta.json'].includes(artifact))) return null;
-    return value;
+    return normalizeIndexGenerationManifest(
+      JSON.parse(fs.readFileSync(getCurrentManifestPath(repoDir), 'utf8')) as unknown,
+    );
   } catch {
     return null;
   }
@@ -223,12 +284,25 @@ export function publishIndexGeneration(
 
   const artifacts: IndexArtifactName[] = ['graph.db', 'bm25.db', 'meta.json'];
   if (fs.existsSync(path.join(generation.finalDir, 'vector.db'))) artifacts.push('vector.db');
-  const manifest: IndexGenerationManifest = {
+  const metadataRecord = metadataValue && typeof metadataValue === 'object'
+    ? metadataValue as { schemaVersion?: number; parser?: 'tree-sitter' | 'regex' }
+    : undefined;
+  const artifactDetails = Object.fromEntries(artifacts.map((artifact) => {
+    const artifactPath = path.join(generation.finalDir, artifact);
+    return [artifact, {
+      size: fs.statSync(artifactPath).size,
+      required: artifact !== 'vector.db' || Boolean(options.vectorRequired),
+    }];
+  })) as Partial<Record<IndexArtifactName, IndexArtifactDetails>>;
+  const manifest: IndexGenerationManifestV2 = {
     version: 2,
     generationId: generation.generationId,
     baseGenerationId: generation.baseGenerationId,
     publishedAt: new Date().toISOString(),
+    schemaVersion: metadataRecord?.schemaVersion,
+    parser: metadataRecord?.parser,
     artifacts,
+    artifactDetails,
   };
   atomicWriteJson(getCurrentManifestPath(repoDir), manifest);
   cleanupOldGenerations(repoDir, options.keepGenerations ?? 2, generation.generationId);

@@ -14,6 +14,7 @@ import { Bm25Index, getBm25DbPath } from '../search/bm25-index.js';
 import { executeSearchRequest, type SearchMode, type SearchScope } from '../search/execute-scoped-search.js';
 import { DbManager, getDbPath, getVectorDbPath } from '../storage/index.js';
 import { loadMetadata, shouldRebuildEmbeddings } from '../storage/metadata.js';
+import { resolveIndexSnapshot, type IndexSnapshot } from '../storage/index-snapshot.js';
 import { VectorIndex } from '../search/vector-index.js';
 // VectorIndex uses the shared SQLite wrapper directly.
 import fs from 'node:fs';
@@ -137,8 +138,15 @@ function createDefaultLimiter() {
 
 // ── App factory ───────────────────────────────────────────────────────────────
 
-export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot?: string, watcherState?: { watching: boolean; lastEventAt: number | null }): express.Application {
+export function createApp(
+  graph: KnowledgeGraph,
+  repoName: string,
+  workspaceRoot?: string,
+  watcherState?: { watching: boolean; lastEventAt: number | null },
+  pinnedSnapshot?: IndexSnapshot | null,
+): express.Application {
   const app = express();
+  const startupSnapshot = pinnedSnapshot ?? (workspaceRoot ? resolveIndexSnapshot(workspaceRoot) : null);
 
   // Trust proxy (for correct IP detection behind nginx/caddy)
   app.set('trust proxy', 1);
@@ -301,7 +309,7 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
   function ensureBm25Index(): Bm25Index | null {
     if (bm25Index) return bm25Index;
     if (!workspaceRoot) return null;
-    const idx = new Bm25Index(getBm25DbPath(workspaceRoot));
+    const idx = new Bm25Index(getBm25DbPath(startupSnapshot ?? workspaceRoot));
     idx.load();
     if (idx.isLoaded) {
       bm25Index = idx;
@@ -321,8 +329,8 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     vectorIndexBuilding = true;
     try {
       const { embedNodes, getEmbeddingFingerprint } = await import('../search/embedder.js');
-      const vdbPath = getVectorDbPath(workspaceRoot);
-      const meta = loadMetadata(workspaceRoot);
+      const vdbPath = startupSnapshot?.vectorDbPath ?? getVectorDbPath(workspaceRoot);
+      const meta = startupSnapshot ? loadMetadata(startupSnapshot) : loadMetadata(workspaceRoot);
       const runtimeFingerprint = getEmbeddingFingerprint();
       const shouldRebuild = shouldRebuildEmbeddings({ metadata: meta, runtime: runtimeFingerprint, hasVectorDb: fs.existsSync(vdbPath) });
       if (shouldRebuild) {
@@ -831,24 +839,56 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
   });
 
   // ── Graph helpers ───────────────────────────────────────────────────────────
-  async function loadRepoGraph(requestedRepo: string): Promise<KnowledgeGraph | null> {
-    if (requestedRepo === repoName) return graph;
+  interface HttpRepoContext {
+    graph: KnowledgeGraph;
+    snapshot: IndexSnapshot | null;
+    bm25Index: Bm25Index | null;
+    vectorDbPath?: string;
+  }
+
+  async function loadRepoContext(requestedRepo: string): Promise<HttpRepoContext | null> {
+    if (requestedRepo === repoName) {
+      return {
+        graph,
+        snapshot: startupSnapshot,
+        bm25Index: ensureBm25Index(),
+        vectorDbPath: startupSnapshot?.vectorDbPath,
+      };
+    }
     const registry = loadRegistry();
     const entry = registry.find((r) => r.id === requestedRepo || r.name === requestedRepo || r.path === requestedRepo);
     if (!entry) return null;
-    const dbPath = path.join(entry.path, '.code-intel', 'graph.db');
-    if (!fs.existsSync(dbPath)) return null;
+    const snapshot = resolveIndexSnapshot(entry.path);
+    if (!snapshot || !fs.existsSync(snapshot.graphDbPath)) return null;
     const repoGraph = createKnowledgeGraph();
-    const db = new DbManager(dbPath, true);
+    const db = new DbManager(snapshot.graphDbPath, true);
     try {
       await db.init();
       await loadGraphFromDB(repoGraph, db);
-      db.close();
-      return repoGraph;
     } catch {
-      db.close();
       return null;
+    } finally {
+      db.close();
     }
+
+    let repoBm25: Bm25Index | null = null;
+    try {
+      const index = new Bm25Index(snapshot.bm25DbPath);
+      index.load();
+      repoBm25 = index;
+    } catch {
+      repoBm25 = null;
+    }
+    return {
+      graph: repoGraph,
+      snapshot,
+      bm25Index: repoBm25,
+      vectorDbPath: snapshot.vectorDbPath,
+    };
+  }
+
+  async function loadRepoGraph(requestedRepo: string): Promise<KnowledgeGraph | null> {
+    return (await loadRepoContext(requestedRepo))?.graph ?? null;
   }
 
   async function loadGroupGraph(groupName: string): Promise<KnowledgeGraph | null> {
@@ -859,14 +899,17 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     for (const member of group.members) {
       const regEntry = registry.find((r) => r.id === member.repoId || r.name === member.registryName);
       if (!regEntry) continue;
-      const dbPath = path.join(regEntry.path, '.code-intel', 'graph.db');
-      if (!fs.existsSync(dbPath)) continue;
-      const db = new DbManager(dbPath, true);
+      const snapshot = resolveIndexSnapshot(regEntry.path);
+      if (!snapshot || !fs.existsSync(snapshot.graphDbPath)) continue;
+      const db = new DbManager(snapshot.graphDbPath, true);
       try {
         await db.init();
         await loadGraphFromDB(mergedGraph, db);
+      } catch {
+        // Skip an unreadable member without mixing in a fallback generation.
+      } finally {
         db.close();
-      } catch { db.close(); }
+      }
     }
     return mergedGraph.size.nodes > 0 ? mergedGraph : null;
   }
@@ -877,6 +920,22 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     if (g) return g;
     const gg = await loadGroupGraph(requestedRepo);
     return gg ?? graph;
+  }
+
+  async function getRepoSearchContext(requestedRepo: string | undefined) {
+    const context = await loadRepoContext(requestedRepo ?? repoName);
+    if (context) {
+      return {
+        graph: context.graph,
+        bm25Index: context.bm25Index,
+        vectorDbPath: context.vectorDbPath,
+      };
+    }
+    return {
+      graph: await getGraphForRepo(requestedRepo),
+      bm25Index: null,
+      vectorDbPath: undefined,
+    };
   }
 
 
@@ -962,6 +1021,7 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
         workspaceRoot,
         ensureBm25Index,
         getGraphForRepo,
+        getRepoSearchContext,
       });
       if ('error' in result && result.error) {
         res.status(result.error.status).json({ error: { code: result.error.status === 404 ? ErrorCodes.NOT_FOUND : ErrorCodes.INVALID_REQUEST, message: result.error.message, hint: result.error.hint } });
@@ -982,6 +1042,7 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
         workspaceRoot,
         ensureBm25Index,
         getGraphForRepo,
+        getRepoSearchContext,
       }, { endpoint: '/api/v1/vector-search', forceDeprecated: true });
       if ('error' in result && result.error) {
         res.status(result.error.status).json({ error: { code: result.error.status === 404 ? ErrorCodes.NOT_FOUND : ErrorCodes.INVALID_REQUEST, message: result.error.message, hint: result.error.hint } });
@@ -1381,6 +1442,7 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
         workspaceRoot,
         ensureBm25Index,
         getGraphForRepo,
+        getRepoSearchContext,
       }, { endpoint: '/api/v1/groups/:name/search', forceDeprecated: true });
       if ('error' in result && result.error) {
         res.status(result.error.status).json({ error: { code: result.error.status === 404 ? ErrorCodes.NOT_FOUND : ErrorCodes.INVALID_REQUEST, message: result.error.message, hint: result.error.hint } });
@@ -1401,9 +1463,9 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
     for (const member of group.members) {
       const regEntry = registry.find((r) => r.id === member.repoId || r.name === member.registryName);
       if (!regEntry) continue;
-      const dbPath = path.join(regEntry.path, '.code-intel', 'graph.db');
-      if (!fs.existsSync(dbPath)) continue;
-      const db = new DbManager(dbPath, true);
+      const snapshot = resolveIndexSnapshot(regEntry.path);
+      if (!snapshot || !fs.existsSync(snapshot.graphDbPath)) continue;
+      const db = new DbManager(snapshot.graphDbPath, true);
       try {
         await db.init();
         await loadGraphFromDB(mergedGraph, db);
@@ -1425,10 +1487,10 @@ export function createApp(graph: KnowledgeGraph, repoName: string, workspaceRoot
       let nodeCount = 0;
       let edgeCount = 0;
       if (regEntry) {
-        const dbPath = path.join(regEntry.path, '.code-intel', 'graph.db');
-        if (fs.existsSync(dbPath)) {
+        const snapshot = resolveIndexSnapshot(regEntry.path);
+        if (snapshot && fs.existsSync(snapshot.graphDbPath)) {
           try {
-            const db = new DbManager(dbPath, true);
+            const db = new DbManager(snapshot.graphDbPath, true);
             await db.init();
             const g = createKnowledgeGraph();
             await loadGraphFromDB(g, db);
@@ -1953,6 +2015,7 @@ export async function startHttpServer(
   port = 4747,
   workspaceRoot?: string,
   watcherState?: { watching: boolean; lastEventAt: number | null },
+  pinnedSnapshot?: IndexSnapshot | null,
 ): Promise<HttpServerInstance> {
   // Bootstrap check
   const db = getOrCreateUsersDB();
@@ -1961,7 +2024,7 @@ export async function startHttpServer(
     console.log('     Run: code-intel user create admin --role admin\n');
   }
 
-  const app = createApp(graph, repoName, workspaceRoot, watcherState);
+  const app = createApp(graph, repoName, workspaceRoot, watcherState, pinnedSnapshot);
 
   return new Promise((resolve) => {
     const httpServer = app.listen(port, () => {

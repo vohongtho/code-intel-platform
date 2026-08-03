@@ -37,6 +37,7 @@ import { textSearch } from '../search/text-search.js';
 import { resolveEmbeddingUpdatePlan } from '../search/embedding-update-plan.js';
 import type { PipelineContext } from '../pipeline/types.js';
 import { saveMetadata, loadMetadata, getDbPath, getVectorDbPath, loadAgentTargets, saveAgentTargets, computeIndexVersion, resolveEmbeddingMode, shouldRebuildEmbeddings, resolveAnalyzeMode, resolveParserForMetadata, type AgentTargetConfig, type AgentTargetSelection, type AgentTargetFormat, type EmbeddingMetadata } from '../storage/metadata.js';
+import { resolveIndexSnapshot } from '../storage/index-snapshot.js';
 import { writeContextFiles } from './context-writer.js';
 import { AGENT_OPTIONS, isValidRepoRelativeTargetPath, resolveBuiltinTarget } from './agent-targets.js';
 import { resolveSetupPlan, type SetupPlan } from './setup-plan.js';
@@ -1937,22 +1938,22 @@ program
   .action(async (targetPath: string) => {
     const workspaceRoot = path.resolve(targetPath);
     const repoName = path.basename(workspaceRoot);
-    const dbPath = getDbPath(workspaceRoot);
 
     if (!fs.existsSync(workspaceRoot) || !fs.statSync(workspaceRoot).isDirectory()) {
       console.error(`  ✗  Path does not exist: ${workspaceRoot}`);
       process.exit(1);
     }
 
-    const existingIndex = fs.existsSync(dbPath) && loadMetadata(workspaceRoot) !== null;
+    const snapshot = resolveIndexSnapshot(workspaceRoot);
+    const existingIndex = Boolean(snapshot && fs.existsSync(snapshot.graphDbPath) && loadMetadata(snapshot) !== null);
 
-    if (existingIndex) {
+    if (existingIndex && snapshot) {
       const graph = createKnowledgeGraph();
-      const db = new DbManager(dbPath, true);
+      const db = new DbManager(snapshot.graphDbPath, true);
       await db.init();
       await loadGraphFromDB(graph, db);
       db.close();
-      await startMcpStdio(graph, repoName, workspaceRoot);
+      await startMcpStdio(graph, repoName, workspaceRoot, snapshot);
     } else {
       const { graph, repoName: name, workspaceRoot: root } = await analyzeWorkspace(targetPath, { silent: true });
       await startMcpStdio(graph, name, root);
@@ -1996,7 +1997,6 @@ program
   .action(async (targetPath: string, options: { port: string; force?: boolean; detach?: boolean }) => {
     const workspaceRoot = path.resolve(targetPath);
     const repoName = path.basename(workspaceRoot);
-    const dbPath = getDbPath(workspaceRoot);
 
     if (!fs.existsSync(workspaceRoot) || !fs.statSync(workspaceRoot).isDirectory()) {
       console.error(`  ✗  Path does not exist: ${workspaceRoot}`);
@@ -2051,12 +2051,12 @@ program
       process.exit(0);
     }
 
-    const existingIndex = !options.force && fs.existsSync(dbPath) && loadMetadata(workspaceRoot) !== null;
+    const snapshot = options.force ? null : resolveIndexSnapshot(workspaceRoot);
+    const existingIndex = Boolean(snapshot && fs.existsSync(snapshot.graphDbPath) && loadMetadata(snapshot) !== null);
 
-    if (existingIndex) {
-      // Load graph from persisted DB — no re-analysis needed
-      // 1.1: Warn + re-analyze if old regex index
-      const meta = loadMetadata(workspaceRoot)!;
+    if (existingIndex && snapshot) {
+      // Load graph from one pinned generation — no re-analysis needed
+      const meta = loadMetadata(snapshot)!;
       if (meta.parser === 'regex' || meta.parser === undefined) {
         Logger.warn(`  [serve] Index was built with regex parser. Run \`code-intel analyze\` to upgrade to tree-sitter, then re-run \`code-intel serve\`.`);
         process.exit(1);
@@ -2064,13 +2064,13 @@ program
         console.log(`Loading index (lazy): ${workspaceRoot}`);
         console.log(`  ◈  ${meta.stats.nodes} nodes · ${meta.stats.edges} edges · ${meta.stats.files} files  (indexed ${meta.indexedAt})`);
         const lazyGraph = new LazyKnowledgeGraph();
-        const db = new DbManager(dbPath, true);
+        const db = new DbManager(snapshot.graphDbPath, true);
         await db.init();
         await lazyGraph.init(db, meta.stats.nodes, meta.stats.edges);
         Logger.info(`  [serve] Lazy graph ready — ${lazyGraph.size.edges} edges loaded; nodes fetched on demand`);
         // Background warm: pre-load high-blast-radius nodes without blocking startup
         setImmediate(() => lazyGraph.warmTopNodes(500).catch(() => {}));
-        await startHttpServer(lazyGraph, repoName, parseInt(options.port, 10), workspaceRoot);
+        await startHttpServer(lazyGraph, repoName, parseInt(options.port, 10), workspaceRoot, undefined, snapshot);
       }
     } else {
       // No index for this path — try to fall back to a known indexed repo from registry.
@@ -2081,7 +2081,10 @@ program
       const registry = loadRegistry();
       // Filter to repos whose DB file still exists, then sort by most recently indexed
       const available = registry
-        .filter((r) => fs.existsSync(getDbPath(r.path)) && loadMetadata(r.path) !== null)
+        .filter((r) => {
+          const candidate = resolveIndexSnapshot(r.path);
+          return Boolean(candidate && fs.existsSync(candidate.graphDbPath) && loadMetadata(candidate) !== null);
+        })
         .sort((a, b) => new Date(b.indexedAt).getTime() - new Date(a.indexedAt).getTime());
 
       if (available.length > 0) {
@@ -2090,21 +2093,22 @@ program
         console.log(`     (${fallback.stats.nodes} nodes · ${fallback.stats.edges} edges · indexed ${fallback.indexedAt})`);
         console.log(`  ℹ  To index this folder run: code-intel analyze\n`);
 
-        const fallbackMeta = loadMetadata(fallback.path)!;
-        const fallbackDbPath = getDbPath(fallback.path);
+        const fallbackSnapshot = resolveIndexSnapshot(fallback.path)!;
+        const fallbackMeta = loadMetadata(fallbackSnapshot)!;
+        const fallbackDbPath = fallbackSnapshot.graphDbPath;
 
         if (fallbackMeta.parser === 'regex' || fallbackMeta.parser === undefined) {
           // Fallback repo has old index — start with empty graph but still serve UI
           console.log(`  ⚠  Fallback index was built with regex parser. Starting with empty graph.`);
           const emptyGraph = createKnowledgeGraph();
-          await startHttpServer(emptyGraph, fallback.name, parseInt(options.port, 10), fallback.path);
+          await startHttpServer(emptyGraph, fallback.name, parseInt(options.port, 10), fallback.path, undefined, fallbackSnapshot);
         } else {
           const lazyGraph = new LazyKnowledgeGraph();
           const db = new DbManager(fallbackDbPath, true);
           await db.init();
           await lazyGraph.init(db, fallbackMeta.stats.nodes, fallbackMeta.stats.edges);
           setImmediate(() => lazyGraph.warmTopNodes(500).catch(() => {}));
-          await startHttpServer(lazyGraph, fallback.name, parseInt(options.port, 10), fallback.path);
+          await startHttpServer(lazyGraph, fallback.name, parseInt(options.port, 10), fallback.path, undefined, fallbackSnapshot);
         }
 
         if (available.length > 1) {
