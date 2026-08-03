@@ -4,8 +4,11 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - .github/patches/embedding-selector.small*
       - .github/workflows/apply-embedding-selector.yml
+
+concurrency:
+  group: embedding-selector-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -21,10 +24,12 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+
       - name: Reconstruct and apply patch
         shell: bash
         run: |
@@ -54,14 +59,19 @@ jobs:
           echo 'dc74fed1b7ea5c92f379d9ff92048f37af5eda5244176d3305ee8f3feadddafa  /tmp/embedding-selector.patch' | sha256sum -c -
           git apply --check /tmp/embedding-selector.patch
           git apply /tmp/embedding-selector.patch
+
       - name: Install dependencies
         run: npm ci --legacy-peer-deps --ignore-scripts --include=optional
+
       - name: Typecheck core
         run: npm run typecheck --workspace=code-intel/core
+
       - name: Build web
         run: npm run build --workspace=code-intel/web
+
       - name: Compile core tests
         run: npx tsc -b code-intel/core/tsconfig.test.json
+
       - name: Run core selector tests
         shell: bash
         run: |
@@ -69,13 +79,18 @@ jobs:
             code-intel/core/dist-tests/tests/unit/search/embedding-models.test.js \
             code-intel/core/dist-tests/tests/unit/search/vector-index.test.js \
             code-intel/core/dist-tests/tests/unit/cli/config-manager-embedding-model.test.js
+
       - name: Run web selector test
         run: npm run test --workspace=code-intel/web -- --run src/pages/SettingsPage.test.tsx
-      - name: Commit validated implementation
+
+      - name: Commit validated implementation and remove staging files
         shell: bash
         run: |
+          set -euo pipefail
+          rm -f .github/patches/embedding-selector.*
+          rm -f .github/workflows/apply-embedding-selector.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add code-intel/core code-intel/web
+          git add -A
           git commit -m "feat(embedding): add model selector and runtime catalog"
           git push origin HEAD:${{ github.event.pull_request.head.ref }}
