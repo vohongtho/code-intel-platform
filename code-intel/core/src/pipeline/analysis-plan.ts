@@ -110,6 +110,7 @@ export function resolveAnalysisPlan(input: {
     if (graphExists) seedArtifacts.push('graph.db');
     if (bm25Exists) seedArtifacts.push('bm25.db');
     if (vectorExists) seedArtifacts.push('vector.db');
+    if (metadataExists) seedArtifacts.push('meta.json');
     return {
       mode: 'publish', reason: 'legacy index migration', source,
       graph: 'preserve', bm25: 'preserve', vector: vectorExists ? 'preserve' : 'disabled', seedArtifacts,
@@ -120,11 +121,13 @@ export function resolveAnalysisPlan(input: {
   }
 
   if (source.kind === 'changed') {
+    const seedArtifacts: IndexArtifactName[] = ['meta.json'];
+    if (vectorHealthy) seedArtifacts.unshift('vector.db');
     return {
       mode: 'publish', reason: source.reason, source,
       graph: 'full', bm25: 'full',
       vector: vectorEnabled ? (vectorHealthy ? 'incremental' : 'full') : (hasArg(args, '--embeddings') ? 'full' : 'disabled'),
-      seedArtifacts: vectorHealthy ? ['vector.db'] : [],
+      seedArtifacts,
     };
   }
 
@@ -132,6 +135,7 @@ export function resolveAnalysisPlan(input: {
   if (graphExists) seedArtifacts.push('graph.db');
   if (bm25Exists) seedArtifacts.push('bm25.db');
   if (vectorExists) seedArtifacts.push('vector.db');
+  if (metadataExists) seedArtifacts.push('meta.json');
   return {
     mode: 'publish',
     reason: !requiredArtifactsPresent ? 'required index artifact missing' : nonSourceWork || embeddingWork ? 'explicit analysis work requested' : source.reason,
