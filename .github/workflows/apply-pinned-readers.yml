@@ -32,6 +32,16 @@ jobs:
           base64 -d .github/patches/v1-0-10-pinned-readers.patch.gz.b64 | gzip -d > /tmp/pinned-readers.patch
           git apply --check /tmp/pinned-readers.patch
           git apply /tmp/pinned-readers.patch
+          python3 <<'PY'
+          from pathlib import Path
+          test = Path('code-intel/core/tests/unit/pipeline/analysis-plan.test.ts')
+          text = test.read_text()
+          old = "repositoryRoot: root, generationId: 'g1', generationDir: dir, legacy: false, manifest: null,"
+          new = "repositoryRoot: root, generationId: 'g1', generationDir: dir, legacy: false, manifestVersion: 2, manifest: null,"
+          if old not in text:
+              raise SystemExit('analysis plan fixture anchor missing')
+          test.write_text(text.replace(old, new, 1))
+          PY
           rm .github/patches/v1-0-10-pinned-readers.patch.gz.b64
           rm .github/workflows/apply-pinned-readers.yml
 
@@ -51,8 +61,9 @@ jobs:
             code-intel/core/dist-tests/tests/unit/storage/index-generation.test.js \
             code-intel/core/dist-tests/tests/unit/storage/index-snapshot.test.js \
             code-intel/core/dist-tests/tests/unit/storage/index-trust.test.js \
-            code-intel/core/dist-tests/tests/unit/search/execute-scoped-search.test.js \
-            code-intel/core/dist-tests/tests/unit/mcp-server/multi-repo-cache.test.js
+            code-intel/core/dist-tests/tests/unit/search/scoped-search-contract.test.js \
+            code-intel/core/dist-tests/tests/unit/mcp-server/reload-on-index-change.test.js \
+            code-intel/core/dist-tests/tests/unit/mcp-server/search-tool.test.js
 
       - name: Build core
         run: npm run build --workspace=code-intel/core
