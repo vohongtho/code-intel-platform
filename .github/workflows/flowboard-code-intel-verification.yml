@@ -1,0 +1,442 @@
+name: FlowBoard Code-Intel Verification
+
+on:
+  pull_request:
+    branches:
+      - release/1.0.9
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-flowboard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Code-Intel dependencies
+        run: npm ci --legacy-peer-deps --ignore-scripts --include=optional
+
+      - name: Rebuild native modules
+        run: npm rebuild tree-sitter tree-sitter-typescript tree-sitter-javascript @ladybugdb/core onnxruntime-node sharp protobufjs || true
+
+      - name: Build Code-Intel v1.0.9
+        run: npm run build --workspace=code-intel/core
+
+      - name: Create FlowBoard training repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_WORKSPACE/flowboard-fixture"
+          rm -rf "$repo"
+          mkdir -p "$repo/src/data" "$repo/src/domain" "$repo/src/http/routes" "$repo/tests"
+
+          cat > "$repo/package.json" <<'JSON'
+          {
+            "name": "flowboard-code-intel-training-fixture",
+            "version": "1.0.0",
+            "private": true,
+            "type": "module",
+            "scripts": { "test": "node --test" }
+          }
+          JSON
+
+          cat > "$repo/src/data/seed.js" <<'JS'
+          export const projects = [
+            { id: 'P-100', name: 'Mobile Portal', ownerId: 'U-1' },
+            { id: 'P-200', name: 'Sensor Platform', ownerId: 'U-2' }
+          ];
+
+          export const tasks = [
+            { id: 'T-1', projectId: 'P-100', title: 'Implement login', status: 'DONE', dueDate: '2026-07-20' },
+            { id: 'T-2', projectId: 'P-100', title: 'Add audit history', status: 'IN_PROGRESS', dueDate: '2026-08-20' },
+            { id: 'T-3', projectId: 'P-200', title: 'Tune alert rules', status: 'TODO', dueDate: '2026-07-25' }
+          ];
+          JS
+
+          cat > "$repo/src/data/store.js" <<'JS'
+          import { projects, tasks } from './seed.js';
+
+          export function getProject(projectId) {
+            return projects.find((project) => project.id === projectId) ?? null;
+          }
+
+          export function listProjects() {
+            return [...projects];
+          }
+
+          export function listTasksByProject(projectId) {
+            return tasks.filter((task) => task.projectId === projectId);
+          }
+
+          export function getTask(taskId) {
+            return tasks.find((task) => task.id === taskId) ?? null;
+          }
+
+          export function saveTask(updatedTask) {
+            const index = tasks.findIndex((task) => task.id === updatedTask.id);
+            if (index < 0) throw new Error('Task not found');
+            tasks[index] = updatedTask;
+            return updatedTask;
+          }
+          JS
+
+          cat > "$repo/src/domain/permission-service.js" <<'JS'
+          export function assertCanEditTask(user, project) {
+            const allowed = user.role === 'ADMIN' || project.ownerId === user.id;
+            if (!allowed) throw new Error('Forbidden');
+          }
+          JS
+
+          cat > "$repo/src/domain/audit-service.js" <<'JS'
+          const auditEvents = [];
+
+          export function recordAuditEvent(event) {
+            auditEvents.push({ ...event, recordedAt: new Date().toISOString() });
+          }
+
+          export function listAuditEvents() {
+            return [...auditEvents];
+          }
+          JS
+
+          cat > "$repo/src/domain/notification-service.js" <<'JS'
+          const notifications = [];
+
+          export function notifyTaskStatusChanged(task, previousStatus) {
+            notifications.push({
+              type: 'TASK_STATUS_CHANGED',
+              taskId: task.id,
+              projectId: task.projectId,
+              previousStatus,
+              currentStatus: task.status
+            });
+          }
+
+          export function listNotifications() {
+            return [...notifications];
+          }
+          JS
+
+          cat > "$repo/src/domain/project-health.js" <<'JS'
+          export function calculateProjectHealth(project, tasks, now = new Date('2026-08-03T00:00:00Z')) {
+            const totalCount = tasks.length;
+            const doneCount = tasks.filter((task) => task.status === 'DONE').length;
+            const overdueCount = tasks.filter((task) =>
+              task.status !== 'DONE' && new Date(task.dueDate) < now
+            ).length;
+
+            let status = 'HEALTHY';
+            if (overdueCount > 0) status = 'AT_RISK';
+            if (totalCount > 0 && doneCount === totalCount) status = 'COMPLETED';
+
+            return {
+              projectId: project.id,
+              status,
+              totalCount,
+              doneCount,
+              overdueCount,
+              completionRate: totalCount === 0 ? 0 : Math.round((doneCount / totalCount) * 100)
+            };
+          }
+          JS
+
+          cat > "$repo/src/domain/dashboard-service.js" <<'JS'
+          import { getProject, listTasksByProject } from '../data/store.js';
+          import { calculateProjectHealth } from './project-health.js';
+
+          export function getProjectDashboard(projectId) {
+            const project = getProject(projectId);
+            if (!project) throw new Error('Project not found');
+            const tasks = listTasksByProject(projectId);
+            return {
+              project,
+              tasks,
+              health: calculateProjectHealth(project, tasks)
+            };
+          }
+          JS
+
+          cat > "$repo/src/domain/report-service.js" <<'JS'
+          import { listProjects, listTasksByProject } from '../data/store.js';
+          import { calculateProjectHealth } from './project-health.js';
+
+          export function buildPortfolioReport() {
+            return listProjects().map((project) => {
+              const health = calculateProjectHealth(project, listTasksByProject(project.id));
+              return {
+                projectId: project.id,
+                projectName: project.name,
+                healthStatus: health.status,
+                overdueCount: health.overdueCount,
+                completionRate: health.completionRate
+              };
+            });
+          }
+          JS
+
+          cat > "$repo/src/domain/task-service.js" <<'JS'
+          import { getProject, getTask, saveTask } from '../data/store.js';
+          import { assertCanEditTask } from './permission-service.js';
+          import { recordAuditEvent } from './audit-service.js';
+          import { notifyTaskStatusChanged } from './notification-service.js';
+
+          const TRACKED_STATUSES = new Set(['TODO', 'IN_PROGRESS', 'DONE']);
+
+          export function updateTaskStatus(user, taskId, nextStatus) {
+            const task = getTask(taskId);
+            if (!task) throw new Error('Task not found');
+            const project = getProject(task.projectId);
+            if (!project) throw new Error('Project not found');
+            assertCanEditTask(user, project);
+            if (!TRACKED_STATUSES.has(nextStatus)) throw new Error('Invalid status');
+
+            const previousStatus = task.status;
+            const updatedTask = saveTask({ ...task, status: nextStatus });
+            recordAuditEvent({
+              action: 'TASK_STATUS_CHANGED',
+              actorId: user.id,
+              taskId,
+              previousStatus,
+              nextStatus
+            });
+            notifyTaskStatusChanged(updatedTask, previousStatus);
+            return updatedTask;
+          }
+          JS
+
+          cat > "$repo/src/http/routes/api-routes.js" <<'JS'
+          import { getProjectDashboard } from '../../domain/dashboard-service.js';
+          import { updateTaskStatus } from '../../domain/task-service.js';
+          import { buildPortfolioReport } from '../../domain/report-service.js';
+
+          export function handleGetDashboard(request) {
+            return getProjectDashboard(request.params.projectId);
+          }
+
+          export function handleUpdateTaskStatus(request) {
+            return updateTaskStatus(request.user, request.params.taskId, request.body.status);
+          }
+
+          export function handleGetPortfolioReport() {
+            return buildPortfolioReport();
+          }
+          JS
+
+          cat > "$repo/src/server.js" <<'JS'
+          import {
+            handleGetDashboard,
+            handleUpdateTaskStatus,
+            handleGetPortfolioReport
+          } from './http/routes/api-routes.js';
+
+          export const routes = {
+            'GET /api/projects/:projectId/dashboard': handleGetDashboard,
+            'PATCH /api/tasks/:taskId/status': handleUpdateTaskStatus,
+            'GET /api/reports/portfolio': handleGetPortfolioReport
+          };
+          JS
+
+          cat > "$repo/tests/project-health.test.js" <<'JS'
+          import test from 'node:test';
+          import assert from 'node:assert/strict';
+          import { calculateProjectHealth } from '../src/domain/project-health.js';
+
+          test('marks project at risk when an unfinished task is overdue', () => {
+            const project = { id: 'P-X' };
+            const tasks = [{ status: 'TODO', dueDate: '2026-07-01' }];
+            const result = calculateProjectHealth(project, tasks);
+            assert.equal(result.status, 'AT_RISK');
+            assert.equal(result.overdueCount, 1);
+          });
+
+          test('marks project completed when every task is done', () => {
+            const project = { id: 'P-X' };
+            const tasks = [{ status: 'DONE', dueDate: '2026-07-01' }];
+            assert.equal(calculateProjectHealth(project, tasks).status, 'COMPLETED');
+          });
+          JS
+
+          cat > "$repo/tests/report-service.test.js" <<'JS'
+          import test from 'node:test';
+          import assert from 'node:assert/strict';
+          import { buildPortfolioReport } from '../src/domain/report-service.js';
+
+          test('portfolio report exposes project health fields', () => {
+            const report = buildPortfolioReport();
+            assert.ok(report.length >= 2);
+            assert.ok('healthStatus' in report[0]);
+            assert.ok('overdueCount' in report[0]);
+          });
+          JS
+
+          cat > "$repo/tests/task-service.test.js" <<'JS'
+          import test from 'node:test';
+          import assert from 'node:assert/strict';
+          import { updateTaskStatus } from '../src/domain/task-service.js';
+
+          test('project owner can update a task status', () => {
+            const updated = updateTaskStatus({ id: 'U-1', role: 'USER' }, 'T-2', 'DONE');
+            assert.equal(updated.status, 'DONE');
+          });
+
+          test('rejects unknown task status', () => {
+            assert.throws(
+              () => updateTaskStatus({ id: 'U-2', role: 'USER' }, 'T-3', 'UNKNOWN'),
+              /Invalid status/
+            );
+          });
+          JS
+
+          git -C "$repo" init -q
+          git -C "$repo" config user.name "FlowBoard Training"
+          git -C "$repo" config user.email "training@example.com"
+          git -C "$repo" add .
+          git -C "$repo" commit -qm "baseline: FlowBoard project management app"
+          git -C "$repo" branch -M main
+
+      - name: Run baseline tests and Code-Intel commands
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_WORKSPACE/flowboard-fixture"
+          out="$GITHUB_WORKSPACE/verification-results"
+          cli="$GITHUB_WORKSPACE/code-intel/core/dist/cli/main.js"
+          mkdir -p "$out"
+
+          capture() {
+            local name="$1"
+            shift
+            echo "===== $name =====" | tee "$out/$name.txt"
+            set +e
+            "$@" 2>&1 | tee -a "$out/$name.txt"
+            local code=${PIPESTATUS[0]}
+            set -e
+            echo "$code" > "$out/$name.exit-code"
+            echo "exit_code=$code" | tee -a "$out/$name.txt"
+            return 0
+          }
+
+          capture version node "$cli" --version
+          capture baseline-tests npm --prefix "$repo" test
+          capture analyze-baseline node "$cli" analyze "$repo" --skip-embeddings --skip-agents-md
+          capture status-baseline node "$cli" status "$repo"
+
+          cd "$repo"
+          capture search-project-health node "$cli" search "calculateProjectHealth" --json
+          capture inspect-project-health node "$cli" inspect calculateProjectHealth
+          capture impact-project-health node "$cli" impact calculateProjectHealth --depth 3
+          capture context-project-health node "$cli" context calculateProjectHealth --show-context
+
+          cp .code-intel/current.json "$out/current-baseline.json"
+          find .code-intel -maxdepth 3 -type f -printf '%P\n' | sort > "$out/index-files-baseline.txt"
+
+      - name: Create incomplete CR-104 change
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_WORKSPACE/flowboard-fixture"
+          git -C "$repo" switch -c lab2/incomplete-change
+
+          python3 - "$repo" <<'PY'
+          from pathlib import Path
+          import sys
+
+          repo = Path(sys.argv[1])
+
+          task_service = repo / 'src/domain/task-service.js'
+          text = task_service.read_text()
+          text = text.replace(
+              "new Set(['TODO', 'IN_PROGRESS', 'DONE'])",
+              "new Set(['TODO', 'IN_PROGRESS', 'BLOCKED', 'DONE'])"
+          )
+          task_service.write_text(text)
+
+          health = repo / 'src/domain/project-health.js'
+          text = health.read_text()
+          text = text.replace(
+              "const doneCount = tasks.filter((task) => task.status === 'DONE').length;",
+              "const doneCount = tasks.filter((task) => task.status === 'DONE').length;\n            const blockedCount = tasks.filter((task) => task.status === 'BLOCKED').length;"
+          )
+          text = text.replace(
+              "doneCount,\n              overdueCount,",
+              "doneCount,\n              blockedCount,\n              overdueCount,"
+          )
+          health.write_text(text)
+          PY
+
+          git -C "$repo" add src/domain/task-service.js src/domain/project-health.js
+          git -C "$repo" commit -qm "feat: partially add BLOCKED task status"
+          git -C "$repo" diff --stat main...HEAD
+
+      - name: Run tests and PR impact on incomplete change
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_WORKSPACE/flowboard-fixture"
+          out="$GITHUB_WORKSPACE/verification-results"
+          cli="$GITHUB_WORKSPACE/code-intel/core/dist/cli/main.js"
+
+          capture() {
+            local name="$1"
+            shift
+            echo "===== $name =====" | tee "$out/$name.txt"
+            set +e
+            "$@" 2>&1 | tee -a "$out/$name.txt"
+            local code=${PIPESTATUS[0]}
+            set -e
+            echo "$code" > "$out/$name.exit-code"
+            echo "exit_code=$code" | tee -a "$out/$name.txt"
+            return 0
+          }
+
+          git -C "$repo" diff main...HEAD > "$out/cr-104.diff"
+          capture changed-tests npm --prefix "$repo" test
+          capture analyze-changed node "$cli" analyze "$repo" --skip-embeddings --skip-agents-md
+
+          cd "$repo"
+          capture pr-impact-text node "$cli" pr-impact --base main --head HEAD
+          capture pr-impact-json node "$cli" pr-impact --base main --head HEAD --format json
+          capture impact-project-health-changed node "$cli" impact calculateProjectHealth --depth 3
+          capture coverage-changed node "$cli" coverage
+          capture index-status-changed node "$cli" index-status "$repo"
+
+          cp .code-intel/current.json "$out/current-changed.json"
+          git log --oneline --decorate --graph --all > "$out/git-log.txt"
+          git status --short > "$out/git-status.txt"
+
+      - name: Assert core verification completed
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$GITHUB_WORKSPACE/verification-results"
+          test "$(cat "$out/version.exit-code")" = "0"
+          test "$(cat "$out/baseline-tests.exit-code")" = "0"
+          test "$(cat "$out/analyze-baseline.exit-code")" = "0"
+          test "$(cat "$out/search-project-health.exit-code")" = "0"
+          test "$(cat "$out/inspect-project-health.exit-code")" = "0"
+          test "$(cat "$out/impact-project-health.exit-code")" = "0"
+          test "$(cat "$out/changed-tests.exit-code")" = "0"
+          test "$(cat "$out/analyze-changed.exit-code")" = "0"
+          test "$(cat "$out/pr-impact-json.exit-code")" = "0"
+          grep -q '1.0.9' "$out/version.txt"
+          grep -q 'calculateProjectHealth' "$out/search-project-health.txt"
+
+      - name: Upload verification results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flowboard-code-intel-v1.0.9-results
+          path: verification-results/
+          if-no-files-found: error
+          retention-days: 7
