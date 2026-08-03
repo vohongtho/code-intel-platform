@@ -1,5 +1,6 @@
 name: Apply v1.0.10 four proposals
 
+# Atomic implementation staging validation.
 on:
   pull_request:
     branches: [main]
