@@ -1,0 +1,67 @@
+name: Apply pinned snapshot readers
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/patches/v1-0-10-pinned-readers.patch.gz.b64
+      - .github/workflows/apply-pinned-readers.yml
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  apply-and-validate:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Decode and apply patch
+        shell: bash
+        run: |
+          base64 -d .github/patches/v1-0-10-pinned-readers.patch.gz.b64 | gzip -d > /tmp/pinned-readers.patch
+          git apply --check /tmp/pinned-readers.patch
+          git apply /tmp/pinned-readers.patch
+          rm .github/patches/v1-0-10-pinned-readers.patch.gz.b64
+          rm .github/workflows/apply-pinned-readers.yml
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck core
+        run: npm run typecheck --workspace=code-intel/core
+
+      - name: Compile tests
+        run: npx tsc -b code-intel/core/tsconfig.test.json
+
+      - name: Run pinned snapshot tests
+        shell: bash
+        run: |
+          NODE_ENV=test node --test --test-concurrency=1 \
+            code-intel/core/dist-tests/tests/unit/storage/index-generation.test.js \
+            code-intel/core/dist-tests/tests/unit/storage/index-snapshot.test.js \
+            code-intel/core/dist-tests/tests/unit/storage/index-trust.test.js \
+            code-intel/core/dist-tests/tests/unit/search/execute-scoped-search.test.js \
+            code-intel/core/dist-tests/tests/unit/mcp-server/multi-repo-cache.test.js
+
+      - name: Build core
+        run: npm run build --workspace=code-intel/core
+
+      - name: Commit validated patch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: pin index readers to one generation"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
