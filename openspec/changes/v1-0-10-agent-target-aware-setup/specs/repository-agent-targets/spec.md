@@ -2,152 +2,240 @@
 
 ## MODIFIED Requirements
 
-### Requirement: Analyze persists the repository's selected agent targets
+### Requirement: Repository agent selection is persisted and reused
 
-Interactive analysis MUST persist the selected agent IDs and their canonical or custom target configuration in `.code-intel/agent-targets.json`.
+Code Intel MUST persist repository agent selection in:
 
-#### Scenario: First interactive analysis
+```text
+<repo>/.code-intel/agent-targets.json
+```
 
-**GIVEN** no saved repository agent selection exists
+The saved selection MUST remain the canonical repository source for both context generation and selection-aware setup.
 
-**AND** the session is interactive
+#### Scenario: First eligible interactive analysis saves selection
 
-**WHEN** the user selects one or more agents during analyze
+GIVEN a repository without `.code-intel/agent-targets.json`
 
-**THEN** analyze saves exactly those agent IDs
+AND analysis runs in an eligible interactive terminal
 
-**AND** saves one target configuration for each selected ID
+WHEN the user selects one or more coding agents
 
-**AND** generated project instruction files are limited to those resolved targets.
+THEN Code Intel MUST persist `selectedAgents` and corresponding target configurations
 
-#### Scenario: Existing selection
+AND analysis MUST generate only the selected repository target files.
 
-**GIVEN** a valid saved repository agent selection exists
+#### Scenario: Later analysis reuses selection
 
-**WHEN** analyze runs without an agent reconfiguration option
+GIVEN a valid saved repository selection
 
-**THEN** analyze reuses the saved selection
+WHEN analysis runs again
 
-**AND** does not silently add newly supported agents.
+THEN analysis MUST reuse the saved target set
 
-#### Scenario: Non-interactive analysis without selection
+AND MUST NOT create targets for unselected agents.
 
-**GIVEN** no saved selection exists
+#### Scenario: Setup consumes the same selection
 
-**AND** the analyze session is non-interactive
+GIVEN a valid saved repository selection
 
-**WHEN** analysis completes
+WHEN `code-intel setup` runs for that repository
 
-**THEN** no implicit all-agent selection is saved
+THEN setup MUST use the same `selectedAgents` list to gate global integration eligibility
 
-**AND** no project agent instruction target is generated unless explicitly configured by a supported non-interactive mechanism.
+AND MUST NOT maintain a separate repository selection.
 
-### Requirement: Analyze owns project-scoped agent instruction files
+---
 
-The analyze context-generation flow MUST be the exclusive normal owner of repository agent instruction files.
+### Requirement: Repository target metadata remains authoritative
 
-#### Scenario: Selected target generation
+The `targets` map in the saved selection MUST remain the canonical source for analysis-managed project target paths and formats.
 
-**GIVEN** the saved selection contains Cursor with target `.cursor/rules/code-intel.mdc`
+#### Scenario: Built-in target
 
-**WHEN** analyze generates context files
+GIVEN a selected agent with a built-in target in `AGENT_OPTIONS`
 
-**THEN** the Cursor target is created or surgically updated
+WHEN analysis writes context
 
-**AND** targets for unselected agents are not created or updated.
+THEN it MUST use the canonical built-in path and format recorded in the selection.
 
-#### Scenario: Custom target generation
+#### Scenario: Custom target
 
-**GIVEN** a selected custom agent has a valid repository-relative target path and format
+GIVEN a selected agent with a validated custom repository-relative target
 
-**WHEN** analyze generates context
+WHEN analysis writes context
 
-**THEN** content is written only to that configured path
+THEN it MUST write only that configured target
 
-**AND** setup does not duplicate or replace the custom target.
+AND setup MUST NOT replace it with a hard-coded path.
 
-### Requirement: Users can explicitly reconfigure repository agents
+#### Scenario: Setup has a different legacy path
 
-Analyze MUST provide an explicit interactive option to replace the saved repository agent selection.
+GIVEN an older setup implementation previously used a different path for the same agent
 
-#### Scenario: Reconfigure selected agents
+WHEN v1.0.10 setup runs
 
-**GIVEN** the saved selection contains Cursor and Copilot
+THEN setup MUST NOT create the legacy project path
 
-**WHEN** the user runs `code-intel analyze --configure-agents` and selects Claude only
+AND analysis target metadata remains authoritative.
 
-**THEN** the saved `selectedAgents` becomes `claude`
+---
 
-**AND** Claude's target becomes the active generated target
+### Requirement: Project target files are analysis-owned
 
-**AND** future setup runs use Claude as the selected setup agent.
+Repository-scoped target creation and managed block updates MUST remain owned by analysis/context-writer.
 
-#### Scenario: Removed target files are not deleted automatically
+#### Scenario: Selected project target is generated
 
-**GIVEN** an agent is removed during reconfiguration
+GIVEN a selected agent target
 
-**AND** its old project instruction file contains generated or user-authored content
+WHEN analysis completes without `--skip-agents-md`
 
-**WHEN** analyze saves the new selection
+THEN context-writer MUST create or update the managed target according to its existing marker-preservation rules.
 
-**THEN** the old file is not deleted automatically
+#### Scenario: Setup follows analysis
 
-**AND** the user is informed that it is no longer managed by the current selection.
+GIVEN analysis already created the selected project target
 
-### Requirement: Agent selection persistence is atomic
+WHEN setup runs
 
-Writing a repository agent selection MUST not expose a partial or malformed replacement file.
+THEN setup MUST leave that file byte-identical
 
-#### Scenario: Successful replacement
+AND MAY install only the selected agent's supported global integration.
 
-**GIVEN** an existing valid selection
+#### Scenario: Unselected target does not appear
 
-**WHEN** a new valid selection is saved
+GIVEN an agent is absent from `selectedAgents`
 
-**THEN** the replacement is written through a temporary file and atomic rename
+WHEN analysis and setup both complete
 
-**AND** later readers observe either the old complete selection or the new complete selection.
+THEN neither command may create that agent's repository target as a side effect of setup behavior.
 
-#### Scenario: Failed replacement
+---
 
-**GIVEN** an existing valid selection
+### Requirement: Saved selection validation is safe
 
-**WHEN** writing the new selection fails before atomic rename
+Consumers of repository agent targets MUST reject unsafe or malformed state without broadening behavior.
 
-**THEN** the existing saved selection remains readable and unchanged.
+#### Scenario: Unsafe custom path
 
-### Requirement: Saved selections are validated before setup use
+GIVEN a target path is absolute or escapes the repository using `..`
 
-Setup MUST validate repository selection data rather than trusting parsed JSON shape.
+WHEN setup validates the saved selection
 
-#### Scenario: Selected target record missing
+THEN the selection MUST be classified as invalid for agent setup
 
-**GIVEN** `selectedAgents` contains `cursor`
+AND no global installer may be selected through fallback behavior.
 
-**AND** `targets.cursor` is missing
+#### Scenario: Unknown selected agent
 
-**WHEN** setup loads the selection
+GIVEN `selectedAgents` contains an ID absent from `AGENT_OPTIONS`
 
-**THEN** the selection is invalid for setup
+WHEN setup validates the selection
 
-**AND** no agent integration is installed.
+THEN it MUST report and skip the unknown ID
 
-#### Scenario: Target ID mismatch
+AND MUST NOT infer behavior from the target label or path.
 
-**GIVEN** the `cursor` target record declares another `agentId`
+#### Scenario: Missing targets map entry
 
-**WHEN** setup validates the selection
+GIVEN a selected agent ID does not have a corresponding target entry
 
-**THEN** validation fails closed.
+WHEN the agent has a known global setup integration
 
-#### Scenario: Unsupported custom agent
+THEN setup MAY gate the global integration using the selected ID
 
-**GIVEN** a valid custom selected agent with no registered global setup integration
+AND MUST report the incomplete target metadata
 
-**WHEN** setup builds the integration plan
+AND analysis behavior remains governed by its existing validation and target resolution rules.
 
-**THEN** the selection remains valid for analyze-owned project context
+---
 
-**AND** no global integration is planned for that custom agent
+### Requirement: Setup does not mutate repository selection
 
-**AND** output explains that no global setup integration is registered.
+`code-intel setup` MUST treat `.code-intel/agent-targets.json` as read-only.
+
+#### Scenario: Default setup
+
+GIVEN a valid saved selection
+
+WHEN default setup completes
+
+THEN the selection file MUST remain byte-identical.
+
+#### Scenario: All-agents override
+
+GIVEN a valid saved selection
+
+WHEN setup runs with `--all-agents`
+
+THEN every global integration MAY be considered
+
+BUT the saved repository selection MUST remain unchanged.
+
+#### Scenario: MCP-only and dry-run
+
+GIVEN any valid saved selection
+
+WHEN setup runs with `--mcp-only` or `--dry-run`
+
+THEN the saved selection MUST remain unchanged.
+
+---
+
+### Requirement: Existing analysis selection lifecycle remains unchanged
+
+Version 1.0.10 agent-aware setup MUST NOT add a new repository agent-reconfiguration command, option, or prompt path.
+
+#### Scenario: No new analyze option
+
+GIVEN the implemented v1.0.10 CLI
+
+WHEN `code-intel analyze --help` is rendered
+
+THEN it MUST NOT include `--configure-agents`
+
+AND MUST NOT include a newly introduced `--agents` option for reselection.
+
+#### Scenario: Existing saved selection continues to be reused
+
+GIVEN a valid saved selection exists
+
+WHEN analysis runs after upgrading to v1.0.10
+
+THEN the existing selection MUST be reused according to the prior lifecycle
+
+AND setup MUST consume that same selection.
+
+#### Scenario: Future reselection is separate scope
+
+GIVEN a future requirement to change repository agent selection
+
+WHEN that behavior is designed
+
+THEN it MUST be proposed as a separate change rather than being implicitly added to agent-aware setup.
+
+---
+
+### Requirement: Legacy files are preserved non-destructively
+
+Existing project files created by older setup behavior MUST NOT be automatically removed or rewritten by this change.
+
+#### Scenario: Legacy unselected file exists
+
+GIVEN `.kilocode/rules/code-intel-rules.md` exists from an older setup run
+
+AND Kilo Code is not selected
+
+WHEN setup runs
+
+THEN the file MUST remain unchanged
+
+AND setup MAY print a diagnostic that it is no longer managed.
+
+#### Scenario: Legacy file contains user content
+
+GIVEN an old agent file contains both Code Intel text and user-authored content
+
+WHEN setup runs
+
+THEN setup MUST not attempt managed-block removal or file deletion.
