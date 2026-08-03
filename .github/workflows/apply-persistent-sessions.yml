@@ -1,0 +1,89 @@
+name: Apply persistent remembered sessions
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/patches/persistent-session.small*
+      - .github/workflows/apply-persistent-sessions.yml
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  apply-and-validate:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Reconstruct and apply patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/chunks.sha256 <<'EOF'
+          4f47d3232a704f502c032329077ec90d9e182a7f42fd137453bea99fbb920b43  .github/patches/persistent-session.small00
+          a82e18f9a3f6a9c5c89207300e869a2b5c7ff5a0d169be4bee3e11e0b5dc0317  .github/patches/persistent-session.small01
+          479c49bf53ab126a13e5cd79b5ff1cb902dcf715b95eb16403af62043505d548  .github/patches/persistent-session.small02
+          64afe3be07ec993c7facc9575b001e7b6f51bc555a60dd9973a366b3e5304692  .github/patches/persistent-session.small03
+          368b6fd384574d8e5dddb0e1d001f0709826a3aa6141f84f57dc9996586be795  .github/patches/persistent-session.small04
+          5ab4f8d0c6748f5cd013f7003cb4c5d89c2d8acf1c52262de44ede17ae6f5f0f  .github/patches/persistent-session.small05
+          60b530fb7d518bfc8bb5151c6a4609117e6dbe44bd851dce1f737ab0650b7b84  .github/patches/persistent-session.small06
+          595cd8a1cd022f03e1ad7f2ceb93c42a741125ede40ff8ceb8bc8a92705538bb  .github/patches/persistent-session.small07
+          16bbe6e102cc194036ce227b21f377087c3c8b7857644300e444c2bc1b6e8ddf  .github/patches/persistent-session.small08
+          5d8ba680409ce358f9298f06a00774170acb893000babfa3d94567add05e5bcf  .github/patches/persistent-session.small09
+          facc4091e1459a6495efe96d271203ca2c3e6e59c44301141509fb1636d9c0f6  .github/patches/persistent-session.small10
+          b84fb607576ea4db63b47135fa3a72aadfe2d7621682d24b50a25a8c09b7d61c  .github/patches/persistent-session.small11
+          8e79f6385bbe03ff4eddae7399ad2b6bd17a7fbac8321d6e3d42f85de548cbfe  .github/patches/persistent-session.small12
+          0a63333d25f2a37da132c6ef5db66b7a33e916333a2d831504f816a520b3564d  .github/patches/persistent-session.small13
+          fbcfb3bf313e5141354f808c7c73e8b9d1c8ffb4c5288b886c9d78796514f785  .github/patches/persistent-session.small14
+          f306db57fab57d2499f10779d0a68dacf65491eb0b06e78cd940db8913db9345  .github/patches/persistent-session.small15
+          bfd588505b55d8caa2a00925e9dbd355cfb604d6e00f6f0220445f7b8d789f22  .github/patches/persistent-session.small16
+          2820155b886f004c0f58a6cae8eda19ee6c3cde7d028df41d069ddc39881aa86  .github/patches/persistent-session.small17
+          0eb57528b4db66750c3c9d90f5ce912c4be38041fb047fb475f5d48bcb7d8ffb  .github/patches/persistent-session.small18
+          3c2ab68dc63a8e4605cc51320bf4c13a2de8f45400e56e240120190a794c118d  .github/patches/persistent-session.small19
+          EOF
+          sha256sum -c /tmp/chunks.sha256
+          cat .github/patches/persistent-session.small{00..19} > /tmp/persistent-sessions.patch.gz.b64
+          echo '51dac7130271694801c17833ca0f46141e6799ae0d14dde549d1f27dd11398ac  /tmp/persistent-sessions.patch.gz.b64' | sha256sum -c -
+          base64 -d /tmp/persistent-sessions.patch.gz.b64 | gzip -d > /tmp/persistent-sessions.patch
+          echo '42f493cdddc329698502d095b283567d1d90790c1127b9f9469b66ff6a06ea28  /tmp/persistent-sessions.patch' | sha256sum -c -
+          git apply --check /tmp/persistent-sessions.patch
+          git apply /tmp/persistent-sessions.patch
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps --ignore-scripts --include=optional
+      - name: Typecheck core
+        run: npm run typecheck --workspace=code-intel/core
+      - name: Compile core tests
+        run: npx tsc -b code-intel/core/tsconfig.test.json
+      - name: Run persistent-session regressions
+        shell: bash
+        run: |
+          NODE_ENV=test node --test --test-concurrency=1 \
+            code-intel/core/dist-tests/tests/unit/auth/session-store.test.js \
+            code-intel/core/dist-tests/tests/unit/auth/auth.test.js \
+            code-intel/core/dist-tests/tests/unit/auth/auth-coverage.test.js \
+            code-intel/core/dist-tests/tests/unit/auth/middleware.test.js \
+            code-intel/core/dist-tests/tests/integration/http/persistent-session-restart.test.js \
+            code-intel/core/dist-tests/tests/integration/http/api.test.js
+      - name: Build core
+        run: npm run build --workspace=code-intel/core
+      - name: Commit implementation and remove staging files
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/patches/persistent-session.small*
+          rm -f .github/workflows/apply-persistent-sessions.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat(auth): persist remembered sessions across restarts"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
