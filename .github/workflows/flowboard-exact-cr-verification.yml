@@ -1,0 +1,172 @@
+name: FlowBoard Exact CR Verification
+
+on:
+  pull_request:
+    branches:
+      - release/1.0.9
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-exact-cr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install and build Code-Intel v1.0.9
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --legacy-peer-deps --ignore-scripts --include=optional
+          npm rebuild tree-sitter tree-sitter-typescript tree-sitter-javascript @ladybugdb/core onnxruntime-node sharp protobufjs || true
+          npm run build --workspace=code-intel/core
+          test "$(node code-intel/core/dist/cli/main.js --version)" = "1.0.9"
+
+      - name: Restore exact FlowBoard source and baseline Git history
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat training-assets/flowboard-main.zip.b64.part* > /tmp/flowboard-main.zip.b64
+          base64 --decode /tmp/flowboard-main.zip.b64 > /tmp/flowboard-main.zip
+          echo "b39dda823a8eaab3bf3ff317750aa2b51a1a790005058c325c4bdd652b765ddd  /tmp/flowboard-main.zip" | sha256sum --check
+
+          repo="$GITHUB_WORKSPACE/flowboard-exact"
+          rm -rf "$repo"
+          mkdir -p "$repo"
+          unzip -q /tmp/flowboard-main.zip -d "$repo"
+          git -C "$repo" init -q
+          git -C "$repo" config user.name "FlowBoard Training"
+          git -C "$repo" config user.email "training@example.com"
+          git -C "$repo" add .
+          git -C "$repo" commit -qm "baseline: exact FlowBoard training repository"
+          git -C "$repo" branch -M main
+
+      - name: Build baseline index then seed CR-104
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_WORKSPACE/flowboard-exact"
+          cli="$GITHUB_WORKSPACE/code-intel/core/dist/cli/main.js"
+
+          npm --prefix "$repo" test
+          node "$cli" analyze "$repo" --skip-embeddings --skip-agents-md
+
+          # analyze adds the local-ignore rule; restore only that tracked file so
+          # the repository's intentional lab seeder sees a clean working tree.
+          git -C "$repo" restore .gitignore
+          test -z "$(git -C "$repo" status --porcelain)"
+
+          npm --prefix "$repo" run lab2:seed
+          test "$(git -C "$repo" branch --show-current)" = "lab2/incomplete-change"
+          test -n "$(git -C "$repo" diff --name-only main...HEAD)"
+
+      - name: Run tests, CLI review, and MCP review on actual CR diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_WORKSPACE/flowboard-exact"
+          out="$GITHUB_WORKSPACE/exact-cr-results"
+          cli="$GITHUB_WORKSPACE/code-intel/core/dist/cli/main.js"
+          mkdir -p "$out"
+
+          capture() {
+            local name="$1"
+            shift
+            echo "===== $name =====" | tee "$out/$name.txt"
+            set +e
+            "$@" 2>&1 | tee -a "$out/$name.txt"
+            local code=${PIPESTATUS[0]}
+            set -e
+            echo "$code" > "$out/$name.exit-code"
+            echo "exit_code=$code" | tee -a "$out/$name.txt"
+            return 0
+          }
+
+          git -C "$repo" diff main...HEAD > "$out/cr-104.diff"
+          git -C "$repo" diff --stat main...HEAD > "$out/cr-104.stat.txt"
+          git -C "$repo" diff --name-only main...HEAD > "$out/cr-104.files.txt"
+          capture changed-tests npm --prefix "$repo" test
+          capture analyze-changed node "$cli" analyze "$repo" --skip-embeddings --skip-agents-md
+
+          cd "$repo"
+          capture pr-impact-text node "$cli" pr-impact --base main --head HEAD
+          capture pr-impact-json node "$cli" pr-impact --base main --head HEAD --format json
+          capture impact-project-health node "$cli" impact calculateProjectHealth --depth 3
+          capture inspect-project-health node "$cli" inspect calculateProjectHealth
+          capture inspect-task-status node "$cli" inspect updateTaskStatus
+          capture coverage-changed node "$cli" coverage
+          capture index-status-changed node "$cli" index-status "$repo"
+
+          cp .code-intel/current.json "$out/current-changed.json"
+          git log --oneline --decorate --graph --all > "$out/git-log.txt"
+          git status --short > "$out/git-status.txt"
+
+          REPO="$repo" CLI="$cli" DIFF="$out/cr-104.diff" OUT="$out/mcp-changed.json" node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+          import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+
+          const repo = process.env.REPO;
+          const cli = process.env.CLI;
+          const diff = fs.readFileSync(process.env.DIFF, 'utf8');
+          const out = process.env.OUT;
+          const transport = new StdioClientTransport({
+            command: 'node',
+            args: [cli, 'mcp', repo],
+            cwd: repo,
+            stderr: 'pipe',
+          });
+          const client = new Client({ name: 'flowboard-cr-verifier', version: '1.0.0' });
+          const text = (value) => value?.content?.map((item) => item.text ?? '').join('\n') ?? '';
+          const result = {};
+          try {
+            await client.connect(transport);
+            const tools = await client.listTools();
+            const resources = await client.listResources();
+            result.toolCount = tools.tools.length;
+            result.resourceCount = resources.resources.length;
+            result.overview = text(await client.callTool({ name: 'overview', arguments: {} }));
+            result.prImpact = text(await client.callTool({ name: 'pr_impact', arguments: { diff, maxHops: 3 } }));
+            result.blastRadius = text(await client.callTool({ name: 'blast_radius', arguments: { target: 'calculateProjectHealth', direction: 'callers', max_hops: 3 } }));
+            result.suggestProjectHealthTests = text(await client.callTool({ name: 'suggest_tests', arguments: { symbol: 'calculateProjectHealth' } }));
+            result.suggestTaskStatusTests = text(await client.callTool({ name: 'suggest_tests', arguments: { symbol: 'updateTaskStatus' } }));
+            result.coverageGaps = text(await client.callTool({ name: 'coverage_gaps', arguments: { limit: 20 } }));
+          } finally {
+            await client.close();
+          }
+          fs.writeFileSync(out, JSON.stringify(result, null, 2));
+          if (result.toolCount !== 31) throw new Error(`Expected 31 MCP tools, got ${result.toolCount}`);
+          if (result.resourceCount !== 3) throw new Error(`Expected 3 MCP resources, got ${result.resourceCount}`);
+          if (!result.prImpact) throw new Error('MCP pr_impact returned no content');
+          NODE
+
+      - name: Assert exact CR verification completed
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$GITHUB_WORKSPACE/exact-cr-results"
+          for name in changed-tests analyze-changed pr-impact-text pr-impact-json impact-project-health inspect-project-health inspect-task-status coverage-changed index-status-changed; do
+            test "$(cat "$out/$name.exit-code")" = "0"
+          done
+          grep -q 'calculateProjectHealth' "$out/impact-project-health.txt"
+          test -s "$out/mcp-changed.json"
+
+      - name: Upload exact CR results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flowboard-exact-cr-code-intel-v1.0.9-results
+          path: exact-cr-results/
+          if-no-files-found: error
+          retention-days: 7
