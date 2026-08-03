@@ -46,7 +46,6 @@ function gitFixture(): { root: string; metadata: IndexMetadata } {
     indexedAt: new Date().toISOString(), schemaVersion: 8, indexVersion: 'v', parser: 'tree-sitter',
     commitHash,
     lastAnalyzedMtimes: { 'src/a.ts': fs.statSync(sourcePath).mtimeMs },
-    embeddings: { enabled: false, status: 'disabled' },
     stats: { nodes: 1, edges: 0, files: 1, duration: 1 },
   };
   return { root, metadata };
