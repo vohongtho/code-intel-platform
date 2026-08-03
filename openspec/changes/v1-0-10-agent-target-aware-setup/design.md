@@ -2,83 +2,162 @@
 
 ## 1. Observed 1.0.9 control flow
 
-### Analyze
+### 1.1 Analysis-side agent selection
 
-`code-intel/core/src/cli/app.ts` owns the current selection flow:
+`code-intel/core/src/cli/app.ts` contains the repository agent-selection flow:
 
-1. `promptForAgentTargets(workspaceRoot)` displays `AGENT_OPTIONS`.
-2. Built-in targets come from `resolveBuiltinTarget(agentId)`.
-3. Custom agents collect a repository-relative target path and format.
-4. `saveAgentTargets(workspaceRoot, selection)` persists `.code-intel/agent-targets.json`.
-5. `getOrCreateAgentTargets()` reuses the saved selection on later analyses.
-6. `writeContextFiles()` writes only the resolved target list unless `--skip-agents-md` is used.
-
-The persisted structure is defined in `code-intel/core/src/storage/metadata.ts`:
-
-```ts
-interface AgentTargetSelection {
-  selectedAgents: string[];
-  targets: Record<string, AgentTargetConfig>;
-}
+```text
+analyzeWorkspace()
+  → loadAgentTargets(workspaceRoot)
+  → if selection exists: reuse it
+  → otherwise, for an eligible interactive session:
+       promptForAgentTargets(workspaceRoot)
+       saveAgentTargets(workspaceRoot, selection)
+  → writeContextFiles(...selected targets...)
 ```
 
-### Setup
+The persisted selection is stored by `code-intel/core/src/storage/metadata.ts` at:
 
-The `setup` action is implemented inline in `code-intel/core/src/cli/app.ts`.
+```text
+<repo>/.code-intel/agent-targets.json
+```
 
-It currently:
+The relevant current symbols are:
 
-1. configures MCP;
-2. invokes global hook/plugin installers independently;
-3. enters a hard-coded prompt-level section;
-4. derives `cwd = process.cwd()`;
-5. calls `installRulesFile()` for every known prompt-level agent;
-6. writes `.clinerules`, `.windsurfrules`, `.kilocode/rules/code-intel-rules.md`, `.agents/rules/code-intel-rules.md`, and `AGENTS.md` regardless of saved selection.
+```ts
+export interface AgentTargetConfig
+export interface AgentTargetSelection
+export function getAgentTargetsPath(repoDir: string): string
+export function loadAgentTargets(repoDir: string): AgentTargetSelection | null
+export function saveAgentTargets(repoDir: string, selection: AgentTargetSelection): void
+```
 
-The setup action does not load `AgentTargetSelection`.
+The target registry is defined in:
 
-## 2. Design objectives
+```text
+code-intel/core/src/cli/agent-targets.ts
+```
 
-- one source of truth for repository agent selection;
-- no project-level instruction writes from setup;
-- selected-agent-only global integrations;
-- deterministic and testable planning before writes;
-- preserve MCP setup independently;
-- preserve existing global installer idempotency;
-- fail closed on invalid selection;
-- no automatic deletion of legacy files or global hooks.
+with:
 
-## 3. Invariants
+```ts
+export interface AgentOption
+export const AGENT_OPTIONS
+export function getAgentOption(agentId: string)
+export function resolveBuiltinTarget(agentId: string)
+```
 
-### Selection invariant
+The existing lifecycle prompts on the first eligible interactive analysis and reuses the saved selection later. This design does not change that lifecycle and does not add a new analysis flag.
 
-For default setup, an agent integration is eligible only when its canonical agent ID exists in the validated saved selection.
+### 1.2 Setup-side integration installation
 
-### Project ownership invariant
+The current `setup` command is also implemented inside `code-intel/core/src/cli/app.ts`.
 
-Only analyze/context-writer may create or update repository agent instruction files.
+Its current control flow is approximately:
 
-### No broad fallback invariant
+```text
+setup
+  → optionally install shell completion
+  → display/write MCP configuration
+  → install Claude hook
+  → install Cursor hook
+  → install Gemini hook
+  → install Copilot integration
+  → install OpenCode plugin
+  → install OpenClaw plugin
+  → write project rule files under process.cwd()
+       .clinerules
+       .windsurfrules
+       .kilocode/rules/code-intel-rules.md
+       .agents/rules/code-intel-rules.md
+       AGENTS.md
+```
 
-Missing or malformed selection never means all agents.
+The setup command does not build its plan from `loadAgentTargets()` and therefore ignores repository selection.
 
-### Explicit override invariant
+### 1.3 Ownership conflict
 
-All-agent behavior requires `--all-agents`.
+Two independent mappings currently exist:
 
-### Read-before-write invariant
+- analysis uses `AGENT_OPTIONS` plus persisted `AgentTargetConfig`;
+- setup uses hard-coded installer calls and hard-coded project paths.
 
-Setup resolves repository, selection, options, and the complete integration plan before invoking an installer.
+This violates a single-source-of-truth design and can create duplicate or conflicting repository files.
 
-### Non-destructive invariant
+---
 
-Setup does not delete project files or uninstall existing global integrations.
+## 2. Design goals
 
-## 4. Module boundaries
+1. Setup MUST read the saved repository selection.
+2. Setup MUST install only selected-agent global integrations by default.
+3. Setup MUST perform no repository instruction-file writes.
+4. Analyze/context-writer remain the sole owners of repository target files.
+5. MCP configuration remains available independently.
+6. Missing or malformed selection MUST fail closed for agent integrations.
+7. Setup planning MUST be deterministic and testable without filesystem writes.
+8. Existing analyze selection behavior MUST remain unchanged.
+9. No new `analyze --configure-agents`, `analyze --agents`, or equivalent command is introduced.
+10. Existing global integrations MUST not be removed automatically.
 
-### 4.1 `cli/agent-targets.ts`
+---
 
-Extend `AgentOption` with setup integration metadata.
+## 3. Core invariants
+
+### Invariant A — One repository selection source
+
+For default setup behavior, selected agents come only from:
+
+```text
+<repo>/.code-intel/agent-targets.json
+```
+
+The setup path may be explicitly supplied or default to `process.cwd()`.
+
+### Invariant B — Setup does not own project targets
+
+No function reachable only from the setup command may call `installRulesFile()` or otherwise create/update:
+
+```text
+AGENTS.md
+CLAUDE.md
+.clinerules
+.windsurfrules
+.cursor/**
+.github/**
+.kiro/**
+.kilocode/**
+.agents/**
+```
+
+### Invariant C — Selection gates global integrations
+
+A global integration is eligible only when:
+
+```text
+selected agent
+  AND agent registry maps it to the integration
+  AND mode is not --mcp-only
+```
+
+`--all-agents` explicitly changes the first predicate for global integrations only.
+
+### Invariant D — No broad fallback
+
+Missing, malformed, or partially invalid selection cannot imply “all agents.”
+
+### Invariant E — Existing analyze lifecycle remains stable
+
+This change does not alter when analysis prompts, how it saves selection, or how later analyses reuse it.
+
+---
+
+## 4. Proposed module ownership
+
+The current setup implementation is too large and tightly coupled inside `app.ts`. Split planning and execution into shared, testable modules.
+
+### 4.1 `code-intel/core/src/cli/agent-targets.ts`
+
+Extend the existing registry with setup metadata.
 
 ```ts
 export type AgentSetupIntegrationId =
@@ -97,425 +176,526 @@ export interface AgentOption {
 }
 ```
 
-Add:
+The registry owns agent-to-integration mapping. Setup must not infer integrations from labels or target file paths.
+
+Suggested examples:
 
 ```ts
-export function getSetupIntegrations(agentId: string): AgentSetupIntegrationId[];
-export function getAllSetupIntegrationIds(): AgentSetupIntegrationId[];
+{ id: 'claude', setupIntegrations: ['claude-hook'], ... }
+{ id: 'cursor', setupIntegrations: ['cursor-hook'], ... }
+{ id: 'gemini-cli', setupIntegrations: ['gemini-hook'], ... }
+{ id: 'copilot', setupIntegrations: ['copilot-hook'], ... }
+{ id: 'opencode', setupIntegrations: ['opencode-plugin'], ... }
+{ id: 'openclaw', setupIntegrations: ['openclaw-plugin'], ... }
 ```
 
-The registry must use exact IDs, not labels or path heuristics.
+Aliases must be explicit when one product shares another product's installer.
 
-### 4.2 New `cli/setup-plan.ts`
+### 4.2 `code-intel/core/src/cli/setup-plan.ts`
 
-Pure planning module.
+New pure planning module.
 
 ```ts
-export type SetupSelectionSource =
-  | 'saved-selection'
-  | 'all-agents-override'
-  | 'mcp-only'
-  | 'missing-selection';
-
 export interface SetupPlanInput {
-  repoDir: string;
-  selection: AgentTargetSelection | null;
+  repositoryPath: string;
+  selectedAgentIds: string[];
   allAgents: boolean;
   mcpOnly: boolean;
+  dryRun: boolean;
+}
+
+export interface PlannedAgentIntegration {
+  integrationId: AgentSetupIntegrationId;
+  agentIds: string[];
+  selected: boolean;
+  reason:
+    | 'selected'
+    | 'all-agents-override'
+    | 'unselected'
+    | 'mcp-only'
+    | 'unsupported';
 }
 
 export interface SetupPlan {
-  repoDir: string;
-  selectionSource: SetupSelectionSource;
+  repositoryPath: string;
+  selectionSource: 'saved' | 'missing' | 'invalid' | 'all-agents';
   selectedAgentIds: string[];
-  integrationIds: AgentSetupIntegrationId[];
-  skippedIntegrationIds: AgentSetupIntegrationId[];
-  configureMcp: boolean;
-  writeProjectFiles: false;
-  diagnostics: string[];
+  mcp: { enabled: boolean };
+  integrations: PlannedAgentIntegration[];
+  projectWrites: [];
+  dryRun: boolean;
 }
 
-export function buildSetupPlan(input: SetupPlanInput): SetupPlan;
+export function resolveSetupPlan(input: SetupPlanInput): SetupPlan;
 ```
 
-Rules:
+The planner MUST be pure. It receives validated IDs and returns a deterministic plan. It performs no reads or writes.
 
-1. `mcpOnly` wins over agent selection.
-2. `allAgents` uses all declared global setup integrations.
-3. valid saved selection maps selected agent IDs to declared integration IDs.
-4. missing selection produces no agent integrations.
-5. duplicate integrations are de-duplicated deterministically.
-6. output order follows a stable registry order.
-7. `writeProjectFiles` is always `false`.
+`projectWrites` is intentionally an empty tuple/array and acts as an assertion of ownership.
 
-Conflicting `--mcp-only --all-agents` should be rejected during CLI option validation.
+### 4.3 `code-intel/core/src/cli/setup-selection.ts`
 
-### 4.3 New `cli/agent-target-selection.ts`
-
-Move repository selection loading and validation out of generic metadata helpers.
+New repository-selection loader and validator.
 
 ```ts
-export interface AgentTargetSelectionLoadResult {
-  state: 'valid' | 'missing' | 'invalid';
-  selection: AgentTargetSelection | null;
-  path: string;
-  errors: string[];
-}
+export type SetupSelectionResult =
+  | {
+      status: 'available';
+      repositoryPath: string;
+      path: string;
+      selection: AgentTargetSelection;
+      validAgentIds: string[];
+      unknownAgentIds: string[];
+    }
+  | {
+      status: 'missing';
+      repositoryPath: string;
+      path: string;
+    }
+  | {
+      status: 'invalid';
+      repositoryPath: string;
+      path: string;
+      reason: string;
+    };
 
-export function loadValidatedAgentTargetSelection(repoDir: string): AgentTargetSelectionLoadResult;
-export function validateAgentTargetSelection(value: unknown): string[];
-export function saveAgentTargetSelectionAtomic(repoDir: string, selection: AgentTargetSelection): void;
+export function loadSetupSelection(repositoryPath: string): SetupSelectionResult;
 ```
 
-Validation includes:
+Validation requirements:
 
-- root object shape;
-- `selectedAgents` array of non-empty strings;
-- no duplicate selected IDs;
-- each selected ID has a matching target;
-- target `agentId` matches the record key;
-- target path passes `isValidRepoRelativeTargetPath()`;
-- format is markdown, text, or json;
-- unknown selected IDs are reported.
+- root value is an object;
+- `selectedAgents` is an array of unique non-empty strings;
+- `targets` is an object;
+- each known selected agent that has a target references a repository-relative path;
+- duplicate IDs are normalized or rejected deterministically;
+- unknown IDs are reported and skipped;
+- malformed JSON produces `invalid`, not `missing`;
+- no fallback to all agents occurs.
 
-Unknown custom agents already persisted by older behavior may remain valid for project generation, but they have no setup integration unless explicitly registered.
+The existing `loadAgentTargets()` may remain permissive for backward compatibility. Setup should use a stricter loader or a shared validated parser.
 
-### 4.4 New `cli/setup-agent-integrations.ts`
+### 4.4 `code-intel/core/src/cli/setup-integrations.ts`
 
-Own setup execution, with injected installers for testing.
+Move installer dispatch behind a typed map.
 
 ```ts
-export type SetupIntegrationStatus =
-  | 'installed'
-  | 'already-present'
-  | 'skipped'
-  | 'failed';
+export type SetupInstaller = () => HookInstallResult;
 
-export interface SetupIntegrationResult {
+export const SETUP_INSTALLERS: Record<AgentSetupIntegrationId, SetupInstaller>;
+
+export interface SetupIntegrationExecution {
   integrationId: AgentSetupIntegrationId;
-  status: SetupIntegrationStatus;
+  result: 'installed' | 'already-present' | 'skipped' | 'failed';
   reason?: string;
 }
 
-export interface SetupInstallerRegistry {
-  install(integrationId: AgentSetupIntegrationId): SetupIntegrationResult;
-}
+export function executeSetupIntegrations(
+  plan: SetupPlan,
+): SetupIntegrationExecution[];
+```
 
-export interface RunSetupOptions {
-  repoDir: string;
+Dry-run must bypass every installer.
+
+Installer functions retain current idempotency, backups, and atomic writes.
+
+### 4.5 `code-intel/core/src/cli/setup-command.ts`
+
+Extract setup orchestration from `app.ts`.
+
+```ts
+export interface SetupCommandOptions {
   completion?: boolean;
   allAgents?: boolean;
   mcpOnly?: boolean;
   dryRun?: boolean;
 }
 
-export async function runSetup(options: RunSetupOptions): Promise<number>;
+export async function runSetupCommand(
+  targetPath: string,
+  options: SetupCommandOptions,
+): Promise<number>;
 ```
 
-`runSetup()` responsibilities:
+Responsibilities:
 
-1. validate repository path;
-2. load selection unless overridden;
-3. build plan;
-4. print plan for dry-run and return without writes;
-5. configure MCP;
-6. invoke only planned global installers;
-7. print one summary;
-8. return nonzero only for invalid selection or failed requested integrations according to established CLI failure policy.
+1. validate target repository path;
+2. process completion-only behavior;
+3. build/execute MCP setup unless dry-run;
+4. load repository selection unless `--all-agents` or `--mcp-only` makes the selection unnecessary for the relevant branch;
+5. resolve the plan;
+6. execute eligible global integrations;
+7. print deterministic summary;
+8. never invoke project rules installers.
 
-Project rules functions are not called from this module.
+### 4.6 `code-intel/core/src/cli/app.ts`
 
-### 4.5 `cli/app.ts`
-
-Keep commander registration thin.
-
-Replace the inline setup action with:
+Retain only Commander registration and argument normalization:
 
 ```ts
 program
   .command('setup')
-  .argument('[path]', 'Repository whose saved agent selection should be used', '.')
+  .argument('[path]', 'Repository whose saved agent selection is used', '.')
   .option('--completion', ...)
   .option('--all-agents', ...)
   .option('--mcp-only', ...)
   .option('--dry-run', ...)
-  .action(async (targetPath, opts) => {
-    process.exitCode = await runSetup({
-      repoDir: path.resolve(targetPath),
-      ...opts,
-    });
-  });
+  .action((targetPath, options) => runSetupCommand(targetPath, options));
 ```
 
-Remove all project-scoped `installRulesFile()` invocations from setup.
+The setup registration MUST NOT add an analysis reconfiguration option.
 
-If `installRulesFile()` has no remaining owner after removal, delete it and its setup-only constants. Context content remains owned by `context-writer.ts`.
+---
 
-### 4.6 `cli/context-writer.ts`
+## 5. Setup control flow
 
-No broad target list is allowed.
-
-Continue accepting an explicit `AgentTargetConfig[]` resolved from saved selection.
-
-Add or preserve assertions that only passed targets are written.
-
-Do not introduce fallback to `LEGACY_CONTEXT_TARGETS` when a saved selection exists.
-
-### 4.7 `storage/metadata.ts`
-
-The raw path helper may remain for compatibility, but setup should use validated selection APIs.
-
-`saveAgentTargets()` should become atomic or delegate to `saveAgentTargetSelectionAtomic()`.
-
-### 4.8 Analyze reselection
-
-Add `configureAgents?: boolean` to `analyzeWorkspace` options and `--configure-agents` to the command.
-
-Modify `getOrCreateAgentTargets()`:
-
-```ts
-async function getOrCreateAgentTargets(
-  workspaceRoot: string,
-  options: { silent?: boolean; forceConfigure?: boolean }
-): Promise<AgentTargetConfig[]>;
-```
-
-When `forceConfigure` is true:
-
-- ignore the existing selection for prompting purposes;
-- prompt again;
-- atomically replace the saved selection;
-- return only newly selected targets.
-
-Removed targets are no longer updated, but their files are not deleted.
-
-## 5. Agent integration registry
-
-A setup integration is global and optional. A project target is repository-scoped. They are separate fields.
-
-Example mapping:
-
-```ts
-const AGENT_OPTIONS = [
-  {
-    id: 'claude',
-    label: 'Claude Code',
-    builtinTarget: { path: 'CLAUDE.md', ... },
-    setupIntegrations: ['claude-hook'],
-  },
-  {
-    id: 'cursor',
-    label: 'Cursor',
-    builtinTarget: { path: '.cursor/rules/code-intel.mdc', ... },
-    setupIntegrations: ['cursor-hook'],
-  },
-  {
-    id: 'copilot',
-    label: 'GitHub Copilot',
-    builtinTarget: { path: '.github/copilot-instructions.md', ... },
-    setupIntegrations: ['copilot-hook'],
-  },
-  {
-    id: 'kilocode',
-    label: 'Kilo Code',
-    builtinTarget: { path: 'AGENTS.md', ... },
-    setupIntegrations: [],
-  },
-];
-```
-
-The Kilo example demonstrates the ownership split: analyze writes its selected target; setup does not create `.kilocode` merely because Kilo is supported.
-
-## 6. MCP behavior
-
-MCP remains independent and should be represented as a separate setup step rather than an agent integration ID.
-
-Dry-run must render MCP planned state but invoke no MCP write.
-
-The current Claude Desktop config write remains idempotent and should be extracted behind an injectable helper for tests.
-
-## 7. Legacy file diagnostics
-
-Add a read-only known-path scanner:
-
-```ts
-export interface LegacyAgentFileDiagnostic {
-  path: string;
-  associatedAgentIds: string[];
-  selected: boolean;
-}
-
-export function findLegacyAgentFiles(repoDir: string, selectedAgentIds: string[]): LegacyAgentFileDiagnostic[];
-```
-
-This scanner must not create directories and must not delete files.
-
-Known paths include historical setup outputs. Diagnostics are informational.
-
-## 8. Setup execution flow
+### 5.1 Default setup
 
 ```text
-Resolve repo path
-      ↓
-Validate CLI option combination
-      ↓
-Load and validate saved selection
-      ↓
-Build pure SetupPlan
-      ↓
-Dry-run? ── yes ──> print plan; zero writes
-      ↓ no
-Configure MCP unless disabled by command mode
-      ↓
-For each planned integration ID
-      ↓
-Invoke mapped global installer
-      ↓
-Collect results
-      ↓
-Scan legacy project files read-only
-      ↓
-Print summary
+resolve repository path
+  ↓
+validate directory
+  ↓
+build MCP plan
+  ↓
+load .code-intel/agent-targets.json
+  ├─ available → validate IDs → resolve selected integration plan
+  ├─ missing   → MCP only + guidance
+  └─ invalid   → MCP status + fail-closed agent result
+  ↓
+execute selected global integrations
+  ↓
+print summary
 ```
 
-No branch in this flow writes a repository instruction file.
+### 5.2 MCP-only
 
-## 9. Failure semantics
+```text
+resolve repository path
+  ↓
+configure/display MCP
+  ↓
+skip selection loader
+  ↓
+skip all agent installers
+```
 
-### Invalid target path
+### 5.3 All-agents override
 
-No agent installer runs. MCP behavior should be planned before write; preferred implementation validates selection before any write and returns an error, keeping the command fully plan-first.
+```text
+resolve repository path
+  ↓
+configure/display MCP
+  ↓
+resolve every registered global integration
+  ↓
+execute global installers
+  ↓
+perform zero repository target writes
+```
 
-### Installer error
+`--all-agents` does not modify saved selection.
 
-Return a structured failed result and continue other selected integrations. Final exit status is nonzero if any requested integration failed unexpectedly.
+### 5.4 Dry-run
+
+```text
+resolve repository path
+  ↓
+read/validate saved selection when needed
+  ↓
+resolve full plan
+  ↓
+print plan
+  ↓
+zero writes
+```
+
+No MCP config, backup file, hook, plugin, completion file, or repository file may be written.
+
+---
+
+## 6. Analyze behavior
+
+No new analyze behavior is required.
+
+The following existing functions remain the owner of selection creation and reuse:
+
+```ts
+promptForAgentTargets(workspaceRoot)
+getOrCreateAgentTargets(workspaceRoot, silent)
+loadAgentTargets(workspaceRoot)
+saveAgentTargets(workspaceRoot, selection)
+writeContextFiles(...)
+```
+
+Version 1.0.10 must not add:
+
+```text
+code-intel analyze --configure-agents
+code-intel analyze --agents
+code-intel agent configure
+```
+
+Any future reselection behavior requires a separate proposal.
+
+---
+
+## 7. Project-file removal from setup
+
+Remove the setup-only control flow that invokes `installRulesFile()` for:
+
+```text
+.clinerules
+.windsurfrules
+.kilocode/rules/code-intel-rules.md
+.agents/rules/code-intel-rules.md
+AGENTS.md
+```
+
+The generic helper may be removed if no other runtime path needs it. If retained for another purpose, it must not be reachable from `runSetupCommand()`.
+
+Setup may inspect known legacy paths for diagnostics, but inspection must be read-only.
+
+---
+
+## 8. Integration result model
+
+Use a stable result shape:
+
+```ts
+export interface SetupSummary {
+  repositoryPath: string;
+  selectionSource: 'saved' | 'missing' | 'invalid' | 'all-agents';
+  selectedAgentIds: string[];
+  unknownAgentIds: string[];
+  mcp: {
+    result: 'installed' | 'updated' | 'already-present' | 'displayed' | 'skipped' | 'failed';
+    reason?: string;
+  };
+  integrations: SetupIntegrationExecution[];
+  projectFilesWritten: [];
+  dryRun: boolean;
+}
+```
+
+This can remain internal in 1.0.10 but should be returned by orchestration for deterministic testing.
+
+---
+
+## 9. Error and fallback semantics
 
 ### Missing selection
 
-Not an error for MCP. Agent section is skipped with guidance.
+Return successful MCP status and an agent-integration skip with guidance. Do not fail the entire command solely because analysis has not yet saved agents.
 
-### Unsupported selected agent
+### Malformed selection
 
-Not an error if the agent has no global setup integration. Report that its project instructions are managed by analyze.
+Do not execute agent installers. Return a non-zero status or clearly classified partial-failure status after reporting MCP outcome. Never broaden scope.
 
-### Option conflict
+### Unknown agents
 
-`--all-agents` plus `--mcp-only` returns usage error before filesystem writes.
+Skip and report them. Known selected agents remain eligible.
 
-## 10. Migration
+### Installer failure
 
-No storage schema migration is required.
+Continue independent installers and summarize failures. Do not roll back previously installed global integrations.
 
-Existing selection JSON is validated at runtime.
+### Invalid repository path
 
-Existing project files remain untouched.
+Fail before selection or agent writes. Dry-run also requires a valid repository path.
 
-Existing global hooks remain untouched when no longer selected.
+### Existing project files
 
-The behavioral migration is documented:
+Never modify or delete them from setup. Report legacy unselected files only as diagnostics.
 
-```text
-Run analyze first to save repository agent selection.
-Then run setup to configure MCP and selected global integrations.
-```
+---
+
+## 10. Compatibility
+
+### Saved state
+
+Current `AgentTargetSelection` JSON remains valid.
+
+### CLI
+
+`code-intel setup` remains the command. New setup-only options are backward-compatible additions.
+
+### Analysis
+
+No new flags, prompts, or state transitions are introduced.
+
+### Project files
+
+Existing files are preserved; setup simply stops managing them.
+
+### Global integrations
+
+Existing hooks/plugins remain idempotent and are not automatically removed.
+
+---
 
 ## 11. Alternatives considered
 
-### Keep installing every agent
+### Alternative A — Let setup prompt for agents
 
-Rejected because it ignores explicit user selection and pollutes repositories.
+Rejected because it creates another source of truth and can diverge from repository context generation.
 
-### Let setup prompt independently
+### Alternative B — Keep broad setup but only skip project files
 
-Rejected because it creates a second source of truth and can diverge from analyze.
+Rejected because global hooks/plugins would still ignore explicit repository selection.
 
-### Let setup write only selected project files
+### Alternative C — Add `analyze --configure-agents`
 
-Rejected because analyze already owns managed context generation and supports custom target paths. Duplicate ownership still risks conflicting content.
+Rejected for this change. The requested correction concerns setup behavior, not expansion of the analysis command surface.
 
-### Delete unselected files automatically
+### Alternative D — Remove all existing unselected global integrations
 
-Rejected as destructive and unsafe for user-authored content.
+Rejected because global configuration can serve multiple repositories and automatic removal may be destructive.
 
-### Detect installed editors and ignore saved selection
+### Alternative E — Use detected installed editors instead of saved selection
 
-Rejected because installation detection does not mean the repository uses that agent.
+Rejected because installed software is not equivalent to repository intent.
 
-### Store selection globally
+---
 
-Rejected because agent usage can differ by repository.
+## 12. Observability
 
-## 12. Test strategy
+Default output should include:
 
-### Unit: setup plan
+```text
+Repository: /workspace/api
+Selection: .code-intel/agent-targets.json
+Selected agents: cursor, copilot
 
-Create `tests/unit/cli/setup-plan.test.ts`.
+MCP:
+  updated: code-intel
 
-Assert:
+Global agent integrations:
+  installed: cursor-hook
+  already present: copilot-hook
+  skipped (unselected): claude-hook, gemini-hook
 
-- selected subset maps to subset integrations;
-- duplicates are removed;
-- missing selection maps to no integrations;
-- `mcpOnly` maps to none;
-- all-agents maps to all registry integrations;
-- `writeProjectFiles` is always false;
-- output order is deterministic.
+Project instruction files:
+  managed by `code-intel analyze`
+  written by setup: none
+```
 
-### Unit: selection validation
+Missing selection output must guide the user to run analysis first.
 
-Create `tests/unit/cli/agent-target-selection.test.ts`.
+Dry-run output must use “would install,” “would skip,” and “would update” language.
 
-Assert malformed shapes, duplicate IDs, mismatched target IDs, unsafe paths, invalid formats, valid custom agents, and atomic save.
+---
 
-### Unit: setup executor
+## 13. Test strategy
 
-Create `tests/unit/cli/setup-agent-integrations.test.ts` with injected fake installers and filesystem.
+### 13.1 Unit tests
 
-Assert only planned installer IDs are called and dry-run calls none.
+#### `tests/unit/cli/setup-plan.test.ts`
 
-### Integration: CLI setup subset
+Verify:
 
-Create `tests/integration/cli/setup-agent-selection.test.ts`.
+- selected IDs map only to their integrations;
+- unselected integrations are skipped;
+- `--all-agents` selects every global integration;
+- `--mcp-only` selects none;
+- project writes are always empty;
+- deterministic ordering;
+- aliases do not duplicate installer execution.
 
-Use isolated HOME and repository temp directories.
+#### `tests/unit/cli/setup-selection.test.ts`
 
-Assert selected subset, no project file creation, missing selection, invalid selection, explicit path, MCP-only, all-agents, and dry-run.
+Verify:
 
-### Integration: analyze reselection
+- valid selection loads;
+- missing file is distinct from malformed JSON;
+- duplicate IDs are handled deterministically;
+- unknown IDs are reported;
+- invalid target paths fail validation;
+- no broad fallback.
 
-Extend analyze agent-target integration tests.
+#### `tests/unit/cli/setup-command.test.ts`
 
-Assert `--configure-agents` replaces selection and future setup uses the new set.
+Inject fake MCP writer and installers. Verify:
 
-### Regression: repository hygiene
+- only planned installers execute;
+- dry-run executes none;
+- missing selection executes MCP only;
+- invalid selection executes no agent installer;
+- summary categorization is stable;
+- no project writer dependency exists.
 
-Before and after setup, snapshot the repository tree excluding allowed `.code-intel` state. Assert setup creates none of the forbidden project paths.
+### 13.2 Integration tests
 
-## 13. Documentation
+#### Cursor-only repository
 
-Update:
+Given saved selection `['cursor']`, run setup in a temporary home/repository and assert:
 
-- top-level `README.md`;
-- `code-intel/core/README.md`;
-- CLI help text;
-- `CHANGELOG.md`;
-- `docs/releases/v1.0.10.md`;
-- release readiness checklist.
+- Cursor global integration is eligible;
+- unrelated global installers are not called;
+- `.clinerules`, `.windsurfrules`, `.kilocode`, `.agents`, `AGENTS.md`, and `.github` are not created by setup.
 
-Documentation must clearly separate:
+#### Missing selection
 
-- analyze = repository target selection and files;
-- setup = MCP and selected global integrations.
+Assert MCP behavior plus zero agent/project writes.
 
-## 14. Release gates
+#### Malformed selection
 
-Release validation must run packed CLI behavior with isolated HOME and repository fixtures.
+Assert fail-closed behavior and unchanged files.
 
-Required evidence:
+#### Dry-run
 
-- selected Cursor only does not create `.github`, `.kilocode`, `.agents`, `.clinerules`, `.windsurfrules`, or `AGENTS.md`;
-- missing selection installs no hooks;
-- malformed selection does not install all hooks;
-- `--all-agents` is explicit;
-- dry-run writes nothing;
-- build, tests, package validation, version check, and audit gates pass.
+Snapshot both repository and fake home before/after; assert byte-identical filesystem state.
+
+#### Analyze CLI surface
+
+Assert `code-intel analyze --help` contains no `--configure-agents` or other new reconfiguration option.
+
+### 13.3 Documentation tests
+
+README, core README, changelog, and CLI help must state:
+
+- analysis owns repository target files;
+- setup reads saved selection;
+- setup installs selected global integrations only;
+- setup does not create project rules;
+- no new analysis reconfiguration command is documented.
+
+---
+
+## 14. Release validation
+
+Release Readiness must include:
+
+1. build and type-check;
+2. full unit/integration tests;
+3. packed CLI setup smoke test;
+4. Cursor-only no-project-pollution regression;
+5. missing/malformed selection regression;
+6. dry-run zero-write regression;
+7. CLI help assertion that no agent reconfiguration flag was added;
+8. package metadata/version checks;
+9. high/critical audit gate.
+
+---
+
+## 15. Final architecture
+
+```text
+AGENT_OPTIONS
+  ├─ project target metadata → analyze/context-writer
+  └─ global integration metadata → setup planner
+
+.code-intel/agent-targets.json
+  ├─ analyze reuses selection
+  └─ setup gates global integration eligibility
+
+analyze
+  └─ owns all repository instruction files
+
+setup
+  ├─ MCP configuration
+  ├─ selected global hooks/plugins
+  └─ zero repository instruction writes
+```
+
+The existing agent selection remains stable; this design changes only how setup consumes it.
