@@ -1,4 +1,4 @@
-name: Apply embedding model selector
+name: Clean embedding staging artifacts
 
 on:
   pull_request:
@@ -6,91 +6,29 @@ on:
     paths:
       - .github/workflows/apply-embedding-selector.yml
 
-concurrency:
-  group: embedding-selector-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
-
 permissions:
   contents: write
   pull-requests: read
 
 jobs:
-  apply-and-validate:
+  cleanup:
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Reconstruct and apply patch
+      - name: Remove temporary patch transport files
         shell: bash
         run: |
           set -euo pipefail
-          cat > /tmp/chunks.sha256 <<'EOF'
-          a9c7198d811fe8585cc03a9630072de77e305b7dcf6a9255860748874216a405  .github/patches/embedding-selector.small00
-          1bca0d8ca976154612a970682c4a1c665fb30863a7ef01301860941cf3d9dd6b  .github/patches/embedding-selector.small01
-          677fad3a564b05558a8948a79febdc82a7c19430cf17b2f1ceaadf288fc13326  .github/patches/embedding-selector.small02
-          a727a45d31376be23e180f861cdd7fd2ac230d04f00753962aadc61a782b1f76  .github/patches/embedding-selector.small03
-          a258becca4943612fdfa65c57a3fac2206fd60c8eed2f1429c451659400fa062  .github/patches/embedding-selector.small04
-          870a2db72d27bd844b8533f8f0d41220efdcd3210feae05505aa101d042bfae6  .github/patches/embedding-selector.small05
-          e45eafd4cbbd7286f99ac8a82fd32684c83ecbb80c72d87114a7e33bd291eae8  .github/patches/embedding-selector.small06
-          ecc08c509007b36deaba3abcc245ca61c8465fbbe70f006c84ac7d1f300ee796  .github/patches/embedding-selector.small07
-          a51df3c9e4fd0300fdfbad76f0358334ba6c96f078c4426543d45a8870322a75  .github/patches/embedding-selector.small08
-          86bec2b451bc56774a786f3de78113625dd36fb2fbc94227472ed7ca267a53df  .github/patches/embedding-selector.small09
-          c7b9c62e73ced86355316541dcaf1849dd50b1c1e53bb7f874ca7724bc0bc773  .github/patches/embedding-selector.small10
-          aa22a9fdf5dbed9a25afde335605a7fff3f4e083fafc5743297a902d3d1eb0e4  .github/patches/embedding-selector.small11
-          26cdbe6310fedf6e075a3a8314bfabe0871acc902c2f95abed6b54a481f80442  .github/patches/embedding-selector.small12
-          e77ebc2ef9ef346f8a123a096f907c256a52f1eb406c582759bc6937aa7437b0  .github/patches/embedding-selector.small13
-          9f750a12acc27f1edd71a5e3f9f08b9ff20e2106334ebec20cd6282389b40d65  .github/patches/embedding-selector.small14
-          c3a784d7110d4106abe5bafde4c638e26a3d330e6280c3d74a414d26d3cd00e5  .github/patches/embedding-selector.small15
-          EOF
-          sha256sum -c /tmp/chunks.sha256
-          cat .github/patches/embedding-selector.small{00..15} > /tmp/embedding-selector.patch.gz.b64
-          echo 'aba0362b166d1521a3f1fafc9eac210ac113fb5963065033e2f889b1bf84a1e0  /tmp/embedding-selector.patch.gz.b64' | sha256sum -c -
-          base64 -d /tmp/embedding-selector.patch.gz.b64 | gzip -d > /tmp/embedding-selector.patch
-          echo 'dc74fed1b7ea5c92f379d9ff92048f37af5eda5244176d3305ee8f3feadddafa  /tmp/embedding-selector.patch' | sha256sum -c -
-          git apply --check /tmp/embedding-selector.patch
-          git apply /tmp/embedding-selector.patch
-
-      - name: Install dependencies
-        run: npm ci --legacy-peer-deps --ignore-scripts --include=optional
-
-      - name: Typecheck core
-        run: npm run typecheck --workspace=code-intel/core
-
-      - name: Build web
-        run: npm run build --workspace=code-intel/web
-
-      - name: Compile core tests
-        run: npx tsc -b code-intel/core/tsconfig.test.json
-
-      - name: Run core selector tests
-        shell: bash
-        run: |
-          NODE_ENV=test node --test --test-concurrency=1 \
-            code-intel/core/dist-tests/tests/unit/search/embedding-models.test.js \
-            code-intel/core/dist-tests/tests/unit/search/vector-index.test.js \
-            code-intel/core/dist-tests/tests/unit/cli/config-manager-embedding-model.test.js
-
-      - name: Run web selector test
-        run: npm run test --workspace=code-intel/web -- --run src/pages/SettingsPage.test.tsx
-
-      - name: Commit validated implementation and remove staging files
-        shell: bash
-        run: |
-          set -euo pipefail
+          rm -f .github/patches/v1-0-10-*
           rm -f .github/patches/embedding-selector.*
+          rm -f .github/workflows/apply-v1-0-10-four-proposals.yml
           rm -f .github/workflows/apply-embedding-selector.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "feat(embedding): add model selector and runtime catalog"
+          git commit -m "chore: remove v1.0.10 patch staging artifacts"
           git push origin HEAD:${{ github.event.pull_request.head.ref }}
