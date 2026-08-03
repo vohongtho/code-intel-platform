@@ -266,7 +266,7 @@ export function publishIndexGeneration(
   repoDir: string,
   generation: IndexGeneration,
   metadata: unknown,
-  options: { vectorRequired?: boolean; keepGenerations?: number } = {},
+  options: { vectorRequired?: boolean; keepGenerations?: number; staleStagingMs?: number } = {},
 ): IndexGenerationManifest {
   assertArtifact(generation.graphDbPath, 'graph.db');
   assertArtifact(generation.bm25DbPath, 'bm25.db');
@@ -305,7 +305,12 @@ export function publishIndexGeneration(
     artifactDetails,
   };
   atomicWriteJson(getCurrentManifestPath(repoDir), manifest);
-  cleanupOldGenerations(repoDir, options.keepGenerations ?? 2, generation.generationId);
+  cleanupOldGenerations(
+    repoDir,
+    options.keepGenerations ?? 2,
+    generation.generationId,
+    options.staleStagingMs,
+  );
   return manifest;
 }
 
@@ -313,7 +318,12 @@ export function abortIndexGeneration(generation: IndexGeneration): void {
   fs.rmSync(generation.stagingDir, { recursive: true, force: true });
 }
 
-export function cleanupOldGenerations(repoDir: string, keep: number, currentGenerationId?: string): void {
+export function cleanupOldGenerations(
+  repoDir: string,
+  keep: number,
+  currentGenerationId?: string,
+  staleStagingMs = DEFAULT_STALE_STAGING_MS,
+): void {
   const root = getGenerationsDir(repoDir);
   if (!fs.existsSync(root)) return;
   const entries = fs.readdirSync(root, { withFileTypes: true })
@@ -329,7 +339,7 @@ export function cleanupOldGenerations(repoDir: string, keep: number, currentGene
   for (const entry of entries) {
     if (!retained.has(entry.name)) fs.rmSync(entry.path, { recursive: true, force: true });
   }
-  cleanupStaleStaging(repoDir);
+  cleanupStaleStaging(repoDir, { staleAfterMs: staleStagingMs });
 }
 
 export function migrateLegacyIndexToGeneration(repoDir: string): IndexGenerationManifest | null {

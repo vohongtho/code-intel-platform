@@ -46,6 +46,10 @@ export interface CodeIntelConfig {
     ignorePatterns: string[];
     incrementalByDefault: boolean;
   };
+  index: {
+    keepGenerations: number;
+    staleStagingHours: number;
+  };
   serve: {
     defaultPort: number;
     openBrowser: boolean;
@@ -84,6 +88,10 @@ export const DEFAULT_CONFIG: CodeIntelConfig = {
     maxFileSizeKB: 512,
     ignorePatterns: [],
     incrementalByDefault: false,
+  },
+  index: {
+    keepGenerations: 2,
+    staleStagingHours: 24,
   },
   serve: {
     defaultPort: 4747,

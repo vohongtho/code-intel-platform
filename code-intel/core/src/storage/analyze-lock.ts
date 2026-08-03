@@ -36,7 +36,7 @@ export function getAnalyzeLockPath(repoDir: string): string {
   return path.join(path.resolve(repoDir), '.code-intel', 'analyze.lock');
 }
 
-function readOwner(lockPath: string): AnalyzeLockOwner | null {
+export function readAnalyzeLockOwner(lockPath: string): AnalyzeLockOwner | null {
   try {
     const value = JSON.parse(fs.readFileSync(lockPath, 'utf8')) as AnalyzeLockOwner;
     if (value.version !== 1 || !value.token || !Number.isInteger(value.pid) || !value.hostname || !value.startedAt) {
@@ -48,7 +48,7 @@ function readOwner(lockPath: string): AnalyzeLockOwner | null {
   }
 }
 
-function processAlive(pid: number): boolean {
+export function isProcessAlive(pid: number): boolean {
   if (pid <= 0) return false;
   try {
     process.kill(pid, 0);
@@ -77,7 +77,7 @@ function canRecoverStaleLock(
   // A local process that is still alive always owns its lock, regardless of age.
   // Cross-host ownership cannot be verified safely and therefore fails closed.
   if (owner.hostname !== os.hostname()) return false;
-  return !processAlive(owner.pid);
+  return !isProcessAlive(owner.pid);
 }
 
 function atomicRewrite(lockPath: string, owner: AnalyzeLockOwner): void {
@@ -118,19 +118,19 @@ export function acquireAnalyzeLock(
         lockPath,
         owner,
         update(patch) {
-          const current = readOwner(lockPath);
+          const current = readAnalyzeLockOwner(lockPath);
           if (!current || current.token !== owner.token) return;
           Object.assign(owner, patch);
           atomicRewrite(lockPath, owner);
         },
         release() {
-          const current = readOwner(lockPath);
+          const current = readAnalyzeLockOwner(lockPath);
           if (current?.token === owner.token) fs.rmSync(lockPath, { force: true });
         },
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      const existing = readOwner(lockPath);
+      const existing = readAnalyzeLockOwner(lockPath);
       if (attempt === 0 && canRecoverStaleLock(lockPath, existing, staleAfterMs)) {
         fs.rmSync(lockPath, { force: true });
         continue;
@@ -138,5 +138,5 @@ export function acquireAnalyzeLock(
       throw new AnalysisAlreadyRunningError(existing, lockPath);
     }
   }
-  throw new AnalysisAlreadyRunningError(readOwner(lockPath), lockPath);
+  throw new AnalysisAlreadyRunningError(readAnalyzeLockOwner(lockPath), lockPath);
 }

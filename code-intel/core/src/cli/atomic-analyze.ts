@@ -20,6 +20,7 @@ import {
 } from '../storage/index-snapshot.js';
 import { planAtomicAnalysis } from '../pipeline/analysis-plan.js';
 import type { IndexMetadata } from '../storage/metadata.js';
+import { DEFAULT_CONFIG, loadConfig } from './init-wizard.js';
 
 const ANALYZE_VALUE_OPTIONS = new Set([
   '--name', '--llm-provider', '--llm-model', '--llm-base-url', '--llm-api-key',
@@ -94,11 +95,25 @@ export function runAtomicAnalyze(args: string[], binUrl: URL): number {
   let lock: ReturnType<typeof acquireAnalyzeLock> | null = null;
   try {
     const snapshot = resolveIndexSnapshot(workspaceRoot);
+    const indexConfig = loadConfig()?.index ?? DEFAULT_CONFIG.index;
+    const staleStagingMs = Math.max(1, indexConfig.staleStagingHours) * 60 * 60 * 1000;
     lock = acquireAnalyzeLock(workspaceRoot, {
+      staleAfterMs: staleStagingMs,
       baseGenerationId: snapshot && !snapshot.legacy ? snapshot.generationId : undefined,
     });
     const previous = loadSnapshotMetadata(snapshot);
     const plan = planAtomicAnalysis(workspaceRoot, args, previous, snapshot);
+    if (args.includes('--verbose')) {
+      console.log('  Analysis plan:');
+      console.log(`    mode: ${plan.mode}`);
+      console.log(`    reason: ${plan.reason}`);
+      if (plan.mode === 'publish') {
+        console.log(`    graph: ${plan.graph}`);
+        console.log(`    bm25: ${plan.bm25}`);
+        console.log(`    vector: ${plan.vector}`);
+        console.log(`    seed artifacts: ${plan.seedArtifacts.join(', ') || '(none)'}`);
+      }
+    }
 
     if (plan.mode === 'passthrough') {
       return runChild(args, binUrl);
@@ -113,7 +128,10 @@ export function runAtomicAnalyze(args: string[], binUrl: URL): number {
       baseGenerationId: snapshot && !snapshot.legacy ? snapshot.generationId : undefined,
     });
     lock.update({ stagingGenerationId: generation.generationId });
-    seedIndexGeneration(workspaceRoot, generation, snapshot, plan.seedArtifacts);
+    const cloneModes = seedIndexGeneration(workspaceRoot, generation, snapshot, plan.seedArtifacts);
+    if (args.includes('--verbose') && Object.keys(cloneModes).length > 0) {
+      console.log(`    clone modes: ${Object.entries(cloneModes).map(([name, mode]) => `${name}=${mode}`).join(', ')}`);
+    }
     const childArgs = [...args];
 
     if (
@@ -139,6 +157,8 @@ export function runAtomicAnalyze(args: string[], binUrl: URL): number {
       metadata.generationId = generation.generationId;
       publishIndexGeneration(workspaceRoot, generation, metadata, {
         vectorRequired: Boolean(metadata.embeddings?.enabled && metadata.embeddings.status === 'ready'),
+        keepGenerations: Math.max(1, Math.floor(indexConfig.keepGenerations)),
+        staleStagingMs,
       });
       return 0;
     } catch (error) {
