@@ -34,6 +34,7 @@ jobs:
           git apply /tmp/pinned-readers.patch
           python3 <<'PY'
           from pathlib import Path
+
           test = Path('code-intel/core/tests/unit/pipeline/analysis-plan.test.ts')
           text = test.read_text()
           old = "repositoryRoot: root, generationId: 'g1', generationDir: dir, legacy: false, manifest: null,"
@@ -41,6 +42,14 @@ jobs:
           if old not in text:
               raise SystemExit('analysis plan fixture anchor missing')
           test.write_text(text.replace(old, new, 1))
+
+          trust = Path('code-intel/core/src/storage/index-trust.ts')
+          trust_text = trust.read_text()
+          trust_old = "const legacy = paths.legacy || metadata.schemaVersion === undefined || metadata.indexVersion === undefined;"
+          trust_new = "const legacy = metadata.schemaVersion === undefined || metadata.indexVersion === undefined;"
+          if trust_old not in trust_text:
+              raise SystemExit('index trust compatibility anchor missing')
+          trust.write_text(trust_text.replace(trust_old, trust_new, 1))
           PY
           rm .github/patches/v1-0-10-pinned-readers.patch.gz.b64
           rm .github/workflows/apply-pinned-readers.yml
