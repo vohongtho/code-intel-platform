@@ -1,0 +1,88 @@
+name: Apply v1.0.10 four proposals
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/patches/v1-0-10-four-proposals.part00
+      - .github/patches/v1-0-10-four-proposals.part01
+      - .github/patches/v1-0-10-four-proposals.part02
+      - .github/patches/v1-0-10-four-proposals.part03
+      - .github/patches/v1-0-10-four-proposals.part04
+      - .github/patches/v1-0-10-four-proposals.part05
+      - .github/workflows/apply-v1-0-10-four-proposals.yml
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  apply-and-validate:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Reconstruct and apply implementation patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .github/patches/v1-0-10-four-proposals.part{00,01,02,03,04,05} > /tmp/four-proposals.patch.gz.b64
+          echo 'a9b447dac33314606494e5e5c6b7798c095b2f5d06c9652e966afabe495e1b61  /tmp/four-proposals.patch.gz.b64' | sha256sum -c -
+          base64 -d /tmp/four-proposals.patch.gz.b64 | gzip -d > /tmp/four-proposals.patch
+          echo '86beebab9c4bd0081f828a94976bd1f447b2b0d139338c248d096c2b26e39220  /tmp/four-proposals.patch' | sha256sum -c -
+          git apply --check /tmp/four-proposals.patch
+          git apply /tmp/four-proposals.patch
+          rm .github/patches/v1-0-10-four-proposals.part{00,01,02,03,04,05}
+          rm .github/workflows/apply-v1-0-10-four-proposals.yml
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps --ignore-scripts --include=optional
+
+      - name: Rebuild required native modules
+        run: npm rebuild tree-sitter tree-sitter-typescript tree-sitter-javascript tree-sitter-python tree-sitter-java tree-sitter-go tree-sitter-rust tree-sitter-c tree-sitter-cpp tree-sitter-c-sharp tree-sitter-php tree-sitter-ruby tree-sitter-kotlin tree-sitter-swift @ladybugdb/core onnxruntime-node sharp protobufjs || true
+
+      - name: Typecheck core
+        run: npm run typecheck --workspace=code-intel/core
+
+      - name: Test Web UI changes
+        run: npm test --workspace=code-intel/web -- --run
+
+      - name: Build Web UI
+        run: npm run build --workspace=code-intel/web
+
+      - name: Compile core tests
+        run: npx tsc -b code-intel/core/tsconfig.test.json
+
+      - name: Run targeted core regressions
+        shell: bash
+        run: |
+          NODE_ENV=test node --test --test-concurrency=1 \
+            code-intel/core/dist-tests/tests/unit/search/embedding-model-registry.test.js \
+            code-intel/core/dist-tests/tests/unit/search/vector-index.test.js \
+            code-intel/core/dist-tests/tests/unit/auth/session-store.test.js \
+            code-intel/core/dist-tests/tests/integration/http/persistent-session-restart.test.js \
+            code-intel/core/dist-tests/tests/unit/storage/repository-management.test.js \
+            code-intel/core/dist-tests/tests/unit/multi-repo/group-management.test.js \
+            code-intel/core/dist-tests/tests/integration/http/management-api.test.js
+
+      - name: Build core
+        run: npm run build --workspace=code-intel/core
+
+      - name: Commit validated implementation
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: implement embedding, sessions, and repo management"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
