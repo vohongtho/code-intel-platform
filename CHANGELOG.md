@@ -19,6 +19,19 @@ All notable changes to this project are documented in this file.
 - Setup no longer creates project-scoped `.cursor`, `.github`, `.kilocode`, `.agents`, `.clinerules`, `.windsurfrules`, or `AGENTS.md` files.
 - Added `setup [path]`, `--mcp-only`, `--all-agents`, and `--dry-run` behavior.
 
+### 🧠 Embedding model selector
+
+- Replaced the free-text embedding model setting with a backend-owned model catalog and Web UI pull-down.
+- Runtime model loading, vector dimension, fingerprint validation, and rebuild decisions now use the selected catalog descriptor.
+- Preserved migration compatibility for the legacy `all-MiniLM-L6-v2` model alias.
+
+### 🔐 Persistent remembered sessions
+
+- Replaced the process-local session `Map` with hashed records in the users SQLite database.
+- Remember-me logins use a 12-hour TTL and now survive `code-intel serve` restarts; normal sessions retain the configurable 8-hour default.
+- Logout, password reset, user disable, and user deletion revoke server-side sessions, while current roles are resolved on every request.
+- Older cookies require one re-login because raw cookie tokens are never imported or persisted during migration.
+
 ---
 
 ## [1.0.9] - 2026-07-31

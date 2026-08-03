@@ -37,10 +37,14 @@ import {
   buildSessionCookie,
   clearSessionCookie,
   createSession,
+  deleteSession,
+  countActiveSessions,
+  parseCookies,
+  SESSION_COOKIE_NAME,
   verifyPassword,
-  sessionStore,
 } from '../auth/middleware.js';
 import { getOrCreateUsersDB } from '../auth/users-db.js';
+import { getOrCreateSessionStore } from '../auth/session-store.js';
 import type { Role } from '../auth/users-db.js';
 import { getOrCreateJobsDB } from '../jobs/jobs-db.js';
 import type { JobStatus } from '../jobs/jobs-db.js';
@@ -148,6 +152,16 @@ export function createApp(
 ): express.Application {
   const app = express();
   const startupSnapshot = pinnedSnapshot ?? (workspaceRoot ? resolveIndexSnapshot(workspaceRoot) : null);
+  const shouldInitializeSessionStore =
+    process.env['NODE_ENV'] !== 'test' || Boolean(process.env['CODE_INTEL_USERS_DB_PATH']);
+  if (shouldInitializeSessionStore) {
+    try {
+      getOrCreateSessionStore();
+    } catch (error) {
+      Logger.warn('[auth] Persistent session store failed to initialize; session authentication will fail closed',
+        error instanceof Error ? error.message : String(error));
+    }
+  }
 
   // Trust proxy (for correct IP detection behind nginx/caddy)
   app.set('trust proxy', 1);
@@ -381,7 +395,7 @@ export function createApp(
       // Update live gauges before scrape
       pipelineNodesTotal.set({ repo: repoName }, graph.size.nodes);
       pipelineEdgesTotal.set({ repo: repoName }, graph.size.edges);
-      activeSessionsTotal.set(sessionStore.size);
+      activeSessionsTotal.set(shouldInitializeSessionStore ? countActiveSessions() : 0);
       const output = await metricsRegistry.metrics();
       res.set('Content-Type', metricsRegistry.contentType);
       res.end(output);
@@ -458,9 +472,22 @@ export function createApp(
       return;
     }
     const user = db.createUser(username, password, 'admin');
-    const { sessionId, ttlMs } = createSession({ id: user.id, username: user.username, role: user.role });
-    res.setHeader('Set-Cookie', buildSessionCookie(sessionId, ttlMs));
-    res.status(201).json({ user: { id: user.id, username: user.username, role: user.role } });
+    try {
+      const { sessionId, ttlMs } = createSession({ id: user.id, username: user.username, role: user.role });
+      res.setHeader('Set-Cookie', buildSessionCookie(sessionId, ttlMs));
+      res.status(201).json({ user: { id: user.id, username: user.username, role: user.role } });
+    } catch (error) {
+      Logger.error('[auth] Failed to persist bootstrap session', error);
+      res.status(503).json({
+        error: {
+          code: ErrorCodes.INTERNAL_ERROR,
+          message: 'Authentication session storage is unavailable',
+          hint: 'Retry after the local authentication database is available',
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
   });
 
   app.post('/auth/login', async (req: Request, res: Response) => {
@@ -512,14 +539,51 @@ export function createApp(
       return;
     }
 
-    const { sessionId, ttlMs } = createSession({ id: user.id, username: user.username, role: user.role }, rememberMe === true);
-    db.logAccess(user.id, '/auth/login', 'login', 'allow', req.ip ?? 'unknown');
-    authAttemptsTotal.inc({ method: 'local', outcome: 'success' });
-    res.setHeader('Set-Cookie', buildSessionCookie(sessionId, ttlMs));
-    res.json({ user: { id: user.id, username: user.username, role: user.role } });
+    try {
+      const { sessionId, ttlMs } = createSession(
+        { id: user.id, username: user.username, role: user.role },
+        rememberMe === true,
+      );
+      db.logAccess(user.id, '/auth/login', 'login', 'allow', req.ip ?? 'unknown');
+      authAttemptsTotal.inc({ method: 'local', outcome: 'success' });
+      res.setHeader('Set-Cookie', buildSessionCookie(sessionId, ttlMs));
+      res.json({ user: { id: user.id, username: user.username, role: user.role } });
+    } catch (error) {
+      Logger.error('[auth] Failed to persist login session', error);
+      db.logAccess(user.id, '/auth/login', 'login', 'deny', req.ip ?? 'unknown');
+      authAttemptsTotal.inc({ method: 'local', outcome: 'failure' });
+      res.status(503).json({
+        error: {
+          code: ErrorCodes.INTERNAL_ERROR,
+          message: 'Authentication session storage is unavailable',
+          hint: 'Retry after the local authentication database is available',
+          requestId: req.requestId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
   });
 
   app.post('/auth/logout', (req: Request, res: Response) => {
+    const rawToken = parseCookies(req.headers['cookie'] ?? '')[SESSION_COOKIE_NAME];
+    if (rawToken) {
+      try {
+        deleteSession(rawToken);
+      } catch (error) {
+        Logger.warn('[auth] Persistent session revocation failed during logout',
+          error instanceof Error ? error.message : String(error));
+        res.status(503).json({
+          error: {
+            code: ErrorCodes.INTERNAL_ERROR,
+            message: 'Logout could not revoke the server-side session',
+            hint: 'Retry logout after the local authentication database is available',
+            requestId: req.requestId,
+            timestamp: new Date().toISOString(),
+          },
+        });
+        return;
+      }
+    }
     res.setHeader('Set-Cookie', clearSessionCookie());
     res.json({ message: 'Logged out successfully' });
   });

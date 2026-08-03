@@ -5,7 +5,6 @@ import {
   requireRole,
   buildSessionCookie,
   clearSessionCookie,
-  sessionStore,
 } from '../../../src/auth/middleware.js';
 import type { Request, Response, NextFunction } from 'express';
 
