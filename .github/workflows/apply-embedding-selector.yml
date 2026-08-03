@@ -1,13 +1,69 @@
 name: Apply embedding model selector
 
 on:
-  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/patches/embedding-selector.part00
+      - .github/patches/embedding-selector.part01
+      - .github/patches/embedding-selector.part02
+      - .github/patches/embedding-selector.part03
+      - .github/workflows/apply-embedding-selector.yml
 
 permissions:
-  contents: read
+  contents: write
+  pull-requests: read
 
 jobs:
-  retired:
+  apply-and-validate:
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - run: echo "Retired; implementation is validated by apply-v1-0-10-four-proposals.yml"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Reconstruct and apply patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '4385eb580f49d7d86b30a20345163e4d07bef37bb50bfde77cf110d1bc1ca428  .github/patches/embedding-selector.part00' | sha256sum -c -
+          echo '4d4ffbb6c894ac368ea013b03d4523fdc1b6adb0e0e037138f59183d3f41cab1  .github/patches/embedding-selector.part01' | sha256sum -c -
+          echo '83675485bfaae5d9919c769ec250d7bd8ea49290d66f137d828a6f70fc9d054f  .github/patches/embedding-selector.part02' | sha256sum -c -
+          echo 'c3a784d7110d4106abe5bafde4c638e26a3d330e6280c3d74a414d26d3cd00e5  .github/patches/embedding-selector.part03' | sha256sum -c -
+          cat .github/patches/embedding-selector.part{00,01,02,03} > /tmp/embedding-selector.patch.gz.b64
+          echo 'aba0362b166d1521a3f1fafc9eac210ac113fb5963065033e2f889b1bf84a1e0  /tmp/embedding-selector.patch.gz.b64' | sha256sum -c -
+          base64 -d /tmp/embedding-selector.patch.gz.b64 | gzip -d > /tmp/embedding-selector.patch
+          echo 'dc74fed1b7ea5c92f379d9ff92048f37af5eda5244176d3305ee8f3feadddafa  /tmp/embedding-selector.patch' | sha256sum -c -
+          git apply --check /tmp/embedding-selector.patch
+          git apply /tmp/embedding-selector.patch
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps --ignore-scripts --include=optional
+      - name: Typecheck core
+        run: npm run typecheck --workspace=code-intel/core
+      - name: Build web
+        run: npm run build --workspace=code-intel/web
+      - name: Compile core tests
+        run: npx tsc -b code-intel/core/tsconfig.test.json
+      - name: Run core selector tests
+        shell: bash
+        run: |
+          NODE_ENV=test node --test --test-concurrency=1 \
+            code-intel/core/dist-tests/tests/unit/search/embedding-models.test.js \
+            code-intel/core/dist-tests/tests/unit/search/vector-index.test.js \
+            code-intel/core/dist-tests/tests/unit/cli/config-manager-embedding-model.test.js
+      - name: Run web selector test
+        run: npm run test --workspace=code-intel/web -- --run code-intel/web/src/pages/SettingsPage.test.tsx
+      - name: Commit validated implementation
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add code-intel/core code-intel/web
+          git commit -m "feat(embedding): add model selector and runtime catalog"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
