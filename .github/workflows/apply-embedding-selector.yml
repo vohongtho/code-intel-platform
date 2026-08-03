@@ -1,65 +1,13 @@
 name: Apply embedding model selector
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - .github/patches/v1-0-10-embedding-selector.patch.gz.b64
-      - .github/workflows/apply-embedding-selector.yml
+  workflow_dispatch:
 
 permissions:
-  contents: write
-  pull-requests: read
+  contents: read
 
 jobs:
-  apply-and-validate:
-    if: github.event.pull_request.head.repo.full_name == github.repository
+  retired:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.ref }}
-          fetch-depth: 0
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Apply implementation patch
-        shell: bash
-        run: |
-          base64 -d .github/patches/v1-0-10-embedding-selector.patch.gz.b64 | gzip -d > /tmp/embedding-selector.patch
-          git apply --check /tmp/embedding-selector.patch
-          git apply /tmp/embedding-selector.patch
-
-      - name: Install dependencies
-        run: npm ci --legacy-peer-deps --ignore-scripts --include=optional
-
-      - name: Typecheck core
-        run: npm run typecheck --workspace=code-intel/core
-
-      - name: Build web
-        run: npm run build --workspace=code-intel/web
-
-      - name: Compile core tests
-        run: npx tsc -b code-intel/core/tsconfig.test.json
-
-      - name: Run embedding selector tests
-        shell: bash
-        run: |
-          NODE_ENV=test node --test --test-concurrency=1 \
-            code-intel/core/dist-tests/tests/unit/search/embedding-models.test.js \
-            code-intel/core/dist-tests/tests/unit/search/vector-index.test.js \
-            code-intel/core/dist-tests/tests/unit/cli/config-manager-embedding-model.test.js
-          npm run test --workspace=code-intel/web -- --run code-intel/web/src/pages/SettingsPage.test.tsx
-
-      - name: Commit validated implementation
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add code-intel/core code-intel/web
-          git commit -m "feat(embedding): add model selector and runtime catalog"
-          git push origin HEAD:${{ github.event.pull_request.head.ref }}
+      - run: echo "Retired; implementation is validated by apply-v1-0-10-four-proposals.yml"
