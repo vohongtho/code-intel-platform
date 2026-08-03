@@ -1,0 +1,75 @@
+name: Implement Generation V2 from PR
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/implement-generation-v2.yml
+      - .github/workflows/implement-generation-v2-pr.yml
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  implement:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Apply implementation from staged workflow
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          workflow = Path('.github/workflows/implement-generation-v2.yml').read_text()
+          marker = "          python3 <<'PY'\n"
+          start = workflow.index(marker) + len(marker)
+          end = workflow.index("\n          PY", start)
+          script = workflow[start:end]
+          script = '\n'.join(line[10:] if line.startswith('          ') else line for line in script.splitlines())
+          exec(compile(script, 'implement-generation-v2.py', 'exec'))
+          Path('.github/workflows/implement-generation-v2-pr.yml').unlink()
+          PY
+
+      - name: Set package version
+        run: npm version 1.0.10 --workspace=code-intel/core --no-git-tag-version
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck core
+        run: npm run typecheck --workspace=code-intel/core
+
+      - name: Compile and run Generation V2 tests
+        shell: bash
+        run: |
+          npx tsc -b code-intel/core/tsconfig.test.json
+          NODE_ENV=test node --test --test-concurrency=1 \
+            code-intel/core/dist-tests/tests/unit/pipeline/analysis-plan.test.js \
+            code-intel/core/dist-tests/tests/unit/storage/analyze-lock.test.js \
+            code-intel/core/dist-tests/tests/unit/storage/index-snapshot.test.js \
+            code-intel/core/dist-tests/tests/unit/storage/generation-v2.test.js \
+            code-intel/core/dist-tests/tests/unit/storage/index-generation.test.js
+
+      - name: Build core
+        run: npm run build --workspace=code-intel/core
+
+      - name: Commit implementation
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: implement generation v2"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
