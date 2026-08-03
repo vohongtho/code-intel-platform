@@ -1,0 +1,44 @@
+name: Normalize v1.0.10 lockfile
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/normalize-v1-0-10-lockfile.yml
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  normalize:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+      - name: Restore lockfile and update only workspace version
+        shell: bash
+        run: |
+          git show origin/main:package-lock.json > package-lock.json
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const file = 'package-lock.json';
+          const lock = JSON.parse(fs.readFileSync(file, 'utf8'));
+          if (!lock.packages?.['code-intel/core']) {
+            throw new Error('Missing code-intel/core workspace entry');
+          }
+          lock.packages['code-intel/core'].version = '1.0.10';
+          fs.writeFileSync(file, JSON.stringify(lock, null, 2) + '\n');
+          NODE
+          rm .github/workflows/normalize-v1-0-10-lockfile.yml
+      - name: Commit normalized lockfile
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "chore: normalize v1.0.10 lockfile"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
