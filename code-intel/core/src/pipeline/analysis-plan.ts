@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { getChangedFilesSince } from './incremental.js';
+import { detectLanguage } from '../shared/detection.js';
 import type { IndexMetadata } from '../storage/metadata.js';
 import type { IndexArtifactName } from '../storage/index-generation.js';
 import type { IndexSnapshot } from '../storage/index-snapshot.js';
@@ -30,6 +31,15 @@ function normalize(value: string): string {
   return value.replace(/\\/g, '/').replace(/^\.\//, '');
 }
 
+function isIndexRelevantPath(
+  relativePath: string,
+  storedMtimes: Record<string, number>,
+): boolean {
+  const normalized = normalize(relativePath);
+  return Object.prototype.hasOwnProperty.call(storedMtimes, normalized)
+    || detectLanguage(normalized) !== null;
+}
+
 export function detectSourceChangeState(
   repoDir: string,
   metadata: IndexMetadata | null,
@@ -41,24 +51,38 @@ export function detectSourceChangeState(
   if (gitChanged === null) {
     return { kind: 'unknown', changedPaths: [], reason: 'git change detection failed' };
   }
-  const changed = new Set(gitChanged.map(normalize));
-  for (const [relativePath, previousMtime] of Object.entries(metadata.lastAnalyzedMtimes ?? {})) {
-    const normalized = normalize(relativePath);
+
+  const storedMtimes = Object.fromEntries(
+    Object.entries(metadata.lastAnalyzedMtimes ?? {})
+      .map(([relativePath, mtime]) => [normalize(relativePath), mtime]),
+  );
+  const changed = new Set(
+    gitChanged
+      .map(normalize)
+      .filter((relativePath) => isIndexRelevantPath(relativePath, storedMtimes)),
+  );
+
+  for (const [relativePath, previousMtime] of Object.entries(storedMtimes)) {
     try {
-      if (fs.statSync(path.join(repoDir, normalized)).mtimeMs !== previousMtime) changed.add(normalized);
+      if (fs.statSync(path.join(repoDir, relativePath)).mtimeMs !== previousMtime) changed.add(relativePath);
     } catch {
-      changed.add(normalized);
+      changed.add(relativePath);
     }
   }
   const changedPaths = [...changed].sort();
   return changedPaths.length === 0
-    ? { kind: 'unchanged', changedPaths, reason: 'git and stored mtimes report no changes' }
-    : { kind: 'changed', changedPaths, reason: `${changedPaths.length} changed or deleted path(s)` };
+    ? { kind: 'unchanged', changedPaths, reason: 'git and stored mtimes report no source changes' }
+    : { kind: 'changed', changedPaths, reason: `${changedPaths.length} changed or deleted source path(s)` };
 }
 
 function exists(filePath: string | undefined): boolean {
   if (!filePath) return false;
-  try { return fs.statSync(filePath).isFile() && fs.statSync(filePath).size > 0; } catch { return false; }
+  try {
+    const stat = fs.statSync(filePath);
+    return (stat.isFile() && stat.size > 0) || stat.isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function hasArg(args: string[], name: string): boolean {
