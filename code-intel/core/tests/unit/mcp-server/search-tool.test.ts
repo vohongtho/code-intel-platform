@@ -143,4 +143,19 @@ describe('MCP search tool', () => {
     assert.equal(payload.scope?.repoName, 'repo');
     assert.equal(payload.results?.[0]?.name, 'LegacyHit');
   });
+
+  it('fails closed for malformed explicit MCP scope', async () => {
+    const repoPath = mkRepo('mcp-search-bad-scope');
+    saveRegistry([{ id: 'repo-id', name: 'repo', path: repoPath, indexedAt: new Date().toISOString(), stats: { nodes: 1, edges: 0, files: 1 } }]);
+    await writeRepoIndex(repoPath, {
+      indexVersion: 'v1',
+      nodes: [{ id: 'n1', name: 'ScopedHit', filePath: 'src/scoped.ts', content: 'function ScopedHit() {}' }],
+    });
+
+    const result = await dispatchTool('search', { query: 'ScopedHit', scope: { type: 'repo' } }, createKnowledgeGraph(), 'fallback', undefined);
+    assert.equal(result.isError, true);
+    const payload = JSON.parse(result.content[0]?.text ?? '{}') as { error?: string; status?: number };
+    assert.equal(payload.status, 400);
+    assert.match(payload.error ?? '', /scope\.repoId/);
+  });
 });

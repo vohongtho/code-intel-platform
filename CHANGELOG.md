@@ -12,6 +12,12 @@ All notable changes to this project are documented in this file.
 - Added repository-level analysis locking, selective artifact seeding, reflink-first cloning, pinned index snapshots, and stale staging cleanup.
 - Changed known source updates to rebuild graph/BM25 while cloning only the healthy vector database required for incremental vector mutation.
 - Updated index trust verification to read graph, BM25, vector, and metadata from one pinned generation snapshot.
+- Stabilized published-generation ownership: `code-intel serve` now treats published vector artifacts as read-only, degrades to BM25 when vectors are missing/stale/incompatible/corrupt, and reports guidance to run `code-intel analyze --embeddings` instead of rebuilding in place.
+- Hardened staging cleanup so lock-owned, remote-host, recent, or otherwise uncertain `.staging-*` directories are preserved and delete-time ownership is revalidated before removal.
+- Replaced stale analyze-lock `read + rmSync` recovery with an ownership-safe atomic claim protocol; release and manual unlock now remove only the claimed lock instance and fail closed when ownership cannot be proven.
+- Enforced fail-closed explicit scope validation across HTTP, MCP, and query-explain paths: malformed `scope` now returns 400, unknown explicit repo/group targets preserve 404, and malformed MCP scope no longer widens to the default repository.
+- Fixed `code-intel setup [path]` to emit MCP configuration for the resolved selected repository root, not ambient `.`.
+- Fixed true no-op analyze flows so explicit `--name` validation and relink/rename reconciliation still run before exit.
 
 ### 🤖 Agent-aware setup
 

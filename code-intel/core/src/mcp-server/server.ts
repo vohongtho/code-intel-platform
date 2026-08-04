@@ -845,6 +845,13 @@ export async function dispatchTool(
   let activeBm25: Bm25Index | null | undefined;
   let activeVectorDbPath: string | undefined;
   let activeContext: LoadedRepoGraph | null = null;
+  if (name === 'search' && a.scope !== undefined) {
+    const { validateSearchScope } = await import('../search/execute-scoped-search.js');
+    const validated = validateSearchScope(a.scope);
+    if ('error' in validated) {
+      return { isError: true, content: [{ type: 'text', text: compact({ error: validated.error.message, hint: validated.error.hint, status: validated.error.status }) }] };
+    }
+  }
   if (GRAPH_BACKED_TOOLS.has(name) || name === 'search') {
     try {
       const ctx = await graphContext(a, repoName, workspaceRoot, graph);
@@ -924,13 +931,7 @@ export async function dispatchTool(
           query: a.query as string | undefined,
           limit: fetchLimit,
           mode: (a.mode as SearchMode | undefined) ?? 'auto',
-          scope: (() => {
-            const raw = a.scope as { type?: 'repo' | 'group'; repoId?: string; name?: string } | undefined;
-            if (!raw) return undefined;
-            if (raw.type === 'repo' && typeof raw.repoId === 'string') return { type: 'repo' as const, repoId: raw.repoId };
-            if (raw.type === 'group' && typeof raw.name === 'string') return { type: 'group' as const, name: raw.name };
-            return undefined;
-          })(),
+          scope: a.scope as Record<string, unknown> | undefined,
           repo: a.repo as string | undefined,
           repoId: a.repoId as string | undefined,
           group: a.group as string | undefined,
@@ -958,7 +959,7 @@ export async function dispatchTool(
           const msg = result.error.status === 404 && /Group '.*' not found/.test(result.error.message)
             ? result.error.message.replace(/Group '(.+)' not found/, 'Group "$1" not found. Use list_groups to see available groups.')
             : result.error.message;
-          return { content: [{ type: 'text', text: msg }] };
+          return { isError: true, content: [{ type: 'text', text: compact({ error: msg, hint: result.error.hint, status: result.error.status }) }] };
         }
         if (!('body' in result)) {
           return { content: [{ type: 'text', text: 'Invalid search result.' }] };

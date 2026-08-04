@@ -347,6 +347,7 @@ export function createApp(
   let vectorIndex: VectorIndex | null = null;
   let vectorIndexBuilding = false;
   let vectorIndexReady = false;
+  let vectorIndexUnavailableReason: string | null = null;
 
   // ── BM25 pre-built inverted index (Epic 2) ──────────────────────────────────
   let bm25Index: Bm25Index | null = null;
@@ -373,40 +374,38 @@ export function createApp(
     if (!workspaceRoot || vectorIndexBuilding) return null;
     vectorIndexBuilding = true;
     try {
-      const { embedNodes, getEmbeddingFingerprint } = await import('../search/embedder.js');
+      const { getEmbeddingFingerprint } = await import('../search/embedder.js');
       const vdbPath = startupSnapshot?.vectorDbPath ?? getVectorDbPath(workspaceRoot);
       const meta = startupSnapshot ? loadMetadata(startupSnapshot) : loadMetadata(workspaceRoot);
       const config = normalizeConfigEmbeddingModel(loadConfig() ?? DEFAULT_CONFIG);
       const descriptor = getEmbeddingModel(config.embeddings.model) ?? getDefaultEmbeddingModel();
       const runtimeFingerprint = getEmbeddingFingerprint({ descriptor });
-      const shouldRebuild = shouldRebuildEmbeddings({ metadata: meta, runtime: runtimeFingerprint, hasVectorDb: fs.existsSync(vdbPath) });
-      if (shouldRebuild) {
-        for (const f of [vdbPath, `${vdbPath}-shm`, `${vdbPath}-wal`]) {
-          try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* ignore */ }
-        }
+      const hasVectorDb = fs.existsSync(vdbPath);
+      const rebuildRequired = shouldRebuildEmbeddings({ metadata: meta, runtime: runtimeFingerprint, hasVectorDb });
+      if (rebuildRequired) {
+        vectorIndexUnavailableReason = hasVectorDb
+          ? 'Published vector index is incompatible or stale; run `code-intel analyze --embeddings` to publish a new generation.'
+          : 'Published vector index is missing; run `code-intel analyze --embeddings` to publish a new generation.';
+        Logger.warn(`  [vector] ${vectorIndexUnavailableReason}`);
+        return null;
       }
       const idx = new VectorIndex(vdbPath, descriptor.dimension);
       await idx.init();
-      const alreadyBuilt = shouldRebuild ? false : await idx.isBuilt();
+      const alreadyBuilt = await idx.isBuilt();
       if (!alreadyBuilt) {
-        Logger.info('  [vector] Building embeddings…');
-        const nodes = await embedNodes(graph, {
-          model: descriptor,
-          onProgress: (done, total) => {
-            if (done % 50 === 0 || done === total) process.stdout.write(`\r  [vector] ${done}/${total}`);
-          },
-        });
-        Logger.info('');
-        await idx.buildIndex(nodes);
-        Logger.info(`  [vector] Index built: ${nodes.length} embeddings`);
-      } else {
-        Logger.info('  [vector] Index already exists, skipping rebuild.');
+        idx.close();
+        vectorIndexUnavailableReason = 'Published vector index is unreadable or empty; run `code-intel analyze --embeddings` to publish a new generation.';
+        Logger.warn(`  [vector] ${vectorIndexUnavailableReason}`);
+        return null;
       }
       vectorIndex = idx;
       vectorIndexReady = true;
+      vectorIndexUnavailableReason = null;
+      Logger.info('  [vector] Published index available.');
       return idx;
     } catch (err) {
-      Logger.warn('  [vector] Index build failed:', err instanceof Error ? err.message : err);
+      vectorIndexUnavailableReason = 'Published vector index is unavailable; run `code-intel analyze --embeddings` to publish a new generation.';
+      Logger.warn('  [vector] Published index unavailable:', err instanceof Error ? err.message : err);
       return null;
     } finally {
       vectorIndexBuilding = false;
@@ -1142,7 +1141,13 @@ export function createApp(
 
   // ── Vector status ───────────────────────────────────────────────────────────
   app.get('/api/v1/vector-status', (_req, res) => {
-    res.json({ ready: vectorIndexReady, building: vectorIndexBuilding });
+    res.json({
+      ready: vectorIndexReady,
+      building: vectorIndexBuilding,
+      degraded: !vectorIndexReady,
+      unavailableReason: vectorIndexUnavailableReason,
+      guidance: vectorIndexReady ? undefined : 'Run `code-intel analyze --embeddings` to publish a compatible vector generation.',
+    });
   });
 
   // ── File read ───────────────────────────────────────────────────────────────
@@ -1872,7 +1877,7 @@ export function createApp(
 
   // POST /api/v1/query/explain — returns a query plan
   app.post('/api/v1/query/explain', requireRole('viewer'), async (req: Request, res: Response) => {
-    const { gql, scope } = req.body as { gql?: string; scope?: QueryScope };
+    const { gql, scope } = req.body as { gql?: string; scope?: QueryScope | Record<string, unknown> };
     if (!gql || typeof gql !== 'string') {
       res.status(400).json({
         error: { code: ErrorCodes.INVALID_REQUEST, message: 'Missing required field: gql', requestId: req.requestId, timestamp: new Date().toISOString() },
@@ -1880,6 +1885,16 @@ export function createApp(
       return;
     }
     try {
+      const { validateSearchScope } = await import('../search/execute-scoped-search.js');
+      if (scope !== undefined) {
+        const validated = validateSearchScope(scope);
+        if ('error' in validated) {
+          res.status(validated.error.status).json({
+            error: { code: ErrorCodes.INVALID_REQUEST, message: validated.error.message, hint: validated.error.hint, requestId: req.requestId, timestamp: new Date().toISOString() },
+          });
+          return;
+        }
+      }
       const { parseGQL, isGQLParseError } = await import('../query/gql-parser.js');
       const ast = parseGQL(gql);
       if (isGQLParseError(ast)) {
@@ -1894,7 +1909,7 @@ export function createApp(
         });
         return;
       }
-      const { graph: targetGraph, resolvedScope } = await resolveExplicitScope(scope);
+      const { graph: targetGraph, resolvedScope } = await resolveExplicitScope(scope as QueryScope | undefined);
       // Build a query plan description
       const plan: Record<string, unknown> = { type: ast.type, gql, scope: resolvedScope };
       if (ast.type === 'FIND') {
@@ -1926,6 +1941,10 @@ export function createApp(
       }
       res.json({ plan, graphSize: targetGraph.size, scope: resolvedScope });
     } catch (err) {
+      if (err instanceof AppError) {
+        res.status(err.statusCode).json({ error: { code: err.code, message: err.message, hint: err.hint, requestId: req.requestId, timestamp: new Date().toISOString() } });
+        return;
+      }
       res.status(500).json({ error: { code: ErrorCodes.INTERNAL_ERROR, message: err instanceof Error ? err.message : String(err), requestId: req.requestId, timestamp: new Date().toISOString() } });
     }
   });

@@ -13,6 +13,7 @@ import {
   type IndexGeneration,
 } from '../storage/index-generation.js';
 import { acquireAnalyzeLock } from '../storage/analyze-lock.js';
+import { findRepoByName, findRepoByPath } from '../storage/repo-registry.js';
 import {
   getSnapshotArtifactPath,
   resolveIndexSnapshot,
@@ -119,6 +120,22 @@ export function runAtomicAnalyze(args: string[], binUrl: URL): number {
       return runChild(args, binUrl);
     }
     if (plan.mode === 'noop') {
+      const requestedRepoName = (() => {
+        const nameFlagIndex = args.indexOf('--name');
+        if (nameFlagIndex >= 0) return args[nameFlagIndex + 1]?.trim();
+        const inline = args.find((arg) => arg.startsWith('--name='));
+        return inline ? inline.slice('--name='.length).trim() : undefined;
+      })();
+      if (requestedRepoName) {
+        const existingByPath = findRepoByPath(workspaceRoot);
+        const existingByName = findRepoByName(requestedRepoName);
+        if (existingByPath && existingByPath.name !== requestedRepoName) {
+          throw new Error(`Path already indexed as "${existingByPath.name}". Use \`code-intel repo rename ${existingByPath.name} ${requestedRepoName}\`.`);
+        }
+        if (existingByName && existingByName.path !== workspaceRoot) {
+          throw new Error(`Repository name "${requestedRepoName}" is linked to ${existingByName.path}. Use \`code-intel repo relink ${requestedRepoName} ${workspaceRoot}\`.`);
+        }
+      }
       console.log('  ✓ No source or index changes detected');
       console.log(`  ✓ Active generation preserved: ${snapshot?.generationId ?? 'legacy'}`);
       return 0;

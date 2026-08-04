@@ -72,4 +72,13 @@ describe('resolveSetupPlan', () => {
       'opencode-plugin',
     ]));
   });
+
+  it('resolves repositoryRoot from explicit selected path', () => {
+    const parent = makeRepo();
+    const repo = path.join(parent, 'nested', 'target-repo');
+    fs.mkdirSync(repo, { recursive: true });
+    const plan = resolveSetupPlan(path.join(parent, '..', path.basename(parent), 'nested', 'target-repo'));
+    assert.equal(plan.repositoryRoot, repo);
+    assert.equal(plan.selectionPath, path.join(repo, '.code-intel', 'agent-targets.json'));
+  });
 });

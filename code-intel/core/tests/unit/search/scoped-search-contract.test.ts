@@ -1,19 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-
-type SearchScope =
-  | { type: 'repo'; repoId: string }
-  | { type: 'group'; name: string };
-
-function normalizeSearchRequest(body: { query?: string; limit?: number; mode?: 'bm25' | 'vector' | 'hybrid'; scope?: SearchScope; repoId?: string; repo?: string; group?: string }) {
-  const { query, limit, mode, scope, repoId, repo, group } = body;
-  if (!query) return { error: { status: 400, message: 'Missing query' } };
-  if (scope && (repoId || repo || group)) return { error: { status: 400, message: 'Ambiguous request shape' } };
-  if (repoId && (repo || group)) return { error: { status: 400, message: 'Ambiguous flat scope' } };
-  if (repo && group) return { error: { status: 400, message: 'Ambiguous legacy scope' } };
-  const normalizedScope = scope ?? (group ? { type: 'group' as const, name: group } : repoId ? { type: 'repo' as const, repoId } : repo ? { type: 'repo' as const, repoId: repo } : undefined);
-  return { query, limit: limit ?? 20, mode: mode ?? 'hybrid', scope: normalizedScope, deprecated: Boolean(repoId || repo || group) };
-}
+import { normalizeSearchRequest, validateSearchScope } from '../../../src/search/execute-scoped-search.js';
 
 describe('scoped search request normalization', () => {
   it('preserves canonical scope object', () => {
@@ -24,6 +11,7 @@ describe('scoped search request normalization', () => {
       mode: 'vector',
       scope: { type: 'repo', repoId: 'repo-api' },
       deprecated: false,
+      explain: false,
     });
   });
 
@@ -32,9 +20,10 @@ describe('scoped search request normalization', () => {
     assert.deepEqual(result, {
       query: 'auth',
       limit: 20,
-      mode: 'hybrid',
+      mode: 'auto',
       scope: { type: 'group', name: 'platform' },
       deprecated: true,
+      explain: false,
     });
   });
 
@@ -54,5 +43,23 @@ describe('scoped search request normalization', () => {
     const result = normalizeSearchRequest({ query: 'auth', repo: 'a', group: 'b' });
     assert.equal('error' in result, true);
     if ('error' in result && result.error) assert.equal(result.error.message, 'Ambiguous legacy scope');
+  });
+
+  it('rejects unknown scope type', () => {
+    const result = validateSearchScope({ type: 'weird' });
+    assert.equal('error' in result, true);
+    if ('error' in result) assert.equal(result.error.message, 'Invalid scope.type');
+  });
+
+  it('rejects repo scope without repoId', () => {
+    const result = normalizeSearchRequest({ query: 'auth', scope: { type: 'repo' } as never });
+    assert.equal('error' in result, true);
+    if ('error' in result && result.error) assert.equal(result.error.message, 'Invalid scope.repoId');
+  });
+
+  it('rejects group scope without name', () => {
+    const result = normalizeSearchRequest({ query: 'auth', scope: { type: 'group' } as never });
+    assert.equal('error' in result, true);
+    if ('error' in result && result.error) assert.equal(result.error.message, 'Invalid scope.name');
   });
 });

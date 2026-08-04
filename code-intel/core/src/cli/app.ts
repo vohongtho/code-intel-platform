@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 // path is imported further below as a default import; use that to avoid
 // importing 'node:path' multiple times.
@@ -8,8 +8,22 @@ import { AMBIGUOUS_SYMBOL_EXIT_CODE, formatSymbolTarget, resolveSymbolTarget } f
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-// Resolve package.json relative to the built CLI file (dist/cli/main.js → ../../package.json)
-const _pkg = JSON.parse(readFileSync(path.join(__dirname, '../../package.json'), 'utf-8')) as { version: string };
+function loadCliPackageMeta(): { version: string } {
+  for (const candidate of [
+    path.join(__dirname, '../../package.json'),
+    path.join(__dirname, '../../../package.json'),
+    path.join(__dirname, '../../../../package.json'),
+  ]) {
+    if (!existsSync(candidate)) continue;
+    try {
+      return JSON.parse(readFileSync(candidate, 'utf-8')) as { version: string };
+    } catch {
+      // Try next candidate.
+    }
+  }
+  return { version: '0.0.0' };
+}
+const _pkg = loadCliPackageMeta();
 
 import { Command } from 'commander';
 import path from 'node:path';
@@ -1693,7 +1707,7 @@ program
       mcpServers: {
         'code-intel': {
 command: 'npx',
-args: ['code-intel', 'mcp', '.'],
+args: ['code-intel', 'mcp', plan.repositoryRoot],
         },
       },
     };

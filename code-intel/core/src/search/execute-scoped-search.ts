@@ -67,7 +67,7 @@ export type SearchRequest = {
   query?: string;
   limit?: number;
   mode?: SearchMode;
-  scope?: SearchScope;
+  scope?: SearchScope | Record<string, unknown>;
   repoId?: string;
   repo?: string;
   group?: string;
@@ -77,6 +77,28 @@ export type SearchRequest = {
 function normalizeRequestedMode(mode: SearchMode | undefined): RequestedSearchMode {
   if (!mode || mode === 'hybrid') return 'auto';
   return mode;
+}
+
+export function validateSearchScope(scope: unknown):
+  | { value: SearchScope }
+  | { error: { status: number; message: string; hint?: string } } {
+  if (!scope || typeof scope !== 'object' || Array.isArray(scope)) {
+    return { error: { status: 400, message: 'Invalid scope', hint: 'scope must be an object' } };
+  }
+  const raw = scope as Record<string, unknown>;
+  if (raw.type !== 'repo' && raw.type !== 'group') {
+    return { error: { status: 400, message: 'Invalid scope.type', hint: 'scope.type must be "repo" or "group"' } };
+  }
+  if (raw.type === 'repo') {
+    if (typeof raw.repoId !== 'string' || raw.repoId.trim().length === 0) {
+      return { error: { status: 400, message: 'Invalid scope.repoId', hint: 'scope.repoId is required for repo scope' } };
+    }
+    return { value: { type: 'repo', repoId: raw.repoId } };
+  }
+  if (typeof raw.name !== 'string' || raw.name.trim().length === 0) {
+    return { error: { status: 400, message: 'Invalid scope.name', hint: 'scope.name is required for group scope' } };
+  }
+  return { value: { type: 'group', name: raw.name } };
 }
 
 export function normalizeSearchRequest(body: SearchRequest) {
@@ -93,14 +115,20 @@ export function normalizeSearchRequest(body: SearchRequest) {
   if (repo && group) {
     return { error: { status: 400, message: 'Ambiguous legacy scope', hint: 'Use either repo or group, not both' } } as const;
   }
-  const normalizedScope = scope
-    ?? (group
+  let normalizedScope: SearchScope | undefined;
+  if (scope !== undefined) {
+    const validated = validateSearchScope(scope);
+    if ('error' in validated) return { error: validated.error } as const;
+    normalizedScope = validated.value;
+  } else {
+    normalizedScope = group
       ? { type: 'group' as const, name: group }
       : repoId
         ? { type: 'repo' as const, repoId }
         : repo
           ? { type: 'repo' as const, repoId: repo }
-          : undefined);
+          : undefined;
+  }
   return {
     query,
     limit: limit ?? 20,

@@ -8,6 +8,8 @@ import crypto from 'node:crypto';
 import { createKnowledgeGraph } from '../../../src/graph/knowledge-graph.js';
 import { createApp } from '../../../src/http/app.js';
 import { UsersDB, resetUsersDBForTesting } from '../../../src/auth/users-db.js';
+import { createIndexGeneration, publishIndexGeneration } from '../../../src/storage/index-generation.js';
+import { Bm25Index } from '../../../src/search/bm25-index.js';
 
 // ── Minimal HTTP helper ───────────────────────────────────────────────────────
 
@@ -510,6 +512,32 @@ describe('HTTP API — GQL query route', () => {
     assert.match(body.error.message, /missing-repo/);
   });
 
+  it('query explain preserves 400 for malformed explicit scope', async () => {
+    const sessionCookie = await loginViewer();
+    const res = await req(server, {
+      method: 'POST',
+      path: '/api/v1/query/explain',
+      body: { gql: 'FIND function', scope: { type: 'repo' } },
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(res.status, 400);
+    const body = res.body as { error: { message: string } };
+    assert.match(body.error.message, /scope\.repoId/);
+  });
+
+  it('query explain preserves 404 for unknown explicit scope target', async () => {
+    const sessionCookie = await loginViewer();
+    const res = await req(server, {
+      method: 'POST',
+      path: '/api/v1/query/explain',
+      body: { gql: 'FIND function', scope: { type: 'repo', repoId: 'missing-repo' } },
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(res.status, 404);
+    const body = res.body as { error: { message: string } };
+    assert.match(body.error.message, /missing-repo/);
+  });
+
   it('preserves 422 for parse errors', async () => {
     const sessionCookie = await loginViewer();
     const res = await req(server, {
@@ -758,6 +786,156 @@ describe('HTTP API — repo-scoped token enforcement', () => {
     });
     // Token is not in the production users.db → 401
     assert.ok([401, 200].includes(res.status));
+  });
+});
+
+describe('HTTP API — published generation vector degradation', () => {
+  let server: http.Server;
+  let dbPath: string;
+  let db: UsersDB;
+  let repoRoot: string;
+
+  function digestPublishedState(root: string, generationId: string): string {
+    const hash = crypto.createHash('sha256');
+    for (const filePath of [
+      path.join(root, '.code-intel', 'current.json'),
+      path.join(root, '.code-intel', 'generations', generationId, 'graph.db'),
+      path.join(root, '.code-intel', 'generations', generationId, 'bm25.db'),
+      path.join(root, '.code-intel', 'generations', generationId, 'meta.json'),
+      path.join(root, '.code-intel', 'generations', generationId, 'vector.db'),
+    ]) {
+      hash.update(filePath);
+      if (fs.existsSync(filePath)) hash.update(fs.readFileSync(filePath));
+      else hash.update('missing');
+    }
+    return hash.digest('hex');
+  }
+
+  async function loginViewer(): Promise<string> {
+    const loginRes = await req(server, {
+      method: 'POST',
+      path: '/auth/login',
+      body: { username: 'viewer', password: 'viewer-pass-123' },
+    });
+    assert.equal(loginRes.status, 200);
+    const cookies = loginRes.headers['set-cookie'] ?? [];
+    return cookies.map((c) => c.split(';')[0] ?? '').join('; ');
+  }
+
+  before(() => {
+    delete process.env['NODE_ENV'];
+    dbPath = path.join(os.tmpdir(), `http-api-vectors-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.db`);
+    repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'http-api-vectors-repo-'));
+    process.env['CODE_INTEL_USERS_DB_PATH'] = dbPath;
+    resetUsersDBForTesting();
+    db = new UsersDB(dbPath);
+    db.createUser('viewer', 'viewer-pass-123', 'viewer');
+  });
+
+  after(async () => {
+    await new Promise<void>((resolve, reject) => server?.close((err) => err ? reject(err) : resolve()) ?? resolve());
+    db.close();
+    try { fs.unlinkSync(dbPath); } catch { /* ignore */ }
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+    delete process.env['CODE_INTEL_USERS_DB_PATH'];
+    resetUsersDBForTesting();
+  });
+
+  it('degrades vector startup without mutating published generation when vectors are missing', async () => {
+    const generation = createIndexGeneration(repoRoot, 'g-missing-vector');
+    fs.writeFileSync(generation.graphDbPath, 'graph');
+    fs.writeFileSync(generation.bm25DbPath, 'bm25');
+    const manifest = publishIndexGeneration(repoRoot, generation, {
+      indexedAt: '2026-08-03T00:00:00.000Z',
+      stats: { nodes: 1, edges: 0, files: 1, duration: 1 },
+    });
+
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: 'n1', kind: 'function', name: 'searchTarget', filePath: 'src/search-target.ts', content: 'searchTarget token' });
+    new Bm25Index(path.join(repoRoot, '.code-intel', 'generations', manifest.generationId, 'bm25.db')).build(graph);
+    const app = createApp(graph, 'test-repo', repoRoot);
+    server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+
+    const beforeDigest = digestPublishedState(repoRoot, manifest.generationId);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const sessionCookie = await loginViewer();
+
+    const vectorStatus = await req(server, {
+      method: 'GET',
+      path: '/api/v1/vector-status',
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(vectorStatus.status, 200);
+    assert.equal((vectorStatus.body as { ready: boolean }).ready, false);
+    assert.equal((vectorStatus.body as { degraded: boolean }).degraded, true);
+    assert.match(String((vectorStatus.body as { guidance?: string }).guidance), /analyze --embeddings/);
+
+    const searchRes = await req(server, {
+      method: 'POST',
+      path: '/api/v1/search',
+      body: { query: 'searchTarget', explain: true },
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(searchRes.status, 200);
+    assert.equal((searchRes.body as { actualMode: string }).actualMode, 'bm25');
+    assert.equal((searchRes.body as { vectorReady: boolean }).vectorReady, false);
+    assert.equal((searchRes.body as { results: unknown[] }).results.length, 1);
+
+    const afterDigest = digestPublishedState(repoRoot, manifest.generationId);
+    assert.equal(afterDigest, beforeDigest);
+  });
+
+  it('degrades incompatible published vectors without mutating manifest or metadata', async () => {
+    await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+
+    const generation = createIndexGeneration(repoRoot, 'g-incompatible-vector');
+    fs.writeFileSync(generation.graphDbPath, 'graph');
+    fs.writeFileSync(generation.bm25DbPath, 'bm25');
+    fs.writeFileSync(generation.vectorDbPath, 'not-a-real-sqlite-db');
+    const manifest = publishIndexGeneration(repoRoot, generation, {
+      indexedAt: '2026-08-03T00:00:00.000Z',
+      embeddings: {
+        enabled: true,
+        status: 'ready',
+        provider: 'test-provider',
+        model: 'wrong-model',
+        dimension: 1,
+      },
+      stats: { nodes: 1, edges: 0, files: 1, duration: 1 },
+    }, { vectorRequired: true });
+
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: 'n1', kind: 'function', name: 'fallbackTarget', filePath: 'src/fallback-target.ts', content: 'fallbackTarget token' });
+    new Bm25Index(path.join(repoRoot, '.code-intel', 'generations', manifest.generationId, 'bm25.db')).build(graph);
+    const app = createApp(graph, 'test-repo', repoRoot);
+    server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+
+    const beforeDigest = digestPublishedState(repoRoot, manifest.generationId);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const sessionCookie = await loginViewer();
+
+    const vectorStatus = await req(server, {
+      method: 'GET',
+      path: '/api/v1/vector-status',
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(vectorStatus.status, 200);
+    assert.equal((vectorStatus.body as { ready: boolean }).ready, false);
+    assert.match(String((vectorStatus.body as { unavailableReason?: string }).unavailableReason), /(incompatible|stale)/);
+
+    const searchRes = await req(server, {
+      method: 'POST',
+      path: '/api/v1/search',
+      body: { query: 'fallbackTarget', explain: true },
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(searchRes.status, 200);
+    assert.equal((searchRes.body as { actualMode: string }).actualMode, 'bm25');
+
+    const afterDigest = digestPublishedState(repoRoot, manifest.generationId);
+    assert.equal(afterDigest, beforeDigest);
   });
 });
 

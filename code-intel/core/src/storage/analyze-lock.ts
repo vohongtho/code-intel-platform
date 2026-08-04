@@ -15,6 +15,12 @@ export interface AnalyzeLockOwner {
   stagingGenerationId?: string;
 }
 
+export interface ClaimedAnalyzeLock {
+  claimedPath: string;
+  owner: AnalyzeLockOwner | null;
+  token: string | null;
+}
+
 export interface AnalyzeLock {
   lockPath: string;
   owner: AnalyzeLockOwner;
@@ -86,6 +92,53 @@ function atomicRewrite(lockPath: string, owner: AnalyzeLockOwner): void {
   fs.renameSync(tmp, lockPath);
 }
 
+function readLockToken(lockPath: string): string | null {
+  return readAnalyzeLockOwner(lockPath)?.token ?? null;
+}
+
+function claimAnalyzeLock(lockPath: string, expectedToken?: string | null): ClaimedAnalyzeLock | null {
+  if (!fs.existsSync(lockPath)) return null;
+  const token = readLockToken(lockPath);
+  if (expectedToken !== undefined && token !== expectedToken) return null;
+  const claimedPath = `${lockPath}.claimed-${process.pid}-${crypto.randomUUID()}`;
+  try {
+    fs.renameSync(lockPath, claimedPath);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'EEXIST') return null;
+    throw error;
+  }
+  const claimedToken = readLockToken(claimedPath);
+  if (expectedToken !== undefined && claimedToken !== expectedToken) {
+    try { fs.renameSync(claimedPath, lockPath); } catch { /* ignore */ }
+    return null;
+  }
+  return {
+    claimedPath,
+    owner: readAnalyzeLockOwner(claimedPath),
+    token: claimedToken,
+  };
+}
+
+function removeClaimedLock(claim: ClaimedAnalyzeLock): void {
+  fs.rmSync(claim.claimedPath, { force: true });
+}
+
+export function releaseAnalyzeLockIfOwned(lockPath: string, ownerToken: string): boolean {
+  const claim = claimAnalyzeLock(lockPath, ownerToken);
+  if (!claim) return false;
+  removeClaimedLock(claim);
+  return true;
+}
+
+export function claimAnalyzeLockForUnlock(lockPath: string, expectedToken?: string | null): ClaimedAnalyzeLock | null {
+  return claimAnalyzeLock(lockPath, expectedToken);
+}
+
+export function removeClaimedAnalyzeLock(claim: ClaimedAnalyzeLock): void {
+  removeClaimedLock(claim);
+}
+
 export function acquireAnalyzeLock(
   repoDir: string,
   options: { staleAfterMs?: number; baseGenerationId?: string } = {},
@@ -124,16 +177,18 @@ export function acquireAnalyzeLock(
           atomicRewrite(lockPath, owner);
         },
         release() {
-          const current = readAnalyzeLockOwner(lockPath);
-          if (current?.token === owner.token) fs.rmSync(lockPath, { force: true });
+          releaseAnalyzeLockIfOwned(lockPath, owner.token);
         },
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
       const existing = readAnalyzeLockOwner(lockPath);
       if (attempt === 0 && canRecoverStaleLock(lockPath, existing, staleAfterMs)) {
-        fs.rmSync(lockPath, { force: true });
-        continue;
+        const claim = claimAnalyzeLock(lockPath, existing?.token ?? null);
+        if (claim) {
+          removeClaimedLock(claim);
+          continue;
+        }
       }
       throw new AnalysisAlreadyRunningError(existing, lockPath);
     }

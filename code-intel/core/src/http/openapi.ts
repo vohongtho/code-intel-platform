@@ -135,7 +135,7 @@ export const openApiSpec = {
         properties: {
           query: { type: 'string', description: 'Search query' },
           limit: { type: 'integer', default: 20 },
-          mode: { type: 'string', enum: ['bm25', 'vector', 'hybrid'], default: 'hybrid' },
+          mode: { type: 'string', enum: ['bm25', 'vector', 'hybrid'], default: 'hybrid', description: 'Malformed explicit scope fails closed with 400; unknown explicit repo/group targets return 404.' },
           scope: { '$ref': '#/components/schemas/SearchScope' },
           repoId: { type: 'string', description: 'Canonical repository identity' },
           repo: { type: 'string', description: 'Deprecated legacy repo scope' },
@@ -223,7 +223,7 @@ export const openApiSpec = {
           content: { 'application/json': { schema: { '$ref': '#/components/schemas/SearchRequest' } } },
         },
         responses: {
-          '200': { description: 'Vector search results', content: { 'application/json': { schema: { '$ref': '#/components/schemas/SearchResponse' } } } },
+          '200': { description: 'Vector search results. When published vectors are missing, stale, incompatible, or corrupt, the server degrades to BM25 without mutating published artifacts.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/SearchResponse' } } } },
           '400': { description: 'Ambiguous or invalid request', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
         },
       },
