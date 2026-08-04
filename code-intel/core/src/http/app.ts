@@ -38,7 +38,7 @@ import {
   clearSessionCookie,
   createSession,
   verifyPassword,
-  sessionStore,
+  countActiveSessions,
 } from '../auth/middleware.js';
 import { getOrCreateUsersDB } from '../auth/users-db.js';
 import type { Role } from '../auth/users-db.js';
@@ -428,7 +428,7 @@ export function createApp(
       // Update live gauges before scrape
       pipelineNodesTotal.set({ repo: repoName }, graph.size.nodes);
       pipelineEdgesTotal.set({ repo: repoName }, graph.size.edges);
-      activeSessionsTotal.set(sessionStore.size);
+      activeSessionsTotal.set(countActiveSessions());
       const output = await metricsRegistry.metrics();
       res.set('Content-Type', metricsRegistry.contentType);
       res.end(output);
