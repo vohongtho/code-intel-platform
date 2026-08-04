@@ -397,7 +397,7 @@ describe('HTTP API — GQL query route', () => {
       headers: { Cookie: sessionCookie },
     });
     assert.equal(res.status, 200);
-    const body = res.body as { kind: string; nodes: unknown[]; edges: unknown[]; groups: Array<{ key: string; count: number }>; path: null; totalCount: number; executionTimeMs: number; truncated: boolean };
+    const body = res.body as { kind: string; nodes: unknown[]; edges: unknown[]; groups: Array<{ key: string; count: number }>; path: null; totalCount: number; executionTimeMs: number; truncated: boolean; scope?: { type: string; repoId: string; repoName: string } };
     assert.equal(body.kind, 'aggregate');
     assert.deepEqual(body.nodes, []);
     assert.deepEqual(body.edges, []);
@@ -407,6 +407,8 @@ describe('HTTP API — GQL query route', () => {
     assert.ok(body.executionTimeMs >= 0);
     assert.ok(body.groups.some((group) => group.key === 'auth' && group.count === 2));
     assert.ok(body.groups.some((group) => group.key === '(none)' && group.count === 1));
+    assert.equal(body.scope?.type, 'repo');
+    assert.equal(body.scope?.repoName, 'test-repo');
   });
 
   it('returns normalized plain COUNT result', async () => {
@@ -495,6 +497,19 @@ describe('HTTP API — GQL query route', () => {
     assert.ok(body.error.requestId);
   });
 
+  it('rejects unknown explicit repoId for GQL scope', async () => {
+    const sessionCookie = await loginViewer();
+    const res = await req(server, {
+      method: 'POST',
+      path: '/api/v1/query',
+      body: { gql: 'FIND function', scope: { type: 'repo', repoId: 'missing-repo' } },
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(res.status, 404);
+    const body = res.body as { error: { message: string } };
+    assert.match(body.error.message, /missing-repo/);
+  });
+
   it('preserves 422 for parse errors', async () => {
     const sessionCookie = await loginViewer();
     const res = await req(server, {
@@ -508,6 +523,18 @@ describe('HTTP API — GQL query route', () => {
     assert.equal(body.error.code, 'CI-1200');
     assert.match(body.error.message, /GQL parse error/);
     assert.ok(body.error.requestId);
+  });
+
+  it('rejects unknown explicit repoId for source preview', async () => {
+    const sessionCookie = await loginViewer();
+    const res = await req(server, {
+      method: 'GET',
+      path: '/api/v1/source?file=src/any.ts&repoId=missing-repo',
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(res.status, 404);
+    const body = res.body as { error: { message: string } };
+    assert.match(body.error.message, /missing-repo/);
   });
 
   it('preserves 408 for truncated partial results', async () => {

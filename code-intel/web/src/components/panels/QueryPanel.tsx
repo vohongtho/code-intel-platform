@@ -233,7 +233,12 @@ export function QueryPanel() {
     setResult(null);
     try {
       const client = new ApiClient(state.serverUrl);
-      const res = await client.queryGQL(query);
+      const scope = state.mode === 'group'
+        ? { type: 'group' as const, name: state.groupName || state.repoName }
+        : state.repoId
+          ? { type: 'repo' as const, repoId: state.repoId }
+          : undefined;
+      const res = await client.queryGQL(query, scope);
       setResult(res);
       addToHistory(query);
       setHistory(loadHistory());
@@ -242,7 +247,7 @@ export function QueryPanel() {
     } finally {
       setLoading(false);
     }
-  }, [gql, loading, state.serverUrl]);
+  }, [gql, loading, state.serverUrl, state.mode, state.groupName, state.repoId, state.repoName]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {

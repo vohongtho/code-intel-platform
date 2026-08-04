@@ -70,7 +70,7 @@ describe('MCP search tool', () => {
       nodes: [{ id: 'n1', name: 'ExactSymbol', filePath: 'src/exact.ts', content: 'function ExactSymbol() {}' }],
     });
 
-    const result = await dispatchTool('search', { query: 'ExactSymbol', repo: 'repo', mode: 'bm25' }, createKnowledgeGraph(), 'fallback', undefined);
+    const result = await dispatchTool('search', { query: 'ExactSymbol', repoId: 'repo-id', mode: 'bm25' }, createKnowledgeGraph(), 'fallback', undefined);
     const payload = JSON.parse(result.content[0]?.text ?? '{}') as { searchMode?: string; results?: Array<{ name?: string }> };
     assert.equal(payload.searchMode, 'bm25');
     assert.equal(payload.results?.[0]?.name, 'ExactSymbol');
@@ -84,7 +84,7 @@ describe('MCP search tool', () => {
       nodes: [{ id: 'n1', name: 'LoginService', filePath: 'src/login.ts', content: 'function LoginService() {}' }],
     });
 
-    const result = await dispatchTool('search', { query: 'LoginService', repo: 'repo', mode: 'vector' }, createKnowledgeGraph(), 'fallback', undefined);
+    const result = await dispatchTool('search', { query: 'LoginService', repoId: 'repo-id', mode: 'vector' }, createKnowledgeGraph(), 'fallback', undefined);
     const payload = JSON.parse(result.content[0]?.text ?? '{}') as { searchMode?: string; results?: Array<{ name?: string }> };
     assert.equal(payload.searchMode, 'bm25');
     assert.equal(payload.results?.[0]?.name, 'LoginService');
@@ -98,7 +98,7 @@ describe('MCP search tool', () => {
       nodes: [{ id: 'n1', name: 'UserService', filePath: 'src/user.ts', content: 'class UserService {}' }],
     });
 
-    const result = await dispatchTool('search', { query: 'UserService', repo: 'repo' }, createKnowledgeGraph(), 'fallback', undefined);
+    const result = await dispatchTool('search', { query: 'UserService', repoId: 'repo-id' }, createKnowledgeGraph(), 'fallback', undefined);
     const payload = JSON.parse(result.content[0]?.text ?? '{}') as { searchMode?: string; results?: Array<{ name?: string }> };
     assert.equal(payload.searchMode, 'bm25');
     assert.equal(payload.results?.[0]?.name, 'UserService');
@@ -108,7 +108,7 @@ describe('MCP search tool', () => {
     const repoPath = mkRepo('mcp-search-missing-index');
     saveRegistry([{ id: 'repo-id', name: 'repo', path: repoPath, indexedAt: new Date().toISOString(), stats: { nodes: 0, edges: 0, files: 0 } }]);
 
-    const first = await dispatchTool('search', { query: 'UserService', repo: 'repo' }, createKnowledgeGraph(), 'fallback', undefined);
+    const first = await dispatchTool('search', { query: 'UserService', repoId: 'repo-id' }, createKnowledgeGraph(), 'fallback', undefined);
     const firstPayload = JSON.parse(first.content[0]?.text ?? '{}') as { error?: string; hint?: string; repo?: string; actionable?: boolean };
     assert.equal(first.isError, true);
     assert.match(firstPayload.error ?? '', /No published index found/);
@@ -121,10 +121,26 @@ describe('MCP search tool', () => {
       nodes: [{ id: 'n1', name: 'UserService', filePath: 'src/user.ts', content: 'class UserService {}' }],
     });
 
-    const second = await dispatchTool('search', { query: 'UserService', repo: 'repo' }, createKnowledgeGraph(), 'fallback', undefined);
+    const second = await dispatchTool('search', { query: 'UserService', repoId: 'repo-id' }, createKnowledgeGraph(), 'fallback', undefined);
     const secondPayload = JSON.parse(second.content[0]?.text ?? '{}') as { searchMode?: string; results?: Array<{ name?: string }> };
     assert.equal(second.isError, undefined);
     assert.equal(secondPayload.searchMode, 'bm25');
     assert.equal(secondPayload.results?.[0]?.name, 'UserService');
+  });
+
+  it('normalizes legacy repo selectors to resolved repo metadata', async () => {
+    const repoPath = mkRepo('mcp-search-legacy-repo');
+    saveRegistry([{ id: 'repo-id', name: 'repo', path: repoPath, indexedAt: new Date().toISOString(), stats: { nodes: 1, edges: 0, files: 1 } }]);
+    await writeRepoIndex(repoPath, {
+      indexVersion: 'v1',
+      nodes: [{ id: 'n1', name: 'LegacyHit', filePath: 'src/legacy.ts', content: 'function LegacyHit() {}' }],
+    });
+
+    const result = await dispatchTool('search', { query: 'LegacyHit', repo: 'repo' }, createKnowledgeGraph(), 'fallback', undefined);
+    const payload = JSON.parse(result.content[0]?.text ?? '{}') as { scope?: { type?: string; repoId?: string; repoName?: string }; results?: Array<{ name?: string }> };
+    assert.equal(payload.scope?.type, 'repo');
+    assert.equal(payload.scope?.repoId, 'repo-id');
+    assert.equal(payload.scope?.repoName, 'repo');
+    assert.equal(payload.results?.[0]?.name, 'LegacyHit');
   });
 });

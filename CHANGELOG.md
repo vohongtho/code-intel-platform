@@ -453,7 +453,7 @@ Fixed three confirmed false-positive mechanisms in the security-signal detectors
 - **`LazyKnowledgeGraph`** — nodes not loaded into memory on startup; fetched from DB on demand with LRU cache
 - **LRU cache** — keeps last N nodes in memory (default: 5,000; `GRAPH_CACHE_SIZE` env var)
 - **Background warm** — pre-loads top-N highest-blast-radius nodes on startup
-- **Paginated graph API** — `GET /api/v1/graph/:repo/nodes?limit=100&offset=0`; single-node fetch without full graph load
+- **Paginated graph API** — `GET /api/v1/graph/:repoId/nodes?limit=100&offset=0`; single-node fetch without full graph load
 - **Web UI progressive loading** — loads visible nodes first; fetches neighbors on pan/zoom
 - **Serve startup** — only loads `meta.json` + node/edge counts on startup; no full graph load
 

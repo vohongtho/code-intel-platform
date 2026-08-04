@@ -26,7 +26,7 @@ import { loadGraphFromDB } from '../multi-repo/graph-from-db.js';
 import { loadRegistry, findRepoByName } from '../storage/repo-registry.js';
 import Logger from '../shared/logger.js';
 import { AppError, ErrorCodes } from '../errors/codes.js';
-import type { CountGroup, GQLResult, GQLResultKind } from 'code-intel-shared';
+import type { CountGroup, GQLResult, GQLResultKind, QueryScope, ResolvedQueryScope } from 'code-intel-shared';
 import {
   requestIdMiddleware,
   authMiddleware,
@@ -967,12 +967,44 @@ export function createApp(
     return mergedGraph.size.nodes > 0 ? mergedGraph : null;
   }
 
+  function resolveDefaultRepoScope(): ResolvedQueryScope {
+    const defaultEntry = loadRegistry().find((r) => r.name === repoName || (workspaceRoot && r.path === workspaceRoot));
+    return { type: 'repo', repoId: defaultEntry?.id ?? repoName, repoName: defaultEntry?.name ?? repoName };
+  }
+
+  async function resolveExplicitScope(scope: QueryScope | undefined): Promise<{ graph: KnowledgeGraph; resolvedScope: ResolvedQueryScope }> {
+    if (!scope) return { graph, resolvedScope: resolveDefaultRepoScope() };
+    if (scope.type === 'group') {
+      const gg = await loadGroupGraph(scope.name);
+      if (!gg) throw new AppError(ErrorCodes.NOT_FOUND, `Group "${scope.name}" not found`, 'Use /api/v1/groups to list available groups', 404);
+      return { graph: gg, resolvedScope: { type: 'group', name: scope.name } };
+    }
+    const entry = loadRegistry().find((r) => r.id === scope.repoId);
+    if (!entry) throw new AppError(ErrorCodes.NOT_FOUND, `Repo "${scope.repoId}" not found`, 'Use /api/v1/repos to list available repositories', 404);
+    if (entry.name === repoName || (workspaceRoot && entry.path === workspaceRoot)) {
+      return { graph, resolvedScope: { type: 'repo', repoId: entry.id, repoName: entry.name } };
+    }
+    const g = await loadRepoGraph(entry.id);
+    if (!g) throw new AppError(ErrorCodes.NOT_FOUND, `Repo "${scope.repoId}" is not indexed`, 'Run code-intel analyze for that repository and retry', 404);
+    return { graph: g, resolvedScope: { type: 'repo', repoId: entry.id, repoName: entry.name } };
+  }
+
   async function getGraphForRepo(requestedRepo: string | undefined): Promise<KnowledgeGraph> {
     if (!requestedRepo || requestedRepo === repoName) return graph;
     const g = await loadRepoGraph(requestedRepo);
     if (g) return g;
     const gg = await loadGroupGraph(requestedRepo);
     return gg ?? graph;
+  }
+
+  async function getGraphForRepoIdOrThrow(repoId: string | undefined): Promise<KnowledgeGraph> {
+    if (!repoId || repoId === repoName) return graph;
+    const entry = loadRegistry().find((r) => r.id === repoId);
+    if (!entry) throw new AppError(ErrorCodes.NOT_FOUND, `Repo "${repoId}" not found`, 'Use /api/v1/repos to list available repositories', 404);
+    if (entry.name === repoName || (workspaceRoot && entry.path === workspaceRoot)) return graph;
+    const repoGraph = await loadRepoGraph(entry.id);
+    if (!repoGraph) throw new AppError(ErrorCodes.NOT_FOUND, `Repo "${repoId}" is not indexed`, 'Run code-intel analyze for that repository and retry', 404);
+    return repoGraph;
   }
 
   async function getRepoSearchContext(requestedRepo: string | undefined) {
@@ -993,13 +1025,13 @@ export function createApp(
 
 
   // ── Graph download ──────────────────────────────────────────────────────────
-  app.get('/api/v1/graph/:repo', requireRepoAccess((req) => {
-    const p = req.params['repo'];
-    const repo = Array.isArray(p) ? p[0] : p;
-    return repo ? decodeURIComponent(repo) : undefined;
+  app.get('/api/v1/graph/:repoId', requireRepoAccess((req) => {
+    const p = req.params['repoId'];
+    const repoId = Array.isArray(p) ? p[0] : p;
+    return repoId ? decodeURIComponent(repoId) : undefined;
   }), async (req, res) => {
-    const rawRepo = req.params['repo'];
-    const requestedRepo = decodeURIComponent(Array.isArray(rawRepo) ? (rawRepo[0] ?? '') : (rawRepo ?? ''));
+    const rawRepoId = req.params['repoId'];
+    const requestedRepo = decodeURIComponent(Array.isArray(rawRepoId) ? (rawRepoId[0] ?? '') : (rawRepoId ?? ''));
     const g = await loadRepoGraph(requestedRepo);
     if (!g) {
       res.status(404).json({
@@ -1017,15 +1049,15 @@ export function createApp(
   });
 
   // ── Paginated node list (Epic 1.2) ──────────────────────────────────────────
-  // GET /api/v1/graph/:repo/nodes?limit=200&offset=0
+  // GET /api/v1/graph/:repoId/nodes?limit=200&offset=0
   // Returns a page of nodes. In lazy mode uses native SKIP/LIMIT; eager mode slices an array.
-  app.get('/api/v1/graph/:repo/nodes', requireRepoAccess((req) => {
-    const p = req.params['repo'];
-    const repo = Array.isArray(p) ? p[0] : p;
-    return repo ? decodeURIComponent(repo) : undefined;
+  app.get('/api/v1/graph/:repoId/nodes', requireRepoAccess((req) => {
+    const p = req.params['repoId'];
+    const repoId = Array.isArray(p) ? p[0] : p;
+    return repoId ? decodeURIComponent(repoId) : undefined;
   }), async (req, res) => {
-    const rawRepo = req.params['repo'];
-    const requestedRepo = decodeURIComponent(Array.isArray(rawRepo) ? (rawRepo[0] ?? '') : (rawRepo ?? ''));
+    const rawRepoId = req.params['repoId'];
+    const requestedRepo = decodeURIComponent(Array.isArray(rawRepoId) ? (rawRepoId[0] ?? '') : (rawRepoId ?? ''));
     const limit = Math.min(parseInt((req.query['limit'] as string | undefined) ?? '200', 10), 1000);
     const offset = Math.max(parseInt((req.query['offset'] as string | undefined) ?? '0', 10), 0);
 
@@ -1069,7 +1101,7 @@ export function createApp(
   // ── Search ──────────────────────────────────────────────────────────────────
   app.post('/api/v1/search', requireToolScope('search'), async (req, res) => {
     try {
-      const result = await executeSearchRequest(req.body as { query?: string; limit?: number; mode?: SearchMode; scope?: SearchScope; repo?: string; group?: string }, {
+      const result = await executeSearchRequest(req.body as { query?: string; limit?: number; mode?: SearchMode; scope?: SearchScope; repoId?: string; repo?: string; group?: string }, {
         repoName,
         workspaceRoot,
         ensureBm25Index,
@@ -1090,7 +1122,7 @@ export function createApp(
   // ── Vector search ───────────────────────────────────────────────────────────
   app.post('/api/v1/vector-search', requireToolScope('search'), async (req, res) => {
     try {
-      const result = await executeSearchRequest({ ...(req.body as Record<string, unknown>), mode: 'vector' } as { query?: string; limit?: number; mode?: SearchMode; scope?: SearchScope; repo?: string; group?: string }, {
+      const result = await executeSearchRequest({ ...(req.body as Record<string, unknown>), mode: 'vector' } as { query?: string; limit?: number; mode?: SearchMode; scope?: SearchScope; repoId?: string; repo?: string; group?: string }, {
         repoName,
         workspaceRoot,
         ensureBm25Index,
@@ -1205,8 +1237,9 @@ export function createApp(
 
   // ── Node detail ─────────────────────────────────────────────────────────────
   app.get('/api/v1/nodes/:id', async (req, res) => {
-    const nodeId = decodeURIComponent(req.params.id);
-    const g = await getGraphForRepo(req.query['repo'] as string | undefined);
+    try {
+      const nodeId = decodeURIComponent(req.params.id);
+      const g = await getGraphForRepoIdOrThrow(req.query['repoId'] as string | undefined);
     // In lazy mode, fall through to DB if node is not in LRU cache
     const node = isLazyGraph(g)
       ? await g.getNodeAsync(nodeId)
@@ -1231,23 +1264,31 @@ export function createApp(
         }
       : (id: string) => Promise.resolve(g.getNode(id)?.kind);
 
-    res.json({
-      node,
-      callers: await Promise.all(incoming.filter((e) => e.kind === 'calls').map(async (e) => ({ id: e.source, name: await resolveName(e.source), weight: e.weight }))),
-      callees: await Promise.all(outgoing.filter((e) => e.kind === 'calls').map(async (e) => ({ id: e.target, name: await resolveName(e.target), weight: e.weight }))),
-      imports: await Promise.all(outgoing.filter((e) => e.kind === 'imports').map(async (e) => ({ id: e.target, name: await resolveName(e.target) }))),
-      importedBy: await Promise.all(incoming.filter((e) => e.kind === 'imports').map(async (e) => ({ id: e.source, name: await resolveName(e.source) }))),
-      extends: await Promise.all(outgoing.filter((e) => e.kind === 'extends').map(async (e) => ({ id: e.target, name: await resolveName(e.target) }))),
-      implementsEdges: await Promise.all(outgoing.filter((e) => e.kind === 'implements').map(async (e) => ({ id: e.target, name: await resolveName(e.target) }))),
-      members: await Promise.all(outgoing.filter((e) => e.kind === 'has_member').map(async (e) => ({ id: e.target, name: await resolveName(e.target), kind: await resolveKind(e.target) }))),
-      cluster: (await Promise.all(incoming.filter((e) => e.kind === 'belongs_to').map(async (e) => resolveName(e.target))))[0],
-    });
+      res.json({
+        node,
+        callers: await Promise.all(incoming.filter((e) => e.kind === 'calls').map(async (e) => ({ id: e.source, name: await resolveName(e.source), weight: e.weight }))),
+        callees: await Promise.all(outgoing.filter((e) => e.kind === 'calls').map(async (e) => ({ id: e.target, name: await resolveName(e.target), weight: e.weight }))),
+        imports: await Promise.all(outgoing.filter((e) => e.kind === 'imports').map(async (e) => ({ id: e.target, name: await resolveName(e.target) }))),
+        importedBy: await Promise.all(incoming.filter((e) => e.kind === 'imports').map(async (e) => ({ id: e.source, name: await resolveName(e.source) }))),
+        extends: await Promise.all(outgoing.filter((e) => e.kind === 'extends').map(async (e) => ({ id: e.target, name: await resolveName(e.target) }))),
+        implementsEdges: await Promise.all(outgoing.filter((e) => e.kind === 'implements').map(async (e) => ({ id: e.target, name: await resolveName(e.target) }))),
+        members: await Promise.all(outgoing.filter((e) => e.kind === 'has_member').map(async (e) => ({ id: e.target, name: await resolveName(e.target), kind: await resolveKind(e.target) }))),
+        cluster: (await Promise.all(incoming.filter((e) => e.kind === 'belongs_to').map(async (e) => resolveName(e.target))))[0],
+      });
+    } catch (err) {
+      if (err instanceof AppError) {
+        res.status(err.statusCode).json({ error: { code: err.code, message: err.message, hint: err.hint, requestId: req.requestId, timestamp: new Date().toISOString() } });
+        return;
+      }
+      throw err;
+    }
   });
 
   // ── Blast radius ────────────────────────────────────────────────────────────
   app.post('/api/v1/blast-radius', async (req, res) => {
-    const { target, direction = 'both', max_hops = 5, repo } = req.body as { target?: string; direction?: string; max_hops?: number; repo?: string };
-    const g = await getGraphForRepo(repo);
+    try {
+      const { target, direction = 'both', max_hops = 5, repoId } = req.body as { target?: string; direction?: string; max_hops?: number; repoId?: string };
+      const g = await getGraphForRepoIdOrThrow(repoId);
     let targetNode = null;
     if (isLazyGraph(g) && target) {
       // Lazy mode: search by ID first (fast), then stream all nodes if needed
@@ -1286,31 +1327,54 @@ export function createApp(
         }
       }
     }
-    res.json({
-      target: targetNode.name,
-      affectedCount: [...affected.values()].filter((a) => a.depth > 0).length,
-      affected: [...affected.entries()].map(([id, info]) => ({ id, ...info })).filter((a) => a.depth > 0),
-    });
+      res.json({
+        target: targetNode.name,
+        affectedCount: [...affected.values()].filter((a) => a.depth > 0).length,
+        affected: [...affected.entries()].map(([id, info]) => ({ id, ...info })).filter((a) => a.depth > 0),
+      });
+    } catch (err) {
+      if (err instanceof AppError) {
+        res.status(err.statusCode).json({ error: { code: err.code, message: err.message, hint: err.hint, requestId: req.requestId, timestamp: new Date().toISOString() } });
+        return;
+      }
+      throw err;
+    }
   });
 
   // ── Flows ───────────────────────────────────────────────────────────────────
   app.get('/api/v1/flows', async (req, res) => {
-    const g = await getGraphForRepo(req.query['repo'] as string | undefined);
+    try {
+      const g = await getGraphForRepoIdOrThrow(req.query['repoId'] as string | undefined);
     const flows: { id: string; name: string; steps: unknown }[] = [];
     for (const node of g.allNodes()) {
       if (node.kind === 'flow') flows.push({ id: node.id, name: node.name, steps: node.metadata?.steps });
     }
-    res.json({ flows });
+      res.json({ flows });
+    } catch (err) {
+      if (err instanceof AppError) {
+        res.status(err.statusCode).json({ error: { code: err.code, message: err.message, hint: err.hint, requestId: req.requestId, timestamp: new Date().toISOString() } });
+        return;
+      }
+      throw err;
+    }
   });
 
   // ── Clusters ────────────────────────────────────────────────────────────────
   app.get('/api/v1/clusters', async (req, res) => {
-    const g = await getGraphForRepo(req.query['repo'] as string | undefined);
+    try {
+      const g = await getGraphForRepoIdOrThrow(req.query['repoId'] as string | undefined);
     const clusters: { id: string; name: string; memberCount: number }[] = [];
     for (const node of g.allNodes()) {
       if (node.kind === 'cluster') clusters.push({ id: node.id, name: node.name, memberCount: (node.metadata?.memberCount as number) ?? 0 });
     }
-    res.json({ clusters });
+      res.json({ clusters });
+    } catch (err) {
+      if (err instanceof AppError) {
+        res.status(err.statusCode).json({ error: { code: err.code, message: err.message, hint: err.hint, requestId: req.requestId, timestamp: new Date().toISOString() } });
+        return;
+      }
+      throw err;
+    }
   });
 
   // ── Jobs ────────────────────────────────────────────────────────────────────
@@ -1572,11 +1636,11 @@ export function createApp(
   // ── Source preview ──────────────────────────────────────────────────────────
   // GET /api/v1/source?file=<path>&startLine=<n>&endLine=<n>
   app.get('/api/v1/source', requireAuth, requireRole('viewer'), (req: Request, res: Response) => {
-    const { file, startLine: startLineStr, endLine: endLineStr, repo } = req.query as {
+    const { file, startLine: startLineStr, endLine: endLineStr, repoId } = req.query as {
       file?: string;
       startLine?: string;
       endLine?: string;
-      repo?: string;
+      repoId?: string;
     };
 
     if (!file) {
@@ -1605,30 +1669,24 @@ export function createApp(
       return;
     }
 
-    // Determine base directory: prefer repo param, then workspaceRoot
-    // If repo is a group name, search all group members for a matching base
+    // Determine base directory: prefer repoId param, then workspaceRoot
     let baseDir = workspaceRoot;
-    if (repo && repo !== repoName) {
+    if (repoId && repoId !== repoName) {
       const registry = loadRegistry();
-      const entry = registry.find((r) => r.name === repo || r.path === repo);
-      if (entry) {
-        baseDir = entry.path;
-      } else {
-        // Maybe it's a group name — try all member repos to find one that contains the file
-        const group = loadGroup(repo);
-        if (group) {
-          const normalizedFile = path.normalize(file);
-          for (const member of group.members) {
-            const regEntry = registry.find((r) => r.name === member.registryName);
-            if (!regEntry) continue;
-            const candidate = path.resolve(path.join(regEntry.path, normalizedFile));
-            if (fs.existsSync(candidate)) {
-              baseDir = regEntry.path;
-              break;
-            }
-          }
-        }
+      const entry = registry.find((r) => r.id === repoId);
+      if (!entry) {
+        res.status(404).json({
+          error: {
+            code: ErrorCodes.NOT_FOUND,
+            message: `Repo "${repoId}" not found`,
+            hint: 'Use /api/v1/repos to list available repositories',
+            requestId: req.requestId,
+            timestamp: new Date().toISOString(),
+          },
+        });
+        return;
       }
+      baseDir = entry.path;
     }
 
     // Security: must be within workspaceRoot or a known repo
@@ -1772,7 +1830,7 @@ export function createApp(
   // ── GQL Query API ───────────────────────────────────────────────────────────
   // POST /api/v1/query — requires viewer role minimum
   app.post('/api/v1/query', requireRole('viewer'), async (req: Request, res: Response) => {
-    const { gql, format } = req.body as { gql?: string; format?: string };
+    const { gql, format, scope } = req.body as { gql?: string; format?: string; scope?: QueryScope };
     if (!gql || typeof gql !== 'string') {
       res.status(400).json({
         error: { code: ErrorCodes.INVALID_REQUEST, message: 'Missing required field: gql', requestId: req.requestId, timestamp: new Date().toISOString() },
@@ -1796,10 +1854,11 @@ export function createApp(
         });
         return;
       }
-      const result = validateGQLResult(runGQL(ast, graph));
+      const { graph: targetGraph, resolvedScope } = await resolveExplicitScope(scope);
+      const result = validateGQLResult(runGQL(ast, targetGraph));
       const statusCode = result.truncated ? 408 : 200;
-      Logger.info(`[gql] requestId=${req.requestId} statement=${ast.type} kind=${result.kind} durationMs=${result.executionTimeMs} truncated=${result.truncated}`);
-      res.status(statusCode).json({ ...result, format: format ?? 'json' });
+      Logger.info(`[gql] requestId=${req.requestId} statement=${ast.type} kind=${result.kind} repoScope=${resolvedScope.type === 'repo' ? resolvedScope.repoId : resolvedScope.name} durationMs=${result.executionTimeMs} truncated=${result.truncated}`);
+      res.status(statusCode).json({ ...result, scope: resolvedScope, format: format ?? 'json' });
     } catch (err) {
       const safeCategory = err instanceof AppError ? 'invalid_result' : 'unexpected';
       Logger.error(`[gql] requestId=${req.requestId} category=${safeCategory}:`, err instanceof Error ? err.message : String(err));
@@ -1813,7 +1872,7 @@ export function createApp(
 
   // POST /api/v1/query/explain — returns a query plan
   app.post('/api/v1/query/explain', requireRole('viewer'), async (req: Request, res: Response) => {
-    const { gql } = req.body as { gql?: string };
+    const { gql, scope } = req.body as { gql?: string; scope?: QueryScope };
     if (!gql || typeof gql !== 'string') {
       res.status(400).json({
         error: { code: ErrorCodes.INVALID_REQUEST, message: 'Missing required field: gql', requestId: req.requestId, timestamp: new Date().toISOString() },
@@ -1835,36 +1894,37 @@ export function createApp(
         });
         return;
       }
+      const { graph: targetGraph, resolvedScope } = await resolveExplicitScope(scope);
       // Build a query plan description
-      const plan: Record<string, unknown> = { type: ast.type, gql };
+      const plan: Record<string, unknown> = { type: ast.type, gql, scope: resolvedScope };
       if (ast.type === 'FIND') {
         plan.steps = [
           { step: 1, op: 'SCAN_NODES', filter: ast.target === '*' ? 'all' : `kind=${ast.target}` },
           ...(ast.where ? [{ step: 2, op: 'WHERE', conditions: ast.where.exprs.length }] : []),
           ...(ast.limit !== undefined ? [{ step: 3, op: 'LIMIT', value: ast.limit }] : []),
         ];
-        plan.estimatedCost = graph.size.nodes;
+        plan.estimatedCost = targetGraph.size.nodes;
       } else if (ast.type === 'TRAVERSE') {
         plan.steps = [
           { step: 1, op: 'FIND_START_NODE', name: ast.from },
           { step: 2, op: 'BFS', edgeKind: ast.edgeKind, maxDepth: ast.depth ?? 5 },
         ];
-        plan.estimatedCost = Math.min(graph.size.nodes, Math.pow(4, ast.depth ?? 5));
+        plan.estimatedCost = Math.min(targetGraph.size.nodes, Math.pow(4, ast.depth ?? 5));
       } else if (ast.type === 'PATH') {
         plan.steps = [
           { step: 1, op: 'FIND_NODES', from: ast.from, to: ast.to },
           { step: 2, op: 'BFS_SHORTEST_PATH' },
         ];
-        plan.estimatedCost = graph.size.nodes + graph.size.edges;
+        plan.estimatedCost = targetGraph.size.nodes + targetGraph.size.edges;
       } else if (ast.type === 'COUNT') {
         plan.steps = [
           { step: 1, op: 'SCAN_NODES', filter: ast.target === '*' ? 'all' : `kind=${ast.target}` },
           ...(ast.where ? [{ step: 2, op: 'WHERE', conditions: ast.where.exprs.length }] : []),
           ...(ast.groupBy ? [{ step: 3, op: 'GROUP_BY', property: ast.groupBy }] : [{ step: 3, op: 'COUNT' }]),
         ];
-        plan.estimatedCost = graph.size.nodes;
+        plan.estimatedCost = targetGraph.size.nodes;
       }
-      res.json({ plan, graphSize: graph.size });
+      res.json({ plan, graphSize: targetGraph.size, scope: resolvedScope });
     } catch (err) {
       res.status(500).json({ error: { code: ErrorCodes.INTERNAL_ERROR, message: err instanceof Error ? err.message : String(err), requestId: req.requestId, timestamp: new Date().toISOString() } });
     }

@@ -83,9 +83,32 @@ export function createMcpServer(
   const _tokenProp = {
     _token: { type: 'string' as const, description: 'Required if CODE_INTEL_TOKEN is configured' },
   };
+  const _repoSelectorProps = {
+    repoId: { type: 'string' as const, description: 'Canonical repository identity (preferred)' },
+    repo: { type: 'string' as const, description: 'Legacy repo selector during migration (deprecated)' },
+  };
+  const REPO_SELECTABLE_TOOL_NAMES = new Set([
+    'overview', 'search', 'context', 'blast_radius', 'file_symbols', 'find_path', 'list_exports', 'routes', 'clusters', 'flows',
+    'detect_changes', 'query', 'raw_query', 'explain_relationship', 'pr_impact', 'similar_symbols', 'health_report',
+    'suggest_tests', 'cluster_summary', 'deprecated_usage', 'complexity_hotspots', 'coverage_gaps', 'secrets', 'vulnerability_scan',
+  ]);
+  const withRepoSelector = <T extends { name: string; inputSchema?: { type?: string; properties?: Record<string, unknown> } }>(tool: T): T => (
+    REPO_SELECTABLE_TOOL_NAMES.has(tool.name) && tool.inputSchema?.type === 'object'
+      ? {
+          ...tool,
+          inputSchema: {
+            ...tool.inputSchema,
+            properties: {
+              ..._repoSelectorProps,
+              ...(tool.inputSchema.properties ?? {}),
+            },
+          },
+        } as T
+      : tool
+  );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [
+  server.setRequestHandler(ListToolsRequestSchema, async () => {
+    const tools = [
       // ── Core repo tools ──────────────────────────────────────────────────
       {
         name: 'repos',
@@ -118,9 +141,11 @@ export function createMcpServer(
               description: 'Canonical search scope',
               properties: {
                 type: { type: 'string', enum: ['repo', 'group'] },
-                name: { type: 'string' },
+                repoId: { type: 'string', description: 'Canonical repository identity when type=repo' },
+                name: { type: 'string', description: 'Group name when type=group' },
               },
             },
+            repoId: { type: 'string', description: 'Canonical repository identity (preferred)' },
             repo: { type: 'string', description: 'Legacy repo scope during migration (deprecated)' },
             group: { type: 'string', description: 'Legacy group scope during migration (deprecated)' },
             ..._tokenProp,
@@ -295,6 +320,8 @@ export function createMcpServer(
               description: 'GQL query string. Examples: "FIND function WHERE name CONTAINS \\"auth\\"", "TRAVERSE CALLS FROM \\"handleLogin\\" DEPTH 3", "PATH FROM \\"createUser\\" TO \\"sendEmail\\"", "COUNT function GROUP BY cluster"',
             },
             limit: { type: 'number', description: 'Override LIMIT in the query (optional)' },
+            repoId: { type: 'string', description: 'Canonical repository identity (preferred)' },
+            repo: { type: 'string', description: 'Legacy repo selector during migration (deprecated)' },
             ..._tokenProp,
           },
           required: ['gql'],
@@ -535,8 +562,9 @@ export function createMcpServer(
           },
         },
       },
-    ],
-  }));
+    ];
+    return { tools: tools.map(withRepoSelector) };
+  });
 
   // ─── Tool Handlers ─────────────────────────────────────────────────────────
 
@@ -642,11 +670,25 @@ function repoCacheKey(repoId: string, repoPath: string): string {
   return `${repoId}:${path.resolve(repoPath)}`;
 }
 
-function resolveRepo(repo: string | undefined, defaultRepo: string, defaultPath: string | undefined): { id: string; name: string; path: string } | null {
+function resolveRepo(repoId: string | undefined, repo: string | undefined, defaultRepo: string, defaultPath: string | undefined): { id: string; name: string; path: string } | null {
   const registry = loadRegistry();
+  if (repoId) {
+    const entry = registry.find((r) => r.id === repoId);
+    if (!entry) throw new Error(`Repo "${repoId}" not found. Use the repos tool to list available repositories.`);
+    return { id: entry.id, name: entry.name, path: entry.path };
+  }
   if (repo) {
-    const entry = registry.find((r) => r.id === repo || r.name === repo || r.path === repo);
-    return entry ? { id: entry.id, name: entry.name, path: entry.path } : null;
+    const idEntry = registry.find((r) => r.id === repo);
+    if (idEntry) return { id: idEntry.id, name: idEntry.name, path: idEntry.path };
+    const matches = registry.filter((r) => r.name === repo || r.path === repo);
+    if (matches.length > 1) {
+      throw new Error(`Repo selector "${repo}" is ambiguous. Use stable repoId instead of repo name/path.`);
+    }
+    if (matches.length === 1) {
+      const entry = matches[0]!;
+      return { id: entry.id, name: entry.name, path: entry.path };
+    }
+    throw new Error(`Repo "${repo}" not found. Use the repos tool to list available repositories.`);
   }
   const entry = registry.find((r) => r.name === defaultRepo || (defaultPath && r.path === defaultPath));
   if (entry) return { id: entry.id, name: entry.name, path: entry.path };
@@ -695,16 +737,17 @@ async function loadRepoGraph(
 }
 
 async function ensureRepoLoaded(
+  repoId: string | undefined,
   repo: string | undefined,
   defaultRepo: string,
   defaultPath: string | undefined,
   fallbackGraph: KnowledgeGraph,
 ): Promise<LoadedRepoGraph> {
-  const resolved = resolveRepo(repo, defaultRepo, defaultPath);
+  const resolved = resolveRepo(repoId, repo, defaultRepo, defaultPath);
   if (!resolved) {
     return {
       id: defaultPath ?? defaultRepo,
-      repo: repo ?? defaultRepo,
+      repo: repo ?? repoId ?? defaultRepo,
       path: defaultPath ?? '',
       indexVersion: 'memory',
       schemaVersion: CURRENT_SCHEMA_VERSION,
@@ -763,7 +806,7 @@ async function ensureRepoLoaded(
 }
 
 async function graphContext(a: Record<string, unknown>, repoName: string, workspaceRoot: string | undefined, graph: KnowledgeGraph): Promise<LoadedRepoGraph> {
-  return ensureRepoLoaded(a.repo as string | undefined, repoName, workspaceRoot, graph);
+  return ensureRepoLoaded(a.repoId as string | undefined, a.repo as string | undefined, repoName, workspaceRoot, graph);
 }
 
 function missingIndexResult(ctx: LoadedRepoGraph): ToolResult {
@@ -803,14 +846,21 @@ export async function dispatchTool(
   let activeVectorDbPath: string | undefined;
   let activeContext: LoadedRepoGraph | null = null;
   if (GRAPH_BACKED_TOOLS.has(name) || name === 'search') {
-    const ctx = await graphContext(a, repoName, workspaceRoot, graph);
-    activeContext = ctx;
-    graph = ctx.graph;
-    activeRepoName = ctx.repo;
-    activeWorkspaceRoot = ctx.path || workspaceRoot;
-    activeBm25 = ctx.bm25Index;
-    activeVectorDbPath = ctx.vectorDbPath;
-    if (ctx.missingIndex) return missingIndexResult(ctx);
+    try {
+      const ctx = await graphContext(a, repoName, workspaceRoot, graph);
+      activeContext = ctx;
+      graph = ctx.graph;
+      activeRepoName = ctx.repo;
+      activeWorkspaceRoot = ctx.path || workspaceRoot;
+      activeBm25 = ctx.bm25Index;
+      activeVectorDbPath = ctx.vectorDbPath;
+      if (ctx.missingIndex) return missingIndexResult(ctx);
+    } catch (err) {
+      return {
+        content: [{ type: 'text', text: compact({ error: err instanceof Error ? err.message : String(err) }) }],
+        isError: true,
+      };
+    }
   }
 
   switch (name) {
@@ -874,22 +924,29 @@ export async function dispatchTool(
           query: a.query as string | undefined,
           limit: fetchLimit,
           mode: (a.mode as SearchMode | undefined) ?? 'auto',
-          scope: a.scope as { type?: 'repo' | 'group'; name?: string } | undefined as { type: 'repo' | 'group'; name: string } | undefined,
+          scope: (() => {
+            const raw = a.scope as { type?: 'repo' | 'group'; repoId?: string; name?: string } | undefined;
+            if (!raw) return undefined;
+            if (raw.type === 'repo' && typeof raw.repoId === 'string') return { type: 'repo' as const, repoId: raw.repoId };
+            if (raw.type === 'group' && typeof raw.name === 'string') return { type: 'group' as const, name: raw.name };
+            return undefined;
+          })(),
           repo: a.repo as string | undefined,
+          repoId: a.repoId as string | undefined,
           group: a.group as string | undefined,
         }, {
           repoName,
           workspaceRoot: activeWorkspaceRoot,
-          ensureBm25Index: () => activeBm25 ?? ((!a.repo || a.repo === repoName) ? (bm25Resolver ? bm25Resolver() : null) : null),
+          ensureBm25Index: () => activeBm25 ?? ((!a.repoId && (!a.repo || a.repo === repoName)) ? (bm25Resolver ? bm25Resolver() : null) : null),
           getGraphForRepo: async (requestedRepo) => {
             if (!requestedRepo || requestedRepo === activeRepoName) return graph;
-            const ctx = await ensureRepoLoaded(requestedRepo, repoName, workspaceRoot, graph);
+            const ctx = await ensureRepoLoaded(requestedRepo, undefined, repoName, workspaceRoot, graph);
             return ctx.graph;
           },
           getRepoSearchContext: async (requestedRepo) => {
             const ctx = !requestedRepo || requestedRepo === activeRepoName
-              ? activeContext ?? await ensureRepoLoaded(requestedRepo, repoName, workspaceRoot, graph)
-              : await ensureRepoLoaded(requestedRepo, repoName, workspaceRoot, graph);
+              ? activeContext ?? await ensureRepoLoaded(requestedRepo, undefined, repoName, workspaceRoot, graph)
+              : await ensureRepoLoaded(requestedRepo, undefined, repoName, workspaceRoot, graph);
             return {
               graph: ctx.graph,
               bm25Index: ctx.bm25Index,

@@ -6,11 +6,12 @@ import { getVectorDbPath } from '../storage/index.js';
 import { loadRegistry } from '../storage/repo-registry.js';
 import { loadGroup } from '../multi-repo/group-registry.js';
 import { queryGroup } from '../multi-repo/group-query.js';
+import type { QueryScope, ResolvedQueryScope } from 'code-intel-shared';
 
 export type SearchMode = 'auto' | 'bm25' | 'vector' | 'hybrid';
 export type RequestedSearchMode = 'auto' | 'bm25' | 'vector';
 export type ActualSearchMode = 'bm25' | 'vector' | 'hybrid';
-export type SearchScope = { type: 'repo' | 'group'; name: string };
+export type SearchScope = QueryScope;
 
 export type SearchFallbackReason =
   | 'VECTOR_INDEX_UNAVAILABLE'
@@ -51,7 +52,7 @@ export type SearchExecResult =
       searchMode: ActualSearchMode;
       fallbackReason?: SearchFallbackReason;
       explanation?: SearchExplanation;
-      scope: SearchScope;
+      scope: ResolvedQueryScope;
       vectorReady: boolean;
       deprecated: boolean;
       deprecation?: string;
@@ -67,6 +68,7 @@ export type SearchRequest = {
   limit?: number;
   mode?: SearchMode;
   scope?: SearchScope;
+  repoId?: string;
   repo?: string;
   group?: string;
   explain?: boolean;
@@ -78,12 +80,15 @@ function normalizeRequestedMode(mode: SearchMode | undefined): RequestedSearchMo
 }
 
 export function normalizeSearchRequest(body: SearchRequest) {
-  const { query, limit, mode, scope, repo, group, explain } = body;
+  const { query, limit, mode, scope, repoId, repo, group, explain } = body;
   if (!query) {
     return { error: { status: 400, message: 'Missing query', hint: 'Provide { "query": "..." } in request body' } } as const;
   }
-  if (scope && (repo || group)) {
-    return { error: { status: 400, message: 'Ambiguous request shape', hint: 'Use either scope or legacy repo/group fields, not both' } } as const;
+  if (scope && (repoId || repo || group)) {
+    return { error: { status: 400, message: 'Ambiguous request shape', hint: 'Use either scope or flat scope fields, not both' } } as const;
+  }
+  if (repoId && (repo || group)) {
+    return { error: { status: 400, message: 'Ambiguous flat scope', hint: 'Use repoId or legacy repo/group, not both' } } as const;
   }
   if (repo && group) {
     return { error: { status: 400, message: 'Ambiguous legacy scope', hint: 'Use either repo or group, not both' } } as const;
@@ -91,9 +96,11 @@ export function normalizeSearchRequest(body: SearchRequest) {
   const normalizedScope = scope
     ?? (group
       ? { type: 'group' as const, name: group }
-      : repo
-        ? { type: 'repo' as const, name: repo }
-        : undefined);
+      : repoId
+        ? { type: 'repo' as const, repoId }
+        : repo
+          ? { type: 'repo' as const, repoId: repo }
+          : undefined);
   return {
     query,
     limit: limit ?? 20,
@@ -170,14 +177,43 @@ export async function executeSearchRequest(
     } as const;
   }
 
-  const requestedRepo = scope?.type === 'repo' ? scope.name : undefined;
-  const resolvedScope = scope ?? { type: 'repo' as const, name: requestedRepo ?? deps.repoName };
+  const registry = loadRegistry();
+  const defaultRepoId = registry.find((repo) => repo.name === deps.repoName || (deps.workspaceRoot && repo.path === deps.workspaceRoot))?.id ?? deps.repoName;
+  let requestedRepo: string | undefined;
+  let resolvedScope: ResolvedQueryScope;
+  if (!scope) {
+    requestedRepo = undefined;
+    resolvedScope = { type: 'repo', repoId: defaultRepoId, repoName: deps.repoName };
+  } else if (scope.type === 'repo') {
+    const exactRepo = registry.find((repo) => repo.id === scope.repoId);
+    if (exactRepo) {
+      requestedRepo = exactRepo.id;
+      resolvedScope = { type: 'repo', repoId: exactRepo.id, repoName: exactRepo.name };
+    } else if (deprecatedFlag) {
+      const matches = registry.filter((repo) => repo.name === scope.repoId || repo.path === scope.repoId);
+      if (matches.length > 1) {
+        return { error: { status: 400, message: `Repo selector '${scope.repoId}' is ambiguous`, hint: 'Use stable repoId instead of repo name/path' } } as const;
+      }
+      if (matches.length === 0) {
+        return { error: { status: 404, message: `Repo '${scope.repoId}' not found`, hint: 'Use /api/v1/repos to list available repositories' } } as const;
+      }
+      const entry = matches[0]!;
+      requestedRepo = entry.id;
+      resolvedScope = { type: 'repo', repoId: entry.id, repoName: entry.name };
+    } else {
+      return { error: { status: 404, message: `Repo '${scope.repoId}' not found`, hint: 'Use /api/v1/repos to list available repositories' } } as const;
+    }
+  } else {
+    requestedRepo = undefined;
+    const groupScope = scope as Extract<SearchScope, { type: 'group' }>;
+    resolvedScope = { type: 'group', name: groupScope.name };
+  }
   const searchContext = deps.getRepoSearchContext
     ? await deps.getRepoSearchContext(requestedRepo)
     : null;
   const graph = searchContext?.graph ?? await deps.getGraphForRepo(requestedRepo);
   const repoEntry = requestedRepo && requestedRepo !== deps.repoName
-    ? loadRegistry().find((repo) => repo.id === requestedRepo || repo.name === requestedRepo || repo.path === requestedRepo)
+    ? registry.find((repo) => repo.id === requestedRepo)
     : null;
   const vectorDbPath = searchContext?.vectorDbPath ?? (repoEntry
     ? getVectorDbPath(repoEntry.path)

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { ApiClient, InvalidGQLResultError } from './client';
+import type { QueryScope } from 'code-intel-shared';
 
 const fetchMock = vi.fn();
 vi.stubGlobal('fetch', fetchMock);
@@ -22,6 +23,21 @@ describe('ApiClient.queryGQL', () => {
     expect(result.edges).toEqual([]);
     expect(result.groups).toEqual([{ key: 'auth', count: 2 }]);
     expect(result.path).toBeNull();
+  });
+
+  it('sends scope when provided', async () => {
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ csrfToken: 'csrf-1' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ kind: 'nodes', nodes: [], edges: [], groups: [], path: null, executionTimeMs: 1, truncated: false, totalCount: 0, scope: { type: 'repo', repoId: 'repo-1', repoName: 'demo' } }) });
+
+    const client = new ApiClient('http://localhost:4747');
+    const scope: QueryScope = { type: 'repo', repoId: 'repo-1' };
+    await client.queryGQL('FIND function', scope);
+
+    expect(fetchMock).toHaveBeenNthCalledWith(2, 'http://localhost:4747/api/v1/query', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ gql: 'FIND function', scope }),
+    }));
   });
 
   it('surfaces structured 500 error messages', async () => {

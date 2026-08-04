@@ -52,7 +52,7 @@ function SeedState({ user = adminUser, connected = true }: { user?: CurrentUser 
     dispatch({ type: 'SET_CONNECTED', connected });
     dispatch({ type: 'SET_VIEW', view: connected ? 'exploring' : 'connect' });
     dispatch({ type: 'SET_SERVER_URL', url: 'http://localhost:4747' });
-    dispatch({ type: 'SET_REPO_NAME', name: 'demo-repo' });
+    dispatch({ type: 'SET_REPO', repoId: 'repo-demo', name: 'demo-repo' });
   }, [connected, dispatch, user]);
   return null;
 }

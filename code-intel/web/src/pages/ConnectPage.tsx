@@ -19,7 +19,7 @@ export function ConnectPage() {
   const [error, setError] = useState('');
   const [connecting, setConnecting] = useState(false);
   const [tab, setTab] = useState<ConnectTab>('repo');
-  const [repos, setRepos] = useState<{ name: string; path: string; nodes: number; edges: number; indexedAt: string | null; active?: boolean }[]>([]);
+  const [repos, setRepos] = useState<{ id: string; name: string; path: string; nodes: number; edges: number; indexedAt: string | null; active?: boolean }[]>([]);
   const [groups, setGroups] = useState<{ name: string; memberCount: number; lastSync: string | null; createdAt: string }[]>([]);
   const [repoSearch, setRepoSearch] = useState('');
   const [groupSearch, setGroupSearch] = useState('');
@@ -60,14 +60,14 @@ export function ConnectPage() {
     }
   };
 
-  const handleConnectRepo = async (repoName: string) => {
+  const handleConnectRepo = async (repoId: string, repoName: string) => {
     setError('');
     setConnecting(true);
     try {
       const client = new ApiClient(url);
       dispatch({ type: 'SET_SERVER_URL', url });
       dispatch({ type: 'SET_MODE', mode: 'repo' });
-      dispatch({ type: 'SET_REPO_NAME', name: repoName });
+      dispatch({ type: 'SET_REPO', repoId, name: repoName });
       dispatch({ type: 'SET_VIEW', view: 'loading' });
       navigate('/loading');
 
@@ -76,8 +76,8 @@ export function ConnectPage() {
       // Phase 1: fetch edges + first node page in parallel (both are fast)
       dispatch({ type: 'SET_GRAPH_LOAD', progress: { loaded: 0, total: 0, phase: 'edges' } });
       const [fullGraph, firstPage] = await Promise.all([
-        client.fetchGraph(repoName),
-        client.fetchGraphNodes(repoName, 0, PAGE),
+        client.fetchGraph(repoId),
+        client.fetchGraphNodes(repoId, 0, PAGE),
       ]);
 
       const total = firstPage.total;
@@ -97,7 +97,7 @@ export function ConnectPage() {
         for (let i = 0; i < offsets.length; i += CONCURRENCY) {
           const batch = offsets.slice(i, i + CONCURRENCY);
           const pages = await Promise.all(
-            batch.map(off => client.fetchGraphNodes(repoName, off, PAGE).catch(() => null))
+            batch.map(off => client.fetchGraphNodes(repoId, off, PAGE).catch(() => null))
           );
           for (const page of pages) {
             if (!page) continue;
@@ -141,7 +141,7 @@ export function ConnectPage() {
       dispatch({ type: 'SET_MODE', mode: 'group' });
       dispatch({ type: 'SET_GROUP_NAME', name: groupName });
       dispatch({ type: 'SET_GROUP_MEMBERS', members: groupConfig.members });
-      dispatch({ type: 'SET_REPO_NAME', name: groupName });
+      dispatch({ type: 'SET_REPO', repoId: '', name: groupName });
       dispatch({ type: 'SET_GRAPH', nodes: graphData.nodes, edges: graphData.edges });
       dispatch({ type: 'SET_CONNECTED', connected: true });
       dispatch({ type: 'SET_VIEW', view: 'exploring' });
@@ -261,7 +261,7 @@ export function ConnectPage() {
                     filteredRepos.map((r) => (
                       <button
                         key={r.name}
-                        onClick={() => handleConnectRepo(r.name)}
+                        onClick={() => handleConnectRepo(r.id, r.name)}
                         disabled={connecting}
                         className={`w-full flex items-center gap-3 bg-surface hover:bg-hover border rounded-xl px-3 py-2.5 transition group disabled:opacity-50 disabled:cursor-not-allowed text-left ${
                           r.active

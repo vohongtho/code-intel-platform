@@ -7,7 +7,7 @@ type Action =
   | { type: 'SET_SERVER_URL'; url: string }
   | { type: 'SET_CONNECTED'; connected: boolean }
   | { type: 'SET_CURRENT_USER'; user: CurrentUser | null }
-  | { type: 'SET_REPO_NAME'; name: string }
+  | { type: 'SET_REPO'; repoId: string; name: string }
   | { type: 'SET_GRAPH'; nodes: CodeNode[]; edges: CodeEdge[] }
   | { type: 'SELECT_NODE'; node: CodeNode | null }
   | { type: 'HOVER_NODE'; nodeId: string | null }
@@ -39,6 +39,7 @@ const initialState: AppState = {
   connected: false,
   graphLoad: null,
   currentUser: null,
+  repoId: '',
   repoName: '',
   nodes: [],
   edges: [],
@@ -90,8 +91,8 @@ function reducer(state: AppState, action: Action): AppState {
               validationErrors: [],
             },
           };
-    case 'SET_REPO_NAME':
-      return { ...state, repoName: action.name };
+    case 'SET_REPO':
+      return { ...state, repoId: action.repoId, repoName: action.name };
     case 'SET_GRAPH':
       return { ...state, nodes: action.nodes, edges: action.edges };
     case 'SELECT_NODE':

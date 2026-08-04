@@ -642,18 +642,20 @@ code-intel group status <name>                                             # Aud
 |--------|----------|-------------|
 | `GET`  | `/api/v1/health` | Server status, graph size, watcher state |
 | `GET`  | `/api/v1/repos` | List indexed repos |
-| `GET`  | `/api/v1/graph/:repo` | Full graph (nodes + edges) |
-| `POST` | `/api/v1/search` | Canonical scoped search (`query`, `limit`, `mode`, `scope`) with repo/group targeting |
+| `GET`  | `/api/v1/graph/:repoId` | Full graph (nodes + edges) |
+| `POST` | `/api/v1/search` | Canonical scoped search (`query`, `limit`, `mode`, `scope`) with repo/group targeting; repo scope uses `repoId` |
 | `POST` | `/api/v1/vector-search` | Deprecated compatibility alias for vector mode; returns resolved scope/mode metadata |
 | `GET`  | `/api/v1/vector-status` | Vector index ready/building status |
 | `GET`  | `/api/v1/nodes/:id` | Node detail (callers, callees, imports, etc.) |
-| `POST` | `/api/v1/blast-radius` | Impact analysis |
-| `POST` | `/api/v1/query` | Execute a GQL query string; returns normalized `{ kind, nodes, edges, groups, path, executionTimeMs, truncated, totalCount }` |
-| `POST` | `/api/v1/query/explain` | Return query plan without executing |
-| `GET`  | `/api/v1/source` | Fetch file content with ±20 lines context; path-traversal protected |
+| `POST` | `/api/v1/blast-radius` | Impact analysis; request body accepts canonical `repoId` |
+| `POST` | `/api/v1/query` | Execute a GQL query string; accepts optional canonical `scope`, returns normalized `{ kind, nodes, edges, groups, path, executionTimeMs, truncated, totalCount, scope }` |
+| `POST` | `/api/v1/query/explain` | Return query plan without executing; accepts optional canonical `scope` |
+| `GET`  | `/api/v1/source` | Fetch file content with ±20 lines context; path-traversal protected; accepts optional `repoId` |
 | `POST` | `/api/v1/grep` | Regex search in file content |
-| `GET`  | `/api/v1/flows` | List detected flows |
-| `GET`  | `/api/v1/clusters` | List clusters |
+| `GET`  | `/api/v1/flows` | List detected flows; accepts optional `repoId` |
+| `GET`  | `/api/v1/clusters` | List clusters; accepts optional `repoId` |
+
+Migration note: internal/UI-owned repo selectors now use `repoId`. Legacy flat `repo` inputs remain only as bounded compatibility adapters on selected surfaces during migration.
 
 ---
 
