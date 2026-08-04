@@ -38,7 +38,7 @@
     "node": ">=22.0.0"
   },
   "scripts": {
-    "build": "tsup --config tsup.config.ts && node scripts/add-shebang.mjs && node scripts/copy-grammars.mjs",
+    "build": "npm --prefix ../shared run build && tsup --config tsup.config.ts && node scripts/add-shebang.mjs && node scripts/copy-grammars.mjs",
     "validate:dist": "rm -f vohongtho.infotech-code-intel-*.tgz && npm pack --silent >/dev/null && rm -f vohongtho.infotech-code-intel-*.tgz",
     "typecheck": "tsc -b --noEmit",
     "prepublishOnly": "npm run build",
