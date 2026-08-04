@@ -991,6 +991,19 @@ All runbooks in `docs/runbooks/`:
 
 ### 🐛 Bug Fixes
 
+#### `fix: normalize GQL aggregate results and prevent Query Console crashes`
+- Normalized every successful GQL response to a stable transport contract: `{ kind, nodes, edges, groups, path, executionTimeMs, truncated, totalCount }`
+- Added `GQLResultKind` with `nodes`, `traversal`, `path`, and `aggregate` variants
+- Updated executor paths so `FIND`, `TRAVERSE`, `PATH`, and `COUNT` all return complete collection fields
+- Preserved aggregate semantics: grouped counts remain descending; missing group values still bucket under `(none)`
+- Added HTTP validation for successful query results before serialization; malformed internal results now return structured `500` responses without stack traces
+- Kept `400` for missing `gql`, `422` for parse errors, and current `408` truncated-result behavior
+- Updated OpenAPI and README docs to document the normalized contract
+- Added Web runtime normalization so legacy aggregate responses that omit `nodes`, `edges`, `path`, and `kind` still render safely
+- Query Console now renders by `result.kind`, shows explicit empty states, keeps metadata visible, and contains render-time failures locally instead of crashing the UI
+- Added regression coverage for grouped COUNT, plain COUNT, FIND/TRAVERSE/PATH result shapes, malformed internal `500` responses, legacy aggregate normalization, non-JSON API failures, and Query Panel aggregate/traversal/path rendering
+
+
 #### `fix: wipe stale .wal/.shm DB files before write to prevent corruption`
 - `analyzeWorkspace --force`: proactively wipes both `graph.db` and `vector.db` stale files (`.wal`, `.shm`, `-wal`, `-shm` variants) upfront before any write
 - `analyze` (non-force): also clears `graph.db` stale journal files before writing

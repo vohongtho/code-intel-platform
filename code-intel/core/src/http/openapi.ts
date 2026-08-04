@@ -65,6 +65,29 @@ export const openApiSpec = {
           timestamp: { type: 'string', format: 'date-time' },
         },
       },
+      CountGroup: {
+        type: 'object',
+        properties: {
+          key: { type: 'string' },
+          count: { type: 'integer', minimum: 0 },
+        },
+        required: ['key', 'count'],
+      },
+      GQLResult: {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['nodes', 'traversal', 'path', 'aggregate'] },
+          nodes: { type: 'array', items: { '$ref': '#/components/schemas/CodeNode' } },
+          edges: { type: 'array', items: { type: 'object' } },
+          groups: { type: 'array', items: { '$ref': '#/components/schemas/CountGroup' } },
+          path: { anyOf: [{ type: 'array', items: { '$ref': '#/components/schemas/CodeNode' } }, { type: 'null' }] },
+          executionTimeMs: { type: 'number', minimum: 0 },
+          truncated: { type: 'boolean' },
+          totalCount: { type: 'integer', minimum: 0 },
+          format: { type: 'string', enum: ['json'] },
+        },
+        required: ['kind', 'nodes', 'edges', 'groups', 'path', 'executionTimeMs', 'truncated', 'totalCount'],
+      },
       SearchScope: {
         type: 'object',
         properties: {
@@ -539,16 +562,32 @@ export const openApiSpec = {
             description: 'GQL execution result',
             content: {
               'application/json': {
-                schema: {
-                  type: 'object',
-                  properties: {
-                    nodes: { type: 'array', items: { '$ref': '#/components/schemas/CodeNode' } },
-                    edges: { type: 'array', items: { type: 'object' } },
-                    groups: { type: 'array', items: { type: 'object', properties: { key: { type: 'string' }, count: { type: 'integer' } } } },
-                    path: { type: 'array', items: { '$ref': '#/components/schemas/CodeNode' }, nullable: true },
-                    executionTimeMs: { type: 'number' },
-                    truncated: { type: 'boolean' },
-                    totalCount: { type: 'integer' },
+                schema: { '$ref': '#/components/schemas/GQLResult' },
+                examples: {
+                  find: {
+                    value: {
+                      kind: 'nodes', nodes: [{ id: 'fn1', name: 'handleLogin', kind: 'function', filePath: 'auth/login.ts' }], edges: [], groups: [], path: null, executionTimeMs: 1, truncated: false, totalCount: 1, format: 'json',
+                    },
+                  },
+                  traverse: {
+                    value: {
+                      kind: 'traversal', nodes: [{ id: 'fn1', name: 'handleLogin', kind: 'function', filePath: 'auth/login.ts' }], edges: [{ id: 'e1', source: 'fn1', target: 'fn3', kind: 'calls' }], groups: [], path: null, executionTimeMs: 2, truncated: false, totalCount: 1, format: 'json',
+                    },
+                  },
+                  path: {
+                    value: {
+                      kind: 'path', nodes: [{ id: 'fn4', name: 'createUser', kind: 'function', filePath: 'user/create.ts' }, { id: 'fn5', name: 'sendEmail', kind: 'function', filePath: 'mail/send.ts' }], edges: [{ id: 'e3', source: 'fn4', target: 'fn5', kind: 'calls' }], groups: [], path: [{ id: 'fn4', name: 'createUser', kind: 'function', filePath: 'user/create.ts' }, { id: 'fn5', name: 'sendEmail', kind: 'function', filePath: 'mail/send.ts' }], executionTimeMs: 2, truncated: false, totalCount: 2, format: 'json',
+                    },
+                  },
+                  count: {
+                    value: {
+                      kind: 'aggregate', nodes: [], edges: [], groups: [{ key: 'total', count: 23 }], path: null, executionTimeMs: 1, truncated: false, totalCount: 23, format: 'json',
+                    },
+                  },
+                  groupedCount: {
+                    value: {
+                      kind: 'aggregate', nodes: [], edges: [], groups: [{ key: 'authentication', count: 12 }, { key: 'storage', count: 8 }, { key: '(none)', count: 3 }], path: null, executionTimeMs: 1, truncated: false, totalCount: 23, format: 'json',
+                    },
                   },
                 },
               },
@@ -557,7 +596,9 @@ export const openApiSpec = {
           '400': { description: 'Missing gql field', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
           '401': { description: 'Unauthorized', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
           '403': { description: 'Forbidden (insufficient role)', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '408': { description: 'Truncated partial result', content: { 'application/json': { schema: { '$ref': '#/components/schemas/GQLResult' } } } },
           '422': { description: 'GQL parse error', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '500': { description: 'Unexpected internal failure or invalid internal result shape', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
         },
       },
     },

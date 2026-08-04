@@ -21,6 +21,7 @@ export const NODE_COLORS: Record<NodeKind, string> = {
   namespace:   '#818CF8',  // Indigo-light (sibling to enum)
   module:      '#E879F9',  // Fuchsia
   route:       '#F87171',  // Red
+  vulnerability: '#DC2626', // Deep red
 
   // Meta/structural
   cluster:     '#64748B',  // Slate gray
@@ -37,8 +38,11 @@ export const EDGE_COLORS: Record<EdgeKind, string> = {
   accesses:   '#06b6d4',
   overrides:  '#ef4444',
   belongs_to: '#475569',
-  step_of:    '#fb923c',
-  handles:    '#fb7185',
+  step_of:           '#fb923c',
+  handles:           '#fb7185',
+  has_vulnerability: '#dc2626',
+  deprecated_use:    '#f59e0b',
+  tested_by:         '#10b981',
 };
 
 export const EDGE_ALPHA: Record<EdgeKind, number> = {
@@ -51,8 +55,11 @@ export const EDGE_ALPHA: Record<EdgeKind, number> = {
   accesses:   0.30,
   overrides:  0.45,
   belongs_to: 0.10,
-  step_of:    0.35,
-  handles:    0.40,
+  step_of:           0.35,
+  handles:           0.40,
+  has_vulnerability: 0.60,
+  deprecated_use:    0.45,
+  tested_by:         0.35,
 };
 
 export function withAlpha(hex: string, alpha: number): string {

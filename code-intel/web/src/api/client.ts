@@ -1,18 +1,72 @@
-import type { CodeNode, CodeEdge } from 'code-intel-shared';
+import type { CodeNode, CodeEdge, CountGroup, GQLResult, GQLResultKind } from 'code-intel-shared';
 import type { SearchResult, CurrentUser, AppConfig, SearchMode, SearchScope, EmbeddingModelCatalog } from '../state/types';
 
-export interface CountGroup {
-  key: string;
-  count: number;
+export class InvalidGQLResultError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InvalidGQLResultError';
+  }
 }
 
-export interface GQLResult {
-  nodes: CodeNode[];
-  edges?: CodeEdge[];
-  groups?: CountGroup[];
-  executionTimeMs: number;
-  truncated: boolean;
-  totalCount: number;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function normalizeCountGroup(value: unknown): CountGroup {
+  if (!isRecord(value) || typeof value.key !== 'string' || typeof value.count !== 'number' || !Number.isInteger(value.count) || value.count < 0) {
+    throw new InvalidGQLResultError('Invalid GQL result: malformed group entry');
+  }
+  return { key: value.key, count: value.count };
+}
+
+function inferLegacyGQLResultKind(value: Record<string, unknown>): GQLResultKind {
+  if (typeof value.kind === 'string') {
+    if (value.kind === 'nodes' || value.kind === 'traversal' || value.kind === 'path' || value.kind === 'aggregate') return value.kind;
+    throw new InvalidGQLResultError(`Invalid GQL result: unknown kind "${value.kind}"`);
+  }
+  if (Array.isArray(value.groups)) return 'aggregate';
+  if (Array.isArray(value.path) || value.path === null) return 'path';
+  if (Array.isArray(value.edges) && value.edges.length > 0) return 'traversal';
+  return 'nodes';
+}
+
+export function normalizeGQLResult(value: unknown): GQLResult {
+  if (!isRecord(value)) throw new InvalidGQLResultError('Invalid GQL result: expected object');
+
+  const executionTimeMs = value.executionTimeMs;
+  const truncated = value.truncated;
+  const totalCount = value.totalCount;
+
+  if (typeof executionTimeMs !== 'number' || !Number.isFinite(executionTimeMs) || executionTimeMs < 0) {
+    throw new InvalidGQLResultError('Invalid GQL result: executionTimeMs must be a non-negative number');
+  }
+  if (typeof truncated !== 'boolean') {
+    throw new InvalidGQLResultError('Invalid GQL result: truncated must be a boolean');
+  }
+  if (typeof totalCount !== 'number' || !Number.isInteger(totalCount) || totalCount < 0) {
+    throw new InvalidGQLResultError('Invalid GQL result: totalCount must be a non-negative integer');
+  }
+
+  const nodes = Array.isArray(value.nodes) ? value.nodes as CodeNode[] : [];
+  const edges = Array.isArray(value.edges) ? value.edges as CodeEdge[] : [];
+  const groups = Array.isArray(value.groups) ? value.groups.map(normalizeCountGroup) : [];
+  const rawPath = value.path;
+  const path = Array.isArray(rawPath) ? rawPath as CodeNode[] : rawPath == null ? null : (() => {
+    throw new InvalidGQLResultError('Invalid GQL result: path must be an array or null');
+  })();
+  const kind = inferLegacyGQLResultKind(value);
+
+  return {
+    kind,
+    nodes,
+    edges,
+    groups,
+    path,
+    executionTimeMs,
+    truncated,
+    totalCount,
+    format: value.format === 'json' ? 'json' : undefined,
+  };
 }
 
 export interface AuthStatus {
@@ -444,10 +498,13 @@ export class ApiClient {
       credentials: 'include',
       body: JSON.stringify({ gql }),
     });
+    const body = await res.json().catch(() => ({})) as { error?: { message?: string } } | unknown;
     if (!res.ok) {
-      const body = await res.json().catch(() => ({})) as { error?: { message?: string } };
-      throw new Error(body?.error?.message ?? `Query failed: ${res.statusText}`);
+      if (isRecord(body) && isRecord(body.error) && typeof body.error.message === 'string') {
+        throw new Error(body.error.message);
+      }
+      throw new Error(`Query failed: ${res.statusText}`);
     }
-    return res.json() as Promise<GQLResult>;
+    return normalizeGQLResult(body);
   }
 }

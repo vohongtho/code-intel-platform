@@ -26,6 +26,7 @@ import { loadGraphFromDB } from '../multi-repo/graph-from-db.js';
 import { loadRegistry, findRepoByName } from '../storage/repo-registry.js';
 import Logger from '../shared/logger.js';
 import { AppError, ErrorCodes } from '../errors/codes.js';
+import type { CountGroup, GQLResult, GQLResultKind } from 'code-intel-shared';
 import {
   requestIdMiddleware,
   authMiddleware,
@@ -97,6 +98,46 @@ function resolveWebDist(): string | null {
 const WEB_DIST = resolveWebDist();
 const WEB_INDEX_HTML = WEB_DIST ? fs.readFileSync(path.join(WEB_DIST, 'index.html'), 'utf8') : null;
 
+function validateGQLResult(value: unknown): GQLResult {
+  if (typeof value !== 'object' || value === null) {
+    throw new AppError(ErrorCodes.INTERNAL_ERROR, 'Invalid GQL result shape', 'Check server logs with the request ID', 500);
+  }
+
+  const result = value as Record<string, unknown>;
+  const { kind, nodes, edges, groups, path, executionTimeMs, truncated, totalCount } = result;
+
+  if (kind !== 'nodes' && kind !== 'traversal' && kind !== 'path' && kind !== 'aggregate') {
+    throw new AppError(ErrorCodes.INTERNAL_ERROR, 'Invalid GQL result shape', 'Check server logs with the request ID', 500);
+  }
+  if (!Array.isArray(nodes) || !Array.isArray(edges) || !Array.isArray(groups)) {
+    throw new AppError(ErrorCodes.INTERNAL_ERROR, 'Invalid GQL result shape', 'Check server logs with the request ID', 500);
+  }
+  if (!(path === null || Array.isArray(path))) {
+    throw new AppError(ErrorCodes.INTERNAL_ERROR, 'Invalid GQL result shape', 'Check server logs with the request ID', 500);
+  }
+  if (typeof executionTimeMs !== 'number' || !Number.isFinite(executionTimeMs) || executionTimeMs < 0) {
+    throw new AppError(ErrorCodes.INTERNAL_ERROR, 'Invalid GQL result shape', 'Check server logs with the request ID', 500);
+  }
+  if (typeof truncated !== 'boolean') {
+    throw new AppError(ErrorCodes.INTERNAL_ERROR, 'Invalid GQL result shape', 'Check server logs with the request ID', 500);
+  }
+  if (typeof totalCount !== 'number' || !Number.isInteger(totalCount) || totalCount < 0) {
+    throw new AppError(ErrorCodes.INTERNAL_ERROR, 'Invalid GQL result shape', 'Check server logs with the request ID', 500);
+  }
+
+  for (const group of groups) {
+    if (typeof group !== 'object' || group === null) {
+      throw new AppError(ErrorCodes.INTERNAL_ERROR, 'Invalid GQL result shape', 'Check server logs with the request ID', 500);
+    }
+    const entry = group as CountGroup;
+    if (typeof entry.key !== 'string' || !Number.isInteger(entry.count) || entry.count < 0) {
+      throw new AppError(ErrorCodes.INTERNAL_ERROR, 'Invalid GQL result shape', 'Check server logs with the request ID', 500);
+    }
+  }
+
+  return value as GQLResult;
+}
+
 // ── CORS allowed origins ──────────────────────────────────────────────────────
 
 function getAllowedOrigins(): string[] {
@@ -145,6 +186,9 @@ export function createApp(
   workspaceRoot?: string,
   watcherState?: { watching: boolean; lastEventAt: number | null },
   pinnedSnapshot?: IndexSnapshot | null,
+  testOverrides?: {
+    executeGQL?: (ast: unknown, graph: KnowledgeGraph) => unknown;
+  },
 ): express.Application {
   const app = express();
   const startupSnapshot = pinnedSnapshot ?? (workspaceRoot ? resolveIndexSnapshot(workspaceRoot) : null);
@@ -1738,6 +1782,7 @@ export function createApp(
     try {
       const { parseGQL, isGQLParseError } = await import('../query/gql-parser.js');
       const { executeGQL } = await import('../query/gql-executor.js');
+      const runGQL = testOverrides?.executeGQL ?? executeGQL;
       const ast = parseGQL(gql);
       if (isGQLParseError(ast)) {
         res.status(422).json({
@@ -1751,11 +1796,18 @@ export function createApp(
         });
         return;
       }
-      const result = executeGQL(ast, graph);
+      const result = validateGQLResult(runGQL(ast, graph));
       const statusCode = result.truncated ? 408 : 200;
+      Logger.info(`[gql] requestId=${req.requestId} statement=${ast.type} kind=${result.kind} durationMs=${result.executionTimeMs} truncated=${result.truncated}`);
       res.status(statusCode).json({ ...result, format: format ?? 'json' });
     } catch (err) {
-      res.status(500).json({ error: { code: ErrorCodes.INTERNAL_ERROR, message: err instanceof Error ? err.message : String(err), requestId: req.requestId, timestamp: new Date().toISOString() } });
+      const safeCategory = err instanceof AppError ? 'invalid_result' : 'unexpected';
+      Logger.error(`[gql] requestId=${req.requestId} category=${safeCategory}:`, err instanceof Error ? err.message : String(err));
+      if (err instanceof AppError) {
+        res.status(err.statusCode).json({ error: { code: err.code, message: err.message, hint: err.hint, requestId: req.requestId, timestamp: new Date().toISOString() } });
+        return;
+      }
+      res.status(500).json({ error: { code: ErrorCodes.INTERNAL_ERROR, message: 'Internal server error', requestId: req.requestId, timestamp: new Date().toISOString() } });
     }
   });
 

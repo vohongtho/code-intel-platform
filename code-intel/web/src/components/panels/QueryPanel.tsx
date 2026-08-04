@@ -1,8 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import type { CodeNode } from 'code-intel-shared';
+import type { CodeNode, CountGroup, GQLResult } from 'code-intel-shared';
 import { useAppState } from '../../state/app-context';
 import { ApiClient } from '../../api/client';
-import type { GQLResult, CountGroup } from '../../api/client';
 
 const HISTORY_KEY = 'code-intel:query-history';
 const MAX_HISTORY = 20;
@@ -109,6 +108,7 @@ function NodeTable({ nodes, onSelectNode }: { nodes: CodeNode[]; onSelectNode: (
 
 function GroupTable({ groups }: { groups: CountGroup[] }) {
   const sorted = [...groups].sort((a, b) => b.count - a.count);
+  const safeRows = sorted.map(({ key, count }) => ({ key, count }));
   return (
     <div className="overflow-auto max-h-48 rounded-md border border-border-subtle">
       <table className="w-full text-[11px] font-mono border-collapse">
@@ -119,7 +119,7 @@ function GroupTable({ groups }: { groups: CountGroup[] }) {
           </tr>
         </thead>
         <tbody>
-          {sorted.map(({ key, count }) => (
+          {safeRows.map(({ key, count }) => (
             <tr key={key} className="hover:bg-hover transition-colors">
               <td className="px-2 py-1 text-accent">{key}</td>
               <td className="px-2 py-1 text-text-primary font-bold">{count}</td>
@@ -127,6 +127,75 @@ function GroupTable({ groups }: { groups: CountGroup[] }) {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+class QueryResultErrorBoundary extends React.Component<{
+  resetKey: string;
+  onError: (error: Error) => void;
+  children: React.ReactNode;
+}, { hasError: boolean }> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError(): { hasError: boolean } {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error): void {
+    this.props.onError(error);
+  }
+
+  componentDidUpdate(prevProps: Readonly<{ resetKey: string }>): void {
+    if (prevProps.resetKey !== this.props.resetKey && this.state.hasError) {
+      this.setState({ hasError: false });
+    }
+  }
+
+  render(): React.ReactNode {
+    if (this.state.hasError) {
+      return (
+        <div className="rounded-md border border-red-700/60 bg-red-900/20 px-3 py-2">
+          <p className="text-[10px] font-bold text-red-400 uppercase tracking-wider mb-0.5">Result Error</p>
+          <p className="text-[11px] text-red-300">Result rendering failed. Edit the query and retry.</p>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function QueryResult({ result, onSelectNode }: { result: GQLResult; onSelectNode: (node: CodeNode) => void }) {
+  const nodes = result.nodes;
+  const edges = result.edges;
+  const groups = result.groups;
+  const path = result.path;
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-3 text-[10px] text-text-muted">
+        <span><span className="text-text-primary font-semibold">{result.totalCount}</span> result{result.totalCount !== 1 ? 's' : ''}</span>
+        <span><span className="text-text-primary font-semibold">{result.executionTimeMs}</span> ms</span>
+        {result.truncated && <span className="text-amber-400 font-semibold">⚠ truncated</span>}
+      </div>
+      {result.kind === 'aggregate' && (
+        groups.length > 0 ? <GroupTable groups={groups} /> : <p className="text-[11px] text-text-muted italic">No groups matched.</p>
+      )}
+      {result.kind === 'nodes' && (
+        nodes.length > 0 ? <NodeTable nodes={nodes} onSelectNode={onSelectNode} /> : <p className="text-[11px] text-text-muted italic">No matching nodes.</p>
+      )}
+      {result.kind === 'traversal' && (
+        nodes.length > 0 ? <>
+          <NodeTable nodes={nodes} onSelectNode={onSelectNode} />
+          {edges.length > 0 && <p className="text-[10px] text-text-muted">+ <span className="text-text-primary">{edges.length}</span> edge{edges.length !== 1 ? 's' : ''} in result</p>}
+        </> : <p className="text-[11px] text-text-muted italic">No traversal result.</p>
+      )}
+      {result.kind === 'path' && (
+        path && path.length > 0 ? <>
+          <NodeTable nodes={path} onSelectNode={onSelectNode} />
+          {edges.length > 0 && <p className="text-[10px] text-text-muted">+ <span className="text-text-primary">{edges.length}</span> edge{edges.length !== 1 ? 's' : ''} in result</p>}
+        </> : <p className="text-[11px] text-text-muted italic">No path found.</p>
+      )}
     </div>
   );
 }
@@ -187,8 +256,7 @@ export function QueryPanel() {
     [dispatch],
   );
 
-  const hasNodes  = result && result.nodes.length > 0;
-  const hasGroups = result && result.groups && result.groups.length > 0;
+  const resultResetKey = `${gql.trim()}::${result?.kind ?? 'none'}::${result?.totalCount ?? 0}`;
 
   const selectClass =
     'w-full bg-deep border border-border-subtle rounded text-[11px] text-text-secondary px-2 py-1 focus:outline-none focus:border-accent cursor-pointer';
@@ -284,21 +352,15 @@ export function QueryPanel() {
 
         {/* Results */}
         {result && (
-          <div className="space-y-2">
-            <div className="flex items-center gap-3 text-[10px] text-text-muted">
-              <span><span className="text-text-primary font-semibold">{result.totalCount}</span> result{result.totalCount !== 1 ? 's' : ''}</span>
-              <span><span className="text-text-primary font-semibold">{result.executionTimeMs}</span> ms</span>
-              {result.truncated && <span className="text-amber-400 font-semibold">⚠ truncated</span>}
-            </div>
-            {hasNodes && <NodeTable nodes={result.nodes} onSelectNode={handleSelectNode} />}
-            {hasGroups && result.groups && <GroupTable groups={result.groups} />}
-            {result.edges && result.edges.length > 0 && (
-              <p className="text-[10px] text-text-muted">
-                + <span className="text-text-primary">{result.edges.length}</span> edge{result.edges.length !== 1 ? 's' : ''} in result
-              </p>
-            )}
-            {!hasNodes && !hasGroups && <p className="text-[11px] text-text-muted italic">No results.</p>}
-          </div>
+          <QueryResultErrorBoundary
+            resetKey={resultResetKey}
+            onError={(renderError) => {
+              if (import.meta.env.DEV) console.error(renderError);
+              setError('Result rendering failed. Retry the query.');
+            }}
+          >
+            <QueryResult result={result} onSelectNode={handleSelectNode} />
+          </QueryResultErrorBoundary>
         )}
       </div>
     </div>

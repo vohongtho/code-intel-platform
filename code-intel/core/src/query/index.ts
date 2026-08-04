@@ -19,11 +19,8 @@ export {
   type NodeKindFilter,
 } from './gql-parser.js';
 
-export {
-  executeGQL,
-  type GQLResult,
-  type CountGroup,
-} from './gql-executor.js';
+export { executeGQL } from './gql-executor.js';
+export type { GQLResult, CountGroup, GQLResultKind } from 'code-intel-shared';
 
 export {
   saveQuery,

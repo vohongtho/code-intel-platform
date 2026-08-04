@@ -199,6 +199,16 @@ describe('GQL Parser — COUNT statements', () => {
     assert.ok(count.where);
     assert.equal(count.groupBy, 'cluster');
   });
+
+  it('rejects COUNT with missing group field', () => {
+    const ast = parseGQL('COUNT function GROUP BY');
+    assert.ok(isGQLParseError(ast));
+  });
+
+  it('rejects COUNT with incomplete GROUP clause', () => {
+    const ast = parseGQL('COUNT function GROUP cluster');
+    assert.ok(isGQLParseError(ast));
+  });
 });
 
 describe('GQL Parser — parse errors', () => {

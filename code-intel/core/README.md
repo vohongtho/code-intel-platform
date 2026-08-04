@@ -1,6 +1,6 @@
 # Code Intelligence Platform
 
-[![npm version](https://img.shields.io/badge/npm-v1.0.1-blue)](https://www.npmjs.com/package/@vohongtho.infotech/code-intel)
+[![npm version](https://img.shields.io/badge/npm-v1.0.10-blue)](https://www.npmjs.com/package/@vohongtho.infotech/code-intel)
 
 A static code analysis platform that builds a **Knowledge Graph** from your source code and makes it explorable through a Web UI, HTTP API, CLI, and MCP server.
 
@@ -14,7 +14,7 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 - **Force-directed Graph Explorer** — interactive Sigma.js visualization with color-coded node types, hover highlighting, and filters
 - **Graph Query Language (GQL)** — query your codebase with `FIND`, `TRAVERSE`, `PATH`, `COUNT GROUP BY`; CLI, HTTP API, and MCP tool
 - **Source Code Preview** — click any node to open syntax-highlighted source at the exact line; "Open in editor" (`vscode://`) button
-- **Query Console** — web UI panel with GQL editor, sortable results table, query history, and example queries
+- **Query Console** — web UI panel with GQL editor, sortable results table, query history, example queries, aggregate-safe rendering, and panel-scoped error containment
 - **AI-Generated Symbol Summaries** — optional `--summarize` flag generates 1-2 sentence summaries per symbol via OpenAI, Anthropic, or Ollama; cached by code hash
 - **Hybrid Search (BM25 + Vector RRF)** — Reciprocal Rank Fusion of keyword + semantic search; `searchMode: 'bm25' | 'vector' | 'hybrid'` in response
 - **Semantic Vector Search** — embeddings via `all-MiniLM-L6-v2`; enriched with summaries when available
@@ -540,7 +540,7 @@ code-intel group status <name>                                             # Aud
 | `GET`  | `/api/v1/vector-status` | Vector index ready/building status |
 | `GET`  | `/api/v1/nodes/:id` | Node detail (callers, callees, imports, etc.) |
 | `POST` | `/api/v1/blast-radius` | Impact analysis |
-| `POST` | `/api/v1/query` | Execute a GQL query string; returns nodes/edges/groups + executionTimeMs |
+| `POST` | `/api/v1/query` | Execute a GQL query string; returns normalized `{ kind, nodes, edges, groups, path, executionTimeMs, truncated, totalCount }` |
 | `POST` | `/api/v1/query/explain` | Return query plan without executing |
 | `GET`  | `/api/v1/source` | Fetch file content with ±20 lines context; path-traversal protected |
 | `POST` | `/api/v1/grep` | Regex search in file content |
@@ -569,7 +569,7 @@ All tools are available to any MCP-capable editor (Claude Desktop, Claude Code, 
 | `routes` | _(none)_ | List all HTTP route handler mappings detected in the codebase |
 | `clusters` | `limit` (number, default 50) | List detected code clusters (directory-based communities) with member counts and top 10 symbols each |
 | `flows` | `limit` (number, default 50) | List detected execution flows with entry points, steps, and step counts |
-| `query` | `gql` (string), `limit` (number, optional) | Execute a GQL query (`FIND`, `TRAVERSE`, `PATH`, `COUNT GROUP BY`) against the live graph; returns nodes/edges/groups + executionTimeMs |
+| `query` | `gql` (string), `limit` (number, optional) | Execute a GQL query (`FIND`, `TRAVERSE`, `PATH`, `COUNT GROUP BY`) against the live graph; returns normalized `{ kind, nodes, edges, groups, path, executionTimeMs, truncated, totalCount }` |
 | `detect_changes` | `base_ref` (string, default `HEAD`), `diff_text` (string, optional) | **Git-diff impact analysis**: maps changed lines to graph symbols and computes combined blast radius. Ideal for PR review or pre-commit checks. |
 | `raw_query` | `cypher` (string) | _(deprecated — use `query` instead)_ Simplified Cypher-like graph query: `name='X'` or `:kind` |
 

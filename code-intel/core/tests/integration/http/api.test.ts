@@ -345,6 +345,225 @@ describe('HTTP API — auth routes', () => {
   });
 });
 
+describe('HTTP API — GQL query route', () => {
+  let server: http.Server;
+  let dbPath: string;
+  let db: UsersDB;
+  let graph: ReturnType<typeof createKnowledgeGraph>;
+
+  before(() => {
+    dbPath = path.join(os.tmpdir(), `http-api-gql-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.db`);
+    process.env['CODE_INTEL_USERS_DB_PATH'] = dbPath;
+    resetUsersDBForTesting();
+    db = new UsersDB(dbPath);
+    db.createUser('viewer', 'viewer-pass-123', 'viewer');
+
+    graph = createKnowledgeGraph();
+    graph.addNode({ id: 'fn1', kind: 'function', name: 'handleLogin', filePath: 'auth/login.ts', exported: true, metadata: { cluster: 'auth' } });
+    graph.addNode({ id: 'fn2', kind: 'function', name: 'handleLogout', filePath: 'auth/logout.ts', exported: true, metadata: { cluster: 'auth' } });
+    graph.addNode({ id: 'fn3', kind: 'function', name: 'sendEmail', filePath: 'mail/send.ts', exported: true });
+    graph.addEdge({ id: 'e1', source: 'fn1', target: 'fn2', kind: 'calls' });
+
+    const app = createApp(graph, 'test-repo');
+    server = http.createServer(app);
+    return new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  });
+
+  after(() => {
+    db.close();
+    try { fs.unlinkSync(dbPath); } catch { /* ignore */ }
+    delete process.env['CODE_INTEL_USERS_DB_PATH'];
+    resetUsersDBForTesting();
+    return new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+  });
+
+  async function loginViewer(): Promise<string> {
+    const loginRes = await req(server, {
+      method: 'POST',
+      path: '/auth/login',
+      body: { username: 'viewer', password: 'viewer-pass-123' },
+    });
+    assert.equal(loginRes.status, 200);
+    const cookies = loginRes.headers['set-cookie'] ?? [];
+    return cookies.map((c) => c.split(';')[0] ?? '').join('; ');
+  }
+
+  it('returns normalized grouped COUNT result for the exact reported payload', async () => {
+    const sessionCookie = await loginViewer();
+    const res = await req(server, {
+      method: 'POST',
+      path: '/api/v1/query',
+      body: { gql: 'COUNT function GROUP BY cluster' },
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(res.status, 200);
+    const body = res.body as { kind: string; nodes: unknown[]; edges: unknown[]; groups: Array<{ key: string; count: number }>; path: null; totalCount: number; executionTimeMs: number; truncated: boolean };
+    assert.equal(body.kind, 'aggregate');
+    assert.deepEqual(body.nodes, []);
+    assert.deepEqual(body.edges, []);
+    assert.equal(body.path, null);
+    assert.equal(body.totalCount, 3);
+    assert.equal(body.truncated, false);
+    assert.ok(body.executionTimeMs >= 0);
+    assert.ok(body.groups.some((group) => group.key === 'auth' && group.count === 2));
+    assert.ok(body.groups.some((group) => group.key === '(none)' && group.count === 1));
+  });
+
+  it('returns normalized plain COUNT result', async () => {
+    const sessionCookie = await loginViewer();
+    const res = await req(server, {
+      method: 'POST',
+      path: '/api/v1/query',
+      body: { gql: 'COUNT function' },
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(res.status, 200);
+    const body = res.body as { kind: string; nodes: unknown[]; edges: unknown[]; groups: Array<{ key: string; count: number }>; path: null };
+    assert.equal(body.kind, 'aggregate');
+    assert.deepEqual(body.nodes, []);
+    assert.deepEqual(body.edges, []);
+    assert.equal(body.path, null);
+    assert.equal(body.groups[0]?.key, 'total');
+    assert.equal(body.groups[0]?.count, 3);
+  });
+
+  it('returns normalized FIND result shape', async () => {
+    const sessionCookie = await loginViewer();
+    const res = await req(server, {
+      method: 'POST',
+      path: '/api/v1/query',
+      body: { gql: 'FIND function' },
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(res.status, 200);
+    const body = res.body as { kind: string; nodes: Array<{ name: string }>; edges: unknown[]; groups: unknown[]; path: null; totalCount: number };
+    assert.equal(body.kind, 'nodes');
+    assert.equal(body.nodes.length, 3);
+    assert.deepEqual(body.edges, []);
+    assert.deepEqual(body.groups, []);
+    assert.equal(body.path, null);
+    assert.equal(body.totalCount, 3);
+  });
+
+  it('returns normalized TRAVERSE result shape', async () => {
+    const sessionCookie = await loginViewer();
+    const res = await req(server, {
+      method: 'POST',
+      path: '/api/v1/query',
+      body: { gql: 'TRAVERSE CALLS FROM "handleLogin" DEPTH 1' },
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(res.status, 200);
+    const body = res.body as { kind: string; nodes: Array<{ name: string }>; edges: Array<{ kind: string }>; groups: unknown[]; path: null };
+    assert.equal(body.kind, 'traversal');
+    assert.ok(body.nodes.some((node) => node.name === 'handleLogin'));
+    assert.ok(body.nodes.some((node) => node.name === 'handleLogout'));
+    assert.ok(body.edges.length >= 1);
+    assert.deepEqual(body.groups, []);
+    assert.equal(body.path, null);
+  });
+
+  it('returns normalized PATH result shape', async () => {
+    const sessionCookie = await loginViewer();
+    const res = await req(server, {
+      method: 'POST',
+      path: '/api/v1/query',
+      body: { gql: 'PATH FROM "handleLogin" TO "handleLogout"' },
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(res.status, 200);
+    const body = res.body as { kind: string; nodes: Array<{ name: string }>; edges: Array<{ kind: string }>; groups: unknown[]; path: Array<{ name: string }> | null };
+    assert.equal(body.kind, 'path');
+    assert.ok(Array.isArray(body.path));
+    assert.ok(body.path && body.path.length >= 2);
+    assert.deepEqual(body.groups, []);
+    assert.ok(body.edges.length >= 1);
+    assert.ok(body.nodes.length >= 2);
+  });
+
+  it('preserves 400 for missing gql', async () => {
+    const sessionCookie = await loginViewer();
+    const res = await req(server, {
+      method: 'POST',
+      path: '/api/v1/query',
+      body: {},
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(res.status, 400);
+    const body = res.body as { error: { code: string; requestId: string } };
+    assert.equal(body.error.code, 'CI-1200');
+    assert.ok(body.error.requestId);
+  });
+
+  it('preserves 422 for parse errors', async () => {
+    const sessionCookie = await loginViewer();
+    const res = await req(server, {
+      method: 'POST',
+      path: '/api/v1/query',
+      body: { gql: 'COUNT function GROUP BY' },
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(res.status, 422);
+    const body = res.body as { error: { code: string; message: string; requestId: string } };
+    assert.equal(body.error.code, 'CI-1200');
+    assert.match(body.error.message, /GQL parse error/);
+    assert.ok(body.error.requestId);
+  });
+
+  it('preserves 408 for truncated partial results', async () => {
+    const overrideApp = createApp(graph, 'test-repo', undefined, undefined, undefined, {
+      executeGQL: () => ({ kind: 'nodes', nodes: [], edges: [], groups: [], path: null, executionTimeMs: 1, truncated: true, totalCount: 0 }),
+    });
+    const overrideServer = http.createServer(overrideApp);
+    await new Promise<void>((resolve) => overrideServer.listen(0, '127.0.0.1', resolve));
+    try {
+      const sessionCookie = await loginViewer();
+      const res = await req(overrideServer, {
+        method: 'POST',
+        path: '/api/v1/query',
+        body: { gql: 'FIND function' },
+        headers: { Cookie: sessionCookie },
+      });
+      assert.equal(res.status, 408);
+      const body = res.body as { kind: string; truncated: boolean; nodes: unknown[]; edges: unknown[]; groups: unknown[]; path: null };
+      assert.equal(body.kind, 'nodes');
+      assert.equal(body.truncated, true);
+      assert.deepEqual(body.nodes, []);
+      assert.deepEqual(body.edges, []);
+      assert.deepEqual(body.groups, []);
+      assert.equal(body.path, null);
+    } finally {
+      await new Promise<void>((resolve, reject) => overrideServer.close((err) => err ? reject(err) : resolve()));
+    }
+  });
+
+  it('returns structured 500 for malformed internal results without stack traces', async () => {
+    const overrideApp = createApp(graph, 'test-repo', undefined, undefined, undefined, {
+      executeGQL: () => ({ kind: 'aggregate', nodes: [], edges: [], groups: 'bad', path: null, executionTimeMs: 1, truncated: false, totalCount: 0 }),
+    });
+    const overrideServer = http.createServer(overrideApp);
+    await new Promise<void>((resolve) => overrideServer.listen(0, '127.0.0.1', resolve));
+    try {
+      const sessionCookie = await loginViewer();
+      const res = await req(overrideServer, {
+        method: 'POST',
+        path: '/api/v1/query',
+        body: { gql: 'COUNT function' },
+        headers: { Cookie: sessionCookie },
+      });
+      assert.equal(res.status, 500);
+      const body = res.body as { error: { code: string; message: string; requestId: string; hint?: string } };
+      assert.equal(body.error.code, 'CI-5000');
+      assert.equal(body.error.message, 'Invalid GQL result shape');
+      assert.ok(body.error.requestId);
+      assert.ok(typeof body.error.hint === 'string');
+      assert.ok(!JSON.stringify(body).includes('at '));
+    } finally {
+      await new Promise<void>((resolve, reject) => overrideServer.close((err) => err ? reject(err) : resolve()));
+    }
+  });
+});
+
 describe('HTTP API — protected routes require auth', () => {
   let server: http.Server;
 

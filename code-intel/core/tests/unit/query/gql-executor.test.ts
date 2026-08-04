@@ -38,16 +38,16 @@ describe('GQL Executor — FIND', () => {
     const ast = parseGQL('FIND function');
     assert.ok(ast.type === 'FIND');
     const result: GQLResult = executeGQL(ast, graph);
-    assert.ok(result.nodes!.length >= 6);
-    assert.ok(result.nodes!.every((n) => n.kind === 'function'));
+    assert.ok(result.nodes.length >= 6);
+    assert.ok(result.nodes.every((n: { kind: string }) => n.kind === 'function'));
   });
 
   it('finds all classes', () => {
     const ast = parseGQL('FIND class');
     assert.ok(ast.type === 'FIND');
     const result = executeGQL(ast, graph);
-    assert.equal(result.nodes!.length, 2);
-    assert.ok(result.nodes!.every((n) => n.kind === 'class'));
+    assert.equal(result.nodes.length, 2);
+    assert.ok(result.nodes.every((n: { kind: string }) => n.kind === 'class'));
   });
 
   it('finds functions matching name CONTAINS auth', () => {
@@ -215,6 +215,17 @@ describe('GQL Executor — PATH', () => {
 describe('GQL Executor — COUNT', () => {
   const graph = buildTestGraph();
 
+  it('groups missing cluster metadata under (none)', () => {
+    const graphWithMissingCluster = buildTestGraph();
+    graphWithMissingCluster.addNode({ id: 'fn-missing', kind: 'function', name: 'orphanFn', filePath: 'misc/orphan.ts' });
+    const ast = parseGQL('COUNT function GROUP BY cluster');
+    assert.ok(!isGQLParseError(ast));
+    const result = executeGQL(ast, graphWithMissingCluster);
+    const noneGroup = result.groups.find((g) => g.key === '(none)');
+    assert.ok(noneGroup);
+    assert.equal(noneGroup.count, 1);
+  });
+
   it('counts functions grouped by cluster', () => {
     const ast = parseGQL('COUNT function GROUP BY cluster');
     assert.ok(!isGQLParseError(ast));
@@ -261,6 +272,36 @@ describe('GQL Executor — COUNT', () => {
 describe('GQL Executor — result shape', () => {
   const graph = buildTestGraph();
 
+  it('returns normalized fields for every result kind', () => {
+    const queries = [
+      'FIND function',
+      'TRAVERSE CALLS FROM "handleLogin" DEPTH 1',
+      'PATH FROM "createUser" TO "sendEmail"',
+      'COUNT function GROUP BY cluster',
+    ] as const;
+
+    for (const query of queries) {
+      const ast = parseGQL(query);
+      assert.ok(!isGQLParseError(ast));
+      const result = executeGQL(ast, graph);
+      assert.ok(result.kind === 'nodes' || result.kind === 'traversal' || result.kind === 'path' || result.kind === 'aggregate');
+      assert.ok(Array.isArray(result.nodes));
+      assert.ok(Array.isArray(result.edges));
+      assert.ok(Array.isArray(result.groups));
+      assert.ok(result.path === null || Array.isArray(result.path));
+    }
+  });
+
+  it('grouped COUNT returns aggregate kind with empty nodes and edges', () => {
+    const ast = parseGQL('COUNT function GROUP BY cluster');
+    assert.ok(!isGQLParseError(ast));
+    const result = executeGQL(ast, graph);
+    assert.equal(result.kind, 'aggregate');
+    assert.deepEqual(result.nodes, []);
+    assert.deepEqual(result.edges, []);
+    assert.equal(result.path, null);
+  });
+
   it('always has executionTimeMs', () => {
     const ast = parseGQL('FIND function');
     assert.ok(!isGQLParseError(ast));
@@ -281,6 +322,33 @@ describe('GQL Executor — result shape', () => {
     assert.ok(!isGQLParseError(ast));
     const result = executeGQL(ast, graph);
     assert.ok(typeof result.totalCount === 'number');
+  });
+
+  it('group results remain sorted by descending count', () => {
+    const ast = parseGQL('COUNT * GROUP BY kind');
+    assert.ok(!isGQLParseError(ast));
+    const result = executeGQL(ast, graph);
+    const counts = result.groups.map((group) => group.count);
+    assert.deepEqual(counts, [...counts].sort((a, b) => b - a));
+  });
+
+  it('zero-match aggregate behavior returns empty groups with zero totalCount', () => {
+    const ast = parseGQL('COUNT function WHERE name CONTAINS "nonexistent_xyz_abc"');
+    assert.ok(!isGQLParseError(ast));
+    const result = executeGQL(ast, graph);
+    assert.equal(result.kind, 'aggregate');
+    assert.equal(result.totalCount, 0);
+    assert.deepEqual(result.groups, []);
+    assert.deepEqual(result.nodes, []);
+    assert.deepEqual(result.edges, []);
+    assert.equal(result.path, null);
+  });
+
+  it('unexpected AST path fails safely', () => {
+    assert.throws(
+      () => executeGQL({ type: 'BROKEN' } as unknown as import('../../../src/query/gql-parser.js').QueryAST, graph),
+      /Unsupported GQL AST type/,
+    );
   });
 
   it('FIND on larger graph returns within reasonable time', () => {
