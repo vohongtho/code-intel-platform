@@ -1659,6 +1659,8 @@ program
   .addHelpText('after', `
   Setup reads <repo>/.code-intel/agent-targets.json, which is created by
   code-intel analyze. Project-scoped instruction files remain owned by analyze.
+  Recommended first run for MCP-enabled repos:
+    code-intel analyze && code-intel setup
 
   Examples:
     $ code-intel setup
@@ -1936,6 +1938,8 @@ program
   and gains access to search, inspect, blast-radius, and flow tools.
 
   Typically invoked automatically by your editor via the config from \`code-intel setup\`.
+  If the target repository is not indexed yet, MCP still starts; graph-backed
+  tool calls will instruct you to run \`code-intel analyze\`, then retry.
 
   Examples:
     $ code-intel mcp
@@ -1961,8 +1965,8 @@ program
       db.close();
       await startMcpStdio(graph, repoName, workspaceRoot, snapshot);
     } else {
-      const { graph, repoName: name, workspaceRoot: root } = await analyzeWorkspace(targetPath, { silent: true });
-      await startMcpStdio(graph, name, root);
+      const graph = createKnowledgeGraph();
+      await startMcpStdio(graph, repoName, workspaceRoot);
     }
   });
 

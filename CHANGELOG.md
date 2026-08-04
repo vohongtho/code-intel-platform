@@ -18,6 +18,9 @@ All notable changes to this project are documented in this file.
 - `code-intel setup` now reads `.code-intel/agent-targets.json` and installs only selected-agent global integrations.
 - Setup no longer creates project-scoped `.cursor`, `.github`, `.kilocode`, `.agents`, `.clinerules`, `.windsurfrules`, or `AGENTS.md` files.
 - Added `setup [path]`, `--mcp-only`, `--all-agents`, and `--dry-run` behavior.
+- `code-intel mcp` no longer auto-analyzes unindexed repositories on startup; it now keeps the MCP connection open and graph-backed tools tell users to run `code-intel analyze` first.
+- After a later explicit `code-intel analyze`, the next graph-backed MCP tool call auto-reloads without requiring reconnect.
+- Recommended MCP first-run sequence is now `code-intel analyze && code-intel setup`.
 
 ### 🧠 Embedding model selector
 

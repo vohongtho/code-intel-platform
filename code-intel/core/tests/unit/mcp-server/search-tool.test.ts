@@ -103,4 +103,28 @@ describe('MCP search tool', () => {
     assert.equal(payload.searchMode, 'bm25');
     assert.equal(payload.results?.[0]?.name, 'UserService');
   });
+
+  it('returns an actionable missing-index error for unindexed repos and succeeds after analyze', async () => {
+    const repoPath = mkRepo('mcp-search-missing-index');
+    saveRegistry([{ id: 'repo-id', name: 'repo', path: repoPath, indexedAt: new Date().toISOString(), stats: { nodes: 0, edges: 0, files: 0 } }]);
+
+    const first = await dispatchTool('search', { query: 'UserService', repo: 'repo' }, createKnowledgeGraph(), 'fallback', undefined);
+    const firstPayload = JSON.parse(first.content[0]?.text ?? '{}') as { error?: string; hint?: string; repo?: string; actionable?: boolean };
+    assert.equal(first.isError, true);
+    assert.match(firstPayload.error ?? '', /No published index found/);
+    assert.match(firstPayload.hint ?? '', /code-intel analyze/);
+    assert.equal(firstPayload.repo, 'repo');
+    assert.equal(firstPayload.actionable, true);
+
+    await writeRepoIndex(repoPath, {
+      indexVersion: 'v1',
+      nodes: [{ id: 'n1', name: 'UserService', filePath: 'src/user.ts', content: 'class UserService {}' }],
+    });
+
+    const second = await dispatchTool('search', { query: 'UserService', repo: 'repo' }, createKnowledgeGraph(), 'fallback', undefined);
+    const secondPayload = JSON.parse(second.content[0]?.text ?? '{}') as { searchMode?: string; results?: Array<{ name?: string }> };
+    assert.equal(second.isError, undefined);
+    assert.equal(secondPayload.searchMode, 'bm25');
+    assert.equal(secondPayload.results?.[0]?.name, 'UserService');
+  });
 });

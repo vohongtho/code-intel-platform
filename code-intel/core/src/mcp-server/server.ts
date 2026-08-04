@@ -627,6 +627,7 @@ type LoadedRepoGraph = {
   graph: KnowledgeGraph;
   bm25Index: Bm25Index | null;
   vectorDbPath?: string;
+  missingIndex?: boolean;
 };
 
 const repoGraphCache = new Map<string, LoadedRepoGraph>();
@@ -711,6 +712,7 @@ async function ensureRepoLoaded(
       snapshot: null,
       graph: fallbackGraph,
       bm25Index: null,
+      missingIndex: !defaultPath,
     };
   }
 
@@ -734,6 +736,7 @@ async function ensureRepoLoaded(
       graph: fallbackGraph,
       bm25Index: null,
       vectorDbPath: snapshot?.vectorDbPath,
+      missingIndex: true,
     };
   }
 
@@ -763,6 +766,23 @@ async function graphContext(a: Record<string, unknown>, repoName: string, worksp
   return ensureRepoLoaded(a.repo as string | undefined, repoName, workspaceRoot, graph);
 }
 
+function missingIndexResult(ctx: LoadedRepoGraph): ToolResult {
+  const repoLabel = ctx.path || ctx.repo;
+  return {
+    content: [{
+      type: 'text',
+      text: compact({
+        error: `No published index found for ${repoLabel}`,
+        hint: 'Run `code-intel analyze` in this repository, then retry the MCP tool call.',
+        repo: ctx.repo,
+        path: ctx.path,
+        actionable: true,
+      }),
+    }],
+    isError: true,
+  };
+}
+
 const GRAPH_BACKED_TOOLS = new Set([
   'overview', 'inspect', 'context', 'blast_radius', 'file_symbols', 'find_path', 'list_exports', 'routes', 'clusters', 'flows',
   'detect_changes', 'query', 'raw_query', 'explain_relationship', 'pr_impact', 'similar_symbols', 'health_report',
@@ -790,6 +810,7 @@ export async function dispatchTool(
     activeWorkspaceRoot = ctx.path || workspaceRoot;
     activeBm25 = ctx.bm25Index;
     activeVectorDbPath = ctx.vectorDbPath;
+    if (ctx.missingIndex) return missingIndexResult(ctx);
   }
 
   switch (name) {
