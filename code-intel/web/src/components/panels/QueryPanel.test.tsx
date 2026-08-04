@@ -6,7 +6,7 @@ import { QueryPanel } from './QueryPanel';
 import type { GQLResult } from 'code-intel-shared';
 import { InvalidGQLResultError, normalizeGQLResult } from '../../api/client';
 
-const queryGQLMock = vi.fn<(_: string) => Promise<GQLResult>>();
+const queryGQLMock = vi.fn<(_: string, __?: unknown) => Promise<GQLResult>>();
 
 vi.mock('../../api/client', async () => {
   const actual = await vi.importActual<typeof import('../../api/client')>('../../api/client');
