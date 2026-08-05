@@ -518,6 +518,7 @@ describe('RBAC — all /api/v1 routes require authentication', () => {
     { method: 'POST', path: '/api/v1/search', body: { query: 'foo' } },
     { method: 'POST', path: '/api/v1/vector-search', body: { query: 'foo' } },
     { method: 'GET', path: '/api/v1/vector-status' },
+    { method: 'GET', path: '/api/v1/embeddings/models' },
     { method: 'POST', path: '/api/v1/files/read', body: { file_path: '/tmp/test' } },
     { method: 'POST', path: '/api/v1/grep', body: { pattern: 'foo' } },
     { method: 'POST', path: '/api/v1/cypher', body: { query: 'MATCH (n) RETURN n' } },

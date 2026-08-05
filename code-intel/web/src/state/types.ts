@@ -1,4 +1,4 @@
-import type { CodeNode, CodeEdge, NodeKind, EdgeKind } from 'code-intel-shared';
+import type { CodeNode, CodeEdge, NodeKind, EdgeKind, QueryScope, ResolvedQueryScope } from 'code-intel-shared';
 
 export type AppView = 'login' | 'connect' | 'loading' | 'exploring' | 'settings';
 
@@ -21,10 +21,8 @@ export interface SearchResult {
 
 export type SearchMode = 'bm25' | 'vector' | 'hybrid';
 
-export interface SearchScope {
-  type: 'repo' | 'group';
-  name: string;
-}
+export type SearchScope = QueryScope;
+export type ResolvedSearchScope = ResolvedQueryScope;
 
 export interface ChatCitation {
   filePath: string;
@@ -60,6 +58,26 @@ export interface GraphLoadProgress {
   loaded: number;   // nodes fetched so far
   total: number;    // total nodes reported by server
   phase: 'edges' | 'nodes'; // what we're currently fetching
+}
+
+export interface EmbeddingModelDescriptor {
+  id: string;
+  label: string;
+  provider: 'huggingface-transformers';
+  dimension: number;
+  dtype: 'q8' | 'fp32';
+  default: boolean;
+  description?: string;
+}
+
+export interface EmbeddingModelAvailability extends EmbeddingModelDescriptor {
+  available: boolean;
+  unavailableReason?: string;
+}
+
+export interface EmbeddingModelCatalog {
+  models: EmbeddingModelAvailability[];
+  defaultModel: string;
 }
 
 export interface AppConfig {
@@ -107,6 +125,7 @@ export interface AppState {
   connected: boolean;
   graphLoad: GraphLoadProgress | null;
   currentUser: CurrentUser | null;
+  repoId: string;
   repoName: string;
   nodes: CodeNode[];
   edges: CodeEdge[];

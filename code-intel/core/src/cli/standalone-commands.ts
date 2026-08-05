@@ -9,6 +9,13 @@ import { loadGraphFromDB } from '../multi-repo/graph-from-db.js';
 import { buildChangeContext } from '../query/change-context.js';
 import { parseDiffFiles } from '../query/pr-impact.js';
 import { startChangeContextHttp, startChangeContextMcp } from './change-context-transports.js';
+import { DEFAULT_CONFIG, loadConfig } from './init-wizard.js';
+import {
+  applyAnalyzeUnlock,
+  applyIndexCleanup,
+  planAnalyzeUnlock,
+  planIndexCleanup,
+} from '../storage/index-maintenance.js';
 
 function optionValue(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
@@ -46,6 +53,32 @@ async function runIndexStatus(args: string[]): Promise<void> {
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   if (result.state === 'corrupt' || result.state === 'missing') process.exitCode = 2;
   else if (result.state === 'stale' || result.state === 'legacy') process.exitCode = 1;
+}
+
+
+async function runIndexMaintenance(args: string[]): Promise<void> {
+  const [subcommand, ...rest] = args;
+  const repoDir = path.resolve(rest[0] && !rest[0].startsWith('-') ? rest[0] : '.');
+  if (subcommand === 'cleanup') {
+    const config = loadConfig()?.index ?? DEFAULT_CONFIG.index;
+    const keep = numberOption(rest, '--keep') ?? config.keepGenerations;
+    const staleHours = numberOption(rest, '--stale-hours') ?? config.staleStagingHours;
+    const plan = planIndexCleanup(repoDir, {
+      keepGenerations: keep,
+      staleStagingMs: Math.max(0, staleHours) * 60 * 60 * 1000,
+      removeLegacy: rest.includes('--remove-legacy'),
+    });
+    if (!rest.includes('--dry-run')) applyIndexCleanup(plan);
+    process.stdout.write(`${JSON.stringify({ dryRun: rest.includes('--dry-run'), ...plan }, null, 2)}\n`);
+    return;
+  }
+  if (subcommand === 'unlock') {
+    const plan = planAnalyzeUnlock(repoDir, rest.includes('--force'));
+    if (plan.exists) applyAnalyzeUnlock(plan);
+    process.stdout.write(`${JSON.stringify({ removed: plan.exists && plan.removable, ...plan }, null, 2)}\n`);
+    return;
+  }
+  throw new Error('Usage: code-intel index cleanup [path] [--dry-run] [--keep N] [--stale-hours N] [--remove-legacy] | code-intel index unlock [path] [--force]');
 }
 
 async function runChangeContext(args: string[]): Promise<void> {
@@ -88,6 +121,10 @@ export async function runStandaloneCommand(argv: string[]): Promise<boolean> {
   const [command, ...args] = argv;
   if (command === 'index-status') {
     await runIndexStatus(args);
+    return true;
+  }
+  if (command === 'index') {
+    await runIndexMaintenance(args);
     return true;
   }
   if (command === 'change-context') {

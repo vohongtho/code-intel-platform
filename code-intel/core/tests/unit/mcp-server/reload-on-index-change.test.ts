@@ -68,7 +68,7 @@ describe('MCP graph reload on index change', () => {
       nodes: [{ id: 'n1', name: 'OldSymbol', filePath: 'src/old.ts' }],
     });
 
-    const first = await dispatchTool('search', { query: 'OldSymbol', repo: 'repo-a' }, createKnowledgeGraph(), 'fallback', undefined);
+    const first = await dispatchTool('search', { query: 'OldSymbol', repoId: 'repo-a-id' }, createKnowledgeGraph(), 'fallback', undefined);
     const firstText = first.content[0]?.text ?? '';
     assert.match(firstText, /OldSymbol/);
 
@@ -77,7 +77,7 @@ describe('MCP graph reload on index change', () => {
       nodes: [{ id: 'n2', name: 'NewSymbol', filePath: 'src/new.ts' }],
     });
 
-    const second = await dispatchTool('search', { query: 'NewSymbol', repo: 'repo-a' }, createKnowledgeGraph(), 'fallback', undefined);
+    const second = await dispatchTool('search', { query: 'NewSymbol', repoId: 'repo-a-id' }, createKnowledgeGraph(), 'fallback', undefined);
     const secondText = second.content[0]?.text ?? '';
     assert.match(secondText, /NewSymbol/);
     assert.doesNotMatch(secondText, /OldSymbol/);
@@ -92,7 +92,7 @@ describe('MCP graph reload on index change', () => {
       nodes: [{ id: 'n1', name: 'StableSymbol', filePath: 'src/stable.ts' }],
     });
 
-    const first = await dispatchTool('search', { query: 'StableSymbol', repo: 'repo-cache' }, createKnowledgeGraph(), 'fallback', undefined);
+    const first = await dispatchTool('search', { query: 'StableSymbol', repoId: 'repo-cache-id' }, createKnowledgeGraph(), 'fallback', undefined);
     assert.match(first.content[0]?.text ?? '', /StableSymbol/);
 
     await writeRepoIndex(repoPath, {
@@ -100,7 +100,7 @@ describe('MCP graph reload on index change', () => {
       nodes: [{ id: 'n2', name: 'ChangedButSameVersion', filePath: 'src/changed.ts' }],
     });
 
-    const second = await dispatchTool('search', { query: 'StableSymbol', repo: 'repo-cache' }, createKnowledgeGraph(), 'fallback', undefined);
+    const second = await dispatchTool('search', { query: 'StableSymbol', repoId: 'repo-cache-id' }, createKnowledgeGraph(), 'fallback', undefined);
     const secondText = second.content[0]?.text ?? '';
     assert.match(secondText, /StableSymbol/);
     assert.doesNotMatch(secondText, /ChangedButSameVersion/);
@@ -123,7 +123,7 @@ describe('MCP graph reload on index change', () => {
       nodes: [{ id: 'b1', name: 'SharedQueryHit', filePath: 'src/repo-b.ts' }],
     });
 
-    const result = await dispatchTool('search', { query: 'SharedQueryHit', repo: 'repo-a' }, createKnowledgeGraph(), 'fallback', undefined);
+    const result = await dispatchTool('search', { query: 'SharedQueryHit', repoId: 'repo-a-id' }, createKnowledgeGraph(), 'fallback', undefined);
     const payload = JSON.parse(result.content[0]?.text ?? '{}') as { results?: Array<{ filePath?: string }> };
     assert.ok(Array.isArray(payload.results));
     assert.ok(payload.results!.length >= 1);
@@ -145,7 +145,7 @@ describe('MCP graph reload on index change', () => {
       ],
     });
 
-    const result = await dispatchTool('search', { query: 'LoginService', repo: 'repo-search' }, createKnowledgeGraph(), 'fallback', undefined);
+    const result = await dispatchTool('search', { query: 'LoginService', repoId: 'repo-search-id' }, createKnowledgeGraph(), 'fallback', undefined);
     const payload = JSON.parse(result.content[0]?.text ?? '{}') as { results?: Array<{ filePath?: string; name?: string }> };
     assert.deepEqual(payload.results?.map((row) => row.filePath), ['src/login.ts']);
   });

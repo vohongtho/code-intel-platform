@@ -1,4 +1,5 @@
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
+import { getDefaultEmbeddingModel, type EmbeddingModelDescriptor } from './embedding-model-registry.js';
 
 export const EMBEDDING_PROVIDER = 'huggingface-transformers';
 export const EMBEDDING_MODEL = 'Xenova/all-MiniLM-L6-v2';
@@ -13,33 +14,56 @@ export interface EmbeddedNode {
   embedding: number[];
 }
 
-const EMBED_DIM = EMBEDDING_DIMENSION; // all-MiniLM-L6-v2 output dimension
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let pipelineInstance: ((text: string | string[], opts: Record<string, unknown>) => Promise<{ data: Float32Array }>) | null = null;
-
-export async function getEmbedder() {
-  if (!pipelineInstance) {
-    let pipeline: (typeof import('@huggingface/transformers'))['pipeline'];
-    try {
-      ({ pipeline } = await import('@huggingface/transformers'));
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      throw new Error(`Vector embeddings unavailable: install optional dependency @huggingface/transformers (${msg})`);
-    }
-    // dtype:'q8' loads the int8-quantized ONNX weights — ~2-4× faster on CPU,
-    // negligible quality difference for code-symbol embeddings.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    pipelineInstance = (await pipeline('feature-extraction', EMBEDDING_MODEL, { dtype: 'q8' } as any)) as unknown as typeof pipelineInstance;
-  }
-  return pipelineInstance!;
+export interface EmbeddingFingerprint {
+  provider: string;
+  model: string;
+  dimension: number;
 }
 
-export function getEmbeddingFingerprint() {
+export interface EmbeddingRuntimeConfig {
+  descriptor: EmbeddingModelDescriptor;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type EmbeddingPipeline = (text: string | string[], opts: Record<string, unknown>) => Promise<{ data: Float32Array }>;
+
+const pipelineCache = new Map<string, EmbeddingPipeline>();
+
+function getPipelineCacheKey(descriptor: EmbeddingModelDescriptor): string {
+  return `${descriptor.id}:${descriptor.dtype}`;
+}
+
+function resolveRuntimeConfig(config?: Partial<EmbeddingRuntimeConfig>): EmbeddingRuntimeConfig {
+  return { descriptor: config?.descriptor ?? getDefaultEmbeddingModel() };
+}
+
+export async function getEmbedder(config?: Partial<EmbeddingRuntimeConfig>): Promise<EmbeddingPipeline> {
+  const { descriptor } = resolveRuntimeConfig(config);
+  const cacheKey = getPipelineCacheKey(descriptor);
+  const cached = pipelineCache.get(cacheKey);
+  if (cached) return cached;
+
+  let pipeline: (typeof import('@huggingface/transformers'))['pipeline'];
+  try {
+    ({ pipeline } = await import('@huggingface/transformers'));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Vector embeddings unavailable: install optional dependency @huggingface/transformers (${msg})`);
+  }
+  // dtype:'q8' loads the int8-quantized ONNX weights — ~2-4× faster on CPU,
+  // negligible quality difference for code-symbol embeddings.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const embedder = (await pipeline('feature-extraction', descriptor.id, { dtype: descriptor.dtype } as any)) as unknown as EmbeddingPipeline;
+  pipelineCache.set(cacheKey, embedder);
+  return embedder;
+}
+
+export function getEmbeddingFingerprint(config?: Partial<EmbeddingRuntimeConfig>): EmbeddingFingerprint {
+  const { descriptor } = resolveRuntimeConfig(config);
   return {
-    provider: EMBEDDING_PROVIDER,
-    model: EMBEDDING_MODEL,
-    dimension: EMBEDDING_DIMENSION,
+    provider: descriptor.provider,
+    model: descriptor.id,
+    dimension: descriptor.dimension,
   };
 }
 
@@ -62,15 +86,16 @@ export function collectEmbeddingCandidates(
 
 export async function embedNodes(
   graph: KnowledgeGraph,
-  opts: { batchSize?: number; onProgress?: (done: number, total: number) => void; filePaths?: Iterable<string> } = {},
+  opts: { batchSize?: number; onProgress?: (done: number, total: number) => void; filePaths?: Iterable<string>; model?: EmbeddingModelDescriptor } = {},
 ): Promise<EmbeddedNode[]> {
   // Larger batch = fewer forward passes = faster overall
-  const { batchSize = 64, onProgress, filePaths } = opts;
+  const { batchSize = 64, onProgress, filePaths, model } = opts;
 
   // Collect candidates — skip cluster/directory/flow to save time
   const candidates = collectEmbeddingCandidates(graph, filePaths);
 
-  const embedder = await getEmbedder();
+  const descriptor = model ?? getDefaultEmbeddingModel();
+  const embedder = await getEmbedder({ descriptor });
   const results: EmbeddedNode[] = [];
 
   for (let i = 0; i < candidates.length; i += batchSize) {
@@ -83,9 +108,12 @@ export async function embedNodes(
     const out = await embedder(texts, { pooling: 'mean', normalize: true });
 
     for (let j = 0; j < batch.length; j++) {
-      const start = j * EMBED_DIM;
+      const start = j * descriptor.dimension;
       // subarray() gives a view (no copy) into the underlying buffer
-      const embedding = Array.from(out.data.subarray(start, start + EMBED_DIM));
+      const embedding = Array.from(out.data.subarray(start, start + descriptor.dimension));
+      if (embedding.length !== descriptor.dimension) {
+        throw new Error(`Embedding dimension mismatch for ${descriptor.id}: expected ${descriptor.dimension}, got ${embedding.length}`);
+      }
       const candidate = batch[j];
 
       // Mark the node with embeddingSource so callers know which path was used

@@ -26,6 +26,43 @@ function makeEmbeddedNode(id: string, filePath: string, embeddingValue: number):
 }
 
 describe('VectorIndex incremental updates', () => {
+  it('opens published indexes read-only without creating WAL sidecars', async () => {
+    const dbPath = tmpDbPath();
+    const writable = new VectorIndex(dbPath);
+    await writable.init();
+    await writable.buildIndex([makeEmbeddedNode('a1', 'src/a.ts', 1)]);
+    writable.close();
+
+    try { fs.unlinkSync(`${dbPath}-wal`); } catch { /* ignore */ }
+    try { fs.unlinkSync(`${dbPath}-shm`); } catch { /* ignore */ }
+
+    const readonly = new VectorIndex(dbPath, 384, { readonly: true, fileMustExist: true });
+    await readonly.init();
+    assert.equal(await readonly.isBuilt(), true);
+    const hits = await readonly.search(makeEmbeddedNode('q', 'q.ts', 1).embedding, 5);
+    assert.equal(hits[0]?.nodeId, 'a1');
+    assert.equal(fs.existsSync(`${dbPath}-wal`), false);
+    assert.equal(fs.existsSync(`${dbPath}-shm`), false);
+    readonly.close();
+    fs.unlinkSync(dbPath);
+  });
+
+  it('rejects write operations in readonly mode', async () => {
+    const dbPath = tmpDbPath();
+    const writable = new VectorIndex(dbPath);
+    await writable.init();
+    await writable.buildIndex([makeEmbeddedNode('a1', 'src/a.ts', 1)]);
+    writable.close();
+
+    const readonly = new VectorIndex(dbPath, 384, { readonly: true, fileMustExist: true });
+    await readonly.init();
+    await assert.rejects(() => readonly.buildIndex([makeEmbeddedNode('x', 'src/x.ts', 1)]), /readonly mode/);
+    await assert.rejects(() => readonly.upsertIndex([makeEmbeddedNode('x', 'src/x.ts', 1)]), /readonly mode/);
+    await assert.rejects(() => readonly.deleteByFilePaths(['src/a.ts']), /readonly mode/);
+    readonly.close();
+    fs.unlinkSync(dbPath);
+  });
+
   it('replaces changed-file vectors without touching other files', async () => {
     const dbPath = tmpDbPath();
     const idx = new VectorIndex(dbPath);
@@ -74,6 +111,29 @@ describe('VectorIndex incremental updates', () => {
     assert.ok(!results.some((hit) => hit.nodeId === 'old'), 'deleted file vector should be removed');
     assert.ok(results.some((hit) => hit.nodeId === 'keep'), 'other file vector should remain');
 
+    idx.close();
+    fs.unlinkSync(dbPath);
+  });
+
+  it('rejects vectors that do not match the configured model dimension', async () => {
+    const dbPath = tmpDbPath();
+    const idx = new VectorIndex(dbPath, 3);
+    await idx.init();
+    await assert.rejects(
+      () => idx.buildIndex([makeEmbeddedNode('bad', 'src/bad.ts', 1)]),
+      /dimension 384; expected 3/,
+    );
+    idx.close();
+    fs.unlinkSync(dbPath);
+  });
+
+  it('stores and searches vectors using a non-default dimension', async () => {
+    const dbPath = tmpDbPath();
+    const idx = new VectorIndex(dbPath, 3);
+    await idx.init();
+    await idx.buildIndex([{ id: 'small', name: 'small', kind: 'function', filePath: 'small.ts', text: 'small', embedding: [1, 0, 0] }]);
+    const hits = await idx.search([1, 0, 0], 1);
+    assert.equal(hits[0]?.nodeId, 'small');
     idx.close();
     fs.unlinkSync(dbPath);
   });

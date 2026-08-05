@@ -65,23 +65,81 @@ export const openApiSpec = {
           timestamp: { type: 'string', format: 'date-time' },
         },
       },
-      SearchScope: {
+      CountGroup: {
         type: 'object',
         properties: {
-          type: { type: 'string', enum: ['repo', 'group'] },
-          name: { type: 'string' },
+          key: { type: 'string' },
+          count: { type: 'integer', minimum: 0 },
         },
-        required: ['type', 'name'],
+        required: ['key', 'count'],
+      },
+      GQLResult: {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['nodes', 'traversal', 'path', 'aggregate'] },
+          nodes: { type: 'array', items: { '$ref': '#/components/schemas/CodeNode' } },
+          edges: { type: 'array', items: { type: 'object' } },
+          groups: { type: 'array', items: { '$ref': '#/components/schemas/CountGroup' } },
+          path: { anyOf: [{ type: 'array', items: { '$ref': '#/components/schemas/CodeNode' } }, { type: 'null' }] },
+          executionTimeMs: { type: 'number', minimum: 0 },
+          truncated: { type: 'boolean' },
+          totalCount: { type: 'integer', minimum: 0 },
+          format: { type: 'string', enum: ['json'] },
+          scope: { '$ref': '#/components/schemas/ResolvedSearchScope' },
+        },
+        required: ['kind', 'nodes', 'edges', 'groups', 'path', 'executionTimeMs', 'truncated', 'totalCount'],
+      },
+      SearchScope: {
+        oneOf: [
+          {
+            type: 'object',
+            properties: {
+              type: { type: 'string', enum: ['repo'] },
+              repoId: { type: 'string', description: 'Stable repository ID - does not fallback to name or path matching' },
+            },
+            required: ['type', 'repoId'],
+          },
+          {
+            type: 'object',
+            properties: {
+              type: { type: 'string', enum: ['group'] },
+              name: { type: 'string', description: 'Group name' },
+            },
+            required: ['type', 'name'],
+          },
+        ],
+      },
+      ResolvedSearchScope: {
+        oneOf: [
+          {
+            type: 'object',
+            properties: {
+              type: { type: 'string', enum: ['repo'] },
+              repoId: { type: 'string' },
+              repoName: { type: 'string' },
+            },
+            required: ['type', 'repoId', 'repoName'],
+          },
+          {
+            type: 'object',
+            properties: {
+              type: { type: 'string', enum: ['group'] },
+              name: { type: 'string' },
+            },
+            required: ['type', 'name'],
+          },
+        ],
       },
       SearchRequest: {
         type: 'object',
         properties: {
           query: { type: 'string', description: 'Search query' },
           limit: { type: 'integer', default: 20 },
-          mode: { type: 'string', enum: ['bm25', 'vector', 'hybrid'], default: 'hybrid' },
+          mode: { type: 'string', enum: ['bm25', 'vector', 'hybrid'], default: 'hybrid', description: 'Malformed explicit scope fails closed with 400; unknown explicit repo/group targets return 404.' },
           scope: { '$ref': '#/components/schemas/SearchScope' },
-          repo: { type: 'string', description: 'Deprecated legacy repo scope' },
-          group: { type: 'string', description: 'Deprecated legacy group scope' },
+          repoId: { type: 'string', description: 'Canonical repository selector - must be a stable repository ID; does not fallback to name or path matching' },
+          repo: { type: 'string', description: 'Deprecated legacy repo selector - allows compatibility resolution by stable ID, name, or path' },
+          group: { type: 'string', description: 'Deprecated legacy group selector' },
         },
         required: ['query'],
       },
@@ -90,7 +148,7 @@ export const openApiSpec = {
         properties: {
           results: { type: 'array', items: { '$ref': '#/components/schemas/CodeNode' } },
           searchMode: { type: 'string', enum: ['bm25', 'vector', 'hybrid'] },
-          scope: { '$ref': '#/components/schemas/SearchScope' },
+          scope: { '$ref': '#/components/schemas/ResolvedSearchScope' },
           deprecated: { type: 'boolean' },
           deprecation: { type: 'string' },
           vectorReady: { type: 'boolean' },
@@ -126,11 +184,11 @@ export const openApiSpec = {
         },
       },
     },
-    '/graph/{repo}': {
+    '/graph/{repoId}': {
       get: {
         tags: ['Graph'],
         summary: 'Download full graph for a repository',
-        parameters: [{ name: 'repo', in: 'path', required: true, schema: { type: 'string' } }],
+        parameters: [{ name: 'repoId', in: 'path', required: true, schema: { type: 'string' } }],
         responses: {
           '200': { description: 'Graph nodes and edges', content: { 'application/json': { schema: { type: 'object', properties: { nodes: { type: 'array' }, edges: { type: 'array' } } } } } },
           '404': { description: 'Repo not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
@@ -165,7 +223,7 @@ export const openApiSpec = {
           content: { 'application/json': { schema: { '$ref': '#/components/schemas/SearchRequest' } } },
         },
         responses: {
-          '200': { description: 'Vector search results', content: { 'application/json': { schema: { '$ref': '#/components/schemas/SearchResponse' } } } },
+          '200': { description: 'Vector search results. When published vectors are missing, stale, incompatible, or corrupt, the server degrades to BM25 without mutating published artifacts.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/SearchResponse' } } } },
           '400': { description: 'Ambiguous or invalid request', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
         },
       },
@@ -195,7 +253,7 @@ export const openApiSpec = {
                   target: { type: 'string', description: 'Symbol name or node ID' },
                   direction: { type: 'string', enum: ['callers', 'callees', 'both'], default: 'both' },
                   max_hops: { type: 'integer', default: 5 },
-                  repo: { type: 'string' },
+                  repoId: { type: 'string' },
                 },
                 required: ['target'],
               },
@@ -212,7 +270,7 @@ export const openApiSpec = {
       get: {
         tags: ['Graph'],
         summary: 'List execution flows detected in the graph',
-        parameters: [{ name: 'repo', in: 'query', schema: { type: 'string' } }],
+        parameters: [{ name: 'repoId', in: 'query', schema: { type: 'string' } }],
         responses: {
           '200': { description: 'List of flows', content: { 'application/json': { schema: { type: 'object' } } } },
         },
@@ -222,7 +280,7 @@ export const openApiSpec = {
       get: {
         tags: ['Graph'],
         summary: 'List community clusters detected in the graph',
-        parameters: [{ name: 'repo', in: 'query', schema: { type: 'string' } }],
+        parameters: [{ name: 'repoId', in: 'query', schema: { type: 'string' } }],
         responses: {
           '200': { description: 'List of clusters', content: { 'application/json': { schema: { type: 'object' } } } },
         },
@@ -272,6 +330,46 @@ export const openApiSpec = {
         },
       },
     },
+    '/embeddings/models': {
+      get: {
+        tags: ['Search'],
+        summary: 'List backend-supported embedding models',
+        responses: {
+          '200': {
+            description: 'Embedding model catalog',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    defaultModel: { type: 'string' },
+                    models: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          id: { type: 'string' },
+                          label: { type: 'string' },
+                          provider: { type: 'string' },
+                          dimension: { type: 'integer' },
+                          dtype: { type: 'string' },
+                          default: { type: 'boolean' },
+                          available: { type: 'boolean' },
+                          unavailableReason: { type: 'string' },
+                          description: { type: 'string' },
+                        },
+                        required: ['id', 'label', 'provider', 'dimension', 'dtype', 'default', 'available'],
+                      },
+                    },
+                  },
+                  required: ['models', 'defaultModel'],
+                },
+              },
+            },
+          },
+        },
+      },
+    },
     '/source': {
       get: {
         tags: ['Files'],
@@ -299,6 +397,13 @@ export const openApiSpec = {
             required: false,
             description: 'End line number (1-indexed)',
             schema: { type: 'integer', minimum: 1 },
+          },
+          {
+            name: 'repoId',
+            in: 'query',
+            required: false,
+            description: 'Repository identity used to resolve file paths',
+            schema: { type: 'string' },
           },
         ],
         responses: {
@@ -488,6 +593,7 @@ export const openApiSpec = {
                     default: 'json',
                     description: 'Output format',
                   },
+                  scope: { '$ref': '#/components/schemas/SearchScope' },
                 },
                 required: ['gql'],
               },
@@ -499,16 +605,32 @@ export const openApiSpec = {
             description: 'GQL execution result',
             content: {
               'application/json': {
-                schema: {
-                  type: 'object',
-                  properties: {
-                    nodes: { type: 'array', items: { '$ref': '#/components/schemas/CodeNode' } },
-                    edges: { type: 'array', items: { type: 'object' } },
-                    groups: { type: 'array', items: { type: 'object', properties: { key: { type: 'string' }, count: { type: 'integer' } } } },
-                    path: { type: 'array', items: { '$ref': '#/components/schemas/CodeNode' }, nullable: true },
-                    executionTimeMs: { type: 'number' },
-                    truncated: { type: 'boolean' },
-                    totalCount: { type: 'integer' },
+                schema: { '$ref': '#/components/schemas/GQLResult' },
+                examples: {
+                  find: {
+                    value: {
+                      kind: 'nodes', nodes: [{ id: 'fn1', name: 'handleLogin', kind: 'function', filePath: 'auth/login.ts' }], edges: [], groups: [], path: null, executionTimeMs: 1, truncated: false, totalCount: 1, format: 'json',
+                    },
+                  },
+                  traverse: {
+                    value: {
+                      kind: 'traversal', nodes: [{ id: 'fn1', name: 'handleLogin', kind: 'function', filePath: 'auth/login.ts' }], edges: [{ id: 'e1', source: 'fn1', target: 'fn3', kind: 'calls' }], groups: [], path: null, executionTimeMs: 2, truncated: false, totalCount: 1, format: 'json',
+                    },
+                  },
+                  path: {
+                    value: {
+                      kind: 'path', nodes: [{ id: 'fn4', name: 'createUser', kind: 'function', filePath: 'user/create.ts' }, { id: 'fn5', name: 'sendEmail', kind: 'function', filePath: 'mail/send.ts' }], edges: [{ id: 'e3', source: 'fn4', target: 'fn5', kind: 'calls' }], groups: [], path: [{ id: 'fn4', name: 'createUser', kind: 'function', filePath: 'user/create.ts' }, { id: 'fn5', name: 'sendEmail', kind: 'function', filePath: 'mail/send.ts' }], executionTimeMs: 2, truncated: false, totalCount: 2, format: 'json',
+                    },
+                  },
+                  count: {
+                    value: {
+                      kind: 'aggregate', nodes: [], edges: [], groups: [{ key: 'total', count: 23 }], path: null, executionTimeMs: 1, truncated: false, totalCount: 23, format: 'json',
+                    },
+                  },
+                  groupedCount: {
+                    value: {
+                      kind: 'aggregate', nodes: [], edges: [], groups: [{ key: 'authentication', count: 12 }, { key: 'storage', count: 8 }, { key: '(none)', count: 3 }], path: null, executionTimeMs: 1, truncated: false, totalCount: 23, format: 'json',
+                    },
                   },
                 },
               },
@@ -517,7 +639,9 @@ export const openApiSpec = {
           '400': { description: 'Missing gql field', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
           '401': { description: 'Unauthorized', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
           '403': { description: 'Forbidden (insufficient role)', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '408': { description: 'Truncated partial result', content: { 'application/json': { schema: { '$ref': '#/components/schemas/GQLResult' } } } },
           '422': { description: 'GQL parse error', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '500': { description: 'Unexpected internal failure or invalid internal result shape', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
         },
       },
     },
@@ -535,6 +659,7 @@ export const openApiSpec = {
                 type: 'object',
                 properties: {
                   gql: { type: 'string', description: 'GQL query string', example: 'FIND function WHERE name CONTAINS "auth"' },
+                  scope: { '$ref': '#/components/schemas/SearchScope' },
                 },
                 required: ['gql'],
               },

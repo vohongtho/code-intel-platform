@@ -77,8 +77,8 @@ export function Header({ onToggleAI, aiOpen }: Props) {
       const client = new ApiClient(state.serverUrl);
       const scope = state.mode === 'group'
         ? { type: 'group' as const, name: state.groupName || state.repoName }
-        : state.repoName
-          ? { type: 'repo' as const, name: state.repoName }
+        : state.repoId
+          ? { type: 'repo' as const, repoId: state.repoId }
           : undefined;
       if (vectorMode && vectorReady) {
         const { results, searchMode, deprecation } = await client.vectorSearch({ query: q, limit: 12, scope });

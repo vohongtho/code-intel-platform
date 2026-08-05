@@ -228,6 +228,18 @@ describe('Metadata', () => {
       }),
       true,
     );
+    assert.equal(
+      shouldRebuildEmbeddings({
+        metadata: {
+          indexedAt: '2025-01-01T00:00:00.000Z',
+          embeddings: { enabled: true, status: 'ready', provider: 'huggingface-transformers', model: 'Xenova/all-MiniLM-L6-v2', dimension: 256 },
+          stats: { nodes: 1, edges: 0, files: 1, duration: 1 },
+        },
+        runtime: { provider: 'huggingface-transformers', model: 'Xenova/all-MiniLM-L6-v2', dimension: 384 },
+        hasVectorDb: true,
+      }),
+      true,
+    );
   });
 
   it('shouldRebuildEmbeddings — false when ready fingerprint matches and vector DB exists', () => {

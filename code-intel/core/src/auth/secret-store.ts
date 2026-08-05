@@ -37,6 +37,7 @@ export interface SecretsBlob {
 }
 
 export function getSecretsPath(): string {
+  
   return (
     process.env['CODE_INTEL_SECRETS_PATH'] ??
     path.join(os.homedir(), '.code-intel', '.secrets')

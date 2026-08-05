@@ -79,7 +79,7 @@ describe('MCP context tool', () => {
 
   it('returns structured document for single seed', async () => {
     const repoPath = await setup();
-    const result = await dispatchTool('context', { repo: 'repo', symbols: ['UserService'] }, createKnowledgeGraph(), 'fallback', repoPath);
+    const result = await dispatchTool('context', { repoId: 'repo-id', symbols: ['UserService'] }, createKnowledgeGraph(), 'fallback', repoPath);
     const payload = JSON.parse(result.content[0]?.text ?? '{}') as {
       summary?: string; logic?: string; relation?: string; focusCode?: string; truncated?: boolean; symbols?: string[];
     };
@@ -93,7 +93,7 @@ describe('MCP context tool', () => {
 
   it('combines multiple seeds', async () => {
     const repoPath = await setup();
-    const result = await dispatchTool('context', { repo: 'repo', symbols: ['UserService', 'UserController'] }, createKnowledgeGraph(), 'fallback', repoPath);
+    const result = await dispatchTool('context', { repoId: 'repo-id', symbols: ['UserService', 'UserController'] }, createKnowledgeGraph(), 'fallback', repoPath);
     const payload = JSON.parse(result.content[0]?.text ?? '{}') as { symbols?: string[]; summary?: string };
     assert.deepEqual(payload.symbols, ['UserService', 'UserController']);
     assert.match(payload.summary ?? '', /UserService/);
@@ -102,7 +102,7 @@ describe('MCP context tool', () => {
 
   it('omits unresolved seeds when at least one resolves', async () => {
     const repoPath = await setup();
-    const result = await dispatchTool('context', { repo: 'repo', symbols: ['UserService', 'MissingSymbol'] }, createKnowledgeGraph(), 'fallback', repoPath);
+    const result = await dispatchTool('context', { repoId: 'repo-id', symbols: ['UserService', 'MissingSymbol'] }, createKnowledgeGraph(), 'fallback', repoPath);
     const payload = JSON.parse(result.content[0]?.text ?? '{}') as { symbols?: string[]; unresolvedSymbols?: string[] };
     assert.deepEqual(payload.symbols, ['UserService']);
     assert.deepEqual(payload.unresolvedSymbols, ['MissingSymbol']);
@@ -110,13 +110,13 @@ describe('MCP context tool', () => {
 
   it('returns error text when no seeds resolve', async () => {
     const repoPath = await setup();
-    const result = await dispatchTool('context', { repo: 'repo', symbols: ['MissingSymbol'] }, createKnowledgeGraph(), 'fallback', repoPath);
+    const result = await dispatchTool('context', { repoId: 'repo-id', symbols: ['MissingSymbol'] }, createKnowledgeGraph(), 'fallback', repoPath);
     assert.match(result.content[0]?.text ?? '', /No symbols resolved/);
   });
 
   it('respects explicit intent and clamps max_tokens', async () => {
     const repoPath = await setup();
-    const result = await dispatchTool('context', { repo: 'repo', symbols: ['UserService'], intent: 'callers', max_tokens: 999999 }, createKnowledgeGraph(), 'fallback', repoPath);
+    const result = await dispatchTool('context', { repoId: 'repo-id', symbols: ['UserService'], intent: 'callers', max_tokens: 999999 }, createKnowledgeGraph(), 'fallback', repoPath);
     const payload = JSON.parse(result.content[0]?.text ?? '{}') as { intent?: string; relation?: string };
     assert.equal(payload.intent, 'callers');
     assert.match(payload.relation ?? '', /UserController|\[RELATION\]/);

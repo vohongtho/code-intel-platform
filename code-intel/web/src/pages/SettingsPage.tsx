@@ -1,9 +1,9 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { NavLink, useNavigate, useParams } from 'react-router';
 import { useAppState } from '../state/app-context';
 import { Header } from '../components/shared/Header';
 import { ApiClient, type ConfigValidationError } from '../api/client';
-import type { AppConfig } from '../state/types';
+import type { AppConfig, EmbeddingModelCatalog } from '../state/types';
 import { SETTINGS_SECTIONS, getSettingsPath, isSettingsSection, type SettingsSection } from '../routing';
 
 const SECTION_LABEL = 'rounded-xl border border-border-subtle bg-surface p-5 space-y-4';
@@ -13,7 +13,7 @@ const LABEL = 'block text-xs font-medium text-text-secondary uppercase tracking-
 
 const DEFAULT_CONFIG: AppConfig = {
   llm: { provider: 'ollama', model: 'llama3', apiKey: '', baseUrl: '', batchSize: 20, maxTokensPerSummary: 100 },
-  embeddings: { model: 'all-MiniLM-L6-v2', enabled: false },
+  embeddings: { model: 'Xenova/all-MiniLM-L6-v2', enabled: false },
   analysis: { maxFileSizeKB: 512, ignorePatterns: [], incrementalByDefault: false },
   serve: { defaultPort: 4747, openBrowser: true },
   auth: { mode: 'local' },
@@ -26,6 +26,9 @@ export function SettingsPage() {
   const navigate = useNavigate();
   const params = useParams<{ section?: string }>();
   const activeSection: SettingsSection = isSettingsSection(params.section ?? '') ? params.section as SettingsSection : 'overview';
+  const [modelCatalog, setModelCatalog] = useState<EmbeddingModelCatalog | null>(null);
+  const [modelCatalogLoading, setModelCatalogLoading] = useState(false);
+  const [modelCatalogError, setModelCatalogError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!params.section) {
@@ -57,8 +60,35 @@ export function SettingsPage() {
     void load();
   }, [dispatch, state.config.current, state.config.loading, state.serverUrl]);
 
+  useEffect(() => {
+    if (activeSection !== 'embeddings') return;
+    const loadCatalog = async () => {
+      setModelCatalogLoading(true);
+      setModelCatalogError(null);
+      try {
+        const client = new ApiClient(state.serverUrl);
+        setModelCatalog(await client.listEmbeddingModels());
+      } catch (err) {
+        setModelCatalogError(err instanceof Error ? err.message : 'Failed to load embedding models');
+      } finally {
+        setModelCatalogLoading(false);
+      }
+    };
+    void loadCatalog();
+  }, [activeSection, state.serverUrl]);
+
   const config = state.config.current ?? DEFAULT_CONFIG;
   const canEdit = state.currentUser?.role === 'admin';
+  const selectedModel = modelCatalog?.models.find((model) => model.id === config.embeddings.model) ?? null;
+  const hasLegacyModel = Boolean(config.embeddings.model) && !selectedModel && !modelCatalogLoading;
+  const saveBlocked = activeSection === 'embeddings' && config.embeddings.enabled && (!selectedModel || !selectedModel.available);
+  const embeddingModelHint = useMemo(() => {
+    if (selectedModel) {
+      return `${selectedModel.id} • ${selectedModel.provider} • ${selectedModel.dimension} dims${selectedModel.available ? '' : ` • ${selectedModel.unavailableReason ?? 'Unavailable'}`}`;
+    }
+    if (hasLegacyModel) return `Unsupported legacy model: ${config.embeddings.model}`;
+    return '';
+  }, [config.embeddings.model, hasLegacyModel, selectedModel]);
 
   const updateConfig = (next: AppConfig) => {
     dispatch({ type: 'UPDATE_CONFIG', config: next });
@@ -177,7 +207,24 @@ export function SettingsPage() {
               {activeSection === 'embeddings' && <section className={SECTION_LABEL}>
                 <h2 className="text-xl font-semibold">Embeddings</h2>
                 <div className="grid md:grid-cols-2 gap-4">
-                  <Field label="Model"><input disabled={!canEdit} className={INPUT} value={config.embeddings.model} onChange={(e) => updateConfig({ ...config, embeddings: { ...config.embeddings, model: e.target.value } })} /></Field>
+                  <Field label="Model">
+                    <select
+                      disabled={!canEdit || modelCatalogLoading}
+                      className={INPUT}
+                      aria-describedby="embedding-model-help"
+                      value={selectedModel ? selectedModel.id : config.embeddings.model}
+                      onChange={(e) => updateConfig({ ...config, embeddings: { ...config.embeddings, model: e.target.value } })}
+                    >
+                      {hasLegacyModel && <option value={config.embeddings.model} disabled>Unsupported legacy model: {config.embeddings.model}</option>}
+                      {(modelCatalog?.models ?? []).map((model) => (
+                        <option key={model.id} value={model.id} disabled={!model.available}>
+                          {model.label}{model.default ? ' (default)' : ''}{!model.available ? ' — unavailable' : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <p id="embedding-model-help" className="mt-2 text-xs text-text-secondary">{embeddingModelHint || (modelCatalogLoading ? 'Loading model catalog…' : 'Select a backend-supported embedding model.')}</p>
+                    {modelCatalogError && <p className="mt-2 text-xs text-red-300">{modelCatalogError} <button type="button" className="underline" onClick={() => setModelCatalog(null)}>Retry</button></p>}
+                  </Field>
                   <Toggle label="Enabled" checked={config.embeddings.enabled} disabled={!canEdit} onChange={(checked) => updateConfig({ ...config, embeddings: { ...config.embeddings, enabled: checked } })} />
                 </div>
               </section>}
@@ -228,7 +275,7 @@ export function SettingsPage() {
 
               <div className="flex items-center justify-end gap-3 pb-10">
                 <button onClick={() => dispatch({ type: 'RESET_CONFIG_EDITS' })} className="px-4 py-2 rounded-lg border border-border-default text-text-secondary hover:text-text-primary hover:bg-hover transition" disabled={state.config.saving}>Cancel</button>
-                <button onClick={save} disabled={!canEdit || state.config.saving} className="px-4 py-2 rounded-lg bg-gradient-to-r from-accent to-accent-dim text-white font-semibold shadow-glow disabled:opacity-50">
+                <button onClick={save} disabled={!canEdit || state.config.saving || saveBlocked} className="px-4 py-2 rounded-lg bg-gradient-to-r from-accent to-accent-dim text-white font-semibold shadow-glow disabled:opacity-50">
                   {state.config.saving ? 'Saving…' : 'Save changes'}
                 </button>
               </div>

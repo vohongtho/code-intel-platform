@@ -31,8 +31,8 @@ export function SidebarChat() {
     try {
       const scope = state.mode === 'group'
         ? { type: 'group' as const, name: state.groupName || state.repoName }
-        : state.repoName
-          ? { type: 'repo' as const, name: state.repoName }
+        : state.repoId
+          ? { type: 'repo' as const, repoId: state.repoId }
           : undefined;
       await runAgent(trimmed, client, (ev) => {
         

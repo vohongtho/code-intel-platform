@@ -1,6 +1,6 @@
 # Code Intelligence Platform
 
-[![npm version](https://img.shields.io/badge/npm-v1.0.8-blue)](https://www.npmjs.com/package/@vohongtho.infotech/code-intel)
+[![npm version](https://img.shields.io/badge/npm-v1.0.10-blue)](https://www.npmjs.com/package/@vohongtho.infotech/code-intel)
 
 A static code analysis platform that builds a **Knowledge Graph** from your source code and makes it explorable through a Web UI, HTTP API, CLI, and MCP server.
 
@@ -14,15 +14,15 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 - **Force-directed Graph Explorer** — interactive Sigma.js visualization with color-coded node types, hover highlighting, and filters
 - **Graph Query Language (GQL)** — query your codebase with `FIND`, `TRAVERSE`, `PATH`, `COUNT GROUP BY`; CLI, HTTP API, and MCP tool
 - **Source Code Preview** — click any node to open syntax-highlighted source at the exact line; "Open in editor" (`vscode://`) button
-- **Query Console** — web UI panel with GQL editor, sortable results table, query history, and example queries
+- **Query Console** — web UI panel with GQL editor, sortable results table, query history, example queries, aggregate-safe rendering, and panel-scoped error containment
 - **AI-Generated Symbol Summaries** — optional `--summarize` flag generates 1-2 sentence summaries per symbol via OpenAI, Anthropic, or Ollama; cached by code hash
 - **Hybrid Search (BM25 + Vector RRF)** — Reciprocal Rank Fusion with truthful `requestedMode`, `actualMode`, and `searchMode`. Fallback reports `VECTOR_INDEX_UNAVAILABLE` for missing/unbuilt/empty vector state and `VECTOR_QUERY_FAILED` for vector execution errors.
-- **Semantic Vector Search** — embeddings via `all-MiniLM-L6-v2`; enriched with summaries when available
+- **Semantic Vector Search** — embeddings via backend-authoritative model catalog; default `Xenova/all-MiniLM-L6-v2`; enriched with summaries when available. `code-intel serve` treats published vector artifacts as read-only: missing, stale, incompatible, or corrupt vectors degrade to BM25 and report guidance to run `code-intel analyze --embeddings` instead of rebuilding in place.
 - **Code AI Chat** — grounded assistant that cites source files in every answer
 - **File Watcher & Auto-Reindex** — `code-intel watch` detects file saves and patches the live graph within ~1 second; WebSocket push notifies connected clients
 - **Code Health** — `code-intel health` reports dead code, circular dependencies (Tarjan SCC), god nodes, orphan files, and a 0–100 health score
 - **HTTP API** — REST endpoints for graph, search, inspect, blast radius, flows, query, source, health
-- **MCP Server** — Model Context Protocol integration for LLM tooling with 6 new reasoning tools (`explain_relationship`, `pr_impact`, `similar_symbols`, `health_report`, `suggest_tests`, `cluster_summary`), pagination, and tool-chaining hints
+- **MCP Server** — Model Context Protocol integration for LLM tooling with 6 new reasoning tools (`explain_relationship`, `pr_impact`, `similar_symbols`, `health_report`, `suggest_tests`, `cluster_summary`), pagination, tool-chaining hints, and fail-closed scoped-search validation for malformed explicit repo/group selectors. _(v1.0.10)_ Canonical scope selectors (`scope.repoId` and flat `repoId`) now enforce stable-ID-only resolution without fallback to name/path matching; legacy `repo` selector preserves compatibility resolution. MCP ambient-preload ordering for the `search` tool remains unchanged in v1.0.10.
 - **Security & Quality Scanning** — `code-intel secrets` (hardcoded API keys, DB URLs, RSA keys), `code-intel scan` (SQL Injection CWE-89, XSS CWE-79, SSRF CWE-918, Path Traversal CWE-22, Command Injection CWE-78), `--format sarif` for CI integration
 - **Complexity Metrics** — `code-intel complexity --top N` ranks functions by cyclomatic + cognitive complexity; `complexity_hotspots` MCP tool
 - **Test Coverage Gaps** — `code-intel coverage` lists untested exported symbols sorted by blast radius; `--threshold <pct>` fails CI if below target
@@ -31,8 +31,8 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 - **Multi-language** — TypeScript, JavaScript, Python, Java, Go, C, C++, C#, Rust, PHP, Ruby, Swift, Kotlin, Dart, HTML (15 languages via tree-sitter AST)
 - **Correctness-First Incremental Analysis** _(v1.0.8)_ — detects committed, staged, unstaged, untracked, mtime-changed, and deleted files. Zero-change runs keep the fast path; any non-empty change set performs a clean full graph rebuild so cross-file `calls`, `imports`, `extends`, `implements`, clusters, and flows cannot be lost.
 - **Parallel Analysis** — `--parallel` flag runs parse + resolve phases on worker threads for large repos
-- **AI Context Files** — auto-generates `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `.cursor/rules/code-intel.mdc`, `.kiro/steering/code-intel.md`, `.clinerules`, `.windsurfrules`, `.kilocode/rules/code-intel-rules.md`, and `.agents/rules/code-intel-rules.md` after every analysis — supporting Amp, Claude Code, Codex, Copilot, Cursor, Aider, Gemini, Kiro, Trae, Hermes, Factory, OpenCode, Pi, Antigravity, OpenClaw, Cline, Windsurf, Kilo Code, and more
-- **Agent Hook System** _(v1.0.2)_ — `code-intel setup` installs PreToolUse hooks for all major AI agents; when an agent runs `grep MyClass src/`, the `code-intel-hook` binary (~10KB, ~50ms startup) silently rewrites it to `code-intel search "MyClass"` — saving ~3,000 tokens per lookup; supports Claude Code, Cursor, Gemini CLI, GitHub Copilot (VS Code + CLI), OpenCode, OpenClaw; rules files for Cline/Roo Code, Windsurf, Kilo Code, Antigravity, Codex CLI
+- **Selection-aware AI Context Files** — the first interactive `code-intel analyze` stores the selected agents in `.code-intel/agent-targets.json`; later analyses update only those selected repository instruction files, such as `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `.cursor/rules/code-intel.mdc`, `.kiro/steering/code-intel.md`, `.clinerules`, `.windsurfrules`, `.kilocode/rules/code-intel-rules.md`, or `.agents/rules/code-intel-rules.md`
+- **Agent-aware Setup** _(v1.0.10)_ — `code-intel setup [path]` reads `.code-intel/agent-targets.json`, configures MCP independently for the resolved selected repository root, and installs only supported global hooks/plugins for agents selected during analysis. Setup never creates repository-scoped `.cursor`, `.github`, `.kilocode`, `.agents`, `.clinerules`, `.windsurfrules`, `AGENTS.md`, or similar instruction files
 - **Repository Groups** — multi-repo / monorepo service tracking with workspace auto-discovery (npm, pnpm, Nx, Turborepo), contract extraction (OpenAPI, GraphQL, Protobuf), type-aware similarity scoring, and cross-repo dependency detection
   - **OpenAPI note:** contract extraction currently parses **JSON** OpenAPI/Swagger specs. YAML filenames are discovered, but YAML parsing is not implemented in `v1.0.4`.
 - **Multi-Layer Exclusion System** — exclude files and folders from analysis with `.codeintelignore` (team, tracked), `.codeintelignore.local` (personal, gitignored), or CLI flags `--skip-folders` / `--skip-files` (per-run); supports basename matching (`tests`), path matching (`src/legacy`), and glob patterns (`**/*.generated.ts`)
@@ -245,6 +245,7 @@ code-intel repo relink api-platform ../new-location
 - existing path + same `--name` refreshes that repo
 - existing path + different `--name` fails; use `code-intel repo rename`
 - new path + existing `--name` fails; use `code-intel repo relink`
+- **no-op analyze with missing registry entry** _(v1.0.10)_ automatically restores the entry using published metadata without creating a new generation
 
 Legacy registries without repo IDs migrate automatically on load. If old entries share the same basename-derived name, the migration repairs duplicates deterministically and prints a warning so you can rename them later.
 
@@ -252,7 +253,7 @@ Then open **http://localhost:4747** in your browser — the Web UI auto-connects
 
 If no admin account exists yet, the first-run setup screen appears. The login and bootstrap forms include eye-icon password visibility toggles, and the username input placeholder reads `User Name`.
 
-Authenticated users can open **Settings** from the profile menu in the Web UI to inspect global server configuration. Admin users can edit routed settings sections for LLM, embeddings, analysis, server, authentication, updates, and telemetry. These settings are server-global and complement the CLI flows (`code-intel init` and `code-intel config *`) rather than replacing editor/MCP setup.
+Authenticated users can open **Settings** from the profile menu in the Web UI to inspect global server configuration. Admin users can edit routed settings sections for LLM, embeddings, analysis, server, authentication, updates, and telemetry. The Embeddings Model control is a backend-driven selector populated from `GET /api/v1/embeddings/models`, not a free-text field. Unsupported legacy values render as disabled recovery options until replaced with a supported model. These settings are server-global and complement the CLI flows (`code-intel init` and `code-intel config *`) rather than replacing editor/MCP setup.
 
 ### After analysis
 
@@ -326,48 +327,39 @@ code-intel analyze --skip-folders tests --skip-folders examples
 
 ---
 
-## 🤖 MCP Setup (one-time)
+## 🤖 MCP and agent setup
 
-Run the one-time setup command to configure the MCP server and install agent hooks:
+Repository instruction files are selected and generated by `code-intel analyze`. On the first interactive analysis, the selected agents are stored in:
+
+```text
+.code-intel/agent-targets.json
+```
+
+Run setup for that repository:
 
 ```bash
-code-intel setup
+code-intel analyze && code-intel setup [path]
 ```
 
-This does two things:
+Setup performs two independent operations:
 
-**1. MCP server** — writes `~/.config/claude/claude_desktop_config.json` so your editor can start the MCP server automatically:
+1. **MCP configuration** — configures/displays the Code Intel MCP server entry.
+2. **Selected global integrations** — installs only the supported global hook or plugin integrations mapped to agents saved by analysis.
 
-```json
-{
-  "mcpServers": {
-    "code-intel": {
-      "command": "npx",
-      "args": ["@vohongtho.infotech/code-intel", "mcp", "."]
-    }
-  }
-}
+Setup does **not** create or modify repository instruction files such as `.cursor/**`, `.github/**`, `.kilocode/**`, `.agents/**`, `.clinerules`, `.windsurfrules`, `AGENTS.md`, or `CLAUDE.md`. Existing files are left unchanged.
+
+Useful modes:
+
+```bash
+code-intel setup ./services/api     # Use that repository's saved selection
+code-intel setup --mcp-only         # Configure MCP only
+code-intel setup --all-agents       # Install all supported global integrations
+code-intel setup --dry-run          # Show the plan without writing files
 ```
 
-**2. Agent hooks** — installs PreToolUse hooks for every supported AI agent (idempotent, always safe to re-run):
+When the selection file is missing or invalid, agent integration installation fails closed and never falls back to every agent. Run `code-intel analyze` to create the repository selection, then rerun setup. MCP can connect before a repository is indexed; graph-backed MCP tools will instruct you to run `code-intel analyze`, then retry without reconnecting.
 
-| Agent | Hook type | What it does |
-|-------|-----------|--------------|
-| **Claude Code** | `~/.claude/settings.json` PreToolUse | Auto-rewrites grep/cat → code-intel search/inspect |
-| **Cursor** | `~/.cursor/hooks.json` preToolUse | Auto-rewrites grep/cat → code-intel search/inspect |
-| **Gemini CLI** | `~/.gemini/settings.json` BeforeTool | Auto-rewrites grep/cat → code-intel search/inspect |
-| **GitHub Copilot** | `.github/hooks/code-intel-rewrite.json` | VS Code Chat: transparent rewrite; CLI: deny + suggestion |
-| **OpenCode** | `~/.config/opencode/plugins/code-intel.ts` | Plugin: intercepts before tool execution |
-| **OpenClaw** | `~/.openclaw/extensions/code-intel/` | Plugin: `before_tool_call` intercept |
-| **Cline / Roo Code** | `.clinerules` | Prompt-level policy (also written by `analyze`) |
-| **Windsurf** | `.windsurfrules` | Prompt-level policy (also written by `analyze`) |
-| **Kilo Code** | `.kilocode/rules/code-intel-rules.md` | Prompt-level policy (also written by `analyze`) |
-| **Antigravity** | `.agents/rules/code-intel-rules.md` | Prompt-level policy (also written by `analyze`) |
-| **Codex CLI** | `AGENTS.md` (appended) | Prompt-level policy (also written by `analyze`) |
-
-> **How hooks work:** The `code-intel-hook` binary (~10KB, ~50ms startup) intercepts every Bash tool call. When the agent tries to run `grep MyClass src/`, the hook silently rewrites it to `code-intel search "MyClass"` — saving ~3,000 tokens per lookup and returning structured graph results instead of raw text.
-
-After setup, the MCP server starts automatically when your AI editor launches, giving it direct access to all code-intel tools.
+> The `code-intel-hook` binary can rewrite supported shell lookups such as `grep MyClass src/` into structured Code Intel searches. Installers remain idempotent and preserve existing user configuration.
 
 ---
 
@@ -520,8 +512,14 @@ Sensitive data (passwords, tokens, API keys, emails, credit cards, etc.) is auto
 ### Setup
 
 ```bash
-code-intel setup                         # Register the MCP server in your editor config (one-time)
+code-intel analyze && code-intel setup [path]   # Canonical first run for MCP-enabled repos
+code-intel setup [path]                         # Configure MCP and selected-agent global integrations
+code-intel setup --mcp-only                     # Configure MCP without agent integrations
+code-intel setup --all-agents                   # Install every supported global integration
+code-intel setup --dry-run                      # Print the plan without writing files
 ```
+
+Project instruction files are generated only by `code-intel analyze` from the saved repository agent selection.
 
 ### Analyze
 
@@ -645,18 +643,20 @@ code-intel group status <name>                                             # Aud
 |--------|----------|-------------|
 | `GET`  | `/api/v1/health` | Server status, graph size, watcher state |
 | `GET`  | `/api/v1/repos` | List indexed repos |
-| `GET`  | `/api/v1/graph/:repo` | Full graph (nodes + edges) |
-| `POST` | `/api/v1/search` | Canonical scoped search (`query`, `limit`, `mode`, `scope`) with repo/group targeting |
+| `GET`  | `/api/v1/graph/:repoId` | Full graph (nodes + edges) |
+| `POST` | `/api/v1/search` | Canonical scoped search (`query`, `limit`, `mode`, `scope`) with repo/group targeting; repo scope uses `repoId` |
 | `POST` | `/api/v1/vector-search` | Deprecated compatibility alias for vector mode; returns resolved scope/mode metadata |
 | `GET`  | `/api/v1/vector-status` | Vector index ready/building status |
 | `GET`  | `/api/v1/nodes/:id` | Node detail (callers, callees, imports, etc.) |
-| `POST` | `/api/v1/blast-radius` | Impact analysis |
-| `POST` | `/api/v1/query` | Execute a GQL query string; returns nodes/edges/groups + executionTimeMs |
-| `POST` | `/api/v1/query/explain` | Return query plan without executing |
-| `GET`  | `/api/v1/source` | Fetch file content with ±20 lines context; path-traversal protected |
+| `POST` | `/api/v1/blast-radius` | Impact analysis; request body accepts canonical `repoId` |
+| `POST` | `/api/v1/query` | Execute a GQL query string; accepts optional canonical `scope`, returns normalized `{ kind, nodes, edges, groups, path, executionTimeMs, truncated, totalCount, scope }` |
+| `POST` | `/api/v1/query/explain` | Return query plan without executing; accepts optional canonical `scope` |
+| `GET`  | `/api/v1/source` | Fetch file content with ±20 lines context; path-traversal protected; accepts optional `repoId` |
 | `POST` | `/api/v1/grep` | Regex search in file content |
-| `GET`  | `/api/v1/flows` | List detected flows |
-| `GET`  | `/api/v1/clusters` | List clusters |
+| `GET`  | `/api/v1/flows` | List detected flows; accepts optional `repoId` |
+| `GET`  | `/api/v1/clusters` | List clusters; accepts optional `repoId` |
+
+Migration note: internal/UI-owned repo selectors now use `repoId`. Legacy flat `repo` inputs remain only as bounded compatibility adapters on selected surfaces during migration.
 
 ---
 
@@ -680,7 +680,7 @@ All tools are available to any MCP-capable editor (Claude Desktop, Claude Code, 
 | `routes` | _(none)_ | List all HTTP route handler mappings detected in the codebase |
 | `clusters` | `limit` (number, default 10) | List detected code clusters (directory-based communities) with member counts and top 10 symbols each |
 | `flows` | `limit` (number, default 10) | List detected execution flows with entry points, steps, and step counts |
-| `query` | `gql` (string), `limit` (number, optional) | Execute a GQL query (`FIND`, `TRAVERSE`, `PATH`, `COUNT GROUP BY`) against the live graph; returns nodes/edges/groups + executionTimeMs |
+| `query` | `gql` (string), `limit` (number, optional) | Execute a GQL query (`FIND`, `TRAVERSE`, `PATH`, `COUNT GROUP BY`) against the live graph; returns normalized `{ kind, nodes, edges, groups, path, executionTimeMs, truncated, totalCount }` |
 | `detect_changes` | `base_ref` (string, default `HEAD`), `diff_text` (string, optional) | **Git-diff impact analysis**: maps changed lines to graph symbols and computes combined blast radius. Ideal for PR review or pre-commit checks. |
 | `raw_query` | `cypher` (string) | _(deprecated — use `query` instead)_ Simplified Cypher-like graph query: `name='X'` or `:kind` |
 

@@ -1,18 +1,72 @@
-import type { CodeNode, CodeEdge } from 'code-intel-shared';
-import type { SearchResult, CurrentUser, AppConfig, SearchMode, SearchScope } from '../state/types';
+import type { CodeNode, CodeEdge, CountGroup, GQLResult, GQLResultKind, QueryScope, ResolvedQueryScope } from 'code-intel-shared';
+import type { SearchResult, CurrentUser, AppConfig, SearchMode, SearchScope, EmbeddingModelCatalog } from '../state/types';
 
-export interface CountGroup {
-  key: string;
-  count: number;
+export class InvalidGQLResultError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InvalidGQLResultError';
+  }
 }
 
-export interface GQLResult {
-  nodes: CodeNode[];
-  edges?: CodeEdge[];
-  groups?: CountGroup[];
-  executionTimeMs: number;
-  truncated: boolean;
-  totalCount: number;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function normalizeCountGroup(value: unknown): CountGroup {
+  if (!isRecord(value) || typeof value.key !== 'string' || typeof value.count !== 'number' || !Number.isInteger(value.count) || value.count < 0) {
+    throw new InvalidGQLResultError('Invalid GQL result: malformed group entry');
+  }
+  return { key: value.key, count: value.count };
+}
+
+function inferLegacyGQLResultKind(value: Record<string, unknown>): GQLResultKind {
+  if (typeof value.kind === 'string') {
+    if (value.kind === 'nodes' || value.kind === 'traversal' || value.kind === 'path' || value.kind === 'aggregate') return value.kind;
+    throw new InvalidGQLResultError(`Invalid GQL result: unknown kind "${value.kind}"`);
+  }
+  if (Array.isArray(value.groups)) return 'aggregate';
+  if (Array.isArray(value.path) || value.path === null) return 'path';
+  if (Array.isArray(value.edges) && value.edges.length > 0) return 'traversal';
+  return 'nodes';
+}
+
+export function normalizeGQLResult(value: unknown): GQLResult {
+  if (!isRecord(value)) throw new InvalidGQLResultError('Invalid GQL result: expected object');
+
+  const executionTimeMs = value.executionTimeMs;
+  const truncated = value.truncated;
+  const totalCount = value.totalCount;
+
+  if (typeof executionTimeMs !== 'number' || !Number.isFinite(executionTimeMs) || executionTimeMs < 0) {
+    throw new InvalidGQLResultError('Invalid GQL result: executionTimeMs must be a non-negative number');
+  }
+  if (typeof truncated !== 'boolean') {
+    throw new InvalidGQLResultError('Invalid GQL result: truncated must be a boolean');
+  }
+  if (typeof totalCount !== 'number' || !Number.isInteger(totalCount) || totalCount < 0) {
+    throw new InvalidGQLResultError('Invalid GQL result: totalCount must be a non-negative integer');
+  }
+
+  const nodes = Array.isArray(value.nodes) ? value.nodes as CodeNode[] : [];
+  const edges = Array.isArray(value.edges) ? value.edges as CodeEdge[] : [];
+  const groups = Array.isArray(value.groups) ? value.groups.map(normalizeCountGroup) : [];
+  const rawPath = value.path;
+  const path = Array.isArray(rawPath) ? rawPath as CodeNode[] : rawPath == null ? null : (() => {
+    throw new InvalidGQLResultError('Invalid GQL result: path must be an array or null');
+  })();
+  const kind = inferLegacyGQLResultKind(value);
+
+  return {
+    kind,
+    nodes,
+    edges,
+    groups,
+    path,
+    executionTimeMs,
+    truncated,
+    totalCount,
+    format: value.format === 'json' ? 'json' : undefined,
+  };
 }
 
 export interface AuthStatus {
@@ -48,7 +102,7 @@ export interface GrepHit {
 export interface SearchResponse {
   results: SearchResult[];
   searchMode: SearchMode;
-  scope?: SearchScope;
+  scope?: ResolvedQueryScope;
   deprecated?: boolean;
   deprecation?: string;
   vectorReady?: boolean;
@@ -63,6 +117,11 @@ export interface SearchRequest {
   limit?: number;
   mode?: SearchMode;
   scope?: SearchScope;
+}
+
+export interface ResolvedRepoRef {
+  repoId: string;
+  repoName: string;
 }
 
 export interface ConfigValidationError {
@@ -166,10 +225,23 @@ export class ApiClient {
     return res.json() as Promise<{ config: AppConfig }>;
   }
 
+  async listEmbeddingModels(): Promise<EmbeddingModelCatalog> {
+    const res = await fetch(`${this.baseUrl}/api/v1/embeddings/models`, { credentials: 'include' });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { error?: { message?: string } };
+      throw new Error(body?.error?.message ?? 'Failed to load embedding models');
+    }
+    const data = await res.json() as Partial<EmbeddingModelCatalog>;
+    if (!Array.isArray(data.models) || typeof data.defaultModel !== 'string') {
+      throw new Error('Malformed embedding model catalog response');
+    }
+    return data as EmbeddingModelCatalog;
+  }
+
   // ── Graph & repos ──────────────────────────────────────────────────────────
 
-  async fetchGraph(repo: string): Promise<{ nodes: CodeNode[]; edges: CodeEdge[] }> {
-    const res = await fetch(`${this.baseUrl}/api/v1/graph/${encodeURIComponent(repo)}`, { credentials: 'include' });
+  async fetchGraph(repoId: string): Promise<{ nodes: CodeNode[]; edges: CodeEdge[] }> {
+    const res = await fetch(`${this.baseUrl}/api/v1/graph/${encodeURIComponent(repoId)}`, { credentials: 'include' });
     if (!res.ok) throw new Error(`Failed to fetch graph: ${res.statusText}`);
     return res.json() as Promise<{ nodes: CodeNode[]; edges: CodeEdge[] }>;
   }
@@ -179,20 +251,20 @@ export class ApiClient {
    * Used for progressive graph loading (Epic 1.2).
    */
   async fetchGraphNodes(
-    repo: string,
+    repoId: string,
     offset: number,
     limit: number,
   ): Promise<{ nodes: CodeNode[]; offset: number; limit: number; total: number; hasMore: boolean }> {
-    const url = `${this.baseUrl}/api/v1/graph/${encodeURIComponent(repo)}/nodes?limit=${limit}&offset=${offset}`;
+    const url = `${this.baseUrl}/api/v1/graph/${encodeURIComponent(repoId)}/nodes?limit=${limit}&offset=${offset}`;
     const res = await fetch(url, { credentials: 'include' });
     if (!res.ok) throw new Error(`Failed to fetch graph nodes: ${res.statusText}`);
     return res.json() as Promise<{ nodes: CodeNode[]; offset: number; limit: number; total: number; hasMore: boolean }>;
   }
 
-  async search(queryOrRequest: string | SearchRequest, limit = 20, options?: { repo?: string; group?: string }): Promise<SearchResponse> {
+  async search(queryOrRequest: string | SearchRequest, limit = 20, options?: { repoId?: string; group?: string }): Promise<SearchResponse> {
     const csrfToken = await this.getCsrfToken();
     const request = typeof queryOrRequest === 'string'
-      ? { query: queryOrRequest, limit, ...(options?.group ? { scope: { type: 'group' as const, name: options.group } } : options?.repo ? { scope: { type: 'repo' as const, name: options.repo } } : {}) }
+      ? { query: queryOrRequest, limit, ...(options?.group ? { scope: { type: 'group' as const, name: options.group } } : options?.repoId ? { scope: { type: 'repo' as const, repoId: options.repoId } } : {}) }
       : queryOrRequest;
     const res = await fetch(`${this.baseUrl}/api/v1/search`, {
       method: 'POST',
@@ -243,8 +315,8 @@ export class ApiClient {
     return res.json() as Promise<{ content: string }>;
   }
 
-  async inspectNode(nodeId: string, repo?: string): Promise<NodeInspectInfo> {
-    const url = `${this.baseUrl}/api/v1/nodes/${encodeURIComponent(nodeId)}${repo ? `?repo=${encodeURIComponent(repo)}` : ''}`;
+  async inspectNode(nodeId: string, repoId?: string): Promise<NodeInspectInfo> {
+    const url = `${this.baseUrl}/api/v1/nodes/${encodeURIComponent(nodeId)}${repoId ? `?repoId=${encodeURIComponent(repoId)}` : ''}`;
     const res = await fetch(url, { credentials: 'include' });
     if (!res.ok) throw new Error(`Inspect failed: ${res.statusText}`);
     return res.json() as Promise<NodeInspectInfo>;
@@ -254,14 +326,14 @@ export class ApiClient {
     target: string,
     direction: 'callers' | 'callees' | 'both' = 'both',
     maxHops = 3,
-    repo?: string,
+    repoId?: string,
   ): Promise<BlastRadiusResult> {
     const csrfToken = await this.getCsrfToken();
     const res = await fetch(`${this.baseUrl}/api/v1/blast-radius`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
       credentials: 'include',
-      body: JSON.stringify({ target, direction, max_hops: maxHops, repo }),
+      body: JSON.stringify({ target, direction, max_hops: maxHops, repoId }),
     });
     if (!res.ok) throw new Error(`Blast radius failed: ${res.statusText}`);
     return res.json() as Promise<BlastRadiusResult>;
@@ -333,11 +405,11 @@ export class ApiClient {
     return res.json() as Promise<{ nodes: import('code-intel-shared').CodeNode[]; edges: import('code-intel-shared').CodeEdge[] }>;
   }
 
-  async sourcePreview(file: string, startLine?: number, endLine?: number, repo?: string): Promise<{ content: string; language: string; startLine: number; endLine: number }> {
+  async sourcePreview(file: string, startLine?: number, endLine?: number, repoId?: string): Promise<{ content: string; language: string; startLine: number; endLine: number }> {
     const params = new URLSearchParams({ file });
     if (startLine !== undefined) params.set('startLine', String(startLine));
     if (endLine !== undefined) params.set('endLine', String(endLine));
-    if (repo) params.set('repo', repo);
+    if (repoId) params.set('repoId', repoId);
     const res = await fetch(`${this.baseUrl}/api/v1/source?${params.toString()}`, { credentials: 'include' });
     if (!res.ok) {
       const body = await res.json().catch(() => ({})) as { error?: { message?: string } };
@@ -423,18 +495,21 @@ export class ApiClient {
     return body as { name: string; members: { groupPath: string; repoId?: string; registryName: string }[] };
   }
 
-  async queryGQL(gql: string): Promise<GQLResult> {
+  async queryGQL(gql: string, scope?: QueryScope): Promise<GQLResult> {
     const csrfToken = await this.getCsrfToken();
     const res = await fetch(`${this.baseUrl}/api/v1/query`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
       credentials: 'include',
-      body: JSON.stringify({ gql }),
+      body: JSON.stringify({ gql, scope }),
     });
+    const body = await res.json().catch(() => ({})) as { error?: { message?: string } } | unknown;
     if (!res.ok) {
-      const body = await res.json().catch(() => ({})) as { error?: { message?: string } };
-      throw new Error(body?.error?.message ?? `Query failed: ${res.statusText}`);
+      if (isRecord(body) && isRecord(body.error) && typeof body.error.message === 'string') {
+        throw new Error(body.error.message);
+      }
+      throw new Error(`Query failed: ${res.statusText}`);
     }
-    return res.json() as Promise<GQLResult>;
+    return normalizeGQLResult(body);
   }
 }

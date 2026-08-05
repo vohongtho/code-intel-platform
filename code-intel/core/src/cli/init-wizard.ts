@@ -46,6 +46,10 @@ export interface CodeIntelConfig {
     ignorePatterns: string[];
     incrementalByDefault: boolean;
   };
+  index: {
+    keepGenerations: number;
+    staleStagingHours: number;
+  };
   serve: {
     defaultPort: number;
     openBrowser: boolean;
@@ -77,13 +81,17 @@ export const DEFAULT_CONFIG: CodeIntelConfig = {
     maxTokensPerSummary: 100,
   },
   embeddings: {
-    model: 'all-MiniLM-L6-v2',
+    model: 'Xenova/all-MiniLM-L6-v2',
     enabled: false,
   },
   analysis: {
     maxFileSizeKB: 512,
     ignorePatterns: [],
     incrementalByDefault: false,
+  },
+  index: {
+    keepGenerations: 2,
+    staleStagingHours: 24,
   },
   serve: {
     defaultPort: 4747,

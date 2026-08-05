@@ -26,7 +26,7 @@ export function NodeDetail({ node, onClose }: Props) {
     setLoadingInfo(true);
     const client = new ApiClient(state.serverUrl);
     client
-      .inspectNode(node.id, state.repoName || undefined)
+      .inspectNode(node.id, state.repoId || undefined)
       .then((data) => { if (!cancelled) setInfo(data); })
       .catch(() => undefined)
       .finally(() => { if (!cancelled) setLoadingInfo(false); });
@@ -38,7 +38,7 @@ export function NodeDetail({ node, onClose }: Props) {
     setLoadingImpact(true);
     try {
       const client = new ApiClient(state.serverUrl);
-      const data = await client.blastRadius(node.id, 'both', 3, state.repoName || undefined);
+      const data = await client.blastRadius(node.id, 'both', 3, state.repoId || undefined);
       setImpact(data);
     } catch { /* ignore */ }
     finally { setLoadingImpact(false); }

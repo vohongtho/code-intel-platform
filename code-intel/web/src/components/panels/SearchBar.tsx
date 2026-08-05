@@ -14,8 +14,8 @@ export function SearchBar() {
       const client = new ApiClient(state.serverUrl);
       const scope = state.mode === 'group'
         ? { type: 'group' as const, name: state.groupName || state.repoName }
-        : state.repoName
-          ? { type: 'repo' as const, name: state.repoName }
+        : state.repoId
+          ? { type: 'repo' as const, repoId: state.repoId }
           : undefined;
       const { results } = await client.search({ query, limit: 20, scope, mode: 'hybrid' });
       dispatch({ type: 'SET_SEARCH', query, results });

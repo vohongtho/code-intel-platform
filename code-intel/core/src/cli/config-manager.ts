@@ -10,6 +10,7 @@
 
 import { loadConfig, saveConfig, wipeConfig, DEFAULT_CONFIG } from './init-wizard.js';
 import type { CodeIntelConfig } from './init-wizard.js';
+import { getEmbeddingModel, normalizeEmbeddingModelId, resolveEmbeddingModelAvailability } from '../search/embedding-model-registry.js';
 
 // ── Sensitive key patterns (same logic as config-validator.ts) ────────────────
 const SENSITIVE_PATTERNS = [
@@ -92,7 +93,7 @@ export const CONFIG_SCHEMA: Record<string, SchemaField> = {
   'llm.baseUrl':            { type: 'string', default: '', description: 'Base URL for custom OpenAI-compatible API (e.g. http://localhost:1234/v1)' },
   'llm.batchSize':          { type: 'number', minimum: 1, maximum: 100, default: 20, description: 'Concurrent LLM calls per batch' },
   'llm.maxTokensPerSummary':{ type: 'number', minimum: 10, maximum: 2000, default: 100, description: 'Max tokens per AI summary' },
-  'embeddings.model':       { type: 'string', default: 'all-MiniLM-L6-v2', description: 'Embedding model name' },
+  'embeddings.model':       { type: 'string', default: 'Xenova/all-MiniLM-L6-v2', description: 'Canonical embedding model ID' },
   'embeddings.enabled':     { type: 'boolean', default: false, description: 'Enable vector search' },
   'analysis.maxFileSizeKB': { type: 'number', minimum: 1, maximum: 102400, default: 512, description: 'Skip files larger than this (KB)' },
   'analysis.ignorePatterns':{ type: 'array', default: [], description: 'Glob patterns to ignore during analysis' },
@@ -115,12 +116,25 @@ export interface ValidationError {
   hint: string;
 }
 
+export function normalizeConfigEmbeddingModel(cfg: CodeIntelConfig): CodeIntelConfig {
+  const normalized = normalizeEmbeddingModelId(cfg.embeddings.model);
+  if (normalized === cfg.embeddings.model) return cfg;
+  return {
+    ...cfg,
+    embeddings: {
+      ...cfg.embeddings,
+      model: normalized,
+    },
+  };
+}
+
 /** Validate a loaded config against the schema. Returns list of errors. */
 export function validateConfig(cfg: CodeIntelConfig): ValidationError[] {
   const errors: ValidationError[] = [];
+  const normalizedCfg = normalizeConfigEmbeddingModel(cfg);
 
   for (const [dotPath, schema] of Object.entries(CONFIG_SCHEMA)) {
-    const value = getByPath(cfg as unknown, dotPath);
+    const value = getByPath(normalizedCfg as unknown, dotPath);
     if (value === undefined || value === null) continue; // missing optional field is OK
 
     if (schema.type === 'string' && typeof value !== 'string') {
@@ -139,10 +153,31 @@ export function validateConfig(cfg: CodeIntelConfig): ValidationError[] {
       errors.push({ path: dotPath, value, reason: `Value ${value} exceeds maximum ${schema.maximum}`, hint: `Set with: code-intel config set ${dotPath} ${schema.maximum}` });
     }
 
-    // Warn if sensitive key has a plaintext (non-$ENV_VAR) value
     const lastKey = dotPath.split('.').pop()!;
     if (isSensitiveKey(lastKey) && typeof value === 'string' && value.length > 0 && !value.startsWith('$')) {
       errors.push({ path: dotPath, value: '***', reason: 'Plaintext secret detected', hint: `Use $ENV_VAR syntax: code-intel config set ${dotPath} $${lastKey.toUpperCase()}` });
+    }
+  }
+
+  const descriptor = getEmbeddingModel(normalizedCfg.embeddings.model);
+  if (!descriptor) {
+    if (normalizedCfg.embeddings.enabled) {
+      errors.push({
+        path: 'embeddings.model',
+        value: normalizedCfg.embeddings.model,
+        reason: 'Unsupported embedding model',
+        hint: 'Select one of the models returned by GET /api/v1/embeddings/models',
+      });
+    }
+  } else {
+    const availability = resolveEmbeddingModelAvailability(descriptor);
+    if (normalizedCfg.embeddings.enabled && !availability.available) {
+      errors.push({
+        path: 'embeddings.model',
+        value: normalizedCfg.embeddings.model,
+        reason: `Embedding model unavailable${availability.unavailableReason ? `: ${availability.unavailableReason}` : ''}`,
+        hint: 'Select one of the available models returned by GET /api/v1/embeddings/models',
+      });
     }
   }
 
@@ -235,7 +270,7 @@ export function configGet(key: string): void {
 
 /** code-intel config set <key> <value> */
 export function configSet(key: string, rawValue: string): void {
-  const cfg = loadConfig() ?? (JSON.parse(JSON.stringify(DEFAULT_CONFIG)) as CodeIntelConfig);
+  const cfg = normalizeConfigEmbeddingModel(loadConfig() ?? (JSON.parse(JSON.stringify(DEFAULT_CONFIG)) as CodeIntelConfig));
 
   const coerced = coerceValue(key, rawValue);
   if (!coerced.ok) {
@@ -257,7 +292,7 @@ export function configSet(key: string, rawValue: string): void {
     process.exit(1);
   }
 
-  saveConfig(cfg);
+  saveConfig(normalizeConfigEmbeddingModel(cfg));
   console.log(`  ✅  ${key} = ${typeof coerced.value === 'string' ? coerced.value : JSON.stringify(coerced.value)}`);
 }
 
@@ -299,7 +334,7 @@ export function configValidate(): boolean {
 
 /** code-intel config reset (non-interactive version for --yes) */
 export function configReset(): void {
-  const defaults = JSON.parse(JSON.stringify(DEFAULT_CONFIG)) as CodeIntelConfig;
+  const defaults = normalizeConfigEmbeddingModel(JSON.parse(JSON.stringify(DEFAULT_CONFIG)) as CodeIntelConfig);
   saveConfig(defaults);
   console.log('\n  ✅  Config reset to defaults.\n');
 }

@@ -6,6 +6,8 @@ import type { Role } from './users-db.js';
 import { getOrCreateUsersDB } from './users-db.js';
 import { ErrorCodes } from '../errors/codes.js';
 import { getSecret } from './secret-store.js';
+import Logger from '../shared/logger.js';
+import { getOrCreateSessionStore } from './session-store.js';
 
 // ── Augment Express request ───────────────────────────────────────────────────
 
@@ -19,7 +21,7 @@ declare global {
   }
 }
 
-// ── Session store ─────────────────────────────────────────────────────────────
+// ── Persistent session store ─────────────────────────────────────────────────
 
 export interface SessionEntry {
   userId: string;
@@ -28,55 +30,44 @@ export interface SessionEntry {
   expiresAt: number;
   /** TTL used when this session was created — needed for correct cookie Max-Age. */
   ttlMs: number;
+  renewed: boolean;
 }
 
-export const sessionStore = new Map<string, SessionEntry>();
-
-const SESSION_COOKIE_NAME = 'code_intel_session';
+export const SESSION_COOKIE_NAME = 'code_intel_session';
 
 /** Normal session TTL (default 8 h, overridable via CODE_INTEL_SESSION_TTL_HOURS). */
 function getSessionTtlMs(): number {
   const hours = parseInt(process.env['CODE_INTEL_SESSION_TTL_HOURS'] ?? '8', 10);
-  return (isNaN(hours) ? 8 : hours) * 60 * 60 * 1000;
+  return (isNaN(hours) || hours <= 0 ? 8 : hours) * 60 * 60 * 1000;
 }
-
-/** "Remember me" TTL — always 12 hours regardless of env. */
-const REMEMBER_ME_TTL_MS = 12 * 60 * 60 * 1000;
 
 export function createSession(
   user: { id: string; username: string; role: Role },
   rememberMe = false,
 ): { sessionId: string; ttlMs: number } {
-  const sessionId = uuidv4();
-  const ttlMs = rememberMe ? REMEMBER_ME_TTL_MS : getSessionTtlMs();
-  const expiresAt = Date.now() + ttlMs;
-  sessionStore.set(sessionId, {
-    userId: user.id,
-    username: user.username,
-    role: user.role,
-    expiresAt,
-    ttlMs,
-  });
-  return { sessionId, ttlMs };
+  const created = getOrCreateSessionStore().create(user.id, rememberMe);
+  return { sessionId: created.rawToken, ttlMs: created.ttlMs };
 }
 
 export function getSession(sessionId: string): SessionEntry | null {
-  const entry = sessionStore.get(sessionId);
-  if (!entry) return null;
-  if (Date.now() > entry.expiresAt) {
-    sessionStore.delete(sessionId);
-    return null;
-  }
-  // Slide the window: if more than 25% of the original TTL has elapsed, renew
-  const remaining = entry.expiresAt - Date.now();
-  if (remaining < entry.ttlMs * 0.75) {
-    entry.expiresAt = Date.now() + entry.ttlMs;
-  }
-  return entry;
+  const resolved = getOrCreateSessionStore().resolve(sessionId);
+  if (!resolved) return null;
+  return {
+    userId: resolved.user.id,
+    username: resolved.user.username,
+    role: resolved.user.role,
+    expiresAt: resolved.expiresAt,
+    ttlMs: resolved.ttlMs,
+    renewed: resolved.renewed,
+  };
 }
 
 export function deleteSession(sessionId: string): void {
-  sessionStore.delete(sessionId);
+  getOrCreateSessionStore().revoke(sessionId);
+}
+
+export function countActiveSessions(): number {
+  return getOrCreateSessionStore().countActive();
 }
 
 // ── Middleware: attach requestId ──────────────────────────────────────────────
@@ -101,13 +92,19 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
   const cookies = parseCookies(req.headers['cookie'] ?? '');
   const sessionId = cookies[SESSION_COOKIE_NAME];
   if (sessionId) {
-    const session = getSession(sessionId);
-    if (session) {
-      req.user = { id: session.userId, username: session.username, role: session.role, authMethod: 'session' };
-      // Refresh session cookie with the original TTL (sliding window)
-      res.setHeader('Set-Cookie', buildSessionCookie(sessionId, session.ttlMs));
-      next();
-      return;
+    try {
+      const session = getSession(sessionId);
+      if (session) {
+        req.user = { id: session.userId, username: session.username, role: session.role, authMethod: 'session' };
+        if (session.renewed) {
+          res.setHeader('Set-Cookie', buildSessionCookie(sessionId, session.ttlMs));
+        }
+        next();
+        return;
+      }
+    } catch (error) {
+      Logger.warn('[auth] Persistent session lookup failed; cookie authentication denied',
+        error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -154,7 +151,7 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
   if (process.env['CODE_INTEL_DEV_AUTO_LOGIN'] === 'true' && isLocalhost(req)) {
     const db = getOrCreateUsersDB();
     const users = db.listUsers();
-    if (users.length === 1 && users[0]!.role === 'admin') {
+    if (users.length === 1 && users[0]!.role === 'admin' && !users[0]!.disabledAt) {
       const user = users[0]!;
       req.user = { id: user.id, username: user.username, role: user.role, authMethod: 'session' };
     }

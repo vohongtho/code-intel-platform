@@ -1,21 +1,45 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
-const INDEX_DIR = '.code-intel';
-const GENERATIONS_DIR = 'generations';
-const CURRENT_FILE = 'current.json';
+export const INDEX_DIR = '.code-intel';
+export const GENERATIONS_DIR = 'generations';
+export const CURRENT_FILE = 'current.json';
+export const STAGING_OWNER_FILE = 'staging.json';
+export const DEFAULT_STALE_STAGING_MS = 24 * 60 * 60 * 1000;
 
 export type IndexArtifactName = 'graph.db' | 'bm25.db' | 'vector.db' | 'meta.json';
+export type ArtifactCloneMode = 'reflink' | 'copy';
 
-export interface IndexGenerationManifest {
+export interface IndexArtifactDetails {
+  size: number;
+  required: boolean;
+}
+
+export interface IndexGenerationManifestV1 {
+  version?: 1;
   generationId: string;
   publishedAt: string;
   artifacts: IndexArtifactName[];
 }
 
+export interface IndexGenerationManifestV2 {
+  version: 2;
+  generationId: string;
+  publishedAt: string;
+  baseGenerationId?: string;
+  schemaVersion?: number;
+  parser?: 'tree-sitter' | 'regex';
+  artifacts: IndexArtifactName[];
+  artifactDetails?: Partial<Record<IndexArtifactName, IndexArtifactDetails>>;
+}
+
+export type IndexGenerationManifest = IndexGenerationManifestV1 | IndexGenerationManifestV2;
+
 export interface IndexGeneration {
   generationId: string;
+  baseGenerationId?: string;
   stagingDir: string;
   finalDir: string;
   graphDbPath: string;
@@ -24,69 +48,75 @@ export interface IndexGeneration {
   metadataPath: string;
 }
 
-function indexDir(repoDir: string): string {
-  return path.join(repoDir, INDEX_DIR);
+export interface StagingOwner {
+  version: 1;
+  generationId: string;
+  baseGenerationId?: string;
+  pid: number;
+  hostname: string;
+  createdAt: string;
+  lastActivityAt: string;
 }
 
-function generationsDir(repoDir: string): string {
-  return path.join(indexDir(repoDir), GENERATIONS_DIR);
+export function getIndexDir(repoDir: string): string {
+  return path.join(path.resolve(repoDir), INDEX_DIR);
+}
+
+export function getGenerationsDir(repoDir: string): string {
+  return path.join(getIndexDir(repoDir), GENERATIONS_DIR);
 }
 
 export function getCurrentManifestPath(repoDir: string): string {
-  return path.join(indexDir(repoDir), CURRENT_FILE);
+  return path.join(getIndexDir(repoDir), CURRENT_FILE);
 }
 
-export function loadCurrentGenerationManifest(repoDir: string): IndexGenerationManifest | null {
-  try {
-    const value = JSON.parse(fs.readFileSync(getCurrentManifestPath(repoDir), 'utf8')) as IndexGenerationManifest;
-    if (!value.generationId || !Array.isArray(value.artifacts)) return null;
-    return value;
-  } catch {
-    return null;
+export function safeGenerationId(value: string): boolean {
+  return value.length > 0
+    && !value.includes('\0')
+    && value !== '.'
+    && value !== '..'
+    && !path.isAbsolute(value)
+    && !value.includes('/')
+    && !value.includes('\\')
+    && path.basename(value) === value;
+}
+
+function isArtifactName(value: unknown): value is IndexArtifactName {
+  return typeof value === 'string'
+    && ['graph.db', 'bm25.db', 'vector.db', 'meta.json'].includes(value);
+}
+
+export function normalizeIndexGenerationManifest(value: unknown): IndexGenerationManifest | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const candidate = value as Record<string, unknown>;
+  if (typeof candidate.generationId !== 'string' || !safeGenerationId(candidate.generationId)) return null;
+  if (typeof candidate.publishedAt !== 'string' || !Number.isFinite(Date.parse(candidate.publishedAt))) return null;
+  if (!Array.isArray(candidate.artifacts) || !candidate.artifacts.every(isArtifactName)) return null;
+
+  if (candidate.version === undefined || candidate.version === 1) {
+    return {
+      version: candidate.version as 1 | undefined,
+      generationId: candidate.generationId,
+      publishedAt: candidate.publishedAt,
+      artifacts: [...new Set(candidate.artifacts as IndexArtifactName[])],
+    };
   }
-}
+  if (candidate.version !== 2) return null;
+  if (candidate.baseGenerationId !== undefined
+    && (typeof candidate.baseGenerationId !== 'string' || !safeGenerationId(candidate.baseGenerationId))) return null;
+  if (candidate.parser !== undefined && candidate.parser !== 'tree-sitter' && candidate.parser !== 'regex') return null;
+  if (candidate.schemaVersion !== undefined && !Number.isInteger(candidate.schemaVersion)) return null;
 
-export function getPublishedGenerationDir(repoDir: string): string | null {
-  const manifest = loadCurrentGenerationManifest(repoDir);
-  if (!manifest) return null;
-  const dir = path.join(generationsDir(repoDir), manifest.generationId);
-  return fs.existsSync(dir) ? dir : null;
-}
-
-export function resolvePublishedArtifactPath(repoDir: string, artifact: IndexArtifactName): string {
-  const staging = process.env['CODE_INTEL_INDEX_STAGING_DIR']?.trim();
-  if (staging) return path.join(path.resolve(staging), artifact);
-  const generationDir = getPublishedGenerationDir(repoDir);
-  if (generationDir) return path.join(generationDir, artifact);
-  return path.join(indexDir(repoDir), artifact);
-}
-
-export function createIndexGeneration(
-  repoDir: string,
-  generationId = `${Date.now()}-${crypto.randomUUID()}`,
-): IndexGeneration {
-  const root = generationsDir(repoDir);
-  fs.mkdirSync(root, { recursive: true });
-  const stagingDir = path.join(root, `.staging-${generationId}`);
-  const finalDir = path.join(root, generationId);
-  fs.rmSync(stagingDir, { recursive: true, force: true });
-  fs.mkdirSync(stagingDir, { recursive: true });
   return {
-    generationId,
-    stagingDir,
-    finalDir,
-    graphDbPath: path.join(stagingDir, 'graph.db'),
-    bm25DbPath: path.join(stagingDir, 'bm25.db'),
-    vectorDbPath: path.join(stagingDir, 'vector.db'),
-    metadataPath: path.join(stagingDir, 'meta.json'),
+    version: 2,
+    generationId: candidate.generationId,
+    publishedAt: candidate.publishedAt,
+    baseGenerationId: candidate.baseGenerationId as string | undefined,
+    schemaVersion: candidate.schemaVersion as number | undefined,
+    parser: candidate.parser as 'tree-sitter' | 'regex' | undefined,
+    artifacts: [...new Set(candidate.artifacts as IndexArtifactName[])],
+    artifactDetails: candidate.artifactDetails as IndexGenerationManifestV2['artifactDetails'],
   };
-}
-
-function assertArtifact(filePath: string, name: string): void {
-  const stat = fs.statSync(filePath, { throwIfNoEntry: false });
-  if (!stat?.isFile() || stat.size <= 0) {
-    throw new Error(`Index generation validation failed: ${name} is missing or empty`);
-  }
 }
 
 function atomicWriteJson(filePath: string, value: unknown): void {
@@ -96,31 +126,191 @@ function atomicWriteJson(filePath: string, value: unknown): void {
   fs.renameSync(tmp, filePath);
 }
 
+export function loadCurrentGenerationManifest(repoDir: string): IndexGenerationManifest | null {
+  try {
+    return normalizeIndexGenerationManifest(
+      JSON.parse(fs.readFileSync(getCurrentManifestPath(repoDir), 'utf8')) as unknown,
+    );
+  } catch {
+    return null;
+  }
+}
+
+export function getPublishedGenerationDir(repoDir: string): string | null {
+  const manifest = loadCurrentGenerationManifest(repoDir);
+  if (!manifest) return null;
+  const dir = path.join(getGenerationsDir(repoDir), manifest.generationId);
+  return fs.existsSync(dir) ? dir : null;
+}
+
+export function resolvePublishedArtifactPath(repoDir: string, artifact: IndexArtifactName): string {
+  const staging = process.env['CODE_INTEL_INDEX_STAGING_DIR']?.trim();
+  if (staging) return path.join(path.resolve(staging), artifact);
+  const generationDir = getPublishedGenerationDir(repoDir);
+  if (generationDir) return path.join(generationDir, artifact);
+  return path.join(getIndexDir(repoDir), artifact);
+}
+
+function ownerFor(generation: IndexGeneration): StagingOwner {
+  const now = new Date().toISOString();
+  return {
+    version: 1,
+    generationId: generation.generationId,
+    baseGenerationId: generation.baseGenerationId,
+    pid: process.pid,
+    hostname: os.hostname(),
+    createdAt: now,
+    lastActivityAt: now,
+  };
+}
+
+export function createIndexGeneration(
+  repoDir: string,
+  generationId = `${Date.now()}-${crypto.randomUUID()}`,
+  options: { baseGenerationId?: string } = {},
+): IndexGeneration {
+  if (!safeGenerationId(generationId)) throw new Error(`Invalid index generation ID: ${generationId}`);
+  const root = getGenerationsDir(repoDir);
+  fs.mkdirSync(root, { recursive: true });
+  const stagingDir = path.join(root, `.staging-${generationId}`);
+  const finalDir = path.join(root, generationId);
+  fs.rmSync(stagingDir, { recursive: true, force: true });
+  fs.mkdirSync(stagingDir, { recursive: true });
+  const generation: IndexGeneration = {
+    generationId,
+    baseGenerationId: options.baseGenerationId,
+    stagingDir,
+    finalDir,
+    graphDbPath: path.join(stagingDir, 'graph.db'),
+    bm25DbPath: path.join(stagingDir, 'bm25.db'),
+    vectorDbPath: path.join(stagingDir, 'vector.db'),
+    metadataPath: path.join(stagingDir, 'meta.json'),
+  };
+  atomicWriteJson(path.join(stagingDir, STAGING_OWNER_FILE), ownerFor(generation));
+  return generation;
+}
+
+export function touchIndexGeneration(generation: IndexGeneration): void {
+  const ownerPath = path.join(generation.stagingDir, STAGING_OWNER_FILE);
+  try {
+    const owner = JSON.parse(fs.readFileSync(ownerPath, 'utf8')) as StagingOwner;
+    owner.lastActivityAt = new Date().toISOString();
+    atomicWriteJson(ownerPath, owner);
+  } catch {
+    atomicWriteJson(ownerPath, ownerFor(generation));
+  }
+}
+
+export function cloneArtifact(source: string, target: string): ArtifactCloneMode {
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  try {
+    fs.copyFileSync(source, target, fs.constants.COPYFILE_FICLONE_FORCE);
+    return 'reflink';
+  } catch {
+    try {
+      fs.copyFileSync(source, target, fs.constants.COPYFILE_FICLONE);
+      return 'reflink';
+    } catch {
+      fs.copyFileSync(source, target);
+      return 'copy';
+    }
+  }
+}
+
+export function cloneGenerationArtifact(source: string, target: string): ArtifactCloneMode {
+  const mode = cloneArtifact(source, target);
+  for (const suffix of ['-wal', '-shm']) {
+    const sidecar = `${source}${suffix}`;
+    if (fs.existsSync(sidecar)) cloneArtifact(sidecar, `${target}${suffix}`);
+  }
+  return mode;
+}
+
+function assertArtifact(filePath: string, name: string): void {
+  const stat = fs.statSync(filePath, { throwIfNoEntry: false });
+  if (!stat?.isFile() || stat.size <= 0) {
+    throw new Error(`Index generation validation failed: ${name} is missing or empty`);
+  }
+}
+
+export function cleanupStaleStaging(
+  repoDir: string,
+  options: { staleAfterMs?: number; activeGenerationId?: string; nowMs?: number } = {},
+): string[] {
+  const root = getGenerationsDir(repoDir);
+  if (!fs.existsSync(root)) return [];
+  const staleAfterMs = options.staleAfterMs ?? DEFAULT_STALE_STAGING_MS;
+  const nowMs = options.nowMs ?? Date.now();
+  const removed: string[] = [];
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !entry.name.startsWith('.staging-')) continue;
+    const generationId = entry.name.slice('.staging-'.length);
+    if (generationId === options.activeGenerationId) continue;
+    const entryPath = path.join(root, entry.name);
+    let activityMs = fs.statSync(entryPath).mtimeMs;
+    try {
+      const owner = JSON.parse(fs.readFileSync(path.join(entryPath, STAGING_OWNER_FILE), 'utf8')) as StagingOwner;
+      const parsed = Date.parse(owner.lastActivityAt || owner.createdAt);
+      if (Number.isFinite(parsed)) activityMs = parsed;
+    } catch {
+      // Invalid owner data is removable only after the same conservative TTL.
+    }
+    if (nowMs - activityMs < staleAfterMs) continue;
+    fs.rmSync(entryPath, { recursive: true, force: true });
+    removed.push(generationId);
+  }
+  return removed;
+}
+
 export function publishIndexGeneration(
   repoDir: string,
   generation: IndexGeneration,
   metadata: unknown,
-  options: { vectorRequired?: boolean; keepGenerations?: number } = {},
+  options: { vectorRequired?: boolean; keepGenerations?: number; staleStagingMs?: number } = {},
 ): IndexGenerationManifest {
   assertArtifact(generation.graphDbPath, 'graph.db');
   assertArtifact(generation.bm25DbPath, 'bm25.db');
   if (options.vectorRequired) assertArtifact(generation.vectorDbPath, 'vector.db');
 
-  atomicWriteJson(generation.metadataPath, metadata);
+  const metadataValue = metadata && typeof metadata === 'object'
+    ? { ...(metadata as Record<string, unknown>), generationId: generation.generationId }
+    : metadata;
+  atomicWriteJson(generation.metadataPath, metadataValue);
   assertArtifact(generation.metadataPath, 'meta.json');
+  fs.rmSync(path.join(generation.stagingDir, STAGING_OWNER_FILE), { force: true });
 
   fs.rmSync(generation.finalDir, { recursive: true, force: true });
   fs.renameSync(generation.stagingDir, generation.finalDir);
 
   const artifacts: IndexArtifactName[] = ['graph.db', 'bm25.db', 'meta.json'];
   if (fs.existsSync(path.join(generation.finalDir, 'vector.db'))) artifacts.push('vector.db');
-  const manifest: IndexGenerationManifest = {
+  const metadataRecord = metadataValue && typeof metadataValue === 'object'
+    ? metadataValue as { schemaVersion?: number; parser?: 'tree-sitter' | 'regex' }
+    : undefined;
+  const artifactDetails = Object.fromEntries(artifacts.map((artifact) => {
+    const artifactPath = path.join(generation.finalDir, artifact);
+    return [artifact, {
+      size: fs.statSync(artifactPath).size,
+      required: artifact !== 'vector.db' || Boolean(options.vectorRequired),
+    }];
+  })) as Partial<Record<IndexArtifactName, IndexArtifactDetails>>;
+  const manifest: IndexGenerationManifestV2 = {
+    version: 2,
     generationId: generation.generationId,
+    baseGenerationId: generation.baseGenerationId,
     publishedAt: new Date().toISOString(),
+    schemaVersion: metadataRecord?.schemaVersion,
+    parser: metadataRecord?.parser,
     artifacts,
+    artifactDetails,
   };
   atomicWriteJson(getCurrentManifestPath(repoDir), manifest);
-  cleanupOldGenerations(repoDir, options.keepGenerations ?? 2, generation.generationId);
+  cleanupOldGenerations(
+    repoDir,
+    options.keepGenerations ?? 2,
+    generation.generationId,
+    options.staleStagingMs,
+  );
   return manifest;
 }
 
@@ -128,8 +318,13 @@ export function abortIndexGeneration(generation: IndexGeneration): void {
   fs.rmSync(generation.stagingDir, { recursive: true, force: true });
 }
 
-export function cleanupOldGenerations(repoDir: string, keep: number, currentGenerationId?: string): void {
-  const root = generationsDir(repoDir);
+export function cleanupOldGenerations(
+  repoDir: string,
+  keep: number,
+  currentGenerationId?: string,
+  staleStagingMs = DEFAULT_STALE_STAGING_MS,
+): void {
+  const root = getGenerationsDir(repoDir);
   if (!fs.existsSync(root)) return;
   const entries = fs.readdirSync(root, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.staging-'))
@@ -144,22 +339,18 @@ export function cleanupOldGenerations(repoDir: string, keep: number, currentGene
   for (const entry of entries) {
     if (!retained.has(entry.name)) fs.rmSync(entry.path, { recursive: true, force: true });
   }
-  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-    if (entry.isDirectory() && entry.name.startsWith('.staging-')) {
-      fs.rmSync(path.join(root, entry.name), { recursive: true, force: true });
-    }
-  }
+  cleanupStaleStaging(repoDir, { staleAfterMs: staleStagingMs });
 }
 
 export function migrateLegacyIndexToGeneration(repoDir: string): IndexGenerationManifest | null {
   if (loadCurrentGenerationManifest(repoDir)) return loadCurrentGenerationManifest(repoDir);
-  const legacyDir = indexDir(repoDir);
+  const legacyDir = getIndexDir(repoDir);
   const required = ['graph.db', 'bm25.db', 'meta.json'] as const;
   if (!required.every((name) => fs.existsSync(path.join(legacyDir, name)))) return null;
   const generation = createIndexGeneration(repoDir, `legacy-${Date.now()}-${crypto.randomUUID()}`);
   for (const artifact of ['graph.db', 'bm25.db', 'vector.db'] as const) {
     const source = path.join(legacyDir, artifact);
-    if (fs.existsSync(source)) fs.copyFileSync(source, path.join(generation.stagingDir, artifact));
+    if (fs.existsSync(source)) cloneGenerationArtifact(source, path.join(generation.stagingDir, artifact));
   }
   const metadata = JSON.parse(fs.readFileSync(path.join(legacyDir, 'meta.json'), 'utf8')) as unknown;
   return publishIndexGeneration(repoDir, generation, metadata, {

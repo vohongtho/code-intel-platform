@@ -22,7 +22,7 @@ interface SourcePanelProps {
   file: string;
   startLine: number;
   endLine: number;
-  repo?: string;
+  repoId?: string;
   onClose: () => void;
 }
 
@@ -33,7 +33,7 @@ interface SourceData {
   endLine: number;
 }
 
-export function SourcePanel({ file, startLine, endLine, repo, onClose }: SourcePanelProps) {
+export function SourcePanel({ file, startLine, endLine, repoId, onClose }: SourcePanelProps) {
   const { state } = useAppState();
   const [data, setData] = useState<SourceData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -88,7 +88,7 @@ export function SourcePanel({ file, startLine, endLine, repo, onClose }: SourceP
 
     const client = new ApiClient(state.serverUrl);
     client
-      .sourcePreview(file, startLine, endLine, repo)
+      .sourcePreview(file, startLine, endLine, repoId)
       .then(async (result) => {
         if (cancelled) return;
         setData(result);
@@ -107,7 +107,7 @@ export function SourcePanel({ file, startLine, endLine, repo, onClose }: SourceP
       .finally(() => { if (!cancelled) setLoading(false); });
 
     return () => { cancelled = true; };
-  }, [file, startLine, endLine, state.serverUrl]);
+  }, [file, startLine, endLine, repoId, state.serverUrl]);
 
   const handleCopyPath = useCallback(async () => {
     try {

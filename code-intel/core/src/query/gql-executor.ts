@@ -4,6 +4,24 @@
 
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
 import type { CodeNode, CodeEdge, EdgeKind } from '../shared/index.js';
+
+export interface CountGroup {
+  key: string;
+  count: number;
+}
+
+export type GQLResultKind = 'nodes' | 'traversal' | 'path' | 'aggregate';
+
+export interface GQLResult {
+  kind: GQLResultKind;
+  nodes: CodeNode[];
+  edges: CodeEdge[];
+  groups: CountGroup[];
+  path: CodeNode[] | null;
+  executionTimeMs: number;
+  truncated: boolean;
+  totalCount: number;
+}
 import type {
   QueryAST,
   FindStatement,
@@ -16,19 +34,32 @@ import type {
 
 // ── Result types ──────────────────────────────────────────────────────────────
 
-export interface CountGroup {
-  key: string;
-  count: number;
+function createGQLResult(
+  kind: GQLResultKind,
+  values: {
+    nodes?: CodeNode[];
+    edges?: CodeEdge[];
+    groups?: CountGroup[];
+    path?: CodeNode[] | null;
+    executionTimeMs: number;
+    truncated: boolean;
+    totalCount: number;
+  },
+): GQLResult {
+  return {
+    kind,
+    nodes: values.nodes ?? [],
+    edges: values.edges ?? [],
+    groups: values.groups ?? [],
+    path: values.path ?? null,
+    executionTimeMs: values.executionTimeMs,
+    truncated: values.truncated,
+    totalCount: values.totalCount,
+  };
 }
 
-export interface GQLResult {
-  nodes?: CodeNode[];
-  edges?: CodeEdge[];
-  groups?: CountGroup[];
-  path?: CodeNode[] | null;
-  executionTimeMs: number;
-  truncated: boolean;
-  totalCount: number;
+function assertNever(value: never): never {
+  throw new Error(`Unsupported GQL AST type: ${JSON.stringify(value)}`);
 }
 
 // ── Timeout helper ────────────────────────────────────────────────────────────
@@ -124,12 +155,12 @@ function executeFIND(stmt: FindStatement, graph: KnowledgeGraph): GQLResult {
   totalCount = allMatching.length;
   const paginated = allMatching.slice(offset, offset + limit);
 
-  return {
+  return createGQLResult('nodes', {
     nodes: paginated,
     executionTimeMs: Date.now() - start,
     truncated,
     totalCount,
-  };
+  });
 }
 
 // ── TRAVERSE executor ─────────────────────────────────────────────────────────
@@ -148,13 +179,11 @@ function executeTRAVERSE(stmt: TraverseStatement, graph: KnowledgeGraph): GQLRes
   }
 
   if (!startNode) {
-    return {
-      nodes: [],
-      edges: [],
+    return createGQLResult('traversal', {
       executionTimeMs: Date.now() - start,
       truncated: false,
       totalCount: 0,
-    };
+    });
   }
 
   // BFS
@@ -208,13 +237,13 @@ function executeTRAVERSE(stmt: TraverseStatement, graph: KnowledgeGraph): GQLRes
     }
   }
 
-  return {
+  return createGQLResult('traversal', {
     nodes: resultNodes,
     edges: resultEdges,
     executionTimeMs: Date.now() - start,
     truncated,
     totalCount: resultNodes.length,
-  };
+  });
 }
 
 // ── PATH executor ─────────────────────────────────────────────────────────────
@@ -234,13 +263,11 @@ function executePATH(stmt: PathStatement, graph: KnowledgeGraph): GQLResult {
   }
 
   if (!startNode || !endNode) {
-    return {
-      path: null,
-      nodes: [],
+    return createGQLResult('path', {
       executionTimeMs: Date.now() - start,
       truncated: false,
       totalCount: 0,
-    };
+    });
   }
 
   // BFS to find shortest path
@@ -277,13 +304,11 @@ function executePATH(stmt: PathStatement, graph: KnowledgeGraph): GQLResult {
   }
 
   if (!found) {
-    return {
-      path: null,
-      nodes: [],
+    return createGQLResult('path', {
       executionTimeMs: Date.now() - start,
       truncated,
       totalCount: 0,
-    };
+    });
   }
 
   // Reconstruct path
@@ -301,14 +326,14 @@ function executePATH(stmt: PathStatement, graph: KnowledgeGraph): GQLResult {
   const pathNodes = pathNodeIds.map((id) => graph.getNode(id)!).filter(Boolean);
   const pathEdges = pathEdgeIds.map((id) => graph.getEdge(id)!).filter(Boolean);
 
-  return {
+  return createGQLResult('path', {
     path: pathNodes,
     nodes: pathNodes,
     edges: pathEdges,
     executionTimeMs: Date.now() - start,
     truncated,
     totalCount: pathNodes.length,
-  };
+  });
 }
 
 // ── COUNT executor ────────────────────────────────────────────────────────────
@@ -340,12 +365,12 @@ function executeCOUNT(stmt: CountStatement, graph: KnowledgeGraph): GQLResult {
   const groupList: CountGroup[] = [...groups.entries()].map(([key, count]) => ({ key, count }));
   groupList.sort((a, b) => b.count - a.count);
 
-  return {
+  return createGQLResult('aggregate', {
     groups: groupList,
     executionTimeMs: Date.now() - start,
     truncated,
     totalCount: total,
-  };
+  });
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -356,19 +381,14 @@ function executeCOUNT(stmt: CountStatement, graph: KnowledgeGraph): GQLResult {
 export function executeGQL(ast: QueryAST, graph: KnowledgeGraph): GQLResult {
   switch (ast.type) {
     case 'FIND':
-      return executeFIND(ast as FindStatement, graph);
+      return executeFIND(ast, graph);
     case 'TRAVERSE':
-      return executeTRAVERSE(ast as TraverseStatement, graph);
+      return executeTRAVERSE(ast, graph);
     case 'PATH':
-      return executePATH(ast as PathStatement, graph);
+      return executePATH(ast, graph);
     case 'COUNT':
-      return executeCOUNT(ast as CountStatement, graph);
+      return executeCOUNT(ast, graph);
     default:
-      return {
-        nodes: [],
-        executionTimeMs: 0,
-        truncated: false,
-        totalCount: 0,
-      };
+      return assertNever(ast);
   }
 }

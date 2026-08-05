@@ -30,7 +30,7 @@ jobs:
           const pkg = JSON.parse(fs.readFileSync('code-intel/core/package.json', 'utf8'));
           const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
           const locked = lock.packages?.['code-intel/core']?.version;
-          if (pkg.version !== '1.0.9') throw new Error(`Expected package version 1.0.9, got ${pkg.version}`);
+          if (pkg.version !== '1.0.10') throw new Error(`Expected package version 1.0.10, got ${pkg.version}`);
           if (locked !== pkg.version) throw new Error(`package-lock core version ${locked} != package version ${pkg.version}`);
           NODE
       - name: Build distributable
@@ -38,17 +38,25 @@ jobs:
       - name: Validate npm package
         run: npm run validate:dist --workspace=code-intel/core
       - name: CLI version smoke test
-        run: test "$(node code-intel/core/dist/cli/main.js --version)" = "1.0.9"
-      - name: Atomic analyze and trust smoke test
+        run: test "$(node code-intel/core/dist/cli/main.js --version)" = "1.0.10"
+      - name: Atomic analyze, no-op, setup, and trust smoke test
         shell: bash
         run: |
           set -euo pipefail
+          cli="$GITHUB_WORKSPACE/code-intel/core/dist/cli/main.js"
           repo="$(mktemp -d)"
           mkdir -p "$repo/src"
           printf 'export function hello(name: string) { return `Hello ${name}`; }\n' > "$repo/src/hello.ts"
-          node code-intel/core/dist/cli/main.js analyze --skip-git --skip-embeddings "$repo"
+          printf '.code-intel/\n.codeintelignore.local\n' > "$repo/.gitignore"
+          git -C "$repo" init -q
+          git -C "$repo" config user.email test@example.com
+          git -C "$repo" config user.name Test
+          git -C "$repo" add .
+          git -C "$repo" commit -qm initial
+
+          node "$cli" analyze --skip-embeddings "$repo"
           test -f "$repo/.code-intel/current.json"
-          node code-intel/core/dist/cli/main.js index-status "$repo" > "$repo/status.json"
+          node "$cli" index-status "$repo" > "$repo/status.json"
           node --input-type=module - "$repo/status.json" <<'NODE'
           import fs from 'node:fs';
           const status = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
@@ -56,11 +64,53 @@ jobs:
             throw new Error(`Expected trusted and fresh index, got ${JSON.stringify(status)}`);
           }
           NODE
+
           before="$(node -e "const fs=require('fs');process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],'utf8')).generationId)" "$repo/.code-intel/current.json")"
-          node code-intel/core/dist/cli/main.js analyze --force --skip-git --skip-embeddings "$repo"
-          node code-intel/core/dist/cli/main.js index-status "$repo" > "$repo/status-after-force.json"
-          after="$(node -e "const fs=require('fs');process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],'utf8')).generationId)" "$repo/.code-intel/current.json")"
-          test "$before" != "$after"
+          before_manifest="$(sha256sum "$repo/.code-intel/current.json" | cut -d' ' -f1)"
+          generation_count_before="$(find "$repo/.code-intel/generations" -mindepth 1 -maxdepth 1 -type d ! -name '.staging-*' | wc -l | tr -d ' ')"
+
+          node "$cli" analyze --skip-embeddings "$repo" > "$repo/noop-output.txt"
+          unchanged="$(node -e "const fs=require('fs');process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],'utf8')).generationId)" "$repo/.code-intel/current.json")"
+          after_manifest="$(sha256sum "$repo/.code-intel/current.json" | cut -d' ' -f1)"
+          generation_count_after="$(find "$repo/.code-intel/generations" -mindepth 1 -maxdepth 1 -type d ! -name '.staging-*' | wc -l | tr -d ' ')"
+          test "$before" = "$unchanged"
+          test "$before_manifest" = "$after_manifest"
+          test "$generation_count_before" = "$generation_count_after"
+          grep -q 'Active generation preserved' "$repo/noop-output.txt"
+          test ! -e "$repo/.code-intel/analyze.lock"
+          test -z "$(find "$repo/.code-intel/generations" -mindepth 1 -maxdepth 1 -type d -name '.staging-*' -print -quit)"
+
+          cat > "$repo/.code-intel/agent-targets.json" <<'JSON'
+          {
+            "selectedAgents": ["cursor"],
+            "targets": {
+              "cursor": {
+                "agentId": "cursor",
+                "label": "Cursor",
+                "path": ".cursor/rules/code-intel.mdc",
+                "format": "markdown",
+                "builtin": true
+              }
+            }
+          }
+          JSON
+          node "$cli" setup "$repo" --dry-run > "$repo/setup-dry-run.txt"
+          grep -q 'cursor-hook' "$repo/setup-dry-run.txt"
+          if grep -q 'claude-hook' "$repo/setup-dry-run.txt"; then
+            echo 'Unselected Claude integration appeared in setup plan' >&2
+            exit 1
+          fi
+          test ! -e "$repo/.cursor"
+          test ! -e "$repo/.kilocode"
+          test ! -e "$repo/.agents"
+          test ! -e "$repo/.clinerules"
+          test ! -e "$repo/.windsurfrules"
+          test ! -e "$repo/AGENTS.md"
+
+          node "$cli" analyze --force --skip-embeddings "$repo"
+          node "$cli" index-status "$repo" > "$repo/status-after-force.json"
+          after_force="$(node -e "const fs=require('fs');process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],'utf8')).generationId)" "$repo/.code-intel/current.json")"
+          test "$before" != "$after_force"
           node --input-type=module - "$repo/status-after-force.json" <<'NODE'
           import fs from 'node:fs';
           const status = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
