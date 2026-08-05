@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createKnowledgeGraph } from '../../../src/graph/knowledge-graph.js';
 import { hybridSearch } from '../../../src/search/hybrid-search.js';
+import { getDefaultEmbeddingModel } from '../../../src/search/embedding-model-registry.js';
 
 describe('hybrid search vector fallback status', () => {
   it('reports unavailable when no vector index exists', async () => {
@@ -19,6 +20,7 @@ describe('hybrid search vector fallback status', () => {
 
     const result = await hybridSearch(graph, 'searchableFunction', 10, {
       vectorDbPath: path.join(os.tmpdir(), `missing-vector-${Date.now()}.db`),
+      descriptor: getDefaultEmbeddingModel(),
     });
 
     assert.equal(result.searchMode, 'bm25');
@@ -41,6 +43,7 @@ describe('hybrid search vector fallback status', () => {
     try {
       const result = await hybridSearch(graph, 'searchableFunction', 10, {
         vectorDbPath: invalidDbPath,
+        descriptor: getDefaultEmbeddingModel(),
       });
       assert.equal(result.searchMode, 'bm25');
       assert.equal(result.vectorStatus, 'failed');

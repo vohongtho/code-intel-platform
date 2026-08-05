@@ -8,7 +8,16 @@
  *    search() is a pure in-process SIMD-friendly loop — no disk I/O per query.
  *  - buildIndex() runs all inserts inside a single SQLite transaction.
  *  - Batch embedding in embedder.ts (batchSize=64) reduces HuggingFace pipeline calls.
+ *
+ * Read-only mode:
+ *  - Published vector artifacts MUST be opened with { readonly: true } to prevent
+ *    mutating published generations.
+ *  - Writer mode avoids WAL so published snapshots do not require reader-created
+ *    WAL/SHM companions at search time.
+ *  - Read-only mode skips schema creation.
+ *  - Write operations (buildIndex, upsertIndex, deleteByFilePaths) will throw in readonly mode.
  */
+import fs from 'node:fs';
 import { Database, type SqliteDatabase } from '../shared/sqlite.js';
 import type { EmbeddedNode } from './embedder.js';
 
@@ -22,36 +31,57 @@ interface CachedRow {
   embedding: Float32Array;
 }
 
+export interface VectorIndexOptions {
+  /** Open in read-only mode (required for published vector artifacts) */
+  readonly?: boolean;
+  /** Require file to exist when opening (useful with readonly to fail fast) */
+  fileMustExist?: boolean;
+}
+
 export class VectorIndex {
   private sqlitePath: string;
   private dimension: number;
   private db: SqliteDatabase | null = null;
+  private readonly: boolean;
   /** In-memory cache — populated after buildIndex() or first search() */
   private cache: CachedRow[] | null = null;
 
-  constructor(sqlitePath: string, dimension = 384) {
+  constructor(sqlitePath: string, dimension = 384, options: VectorIndexOptions = {}) {
     this.sqlitePath = sqlitePath;
     this.dimension = dimension;
+    this.readonly = options.readonly ?? false;
+    
+    if (options.fileMustExist && !fs.existsSync(sqlitePath)) {
+      throw new Error(`VectorIndex: file does not exist: ${sqlitePath}`);
+    }
   }
 
   async init(): Promise<void> {
-    this.db = new Database(this.sqlitePath);
-    // WAL mode: faster writes, concurrent reads
-    this.db.pragma('journal_mode = WAL');
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS ${EMBED_TABLE} (
-        id        TEXT PRIMARY KEY,
-        name      TEXT NOT NULL,
-        kind      TEXT NOT NULL,
-        file_path TEXT NOT NULL,
-        text      TEXT NOT NULL,
-        embedding BLOB NOT NULL
-      )
-    `);
+    if (this.readonly) {
+      // Read-only mode: open existing DB without write pragmas or schema creation
+      if (!fs.existsSync(this.sqlitePath)) {
+        throw new Error(`VectorIndex: cannot open nonexistent file in readonly mode: ${this.sqlitePath}`);
+      }
+      this.db = new Database(this.sqlitePath, { readonly: true });
+    } else {
+      // Write mode: create schema without WAL so published snapshots remain sidecar-free.
+      this.db = new Database(this.sqlitePath);
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS ${EMBED_TABLE} (
+          id        TEXT PRIMARY KEY,
+          name      TEXT NOT NULL,
+          kind      TEXT NOT NULL,
+          file_path TEXT NOT NULL,
+          text      TEXT NOT NULL,
+          embedding BLOB NOT NULL
+        )
+      `);
+    }
   }
 
   async buildIndex(nodes: EmbeddedNode[]): Promise<void> {
     if (!this.db) throw new Error('VectorIndex not initialized');
+    if (this.readonly) throw new Error('Cannot buildIndex in readonly mode');
 
     this.db.exec(`DELETE FROM ${EMBED_TABLE}`);
     this._insertMany(nodes);
@@ -60,6 +90,7 @@ export class VectorIndex {
 
   async deleteByFilePaths(filePaths: string[]): Promise<number> {
     if (!this.db) throw new Error('VectorIndex not initialized');
+    if (this.readonly) throw new Error('Cannot deleteByFilePaths in readonly mode');
     if (filePaths.length === 0) return 0;
 
     const uniquePaths = [...new Set(filePaths)];
@@ -77,6 +108,7 @@ export class VectorIndex {
 
   async upsertIndex(nodes: EmbeddedNode[]): Promise<number> {
     if (!this.db) throw new Error('VectorIndex not initialized');
+    if (this.readonly) throw new Error('Cannot upsertIndex in readonly mode');
     if (nodes.length === 0) return 0;
 
     this._insertMany(nodes);
@@ -123,8 +155,10 @@ export class VectorIndex {
         .prepare(`SELECT count(*) AS cnt FROM ${EMBED_TABLE}`)
         .get() as { cnt: number };
       return Number(row.cnt) > 0;
-    } catch {
-      return false;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/no such table/i.test(message)) return false;
+      throw error;
     }
   }
 
@@ -158,6 +192,7 @@ export class VectorIndex {
 
     const insertMany = this.db!.transaction((nodes: EmbeddedNode[]) => {
       for (const node of nodes) {
+        this._assertDimension(node.embedding.length);
         stmt.run(
           node.id,
           node.name,
@@ -172,6 +207,7 @@ export class VectorIndex {
   }
 
   private _toCachedRow(node: EmbeddedNode): CachedRow {
+    this._assertDimension(node.embedding.length);
     return {
       nodeId:    node.id,
       name:      node.name,
@@ -179,6 +215,12 @@ export class VectorIndex {
       filePath:  node.filePath,
       embedding: new Float32Array(node.embedding),
     };
+  }
+
+  private _assertDimension(actual: number): void {
+    if (actual !== this.dimension) {
+      throw new Error(`Embedding dimension ${actual}; expected ${this.dimension}`);
+    }
   }
 }
 

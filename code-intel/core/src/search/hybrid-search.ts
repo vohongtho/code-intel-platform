@@ -4,10 +4,12 @@ import { textSearch, reciprocalRankFusion, compareResults, isDefaultExcludedSear
 import type { SearchResult } from './text-search.js';
 import { VectorIndex } from './vector-index.js';
 import { getEmbedder } from './embedder.js';
-import { getDefaultEmbeddingModel } from './embedding-model-registry.js';
+import type { EmbeddingModelDescriptor } from './embedding-model-registry.js';
 
 export interface HybridSearchOptions {
   vectorDbPath?: string;
+  /** Required when vectorDbPath is provided - pre-validated embedding descriptor */
+  descriptor?: EmbeddingModelDescriptor;
   bm25Limit?: number;
   vectorLimit?: number;
   bm25Results?: SearchResult[];
@@ -49,6 +51,7 @@ export async function hybridSearch(
 }> {
   const {
     vectorDbPath,
+    descriptor,
     bm25Limit = 50,
     vectorLimit = 50,
     bm25Results: precomputedBm25,
@@ -60,6 +63,11 @@ export async function hybridSearch(
     : Promise.resolve(textSearch(graph, query, bm25Limit));
 
   const hasVectorDb = Boolean(vectorDbPath && fs.existsSync(vectorDbPath));
+
+  // Require descriptor when vectorDbPath is provided - caller should have validated runtime state
+  if (hasVectorDb && !descriptor) {
+    throw new Error('hybridSearch: descriptor is required when vectorDbPath is provided');
+  }
 
   if (!hasVectorDb) {
     const bm25Results = (await bm25Promise)
@@ -78,7 +86,7 @@ export async function hybridSearch(
     };
   }
 
-  const vectorResult = await runVectorSearch(vectorDbPath!, query, vectorLimit);
+  const vectorResult = await runVectorSearch(vectorDbPath!, descriptor!, query, vectorLimit);
   const bm25Results = await bm25Promise;
 
   if (vectorResult.status !== 'success') {
@@ -146,6 +154,7 @@ export async function hybridSearch(
 
 async function runVectorSearch(
   vectorDbPath: string,
+  descriptor: EmbeddingModelDescriptor,
   query: string,
   topK: number,
 ): Promise<
@@ -154,8 +163,8 @@ async function runVectorSearch(
 > {
   let idx: VectorIndex | null = null;
   try {
-    const descriptor = getDefaultEmbeddingModel();
-    idx = new VectorIndex(vectorDbPath, descriptor.dimension);
+    // Open in read-only mode for search-time access to published vector artifacts
+    idx = new VectorIndex(vectorDbPath, descriptor.dimension, { readonly: true });
     await idx.init();
 
     const built = await idx.isBuilt();

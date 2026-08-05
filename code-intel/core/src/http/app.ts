@@ -375,29 +375,50 @@ export function createApp(
     vectorIndexBuilding = true;
     try {
       const { getEmbeddingFingerprint } = await import('../search/embedder.js');
+      const { resolveVectorRuntimeState } = await import('../search/vector-runtime-state.js');
+      
       const vdbPath = startupSnapshot?.vectorDbPath ?? getVectorDbPath(workspaceRoot);
       const meta = startupSnapshot ? loadMetadata(startupSnapshot) : loadMetadata(workspaceRoot);
       const config = normalizeConfigEmbeddingModel(loadConfig() ?? DEFAULT_CONFIG);
       const descriptor = getEmbeddingModel(config.embeddings.model) ?? getDefaultEmbeddingModel();
       const runtimeFingerprint = getEmbeddingFingerprint({ descriptor });
-      const hasVectorDb = fs.existsSync(vdbPath);
-      const rebuildRequired = shouldRebuildEmbeddings({ metadata: meta, runtime: runtimeFingerprint, hasVectorDb });
-      if (rebuildRequired) {
-        vectorIndexUnavailableReason = hasVectorDb
-          ? 'Published vector index is incompatible or stale; run `code-intel analyze --embeddings` to publish a new generation.'
-          : 'Published vector index is missing; run `code-intel analyze --embeddings` to publish a new generation.';
+      
+      // Use the authoritative runtime state resolver
+      const state = await resolveVectorRuntimeState({
+        vectorDbPath: vdbPath,
+        descriptor,
+        runtimeFingerprint,
+        metadata: meta ?? undefined,
+      });
+      
+      if (!state.ready) {
+        // Map runtime state status to user-facing guidance
+        switch (state.status) {
+          case 'missing':
+            vectorIndexUnavailableReason = 'Published vector index is missing; run `code-intel analyze --embeddings` to publish a new generation.';
+            break;
+          case 'incompatible':
+            vectorIndexUnavailableReason = 'Published vector index is incompatible; run `code-intel analyze --embeddings` to publish a new generation.';
+            break;
+          case 'stale':
+            vectorIndexUnavailableReason = 'Published vector index is stale; run `code-intel analyze --embeddings` to publish a new generation.';
+            break;
+          case 'corrupt':
+            vectorIndexUnavailableReason = 'Published vector index is corrupt or unreadable; run `code-intel analyze --embeddings` to publish a new generation.';
+            break;
+          case 'empty':
+            vectorIndexUnavailableReason = 'Published vector index is empty; run `code-intel analyze --embeddings` to publish a new generation.';
+            break;
+          default:
+            vectorIndexUnavailableReason = state.reason ?? 'Published vector index is unavailable; run `code-intel analyze --embeddings` to publish a new generation.';
+        }
         Logger.warn(`  [vector] ${vectorIndexUnavailableReason}`);
         return null;
       }
-      const idx = new VectorIndex(vdbPath, descriptor.dimension);
+      
+      // Vector is ready - open the index (already validated by runtime state resolver)
+      const idx = new VectorIndex(vdbPath, descriptor.dimension, { readonly: true });
       await idx.init();
-      const alreadyBuilt = await idx.isBuilt();
-      if (!alreadyBuilt) {
-        idx.close();
-        vectorIndexUnavailableReason = 'Published vector index is unreadable or empty; run `code-intel analyze --embeddings` to publish a new generation.';
-        Logger.warn(`  [vector] ${vectorIndexUnavailableReason}`);
-        return null;
-      }
       vectorIndex = idx;
       vectorIndexReady = true;
       vectorIndexUnavailableReason = null;

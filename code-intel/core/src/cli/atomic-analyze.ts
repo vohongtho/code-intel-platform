@@ -14,6 +14,7 @@ import {
 } from '../storage/index-generation.js';
 import { acquireAnalyzeLock } from '../storage/analyze-lock.js';
 import { findRepoByName, findRepoByPath } from '../storage/repo-registry.js';
+import { reconcileRegistryEntry } from '../storage/registry-reconciliation.js';
 import {
   getSnapshotArtifactPath,
   resolveIndexSnapshot,
@@ -120,22 +121,32 @@ export function runAtomicAnalyze(args: string[], binUrl: URL): number {
       return runChild(args, binUrl);
     }
     if (plan.mode === 'noop') {
+      // Extract requested repository name from args if provided
       const requestedRepoName = (() => {
         const nameFlagIndex = args.indexOf('--name');
         if (nameFlagIndex >= 0) return args[nameFlagIndex + 1]?.trim();
         const inline = args.find((arg) => arg.startsWith('--name='));
         return inline ? inline.slice('--name='.length).trim() : undefined;
       })();
-      if (requestedRepoName) {
-        const existingByPath = findRepoByPath(workspaceRoot);
-        const existingByName = findRepoByName(requestedRepoName);
-        if (existingByPath && existingByPath.name !== requestedRepoName) {
-          throw new Error(`Path already indexed as "${existingByPath.name}". Use \`code-intel repo rename ${existingByPath.name} ${requestedRepoName}\`.`);
+      
+      // Reconcile registry entry - restore if missing, detect conflicts
+      if (previous) {
+        const result = reconcileRegistryEntry({
+          workspaceRoot,
+          requestedName: requestedRepoName,
+          metadata: previous,
+        });
+        
+        if (result.outcome === 'conflict') {
+          throw new Error(`${result.message}${result.guidance ? `\n  ${result.guidance}` : ''}`);
         }
-        if (existingByName && existingByName.path !== workspaceRoot) {
-          throw new Error(`Repository name "${requestedRepoName}" is linked to ${existingByName.path}. Use \`code-intel repo relink ${requestedRepoName} ${workspaceRoot}\`.`);
+        
+        if (result.outcome === 'registered') {
+          console.log(`  ✓ ${result.message}`);
         }
+        // For 'unchanged', we don't need to log anything - the registry is already correct
       }
+      
       console.log('  ✓ No source or index changes detected');
       console.log(`  ✓ Active generation preserved: ${snapshot?.generationId ?? 'legacy'}`);
       return 0;

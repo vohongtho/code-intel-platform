@@ -35,6 +35,7 @@ export interface IndexMetadata {
   schemaVersion?: number;
   indexVersion?: string;
   generationId?: string;
+  repoId?: string;
   commitHash?: string;
   parser?: 'tree-sitter' | 'regex';
   lastAnalyzedMtimes?: Record<string, number>;

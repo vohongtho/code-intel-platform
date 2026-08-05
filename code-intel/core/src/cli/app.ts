@@ -940,6 +940,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
       indexedAt,
       schemaVersion,
       indexVersion: computeIndexVersion(workspaceRoot, schemaVersion, indexedAt),
+      repoId: savedRepo.id,
       commitHash: currentCommitHash,
       lastAnalyzedMtimes: mergedMtimes,
       parser: resolveParserForMetadata(context.parserUsed, previousMetadata),

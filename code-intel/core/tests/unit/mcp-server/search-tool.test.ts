@@ -144,6 +144,34 @@ describe('MCP search tool', () => {
     assert.equal(payload.results?.[0]?.name, 'LegacyHit');
   });
 
+  it('rejects canonical repoId that only matches legacy name compatibility', async () => {
+    const repoPath = mkRepo('mcp-search-canonical-repoid');
+    saveRegistry([{ id: 'repo-id', name: 'repo', path: repoPath, indexedAt: new Date().toISOString(), stats: { nodes: 1, edges: 0, files: 1 } }]);
+    await writeRepoIndex(repoPath, {
+      indexVersion: 'v1',
+      nodes: [{ id: 'n1', name: 'CanonicalMiss', filePath: 'src/canonical.ts', content: 'function CanonicalMiss() {}' }],
+    });
+
+    const result = await dispatchTool('search', { query: 'CanonicalMiss', repoId: 'repo' }, createKnowledgeGraph(), 'fallback', undefined);
+    assert.equal(result.isError, true);
+    const payload = JSON.parse(result.content[0]?.text ?? '{}') as { error?: string };
+    assert.match(payload.error ?? '', /Repo \"repo\" not found/);
+  });
+
+  it('deprecated hybrid mode does not widen canonical repoId semantics', async () => {
+    const repoPath = mkRepo('mcp-search-canonical-hybrid');
+    saveRegistry([{ id: 'repo-id', name: 'repo', path: repoPath, indexedAt: new Date().toISOString(), stats: { nodes: 1, edges: 0, files: 1 } }]);
+    await writeRepoIndex(repoPath, {
+      indexVersion: 'v1',
+      nodes: [{ id: 'n1', name: 'CanonicalHybrid', filePath: 'src/canonical.ts', content: 'function CanonicalHybrid() {}' }],
+    });
+
+    const result = await dispatchTool('search', { query: 'CanonicalHybrid', repoId: 'repo', mode: 'hybrid' }, createKnowledgeGraph(), 'fallback', undefined);
+    assert.equal(result.isError, true);
+    const payload = JSON.parse(result.content[0]?.text ?? '{}') as { error?: string };
+    assert.match(payload.error ?? '', /Repo \"repo\" not found/);
+  });
+
   it('fails closed for malformed explicit MCP scope', async () => {
     const repoPath = mkRepo('mcp-search-bad-scope');
     saveRegistry([{ id: 'repo-id', name: 'repo', path: repoPath, indexedAt: new Date().toISOString(), stats: { nodes: 1, edges: 0, files: 1 } }]);

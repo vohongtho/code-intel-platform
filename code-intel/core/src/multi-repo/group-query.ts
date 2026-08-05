@@ -12,10 +12,13 @@ import { DbManager } from '../storage/db-manager.js';
 import { createKnowledgeGraph } from '../graph/knowledge-graph.js';
 import { loadGraphFromDB } from './graph-from-db.js';
 import { resolveIndexSnapshot } from '../storage/index-snapshot.js';
-import { VectorIndex } from '../search/vector-index.js';
-import { getEmbedder } from '../search/embedder.js';
 import { hybridSearch } from '../search/hybrid-search.js';
-import { getDefaultEmbeddingModel } from '../search/embedding-model-registry.js';
+import { resolveVectorRuntimeState } from '../search/vector-runtime-state.js';
+import { loadMetadata } from '../storage/metadata.js';
+import { getEmbeddingFingerprint } from '../search/embedder.js';
+import { getDefaultEmbeddingModel, getEmbeddingModel } from '../search/embedding-model-registry.js';
+import { loadConfig, DEFAULT_CONFIG } from '../cli/init-wizard.js';
+import { normalizeConfigEmbeddingModel } from '../cli/config-manager.js';
 
 export interface GroupQueryResult {
   repoName: string;
@@ -62,22 +65,54 @@ export async function queryGroup(
     }
 
     const vectorDbPath = snapshot.vectorDbPath;
-    const vectorReady = await isVectorReady(vectorDbPath);
+    
+    // Resolve vector runtime state for this member repo
+    let vectorRuntimeState = null;
+    if (vectorDbPath && fs.existsSync(vectorDbPath)) {
+      try {
+        const metadata = loadMetadata(regEntry.path);
+        const config = normalizeConfigEmbeddingModel(loadConfig() ?? DEFAULT_CONFIG);
+        const descriptor = getEmbeddingModel(config.embeddings.model) ?? getDefaultEmbeddingModel();
+        const runtimeFingerprint = getEmbeddingFingerprint({ descriptor });
+        
+        vectorRuntimeState = await resolveVectorRuntimeState({
+          vectorDbPath,
+          descriptor,
+          runtimeFingerprint,
+          metadata: metadata ?? undefined,
+        });
+      } catch {
+        // If runtime state resolution fails, treat vector as unavailable
+        vectorRuntimeState = null;
+      }
+    }
+    
+    const vectorReady = vectorRuntimeState?.ready ?? false;
     if (vectorReady) anyVectorReady = true;
 
     let results: SearchResult[];
     if (requestedMode === 'bm25') {
       results = textSearch(graph, query, limit);
     } else if (requestedMode === 'vector') {
-      const vectorResults = vectorReady ? await runVectorSearch(graph, vectorDbPath, query, limit) : [];
-      if (vectorResults.length > 0) {
-        anyVectorUsed = true;
-        results = vectorResults;
+      if (vectorReady && vectorRuntimeState?.descriptor) {
+        // Use vector search with validated descriptor
+        const vectorResults = await runVectorSearch(graph, vectorDbPath, vectorRuntimeState.descriptor, query, limit);
+        if (vectorResults.length > 0) {
+          anyVectorUsed = true;
+          results = vectorResults;
+        } else {
+          results = textSearch(graph, query, limit);
+        }
       } else {
+        // Vector not ready, fallback to BM25
         results = textSearch(graph, query, limit);
       }
     } else {
-      const hybrid = await hybridSearch(graph, query, limit, { vectorDbPath });
+      // Hybrid mode: pass descriptor if vector is ready
+      const hybrid = await hybridSearch(graph, query, limit, {
+        vectorDbPath: vectorReady ? vectorDbPath : undefined,
+        descriptor: vectorRuntimeState?.descriptor,
+      });
       if (hybrid.searchMode !== 'bm25') anyVectorUsed = true;
       results = hybrid.results.map(({ searchMode: _searchMode, ...rest }) => rest);
     }
@@ -108,24 +143,19 @@ export async function queryGroup(
   return { perRepo, merged, searchMode, vectorReady: anyVectorReady };
 }
 
-async function isVectorReady(vectorDbPath: string): Promise<boolean> {
-  if (!fs.existsSync(vectorDbPath)) return false;
+async function runVectorSearch(
+  graph: ReturnType<typeof createKnowledgeGraph>,
+  vectorDbPath: string,
+  descriptor: ReturnType<typeof getDefaultEmbeddingModel>,
+  query: string,
+  topK: number,
+): Promise<SearchResult[]> {
   try {
-    const descriptor = getDefaultEmbeddingModel();
-    const idx = new VectorIndex(vectorDbPath, descriptor.dimension);
-    await idx.init();
-    const built = await idx.isBuilt();
-    idx.close();
-    return built;
-  } catch {
-    return false;
-  }
-}
-
-async function runVectorSearch(graph: ReturnType<typeof createKnowledgeGraph>, vectorDbPath: string, query: string, topK: number): Promise<SearchResult[]> {
-  try {
-    const descriptor = getDefaultEmbeddingModel();
-    const idx = new VectorIndex(vectorDbPath, descriptor.dimension);
+    const { getEmbedder } = await import('../search/embedder.js');
+    const { VectorIndex } = await import('../search/vector-index.js');
+    
+    // Open in read-only mode for search-time access to published vector artifacts
+    const idx = new VectorIndex(vectorDbPath, descriptor.dimension, { readonly: true });
     await idx.init();
     const built = await idx.isBuilt();
     if (!built) {
