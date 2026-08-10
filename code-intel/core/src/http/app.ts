@@ -260,14 +260,18 @@ export function createApp(
   app.use((_req: Request, res: Response, next: NextFunction): void => {
     if (workspaceRoot) {
       // Use a raw read so corrupted or unreadable files throw (loadMetadata swallows errors)
-      const metaFilePath = path.join(workspaceRoot, '.code-intel', 'meta.json');
+      const metaFilePath = startupSnapshot?.metadataPath ?? path.join(workspaceRoot, '.code-intel', 'meta.json');
       let metaOk = false;
       try {
-        if (fs.existsSync(metaFilePath)) {
-          const raw = fs.readFileSync(metaFilePath, 'utf-8');
-          const meta = JSON.parse(raw) as { indexVersion?: string } | null;
-          if (meta?.indexVersion) res.setHeader('X-Index-Version', meta.indexVersion);
+        if (!fs.existsSync(metaFilePath)) {
+          throw new Error(`Published metadata not found: ${metaFilePath}`);
         }
+        const raw = fs.readFileSync(metaFilePath, 'utf-8');
+        const meta = JSON.parse(raw) as { indexVersion?: string } | null;
+        if (!meta?.indexVersion) {
+          throw new Error(`Published metadata missing indexVersion: ${metaFilePath}`);
+        }
+        res.setHeader('X-Index-Version', meta.indexVersion);
         metaOk = true;
         // If we previously flagged DB unavailability, clear it now
         if (dbUnavailableSince !== null) {

@@ -992,29 +992,129 @@ describe('Reliability — atomic index swap (graph.db.new → rename)', () => {
     // Clean up
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
+});
 
-  it('X-Index-Version header is present when workspaceRoot with meta.json is set', async () => {
-    const tmpDir = path.join(os.tmpdir(), `version-test-${Date.now()}`);
-    fs.mkdirSync(path.join(tmpDir, '.code-intel'), { recursive: true });
-    const indexVersion = crypto.randomUUID();
-    fs.writeFileSync(
-      path.join(tmpDir, '.code-intel', 'meta.json'),
-      JSON.stringify({ indexedAt: new Date().toISOString(), indexVersion, stats: { nodes: 0, edges: 0, files: 0, duration: 0 } }),
-    );
-
+describe('HTTP API — index observability headers', () => {
+  async function withServer(
+    workspaceRoot: string,
+    run: (server: http.Server) => Promise<void>,
+  ): Promise<void> {
     process.env['CODE_INTEL_DEV_AUTO_LOGIN'] = 'true';
     const graph = createKnowledgeGraph();
-    const app = createApp(graph, 'test-repo', tmpDir);
+    const app = createApp(graph, 'test-repo', workspaceRoot);
     const server = http.createServer(app);
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      await run(server);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+      delete process.env['CODE_INTEL_DEV_AUTO_LOGIN'];
+    }
+  }
 
-    const res = await rawReq(server, { method: 'GET', path: '/health/live' });
-    await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+  function writeLegacyMeta(tmpDir: string, indexVersion?: string): void {
+    fs.mkdirSync(path.join(tmpDir, '.code-intel'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpDir, '.code-intel', 'meta.json'),
+      JSON.stringify({ indexedAt: new Date().toISOString(), ...(indexVersion ? { indexVersion } : {}), stats: { nodes: 0, edges: 0, files: 0, duration: 0 } }),
+    );
+  }
 
-    delete process.env['CODE_INTEL_DEV_AUTO_LOGIN'];
+  function publishGenerationMeta(tmpDir: string, generationId: string, indexVersion: string): void {
+    const generation = createIndexGeneration(tmpDir, generationId);
+    fs.writeFileSync(generation.graphDbPath, 'graph');
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: `n-${generationId}`, kind: 'function', name: `fn-${generationId}`, filePath: `src/${generationId}.ts`, content: indexVersion });
+    new Bm25Index(generation.bm25DbPath).build(graph);
+    publishIndexGeneration(tmpDir, generation, {
+      indexedAt: new Date().toISOString(),
+      indexVersion,
+      stats: { nodes: 1, edges: 0, files: 1, duration: 0 },
+    });
+  }
+
+  it('uses pinned Generation V2 metadata for X-Index-Version', async () => {
+    const tmpDir = path.join(os.tmpdir(), `version-test-${Date.now()}`);
+    const indexVersion = crypto.randomUUID();
+    publishGenerationMeta(tmpDir, 'g-header-v2', indexVersion);
+
+    await withServer(tmpDir, async (server) => {
+      const res = await rawReq(server, { method: 'GET', path: '/health/live' });
+      assert.equal(res.headers['x-index-version'], indexVersion, 'X-Index-Version header must match pinned generation metadata');
+    });
+
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
 
-    assert.equal(res.headers['x-index-version'], indexVersion, 'X-Index-Version header must match indexVersion from meta.json');
+  it('marks response stale when pinned metadata lacks indexVersion', async () => {
+    const tmpDir = path.join(os.tmpdir(), `version-test-missing-index-version-${Date.now()}`);
+    publishGenerationMeta(tmpDir, 'g-header-no-version', 'temporary-version');
+    fs.writeFileSync(
+      path.join(tmpDir, '.code-intel', 'generations', 'g-header-no-version', 'meta.json'),
+      JSON.stringify({ indexedAt: new Date().toISOString(), stats: { nodes: 1, edges: 0, files: 1, duration: 0 } }),
+    );
+
+    await withServer(tmpDir, async (server) => {
+      const res = await rawReq(server, { method: 'GET', path: '/health/live' });
+      assert.equal(res.headers['x-stale'], 'true');
+      assert.ok(typeof res.headers['x-stale-since'] === 'string');
+      assert.equal(res.headers['x-index-version'], undefined);
+    });
+
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('ignores conflicting legacy flat metadata when Generation V2 snapshot is active', async () => {
+    const tmpDir = path.join(os.tmpdir(), `version-test-conflict-${Date.now()}`);
+    writeLegacyMeta(tmpDir, 'legacy-old');
+    publishGenerationMeta(tmpDir, 'g-header-conflict', 'generation-new');
+
+    await withServer(tmpDir, async (server) => {
+      const res = await rawReq(server, { method: 'GET', path: '/health/live' });
+      assert.equal(res.headers['x-index-version'], 'generation-new');
+    });
+
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('falls back to legacy flat metadata when no Generation V2 snapshot is active', async () => {
+    const tmpDir = path.join(os.tmpdir(), `version-test-legacy-${Date.now()}`);
+    const indexVersion = crypto.randomUUID();
+    writeLegacyMeta(tmpDir, indexVersion);
+
+    await withServer(tmpDir, async (server) => {
+      const res = await rawReq(server, { method: 'GET', path: '/health/live' });
+      assert.equal(res.headers['x-index-version'], indexVersion, 'X-Index-Version header must match legacy meta.json when no snapshot exists');
+    });
+
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('marks response stale when legacy metadata lacks indexVersion and no Generation V2 snapshot is active', async () => {
+    const tmpDir = path.join(os.tmpdir(), `version-test-legacy-no-version-${Date.now()}`);
+    writeLegacyMeta(tmpDir);
+
+    await withServer(tmpDir, async (server) => {
+      const res = await rawReq(server, { method: 'GET', path: '/health/live' });
+      assert.equal(res.headers['x-stale'], 'true');
+      assert.ok(typeof res.headers['x-stale-since'] === 'string');
+      assert.equal(res.headers['x-index-version'], undefined);
+    });
+
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('marks response stale when legacy metadata is missing and no Generation V2 snapshot is active', async () => {
+    const tmpDir = path.join(os.tmpdir(), `version-test-legacy-missing-${Date.now()}`);
+    fs.mkdirSync(path.join(tmpDir, '.code-intel'), { recursive: true });
+
+    await withServer(tmpDir, async (server) => {
+      const res = await rawReq(server, { method: 'GET', path: '/health/live' });
+      assert.equal(res.headers['x-stale'], 'true');
+      assert.ok(typeof res.headers['x-stale-since'] === 'string');
+    });
+
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 });
 
