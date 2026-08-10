@@ -367,15 +367,13 @@ export async function executeSearchRequest(
   
   // Map runtime state status to fallback reason
   let fallbackReason: SearchFallbackReason | undefined;
-  if (actualMode === 'bm25' && requestedMode !== 'bm25') {
+  if (actualMode === 'bm25') {
     if (vectorRuntimeState?.status === 'missing' || vectorRuntimeState?.status === 'empty') {
       fallbackReason = 'VECTOR_INDEX_UNAVAILABLE';
     } else if (vectorRuntimeState?.status === 'corrupt' || vectorRuntimeState?.status === 'unavailable' || vectorStatus === 'failed') {
       fallbackReason = 'VECTOR_QUERY_FAILED';
-    } else if (vectorRuntimeState?.status === 'incompatible' || vectorRuntimeState?.status === 'stale') {
-      fallbackReason = 'VECTOR_INDEX_UNAVAILABLE';
     } else {
-      fallbackReason = vectorStatus === 'failed' ? 'VECTOR_QUERY_FAILED' : 'VECTOR_INDEX_UNAVAILABLE';
+      fallbackReason = 'VECTOR_INDEX_UNAVAILABLE';
     }
   }
   

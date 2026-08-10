@@ -845,14 +845,29 @@ export async function dispatchTool(
   let activeBm25: Bm25Index | null | undefined;
   let activeVectorDbPath: string | undefined;
   let activeContext: LoadedRepoGraph | null = null;
-  if (name === 'search' && a.scope !== undefined) {
-    const { validateSearchScope } = await import('../search/execute-scoped-search.js');
-    const validated = validateSearchScope(a.scope);
-    if ('error' in validated) {
-      return { isError: true, content: [{ type: 'text', text: compact({ error: validated.error.message, hint: validated.error.hint, status: validated.error.status }) }] };
+  let preloadSearchContext = name === 'search';
+
+  const missingIndexError = (ctx: LoadedRepoGraph): Error & { code: 'MISSING_INDEX'; repo: string; path: string } => Object.assign(
+    new Error(`No published index found for ${ctx.path || ctx.repo}`),
+    { code: 'MISSING_INDEX' as const, repo: ctx.repo, path: ctx.path },
+  );
+  if (name === 'search') {
+    const { normalizeSearchRequest } = await import('../search/execute-scoped-search.js');
+    const normalized = normalizeSearchRequest({
+      query: a.query as string | undefined,
+      limit: a.limit as number | undefined,
+      mode: a.mode as SearchMode | undefined,
+      scope: a.scope as Record<string, unknown> | undefined,
+      repo: a.repo as string | undefined,
+      repoId: a.repoId as string | undefined,
+      group: a.group as string | undefined,
+    });
+    if ('error' in normalized && normalized.error) {
+      return { isError: true, content: [{ type: 'text', text: compact({ error: normalized.error.message, hint: normalized.error.hint, status: normalized.error.status }) }] };
     }
+    preloadSearchContext = normalized.scope === undefined;
   }
-  if (GRAPH_BACKED_TOOLS.has(name) || name === 'search') {
+  if (GRAPH_BACKED_TOOLS.has(name) || preloadSearchContext) {
     try {
       const ctx = await graphContext(a, repoName, workspaceRoot, graph);
       activeContext = ctx;
@@ -927,34 +942,63 @@ export async function dispatchTool(
         const offset = Math.max((a.offset as number) ?? 0, 0);
         const effectiveLimit = Math.min((a.limit as number) ?? 10, 500);
         const fetchLimit = Math.min(offset + effectiveLimit, 500);
-        const result = await executeSearchRequest({
-          query: a.query as string | undefined,
-          limit: fetchLimit,
-          mode: (a.mode as SearchMode | undefined) ?? 'auto',
-          scope: a.scope as Record<string, unknown> | undefined,
-          repo: a.repo as string | undefined,
-          repoId: a.repoId as string | undefined,
-          group: a.group as string | undefined,
-        }, {
-          repoName,
-          workspaceRoot: activeWorkspaceRoot,
-          ensureBm25Index: () => activeBm25 ?? ((!a.repoId && (!a.repo || a.repo === repoName)) ? (bm25Resolver ? bm25Resolver() : null) : null),
-          getGraphForRepo: async (requestedRepo) => {
-            if (!requestedRepo || requestedRepo === activeRepoName) return graph;
-            const ctx = await ensureRepoLoaded(requestedRepo, undefined, repoName, workspaceRoot, graph);
-            return ctx.graph;
-          },
-          getRepoSearchContext: async (requestedRepo) => {
-            const ctx = !requestedRepo || requestedRepo === activeRepoName
-              ? activeContext ?? await ensureRepoLoaded(requestedRepo, undefined, repoName, workspaceRoot, graph)
-              : await ensureRepoLoaded(requestedRepo, undefined, repoName, workspaceRoot, graph);
+        let result: Awaited<ReturnType<typeof executeSearchRequest>>;
+        try {
+          result = await executeSearchRequest({
+            query: a.query as string | undefined,
+            limit: fetchLimit,
+            mode: (a.mode as SearchMode | undefined) ?? 'auto',
+            scope: a.scope as Record<string, unknown> | undefined,
+            repo: a.repo as string | undefined,
+            repoId: a.repoId as string | undefined,
+            group: a.group as string | undefined,
+          }, {
+            repoName,
+            workspaceRoot: activeWorkspaceRoot,
+            ensureBm25Index: () => activeBm25 ?? ((!a.repoId && (!a.repo || a.repo === repoName)) ? (bm25Resolver ? bm25Resolver() : null) : null),
+            getGraphForRepo: async (requestedRepo) => {
+              if (!requestedRepo || requestedRepo === activeRepoName) return graph;
+              const ctx = await ensureRepoLoaded(requestedRepo, undefined, repoName, workspaceRoot, graph);
+              if (ctx.missingIndex) throw missingIndexError(ctx);
+              return ctx.graph;
+            },
+            getRepoSearchContext: async (requestedRepo) => {
+              const ctx = !requestedRepo || requestedRepo === activeRepoName
+                ? activeContext ?? await ensureRepoLoaded(requestedRepo, undefined, repoName, workspaceRoot, graph)
+                : await ensureRepoLoaded(requestedRepo, undefined, repoName, workspaceRoot, graph);
+              if (requestedRepo && ctx.missingIndex) throw missingIndexError(ctx);
+              return {
+                graph: ctx.graph,
+                bm25Index: ctx.bm25Index,
+                vectorDbPath: ctx.vectorDbPath ?? activeVectorDbPath,
+              };
+            },
+          });
+        } catch (err) {
+          if (
+            err instanceof Error
+            && 'code' in err
+            && err.code === 'MISSING_INDEX'
+            && 'repo' in err
+            && 'path' in err
+          ) {
+            const missing = err as Error & { code: 'MISSING_INDEX'; repo: string; path: string };
             return {
-              graph: ctx.graph,
-              bm25Index: ctx.bm25Index,
-              vectorDbPath: ctx.vectorDbPath ?? activeVectorDbPath,
+              content: [{
+                type: 'text',
+                text: compact({
+                  error: missing.message,
+                  hint: 'Run `code-intel analyze` in this repository, then retry the MCP tool call.',
+                  repo: missing.repo,
+                  path: missing.path,
+                  actionable: true,
+                }),
+              }],
+              isError: true,
             };
-          },
-        });
+          }
+          throw err;
+        }
         if ('error' in result && result.error) {
           const msg = result.error.status === 404 && /Group '.*' not found/.test(result.error.message)
             ? result.error.message.replace(/Group '(.+)' not found/, 'Group "$1" not found. Use list_groups to see available groups.')

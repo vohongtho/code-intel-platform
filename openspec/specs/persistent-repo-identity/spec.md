@@ -4,7 +4,7 @@
 TBD - created by syncing archived change persistent-repo-identity-and-unique-names. Update Purpose after archive.
 ## Requirements
 ### Requirement: Indexed repositories SHALL have stable internal identities
-The system SHALL persist a stable unique repository ID for each indexed repository. That ID SHALL remain unchanged across re-analysis, rename, and relink operations for the same repository.
+The system SHALL persist a stable unique repository ID for each indexed repository. That ID SHALL remain unchanged across re-analysis, rename, relink, and no-op registry reconciliation for the same repository.
 
 #### Scenario: Re-analysis preserves repository ID
 - **WHEN** a user re-runs `code-intel analyze` for an already indexed repository
@@ -20,6 +20,12 @@ The system SHALL persist a stable unique repository ID for each indexed reposito
 - **WHEN** a user updates an indexed repository to a new filesystem path using the supported relink flow
 - **THEN** the repository keeps the same persisted ID
 - **AND** future repo loads use the new path
+
+#### Scenario: No-op registry restore preserves repository ID
+- **GIVEN** an indexed repository has a healthy published generation but its global registry entry is missing
+- **WHEN** no-op analyze restores the repository to the registry
+- **THEN** the restored entry SHALL represent the same logical repository
+- **AND** it SHALL NOT create a second repository identity for the same path and published generation
 
 ### Requirement: Repository names SHALL be explicit unique lookup keys
 The system SHALL treat repository names as explicit user-facing lookup keys rather than always deriving them from the current folder basename. Repository names SHALL be unique across the registry.
@@ -100,4 +106,3 @@ The system SHALL migrate existing registry entries that lack repository IDs and 
 - **AND** the migrated names become unique deterministically
 - **AND** the system surfaces a warning describing the repaired names
 - **AND** no registry entry is dropped
-

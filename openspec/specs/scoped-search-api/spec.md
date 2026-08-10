@@ -15,14 +15,40 @@ The system SHALL allow search-like API requests to declare the repository or rep
 - **THEN** the system executes the search only against that group
 - **AND** the response identifies the resolved group scope
 
+#### Scenario: Explicit repo-scoped MCP search ignores ambient unindexed repo
+- **WHEN** an MCP `search` request provides explicit repo scope for an indexed repository
+- **AND** the ambient default repository has no published index
+- **THEN** the system executes the search against the explicit target repository
+- **AND** it SHALL NOT fail the request because the ambient default repository is unindexed
+
+#### Scenario: Explicit group-scoped MCP search ignores ambient unindexed repo
+- **WHEN** an MCP `search` request provides explicit group scope for an existing group with at least one indexed member repository
+- **AND** the ambient default repository has no published index
+- **THEN** the system executes the search against the explicit target group
+- **AND** it SHALL NOT fail the request because the ambient default repository is unindexed
+
 #### Scenario: Invalid explicit scope
 - **WHEN** a client sends a search request with an unknown scope type, missing required scope field, unknown repo ID, or unknown group name
 - **THEN** the system SHALL reject the request with an error that identifies the invalid scope field
 
+#### Scenario: Canonical repo scope does not fall back to legacy selectors
+- **WHEN** a client sends a canonical search request with `scope.type` = `repo` and `scope.repoId` = a repository name or path rather than a stable repository ID
+- **THEN** the system SHALL reject the request as unknown repository scope
+- **AND** it SHALL NOT reinterpret that canonical selector as a repository name or path
+
+#### Scenario: Flat canonical repoId does not fall back to legacy selectors
+- **WHEN** a client sends a canonical search request using flat `repoId` with a repository name or path rather than a stable repository ID
+- **THEN** the system SHALL reject the request as unknown repository scope
+- **AND** it SHALL NOT reinterpret that canonical selector as a repository name or path
+
 #### Scenario: Legacy repo search shape normalized
-- **WHEN** a documented legacy search request uses a repo name or legacy flat `repo` field during migration
-- **THEN** the system normalizes it to the matching `repoId`
+- **WHEN** a documented legacy search request uses the flat `repo` field during migration
+- **THEN** the system normalizes it to the matching stable repository ID when exactly one repository matches by compatibility rules
 - **AND** it applies canonical scope validation and execution after normalization
+
+#### Scenario: Ambiguous legacy repo selector rejected
+- **WHEN** a documented legacy search request uses the flat `repo` field and that selector matches more than one repository by compatibility rules
+- **THEN** the system SHALL reject the request as ambiguous
 
 ### Requirement: Search strategy SHALL be selectable independently from search scope
 The system SHALL let clients choose BM25, vector, or hybrid search behavior without changing how repo or group scope is expressed. This applies uniformly across every search transport — HTTP, UI, and MCP tool calls — by routing through the same canonical search execution path rather than a transport-specific reimplementation.
@@ -39,18 +65,10 @@ The system SHALL let clients choose BM25, vector, or hybrid search behavior with
 - **WHEN** a client omits the `mode` field from a scoped search request
 - **THEN** the system SHALL apply the documented default search mode consistently for that endpoint
 
-#### Scenario: MCP tool search with explicit BM25 mode
-- **WHEN** an MCP client calls the `search` tool with `mode` = `bm25`
-- **THEN** the system executes BM25-only search, bypassing vector search and Reciprocal Rank Fusion, even if a vector index exists for the repository
-- **AND** the tool response `searchMode` field reports `bm25`
-
-#### Scenario: MCP tool search with explicit vector mode
-- **WHEN** an MCP client calls the `search` tool with `mode` = `vector` on a repository with a built vector index
-- **THEN** the system executes vector search and reports `searchMode` = `vector` (or `bm25` if the vector index is unavailable, per existing fallback behavior)
-
-#### Scenario: MCP tool default mode
-- **WHEN** an MCP client calls the `search` tool without a `mode` field
-- **THEN** the system SHALL apply the same behavior as today (hybrid when a vector index exists for the repository, BM25 otherwise) so existing callers are unaffected
+#### Scenario: Deprecated mode does not widen selector semantics
+- **WHEN** a client uses a deprecated search mode or deprecated endpoint together with canonical repo scope
+- **THEN** the system SHALL preserve canonical stable-ID-only selector semantics
+- **AND** deprecation metadata SHALL affect warnings only, not scope resolution behavior
 
 ### Requirement: Legacy search entry points SHALL honor the unified scope model during migration
 The system SHALL preserve compatibility for existing search entry points while applying the same explicit scope semantics. Compatibility paths SHALL behave as thin adapters over the canonical search execution path rather than independent implementations.
@@ -79,6 +97,12 @@ The system SHALL preserve compatibility for existing search entry points while a
 - **THEN** the system MAY apply documented backward-compatible default scope behavior
 - **AND** it SHALL NOT treat that omitted scope as permission to search outside the current default repository context
 
+#### Scenario: Unscoped MCP search still depends on ambient default repository
+- **WHEN** an MCP `search` request omits explicit repo/group scope
+- **AND** the ambient default repository has no published index
+- **THEN** the system SHALL report the documented ambient missing-index error
+- **AND** it SHALL preserve current default-repository search behavior for unscoped requests
+
 #### Scenario: Legacy request deprecation metadata
 - **WHEN** a compatibility endpoint or legacy request shape is used during migration
 - **THEN** the system response SHALL identify the resolved scope and mode
@@ -99,4 +123,3 @@ The system SHALL return enough metadata for callers to determine which repo or g
 #### Scenario: Legacy normalized response metadata
 - **WHEN** a legacy endpoint or legacy request shape succeeds after normalization
 - **THEN** the response includes the normalized scope and resolved mode actually used for execution
-

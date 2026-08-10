@@ -11,6 +11,7 @@ import { saveMetadata, getVectorDbPath } from '../../../src/storage/metadata.js'
 import { saveRegistry } from '../../../src/storage/repo-registry.js';
 import { dispatchTool, resetRepoGraphCacheForTests } from '../../../src/mcp-server/server.js';
 import { CURRENT_SCHEMA_VERSION } from '../../../src/migrations/migration-runner.js';
+import { saveGroup, deleteGroup } from '../../../src/multi-repo/group-registry.js';
 import { Bm25Index, getBm25DbPath } from '../../../src/search/bm25-index.js';
 
 function mkRepo(name: string): string {
@@ -59,6 +60,7 @@ async function writeRepoIndex(repoPath: string, spec: {
 describe('MCP search tool', () => {
   beforeEach(() => {
     resetRepoGraphCacheForTests();
+    deleteGroup('backend-services');
   });
 
   it('mode=bm25 bypasses vector and reports bm25', async () => {
@@ -155,7 +157,7 @@ describe('MCP search tool', () => {
     const result = await dispatchTool('search', { query: 'CanonicalMiss', repoId: 'repo' }, createKnowledgeGraph(), 'fallback', undefined);
     assert.equal(result.isError, true);
     const payload = JSON.parse(result.content[0]?.text ?? '{}') as { error?: string };
-    assert.match(payload.error ?? '', /Repo \"repo\" not found/);
+    assert.match(payload.error ?? '', /Repo ['\"]repo['\"] not found/);
   });
 
   it('deprecated hybrid mode does not widen canonical repoId semantics', async () => {
@@ -169,7 +171,7 @@ describe('MCP search tool', () => {
     const result = await dispatchTool('search', { query: 'CanonicalHybrid', repoId: 'repo', mode: 'hybrid' }, createKnowledgeGraph(), 'fallback', undefined);
     assert.equal(result.isError, true);
     const payload = JSON.parse(result.content[0]?.text ?? '{}') as { error?: string };
-    assert.match(payload.error ?? '', /Repo \"repo\" not found/);
+    assert.match(payload.error ?? '', /Repo ['\"]repo['\"] not found/);
   });
 
   it('fails closed for malformed explicit MCP scope', async () => {
@@ -185,5 +187,88 @@ describe('MCP search tool', () => {
     const payload = JSON.parse(result.content[0]?.text ?? '{}') as { error?: string; status?: number };
     assert.equal(payload.status, 400);
     assert.match(payload.error ?? '', /scope\.repoId/);
+  });
+
+  it('searches an explicit scoped repo even when the ambient repo has no index', async () => {
+    const ambientRepoPath = mkRepo('mcp-search-ambient-unindexed');
+    const repoBPath = mkRepo('mcp-search-explicit-repo');
+    saveRegistry([
+      { id: 'ambient-repo-id', name: 'ambient-repo', path: ambientRepoPath, indexedAt: new Date().toISOString(), stats: { nodes: 0, edges: 0, files: 0 } },
+      { id: 'repo-b-id', name: 'repo-b', path: repoBPath, indexedAt: new Date().toISOString(), stats: { nodes: 1, edges: 0, files: 1 } },
+    ]);
+    await writeRepoIndex(repoBPath, {
+      indexVersion: 'v1',
+      nodes: [{ id: 'n1', name: 'RepoBOnlySymbol', filePath: 'src/repo-b.ts', content: 'function RepoBOnlySymbol() {}' }],
+    });
+
+    const result = await dispatchTool(
+      'search',
+      {
+        query: 'RepoBOnlySymbol',
+        scope: {
+          type: 'repo',
+          repoId: 'repo-b-id',
+        },
+        mode: 'bm25',
+      },
+      createKnowledgeGraph(),
+      'ambient-repo',
+      ambientRepoPath,
+    );
+
+    assert.equal(result.isError, undefined);
+    const payload = JSON.parse(result.content[0]?.text ?? '{}') as { scope?: { repoId?: string }; results?: Array<{ name?: string }> };
+    assert.equal(payload.scope?.repoId, 'repo-b-id');
+    assert.equal(payload.results?.[0]?.name, 'RepoBOnlySymbol');
+  });
+
+  it('searches an explicit scoped group even when the ambient repo has no index', async () => {
+    const ambientRepoPath = mkRepo('mcp-search-ambient-group-unindexed');
+    const repoBPath = mkRepo('mcp-search-group-member');
+    saveRegistry([
+      { id: 'ambient-repo-id', name: 'ambient-repo', path: ambientRepoPath, indexedAt: new Date().toISOString(), stats: { nodes: 0, edges: 0, files: 0 } },
+      { id: 'repo-b-id', name: 'repo-b', path: repoBPath, indexedAt: new Date().toISOString(), stats: { nodes: 1, edges: 0, files: 1 } },
+    ]);
+    await writeRepoIndex(repoBPath, {
+      indexVersion: 'v1',
+      nodes: [{ id: 'n1', name: 'RepoBGroupOnlySymbol', filePath: 'src/repo-b-group.ts', content: 'function RepoBGroupOnlySymbol() {}' }],
+    });
+    saveGroup({
+      name: 'backend-services',
+      createdAt: new Date().toISOString(),
+      members: [{ groupPath: 'backend/repo-b', repoId: 'repo-b-id', registryName: 'repo-b' }],
+    });
+
+    const result = await dispatchTool(
+      'search',
+      {
+        query: 'RepoBGroupOnlySymbol',
+        scope: {
+          type: 'group',
+          name: 'backend-services',
+        },
+        mode: 'bm25',
+      },
+      createKnowledgeGraph(),
+      'ambient-repo',
+      ambientRepoPath,
+    );
+
+    assert.equal(result.isError, undefined);
+    const payload = JSON.parse(result.content[0]?.text ?? '{}') as { scope?: { type?: string; name?: string }; results?: Array<{ name?: string }> };
+    assert.equal(payload.scope?.type, 'group');
+    assert.equal(payload.scope?.name, 'backend-services');
+    assert.equal(payload.results?.[0]?.name, 'RepoBGroupOnlySymbol');
+  });
+
+  it('unscoped search still reports ambient missing-index', async () => {
+    const ambientRepoPath = mkRepo('mcp-search-unscoped-ambient');
+    saveRegistry([{ id: 'ambient-repo-id', name: 'ambient-repo', path: ambientRepoPath, indexedAt: new Date().toISOString(), stats: { nodes: 0, edges: 0, files: 0 } }]);
+
+    const result = await dispatchTool('search', { query: 'Anything' }, createKnowledgeGraph(), 'ambient-repo', ambientRepoPath);
+    assert.equal(result.isError, true);
+    const payload = JSON.parse(result.content[0]?.text ?? '{}') as { error?: string; repo?: string };
+    assert.match(payload.error ?? '', /No published index found/);
+    assert.equal(payload.repo, 'ambient-repo');
   });
 });
