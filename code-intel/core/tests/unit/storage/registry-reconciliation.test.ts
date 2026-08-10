@@ -96,4 +96,41 @@ describe('registry-reconciliation', () => {
     assert.match(result.message, /already linked to path/);
     assert.match(result.guidance ?? '', /relink flow/);
   });
+
+  it('reports relink guidance when published repoId is already owned by another path', () => {
+    saveRegistry([{ id: metadata.repoId, name: 'alpha', path: path.resolve('/repos/original'), indexedAt: metadata.indexedAt, stats: { nodes: 1, edges: 0, files: 1 } }]);
+
+    const result = reconcileRegistryEntry({
+      workspaceRoot: '/repos/new-path',
+      requestedName: 'restored',
+      metadata,
+    });
+
+    assert.equal(result.outcome, 'conflict');
+    assert.match(result.message, /Repository ID/);
+    assert.match(result.guidance ?? '', /relink flow/);
+    const registry = loadRegistry();
+    assert.equal(registry.length, 1);
+    assert.equal(registry[0]?.path, path.resolve('/repos/original'));
+    assert.equal(registry[0]?.id, metadata.repoId);
+  });
+
+  it('restores deterministically when metadata has no repoId', () => {
+    saveRegistry([]);
+
+    const result = reconcileRegistryEntry({
+      workspaceRoot: '/repos/legacy',
+      requestedName: 'legacy',
+      metadata: {
+        indexedAt: metadata.indexedAt,
+        stats: metadata.stats,
+      },
+    });
+
+    assert.equal(result.outcome, 'registered');
+    assert.equal(result.entry?.name, 'legacy');
+    assert.equal(result.entry?.path, path.resolve('/repos/legacy'));
+    assert.ok(result.entry?.id);
+    assert.notEqual(result.entry?.id, '');
+  });
 });

@@ -8,7 +8,8 @@ import { loadGroup } from '../multi-repo/group-registry.js';
 import { queryGroup } from '../multi-repo/group-query.js';
 import type { QueryScope, ResolvedQueryScope } from 'code-intel-shared';
 import { resolveVectorRuntimeState, type VectorRuntimeState } from './vector-runtime-state.js';
-import { loadMetadata } from '../storage/metadata.js';
+import { type IndexMetadata } from '../storage/metadata.js';
+import type { IndexSnapshot } from '../storage/index-snapshot.js';
 import { getEmbeddingFingerprint } from './embedder.js';
 import { getDefaultEmbeddingModel, getEmbeddingModel } from './embedding-model-registry.js';
 import type { EmbeddingModelDescriptor } from './embedding-model-registry.js';
@@ -171,32 +172,21 @@ export function deprecationFor(req: { deprecated?: boolean }, endpoint?: string)
 }
 
 /**
- * Resolve vector runtime state for a repository path.
+ * Resolve vector runtime state for a pinned repository search context.
  * 
  * This is the authoritative vector readiness check for repo-scoped search.
- * Loads metadata, gets the configured embedding descriptor, and validates
- * vector execution eligibility through the runtime state contract.
- * 
- * @param repoPath - repository workspace root
- * @param vectorDbPath - path to vector.db
- * @returns resolved runtime state with ready flag and reason
+ * Metadata, when present, must come from the same pinned generation as the
+ * selected graph/BM25/vector artifacts.
  */
 async function resolveRepoVectorRuntimeState(
-  repoPath: string,
   vectorDbPath: string,
+  metadata?: IndexMetadata | null,
 ): Promise<VectorRuntimeState> {
   try {
-    // Load repository metadata
-    const metadata = loadMetadata(repoPath);
-
-    // Get configured embedding descriptor
     const config = normalizeConfigEmbeddingModel(loadConfig() ?? DEFAULT_CONFIG);
     const descriptor = getEmbeddingModel(config.embeddings.model) ?? getDefaultEmbeddingModel();
-
-    // Calculate runtime fingerprint
     const runtimeFingerprint = getEmbeddingFingerprint({ descriptor });
 
-    // Resolve vector runtime state
     return await resolveVectorRuntimeState({
       vectorDbPath,
       descriptor,
@@ -204,7 +194,6 @@ async function resolveRepoVectorRuntimeState(
       metadata: metadata ?? undefined,
     });
   } catch (err) {
-    // If anything fails, return unavailable state
     return {
       status: 'unavailable',
       ready: false,
@@ -218,6 +207,8 @@ export interface RepoSearchContext {
   graph: KnowledgeGraph;
   bm25Index: Bm25Index | null;
   vectorDbPath?: string;
+  snapshot?: IndexSnapshot | null;
+  metadata?: IndexMetadata | null;
 }
 
 export type ExecuteScopedSearchDeps = {
@@ -322,14 +313,14 @@ export async function executeSearchRequest(
     : deps.workspaceRoot
       ? getVectorDbPath(deps.workspaceRoot)
       : undefined);
+  const metadata = searchContext?.metadata;
   const bm25 = searchContext?.bm25Index
     ?? ((!requestedRepo || requestedRepo === deps.repoName) ? deps.ensureBm25Index() : null);
   const bm25Results = bm25 ? bm25.search(query, limit * 3) : null;
 
   // Resolve vector runtime state for accurate readiness and fallback reporting
-  const repoPath = repoEntry?.path ?? deps.workspaceRoot;
-  const vectorRuntimeState = vectorDbPath && repoPath
-    ? await resolveRepoVectorRuntimeState(repoPath, vectorDbPath)
+  const vectorRuntimeState = vectorDbPath
+    ? await resolveRepoVectorRuntimeState(vectorDbPath, metadata)
     : null;
 
   if (requestedMode === 'bm25') {

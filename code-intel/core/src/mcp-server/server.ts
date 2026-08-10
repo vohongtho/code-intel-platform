@@ -652,6 +652,7 @@ type LoadedRepoGraph = {
   schemaVersion: number;
   generationId: string;
   snapshot: IndexSnapshot | null;
+  metadata: import('../storage/metadata.js').IndexMetadata | null;
   graph: KnowledgeGraph;
   bm25Index: Bm25Index | null;
   vectorDbPath?: string;
@@ -722,6 +723,8 @@ async function loadRepoGraph(
     bm25Index = null;
   }
 
+  const metadata = loadMetadata(snapshot);
+
   return {
     id: resolved.id,
     repo: resolved.name,
@@ -730,6 +733,7 @@ async function loadRepoGraph(
     schemaVersion,
     generationId: snapshot.generationId,
     snapshot,
+    metadata,
     graph,
     bm25Index,
     vectorDbPath: snapshot.vectorDbPath,
@@ -753,6 +757,7 @@ async function ensureRepoLoaded(
       schemaVersion: CURRENT_SCHEMA_VERSION,
       generationId: 'memory',
       snapshot: null,
+      metadata: null,
       graph: fallbackGraph,
       bm25Index: null,
       missingIndex: !defaultPath,
@@ -776,6 +781,7 @@ async function ensureRepoLoaded(
       schemaVersion,
       generationId: snapshot?.generationId ?? 'memory',
       snapshot,
+      metadata: meta,
       graph: fallbackGraph,
       bm25Index: null,
       vectorDbPath: snapshot?.vectorDbPath,
@@ -971,6 +977,8 @@ export async function dispatchTool(
                 graph: ctx.graph,
                 bm25Index: ctx.bm25Index,
                 vectorDbPath: ctx.vectorDbPath ?? activeVectorDbPath,
+                snapshot: ctx.snapshot,
+                metadata: ctx.metadata,
               };
             },
           });

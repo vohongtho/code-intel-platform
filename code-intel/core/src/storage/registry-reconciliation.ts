@@ -13,6 +13,7 @@ import {
   loadRegistry,
   findRepoByPath,
   findRepoByName,
+  findRepoById,
   upsertRepo,
 } from './repo-registry.js';
 import type { IndexMetadata } from './metadata.js';
@@ -57,6 +58,7 @@ export function reconcileRegistryEntry(input: ReconciliationInput): Reconciliati
   const registry = loadRegistry();
   const existingByPath = findRepoByPath(normalizedPath, registry);
   const existingByName = findRepoByName(targetName, registry);
+  const existingById = metadata.repoId ? findRepoById(metadata.repoId, registry) : undefined;
   
   // Case 1: Entry exists for this path
   if (existingByPath) {
@@ -87,8 +89,17 @@ export function reconcileRegistryEntry(input: ReconciliationInput): Reconciliati
       guidance: `Use the relink flow to move repository "${targetName}" from "${existingByName.path}" to "${normalizedPath}".`,
     };
   }
+
+  // Case 3: A published stable ID already belongs to another path
+  if (existingById && path.resolve(existingById.path) !== normalizedPath) {
+    return {
+      outcome: 'conflict',
+      message: `Repository ID "${metadata.repoId}" is already linked to path "${existingById.path}"`,
+      guidance: `Use the relink flow to move repository "${existingById.name}" from "${existingById.path}" to "${normalizedPath}".`,
+    };
+  }
   
-  // Case 3: No conflicts - restore the missing entry
+  // Case 4: No conflicts - restore the missing entry
   try {
     const restored = upsertRepo({
       id: metadata.repoId,

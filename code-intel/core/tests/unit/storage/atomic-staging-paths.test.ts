@@ -96,6 +96,35 @@ describe('atomic analyze no-op validation', () => {
       fs.rmSync(repoB, { recursive: true, force: true });
     }
   });
+
+  it('noop analyze rejects published repoId already owned by another path', () => {
+    const prevHome = process.env['HOME'];
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-atomic-home-'));
+    const repoA = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-atomic-a-'));
+    const repoB = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-atomic-b-'));
+    process.env['HOME'] = home;
+    try {
+      saveRegistry([{ id: 'repo-1', name: 'alpha', path: repoA, indexedAt: new Date(0).toISOString(), stats: { nodes: 1, edges: 0, files: 1 } }]);
+      const live = createIndexGeneration(repoB, 'live');
+      fs.writeFileSync(live.graphDbPath, 'graph');
+      fs.writeFileSync(live.bm25DbPath, 'bm25');
+      publishIndexGeneration(repoB, live, {
+        repoId: 'repo-1',
+        indexedAt: new Date(0).toISOString(),
+        stats: { nodes: 1, edges: 0, files: 1, duration: 1 },
+      });
+      const status = runAtomicAnalyze(['analyze', repoB, '--name', 'beta'], new URL('../../../src/cli/main.js', import.meta.url));
+      assert.equal(status, 1);
+      const current = JSON.parse(fs.readFileSync(path.join(repoB, '.code-intel', 'current.json'), 'utf8')) as { generationId: string };
+      assert.equal(current.generationId, 'live');
+    } finally {
+      if (prevHome === undefined) delete process.env['HOME'];
+      else process.env['HOME'] = prevHome;
+      fs.rmSync(home, { recursive: true, force: true });
+      fs.rmSync(repoA, { recursive: true, force: true });
+      fs.rmSync(repoB, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('atomic staging artifact routing', () => {

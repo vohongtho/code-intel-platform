@@ -70,7 +70,7 @@ export async function queryGroup(
     let vectorRuntimeState = null;
     if (vectorDbPath && fs.existsSync(vectorDbPath)) {
       try {
-        const metadata = loadMetadata(regEntry.path);
+        const metadata = loadMetadata(snapshot);
         const config = normalizeConfigEmbeddingModel(loadConfig() ?? DEFAULT_CONFIG);
         const descriptor = getEmbeddingModel(config.embeddings.model) ?? getDefaultEmbeddingModel();
         const runtimeFingerprint = getEmbeddingFingerprint({ descriptor });

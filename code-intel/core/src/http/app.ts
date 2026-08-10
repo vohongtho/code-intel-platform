@@ -13,7 +13,7 @@ import { isLazyGraph } from '../graph/lazy-knowledge-graph.js';
 import { Bm25Index, getBm25DbPath } from '../search/bm25-index.js';
 import { executeSearchRequest, type SearchMode, type SearchScope } from '../search/execute-scoped-search.js';
 import { DbManager, getDbPath, getVectorDbPath } from '../storage/index.js';
-import { loadMetadata, shouldRebuildEmbeddings } from '../storage/metadata.js';
+import { loadMetadata, shouldRebuildEmbeddings, type IndexMetadata } from '../storage/metadata.js';
 import { resolveIndexSnapshot, type IndexSnapshot } from '../storage/index-snapshot.js';
 import { VectorIndex } from '../search/vector-index.js';
 // VectorIndex uses the shared SQLite wrapper directly.
@@ -915,6 +915,7 @@ export function createApp(
   interface HttpRepoContext {
     graph: KnowledgeGraph;
     snapshot: IndexSnapshot | null;
+    metadata: IndexMetadata | null;
     bm25Index: Bm25Index | null;
     vectorDbPath?: string;
   }
@@ -924,6 +925,7 @@ export function createApp(
       return {
         graph,
         snapshot: startupSnapshot,
+        metadata: startupSnapshot ? loadMetadata(startupSnapshot) : null,
         bm25Index: ensureBm25Index(),
         vectorDbPath: startupSnapshot?.vectorDbPath,
       };
@@ -955,6 +957,7 @@ export function createApp(
     return {
       graph: repoGraph,
       snapshot,
+      metadata: loadMetadata(snapshot),
       bm25Index: repoBm25,
       vectorDbPath: snapshot.vectorDbPath,
     };
@@ -1034,12 +1037,16 @@ export function createApp(
         graph: context.graph,
         bm25Index: context.bm25Index,
         vectorDbPath: context.vectorDbPath,
+        snapshot: context.snapshot,
+        metadata: context.metadata,
       };
     }
     return {
       graph: await getGraphForRepo(requestedRepo),
       bm25Index: null,
       vectorDbPath: undefined,
+      snapshot: null,
+      metadata: null,
     };
   }
 
