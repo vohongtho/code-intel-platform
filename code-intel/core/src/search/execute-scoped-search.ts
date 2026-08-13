@@ -6,11 +6,20 @@ import { getVectorDbPath } from '../storage/index.js';
 import { loadRegistry } from '../storage/repo-registry.js';
 import { loadGroup } from '../multi-repo/group-registry.js';
 import { queryGroup } from '../multi-repo/group-query.js';
+import type { QueryScope, ResolvedQueryScope } from 'code-intel-shared';
+import { resolveVectorRuntimeState, type VectorRuntimeState } from './vector-runtime-state.js';
+import { type IndexMetadata } from '../storage/metadata.js';
+import type { IndexSnapshot } from '../storage/index-snapshot.js';
+import { getEmbeddingFingerprint } from './embedder.js';
+import { getDefaultEmbeddingModel, getEmbeddingModel } from './embedding-model-registry.js';
+import type { EmbeddingModelDescriptor } from './embedding-model-registry.js';
+import { loadConfig, DEFAULT_CONFIG } from '../cli/init-wizard.js';
+import { normalizeConfigEmbeddingModel } from '../cli/config-manager.js';
 
 export type SearchMode = 'auto' | 'bm25' | 'vector' | 'hybrid';
 export type RequestedSearchMode = 'auto' | 'bm25' | 'vector';
 export type ActualSearchMode = 'bm25' | 'vector' | 'hybrid';
-export type SearchScope = { type: 'repo' | 'group'; name: string };
+export type SearchScope = QueryScope;
 
 export type SearchFallbackReason =
   | 'VECTOR_INDEX_UNAVAILABLE'
@@ -51,7 +60,7 @@ export type SearchExecResult =
       searchMode: ActualSearchMode;
       fallbackReason?: SearchFallbackReason;
       explanation?: SearchExplanation;
-      scope: SearchScope;
+      scope: ResolvedQueryScope;
       vectorReady: boolean;
       deprecated: boolean;
       deprecation?: string;
@@ -66,39 +75,90 @@ export type SearchRequest = {
   query?: string;
   limit?: number;
   mode?: SearchMode;
-  scope?: SearchScope;
+  scope?: SearchScope | Record<string, unknown>;
+  repoId?: string;
   repo?: string;
   group?: string;
   explain?: boolean;
 };
+
+export type SelectorSource =
+  | 'none'
+  | 'canonical-scope'
+  | 'canonical-repo-id'
+  | 'legacy-repo'
+  | 'legacy-group';
 
 function normalizeRequestedMode(mode: SearchMode | undefined): RequestedSearchMode {
   if (!mode || mode === 'hybrid') return 'auto';
   return mode;
 }
 
+export function validateSearchScope(scope: unknown):
+  | { value: SearchScope }
+  | { error: { status: number; message: string; hint?: string } } {
+  if (!scope || typeof scope !== 'object' || Array.isArray(scope)) {
+    return { error: { status: 400, message: 'Invalid scope', hint: 'scope must be an object' } };
+  }
+  const raw = scope as Record<string, unknown>;
+  if (raw.type !== 'repo' && raw.type !== 'group') {
+    return { error: { status: 400, message: 'Invalid scope.type', hint: 'scope.type must be "repo" or "group"' } };
+  }
+  if (raw.type === 'repo') {
+    if (typeof raw.repoId !== 'string' || raw.repoId.trim().length === 0) {
+      return { error: { status: 400, message: 'Invalid scope.repoId', hint: 'scope.repoId is required for repo scope' } };
+    }
+    return { value: { type: 'repo', repoId: raw.repoId } };
+  }
+  if (typeof raw.name !== 'string' || raw.name.trim().length === 0) {
+    return { error: { status: 400, message: 'Invalid scope.name', hint: 'scope.name is required for group scope' } };
+  }
+  return { value: { type: 'group', name: raw.name } };
+}
+
 export function normalizeSearchRequest(body: SearchRequest) {
-  const { query, limit, mode, scope, repo, group, explain } = body;
+  const { query, limit, mode, scope, repoId, repo, group, explain } = body;
   if (!query) {
     return { error: { status: 400, message: 'Missing query', hint: 'Provide { "query": "..." } in request body' } } as const;
   }
-  if (scope && (repo || group)) {
-    return { error: { status: 400, message: 'Ambiguous request shape', hint: 'Use either scope or legacy repo/group fields, not both' } } as const;
+  if (scope && (repoId || repo || group)) {
+    return { error: { status: 400, message: 'Ambiguous request shape', hint: 'Use either scope or flat scope fields, not both' } } as const;
+  }
+  if (repoId && (repo || group)) {
+    return { error: { status: 400, message: 'Ambiguous flat scope', hint: 'Use repoId or legacy repo/group, not both' } } as const;
   }
   if (repo && group) {
     return { error: { status: 400, message: 'Ambiguous legacy scope', hint: 'Use either repo or group, not both' } } as const;
   }
-  const normalizedScope = scope
-    ?? (group
-      ? { type: 'group' as const, name: group }
-      : repo
-        ? { type: 'repo' as const, name: repo }
-        : undefined);
+  
+  let normalizedScope: SearchScope | undefined;
+  let selectorSource: SelectorSource;
+  
+  if (scope !== undefined) {
+    const validated = validateSearchScope(scope);
+    if ('error' in validated) return { error: validated.error } as const;
+    normalizedScope = validated.value;
+    selectorSource = 'canonical-scope';
+  } else if (group) {
+    normalizedScope = { type: 'group' as const, name: group };
+    selectorSource = 'legacy-group';
+  } else if (repoId) {
+    normalizedScope = { type: 'repo' as const, repoId };
+    selectorSource = 'canonical-repo-id';
+  } else if (repo) {
+    normalizedScope = { type: 'repo' as const, repoId: repo };
+    selectorSource = 'legacy-repo';
+  } else {
+    normalizedScope = undefined;
+    selectorSource = 'none';
+  }
+  
   return {
     query,
     limit: limit ?? 20,
     mode: normalizeRequestedMode(mode),
     scope: normalizedScope,
+    selectorSource,
     deprecated: Boolean(repo || group || mode === 'hybrid'),
     explain: explain === true,
   } as const;
@@ -111,11 +171,52 @@ export function deprecationFor(req: { deprecated?: boolean }, endpoint?: string)
     : 'Legacy repo/group request shape or hybrid mode is deprecated; use { query, limit, mode: auto|bm25|vector, scope }.';
 }
 
+/**
+ * Resolve vector runtime state for a pinned repository search context.
+ * 
+ * This is the authoritative vector readiness check for repo-scoped search.
+ * Metadata, when present, must come from the same pinned generation as the
+ * selected graph/BM25/vector artifacts.
+ */
+async function resolveRepoVectorRuntimeState(
+  vectorDbPath: string,
+  metadata?: IndexMetadata | null,
+): Promise<VectorRuntimeState> {
+  try {
+    const config = normalizeConfigEmbeddingModel(loadConfig() ?? DEFAULT_CONFIG);
+    const descriptor = getEmbeddingModel(config.embeddings.model) ?? getDefaultEmbeddingModel();
+    const runtimeFingerprint = getEmbeddingFingerprint({ descriptor });
+
+    return await resolveVectorRuntimeState({
+      vectorDbPath,
+      descriptor,
+      runtimeFingerprint,
+      metadata: metadata ?? undefined,
+    });
+  } catch (err) {
+    return {
+      status: 'unavailable',
+      ready: false,
+      vectorDbPath,
+      reason: `Failed to resolve vector runtime state: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
+export interface RepoSearchContext {
+  graph: KnowledgeGraph;
+  bm25Index: Bm25Index | null;
+  vectorDbPath?: string;
+  snapshot?: IndexSnapshot | null;
+  metadata?: IndexMetadata | null;
+}
+
 export type ExecuteScopedSearchDeps = {
   repoName: string;
   workspaceRoot?: string;
   ensureBm25Index: () => Bm25Index | null;
   getGraphForRepo: (requestedRepo: string | undefined) => Promise<KnowledgeGraph>;
+  getRepoSearchContext?: (requestedRepo: string | undefined) => Promise<RepoSearchContext>;
 };
 
 export async function executeSearchRequest(
@@ -126,7 +227,7 @@ export async function executeSearchRequest(
   const normalized = normalizeSearchRequest(body);
   if ('error' in normalized && normalized.error) return { error: normalized.error };
 
-  const { query, limit, mode: requestedMode, scope, deprecated, explain } = normalized;
+  const { query, limit, mode: requestedMode, scope, selectorSource, deprecated, explain } = normalized;
   const endpointDeprecated = extra.forceDeprecated || Boolean(extra.endpoint);
   const deprecatedFlag = deprecated || endpointDeprecated;
   const deprecation = deprecationFor({ deprecated: deprecatedFlag }, extra.endpoint);
@@ -163,19 +264,64 @@ export async function executeSearchRequest(
     } as const;
   }
 
-  const requestedRepo = scope?.type === 'repo' ? scope.name : undefined;
-  const graph = await deps.getGraphForRepo(requestedRepo);
-  const resolvedScope = scope ?? { type: 'repo' as const, name: requestedRepo ?? deps.repoName };
-  const repoEntry = requestedRepo && requestedRepo !== deps.repoName
-    ? loadRegistry().find((repo) => repo.id === requestedRepo || repo.name === requestedRepo || repo.path === requestedRepo)
+  const registry = loadRegistry();
+  const defaultRepoId = registry.find((repo) => repo.name === deps.repoName || (deps.workspaceRoot && repo.path === deps.workspaceRoot))?.id ?? deps.repoName;
+  let requestedRepo: string | undefined;
+  let resolvedScope: ResolvedQueryScope;
+  
+  if (!scope) {
+    requestedRepo = undefined;
+    resolvedScope = { type: 'repo', repoId: defaultRepoId, repoName: deps.repoName };
+  } else if (scope.type === 'repo') {
+    // Try exact stable ID match first (works for all selector sources)
+    const exactRepo = registry.find((repo) => repo.id === scope.repoId);
+    
+    if (exactRepo) {
+      // Found by stable ID
+      requestedRepo = exactRepo.id;
+      resolvedScope = { type: 'repo', repoId: exactRepo.id, repoName: exactRepo.name };
+    } else if (selectorSource === 'legacy-repo') {
+      // Legacy repo selector: allow compatibility fallback to name/path
+      const matches = registry.filter((repo) => repo.name === scope.repoId || repo.path === scope.repoId);
+      if (matches.length > 1) {
+        return { error: { status: 400, message: `Repo selector '${scope.repoId}' is ambiguous`, hint: 'Use stable repoId instead of repo name/path' } } as const;
+      }
+      if (matches.length === 0) {
+        return { error: { status: 404, message: `Repo '${scope.repoId}' not found`, hint: 'Use /api/v1/repos to list available repositories' } } as const;
+      }
+      const entry = matches[0]!;
+      requestedRepo = entry.id;
+      resolvedScope = { type: 'repo', repoId: entry.id, repoName: entry.name };
+    } else {
+      // Canonical selectors (canonical-scope, canonical-repo-id): stable ID only, no fallback
+      return { error: { status: 404, message: `Repo '${scope.repoId}' not found`, hint: 'Use /api/v1/repos to list available repositories' } } as const;
+    }
+  } else {
+    requestedRepo = undefined;
+    const groupScope = scope as Extract<SearchScope, { type: 'group' }>;
+    resolvedScope = { type: 'group', name: groupScope.name };
+  }
+  const searchContext = deps.getRepoSearchContext
+    ? await deps.getRepoSearchContext(requestedRepo)
     : null;
-  const vectorDbPath = repoEntry
+  const graph = searchContext?.graph ?? await deps.getGraphForRepo(requestedRepo);
+  const repoEntry = requestedRepo && requestedRepo !== deps.repoName
+    ? registry.find((repo) => repo.id === requestedRepo)
+    : null;
+  const vectorDbPath = searchContext?.vectorDbPath ?? (repoEntry
     ? getVectorDbPath(repoEntry.path)
     : deps.workspaceRoot
       ? getVectorDbPath(deps.workspaceRoot)
-      : undefined;
-  const bm25 = (!requestedRepo || requestedRepo === deps.repoName) ? deps.ensureBm25Index() : null;
+      : undefined);
+  const metadata = searchContext?.metadata;
+  const bm25 = searchContext?.bm25Index
+    ?? ((!requestedRepo || requestedRepo === deps.repoName) ? deps.ensureBm25Index() : null);
   const bm25Results = bm25 ? bm25.search(query, limit * 3) : null;
+
+  // Resolve vector runtime state for accurate readiness and fallback reporting
+  const vectorRuntimeState = vectorDbPath
+    ? await resolveRepoVectorRuntimeState(vectorDbPath, metadata)
+    : null;
 
   if (requestedMode === 'bm25') {
     const compactResults = (bm25Results ?? textSearch(graph, query, limit)).slice(0, limit);
@@ -188,9 +334,9 @@ export async function executeSearchRequest(
         requestedMode,
         actualMode: 'bm25',
         searchMode: 'bm25',
-        explanation: explain ? buildSearchExplanation(requestedMode, 'bm25', Boolean(vectorDbPath)) : undefined,
+        explanation: explain ? buildSearchExplanation(requestedMode, 'bm25', vectorRuntimeState?.ready ?? false) : undefined,
         scope: resolvedScope,
-        vectorReady: Boolean(vectorDbPath),
+        vectorReady: vectorRuntimeState?.ready ?? false,
         deprecated: deprecatedFlag,
         deprecation,
         total: results.length,
@@ -201,18 +347,28 @@ export async function executeSearchRequest(
     } as const;
   }
 
+  // Call hybridSearch with validated descriptor if vector is ready
   const { results, searchMode, vectorStatus } = await hybridSearch(graph, query, limit, {
-    vectorDbPath,
+    vectorDbPath: vectorRuntimeState?.ready ? vectorDbPath : undefined,
+    descriptor: vectorRuntimeState?.descriptor,
     bm25Results: bm25Results ?? undefined,
     explainResults: explain,
   });
   const actualMode = searchMode as ActualSearchMode;
-  const fallbackReason: SearchFallbackReason | undefined = actualMode === 'bm25'
-    ? vectorStatus === 'failed'
-      ? 'VECTOR_QUERY_FAILED'
-      : 'VECTOR_INDEX_UNAVAILABLE'
-    : undefined;
-  const vectorReady = vectorStatus !== 'unavailable';
+  
+  // Map runtime state status to fallback reason
+  let fallbackReason: SearchFallbackReason | undefined;
+  if (actualMode === 'bm25') {
+    if (vectorRuntimeState?.status === 'missing' || vectorRuntimeState?.status === 'empty') {
+      fallbackReason = 'VECTOR_INDEX_UNAVAILABLE';
+    } else if (vectorRuntimeState?.status === 'corrupt' || vectorRuntimeState?.status === 'unavailable' || vectorStatus === 'failed') {
+      fallbackReason = 'VECTOR_QUERY_FAILED';
+    } else {
+      fallbackReason = 'VECTOR_INDEX_UNAVAILABLE';
+    }
+  }
+  
+  const vectorReady = vectorRuntimeState?.ready ?? false;
 
   return {
     body: {

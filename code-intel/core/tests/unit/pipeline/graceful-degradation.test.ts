@@ -70,13 +70,9 @@ describe('Epic 6 — DB disconnect: X-Stale headers', () => {
     new UsersDB(usersDbPath).createUser('admin', 'password123', 'admin');
 
     const graph = createKnowledgeGraph();
-    // Use a workspaceRoot that has NO meta.json → loadMetadata() will throw
+    // Use a workspaceRoot with NO meta.json so the selected metadata path is missing
     const brokenRoot = path.join(os.tmpdir(), `e6-broken-${Date.now()}`);
-    fs.mkdirSync(brokenRoot, { recursive: true });
-    // Create a .code-intel dir with an invalid/unreadable meta.json to force exception
-    const ciDir = path.join(brokenRoot, '.code-intel');
-    fs.mkdirSync(ciDir, { recursive: true });
-    fs.writeFileSync(path.join(ciDir, 'meta.json'), '{invalid json}');
+    fs.mkdirSync(path.join(brokenRoot, '.code-intel'), { recursive: true });
 
     const app = createApp(graph, 'e6-test', brokenRoot);
     server = http.createServer(app);
@@ -90,7 +86,7 @@ describe('Epic 6 — DB disconnect: X-Stale headers', () => {
     return new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
-  it('X-Stale: true header is set when meta.json cannot be read', async () => {
+  it('X-Stale: true header is set when selected metadata is missing', async () => {
     const res = await rawReq(server, { method: 'GET', path: '/health/live' });
     assert.equal(res.status, 200);
     assert.equal(res.headers['x-stale'], 'true', 'X-Stale header should be "true"');
@@ -109,7 +105,7 @@ describe('Epic 6 — DB disconnect: X-Stale headers', () => {
   });
 });
 
-describe('Epic 6 — DB reconnect: stale headers cleared when meta.json is valid', () => {
+describe('Epic 6 — DB reconnect: stale headers cleared when pinned metadata is valid', () => {
   let server: http.Server;
   let usersDbPath: string;
   let metaPath: string;
@@ -123,10 +119,16 @@ describe('Epic 6 — DB reconnect: stale headers cleared when meta.json is valid
 
     const graph = createKnowledgeGraph();
     const root = path.join(os.tmpdir(), `e6-reconnect-${Date.now()}`);
-    const ciDir = path.join(root, '.code-intel');
-    fs.mkdirSync(ciDir, { recursive: true });
-    // Start with invalid meta.json to trigger stale mode
-    metaPath = path.join(ciDir, 'meta.json');
+    const generationDir = path.join(root, '.code-intel', 'generations', 'g-reconnect');
+    fs.mkdirSync(generationDir, { recursive: true });
+    fs.writeFileSync(path.join(generationDir, 'graph.db'), 'graph');
+    fs.writeFileSync(path.join(generationDir, 'bm25.db'), 'bm25');
+    fs.writeFileSync(
+      path.join(root, '.code-intel', 'current.json'),
+      JSON.stringify({ version: 2, generationId: 'g-reconnect', publishedAt: new Date().toISOString(), artifacts: ['graph.db', 'bm25.db', 'meta.json'] }),
+    );
+    // Start with invalid pinned metadata to trigger stale mode
+    metaPath = path.join(generationDir, 'meta.json');
     fs.writeFileSync(metaPath, '{broken}');
 
     const app = createApp(graph, 'e6-reconnect', root);
@@ -141,12 +143,12 @@ describe('Epic 6 — DB reconnect: stale headers cleared when meta.json is valid
     return new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
-  it('after "reconnect" (valid meta.json written), X-Stale header disappears', async () => {
+  it('after "reconnect" (valid pinned meta.json written), X-Stale header disappears', async () => {
     // First confirm stale
     const res1 = await rawReq(server, { method: 'GET', path: '/health/live' });
     assert.equal(res1.headers['x-stale'], 'true', 'Should be stale before reconnect');
 
-    // Simulate DB reconnect: write a valid meta.json
+    // Simulate DB reconnect: write a valid pinned meta.json
     const validMeta = JSON.stringify({
       indexedAt: new Date().toISOString(),
       indexVersion: 'test-reconnect',
@@ -157,6 +159,7 @@ describe('Epic 6 — DB reconnect: stale headers cleared when meta.json is valid
     // Next request should clear stale
     const res2 = await rawReq(server, { method: 'GET', path: '/health/live' });
     assert.equal(res2.headers['x-stale'], undefined, 'X-Stale should be cleared after reconnect');
+    assert.equal(res2.headers['x-stale-since'], undefined, 'X-Stale-Since should be cleared after reconnect');
   });
 });
 

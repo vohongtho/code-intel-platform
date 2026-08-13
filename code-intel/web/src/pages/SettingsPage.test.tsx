@@ -9,6 +9,7 @@ import type { CurrentUser } from '../state/types';
 
 const getConfigMock = vi.fn();
 const saveConfigMock = vi.fn();
+const listEmbeddingModelsMock = vi.fn();
 const logoutMock = vi.fn();
 const vectorStatusMock = vi.fn().mockResolvedValue({ ready: false, building: false });
 
@@ -16,6 +17,7 @@ vi.mock('../api/client', () => ({
   ApiClient: class {
     getConfig = getConfigMock;
     saveConfig = saveConfigMock;
+    listEmbeddingModels = listEmbeddingModelsMock;
     logout = logoutMock;
     vectorStatus = vectorStatusMock;
   },
@@ -35,7 +37,7 @@ const viewerUser: CurrentUser = {
 
 const defaultConfig = {
   llm: { provider: 'ollama', model: 'llama3', apiKey: '', baseUrl: '', batchSize: 20, maxTokensPerSummary: 100 },
-  embeddings: { model: 'all-MiniLM-L6-v2', enabled: false },
+  embeddings: { model: 'Xenova/all-MiniLM-L6-v2', enabled: false },
   analysis: { maxFileSizeKB: 512, ignorePatterns: [], incrementalByDefault: false },
   serve: { defaultPort: 4747, openBrowser: true },
   auth: { mode: 'local' as const },
@@ -50,7 +52,7 @@ function SeedState({ user = adminUser, connected = true }: { user?: CurrentUser 
     dispatch({ type: 'SET_CONNECTED', connected });
     dispatch({ type: 'SET_VIEW', view: connected ? 'exploring' : 'connect' });
     dispatch({ type: 'SET_SERVER_URL', url: 'http://localhost:4747' });
-    dispatch({ type: 'SET_REPO_NAME', name: 'demo-repo' });
+    dispatch({ type: 'SET_REPO', repoId: 'repo-demo', name: 'demo-repo' });
   }, [connected, dispatch, user]);
   return null;
 }
@@ -91,7 +93,20 @@ describe('SettingsPage routing and save flow', () => {
     saveConfigMock.mockReset();
     logoutMock.mockReset();
     vectorStatusMock.mockClear();
+    listEmbeddingModelsMock.mockReset();
     getConfigMock.mockResolvedValue({ config: defaultConfig });
+    listEmbeddingModelsMock.mockResolvedValue({
+      defaultModel: 'Xenova/all-MiniLM-L6-v2',
+      models: [{
+        id: 'Xenova/all-MiniLM-L6-v2',
+        label: 'all-MiniLM-L6-v2',
+        provider: 'huggingface-transformers',
+        dimension: 384,
+        dtype: 'q8',
+        default: true,
+        available: true,
+      }],
+    });
   });
 
   it('redirects bare /settings to /settings/overview', async () => {
@@ -128,6 +143,19 @@ describe('SettingsPage routing and save flow', () => {
   it('renders read-only save state for viewer', async () => {
     renderSettingsRoute('/settings/server', viewerUser);
     expect(await screen.findByText('Read-only for this role.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /save changes/i })).toBeDisabled();
+  });
+
+  it('renders embeddings model as select, not text input', async () => {
+    renderSettingsRoute('/settings/embeddings', adminUser);
+    expect(await screen.findByRole('combobox', { name: /model/i })).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: /model/i })).not.toBeInTheDocument();
+  });
+
+  it('renders unsupported legacy model option and blocks saving when enabled', async () => {
+    getConfigMock.mockResolvedValue({ config: { ...defaultConfig, embeddings: { model: 'legacy-model', enabled: true } } });
+    renderSettingsRoute('/settings/embeddings', adminUser);
+    expect(await screen.findAllByText(/Unsupported legacy model: legacy-model/i)).toHaveLength(2);
     expect(screen.getByRole('button', { name: /save changes/i })).toBeDisabled();
   });
 });

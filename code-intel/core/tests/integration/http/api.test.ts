@@ -8,6 +8,8 @@ import crypto from 'node:crypto';
 import { createKnowledgeGraph } from '../../../src/graph/knowledge-graph.js';
 import { createApp } from '../../../src/http/app.js';
 import { UsersDB, resetUsersDBForTesting } from '../../../src/auth/users-db.js';
+import { createIndexGeneration, publishIndexGeneration } from '../../../src/storage/index-generation.js';
+import { Bm25Index } from '../../../src/search/bm25-index.js';
 
 // ── Minimal HTTP helper ───────────────────────────────────────────────────────
 
@@ -210,8 +212,53 @@ describe('HTTP API — auth routes', () => {
       headers: { Cookie: sessionCookie },
     });
     assert.equal(res.status, 200);
-    const body = res.body as { config: { llm: { apiKey: string } } };
+    const body = res.body as { config: { llm: { apiKey: string }, embeddings: { model: string } } };
     assert.equal(body.config.llm.apiKey, '');
+    assert.equal(body.config.embeddings.model, 'Xenova/all-MiniLM-L6-v2');
+  });
+
+  it('GET /api/v1/embeddings/models → 200 for viewer without loading pipeline', async () => {
+    const loginRes = await req(server, {
+      method: 'POST',
+      path: '/auth/login',
+      body: { username: 'viewer', password: 'viewer-pass-123' },
+    });
+    assert.equal(loginRes.status, 200);
+    const cookies = loginRes.headers['set-cookie'] ?? [];
+    const sessionCookie = cookies.map((c) => c.split(';')[0] ?? '').join('; ');
+
+    const res = await req(server, {
+      method: 'GET',
+      path: '/api/v1/embeddings/models',
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(res.status, 200);
+    const body = res.body as { defaultModel: string; models: Array<{ id: string; default: boolean; available: boolean }> };
+    assert.equal(body.defaultModel, 'Xenova/all-MiniLM-L6-v2');
+    assert.equal(body.models[0]?.id, 'Xenova/all-MiniLM-L6-v2');
+    assert.equal(body.models[0]?.default, true);
+    assert.equal(typeof body.models[0]?.available, 'boolean');
+  });
+
+  it('GET /api/v1/embeddings/models → backend-owned catalog for viewer', async () => {
+    const loginRes = await req(server, {
+      method: 'POST',
+      path: '/auth/login',
+      body: { username: 'viewer', password: 'viewer-pass-123' },
+    });
+    assert.equal(loginRes.status, 200);
+    const cookies = loginRes.headers['set-cookie'] ?? [];
+    const sessionCookie = cookies.map((c) => c.split(';')[0] ?? '').join('; ');
+
+    const res = await req(server, {
+      method: 'GET',
+      path: '/api/v1/embeddings/models',
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(res.status, 200);
+    const body = res.body as { defaultModel: string; models: Array<{ id: string; dimension: number }> };
+    assert.equal(body.defaultModel, 'Xenova/all-MiniLM-L6-v2');
+    assert.ok(body.models.some((model) => model.id === body.defaultModel && model.dimension === 384));
   });
 
   it('PUT /api/v1/config → 403 for viewer', async () => {
@@ -227,7 +274,7 @@ describe('HTTP API — auth routes', () => {
     const res = await req(server, {
       method: 'PUT',
       path: '/api/v1/config',
-      body: { config: { llm: { provider: 'ollama', model: 'llama3', apiKey: '', batchSize: 20, maxTokensPerSummary: 100 }, embeddings: { model: 'all-MiniLM-L6-v2', enabled: false }, analysis: { maxFileSizeKB: 512, ignorePatterns: [], incrementalByDefault: false }, serve: { defaultPort: 4747, openBrowser: true }, auth: { mode: 'local' }, updates: { checkOnStartup: true, intervalHours: 24 }, telemetry: { enabled: false } } },
+      body: { config: { llm: { provider: 'ollama', model: 'llama3', apiKey: '', batchSize: 20, maxTokensPerSummary: 100 }, embeddings: { model: 'Xenova/all-MiniLM-L6-v2', enabled: false }, analysis: { maxFileSizeKB: 512, ignorePatterns: [], incrementalByDefault: false }, serve: { defaultPort: 4747, openBrowser: true }, auth: { mode: 'local' }, updates: { checkOnStartup: true, intervalHours: 24 }, telemetry: { enabled: false } } },
       headers: { Cookie: sessionCookie },
     });
     assert.equal(res.status, 403);
@@ -246,7 +293,7 @@ describe('HTTP API — auth routes', () => {
     const res = await req(server, {
       method: 'PUT',
       path: '/api/v1/config',
-      body: { config: { llm: { provider: 'bad', model: 'llama3', apiKey: '', batchSize: 20, maxTokensPerSummary: 100 }, embeddings: { model: 'all-MiniLM-L6-v2', enabled: false }, analysis: { maxFileSizeKB: 512, ignorePatterns: [], incrementalByDefault: false }, serve: { defaultPort: 4747, openBrowser: true }, auth: { mode: 'local' }, updates: { checkOnStartup: true, intervalHours: 24 }, telemetry: { enabled: false } } },
+      body: { config: { llm: { provider: 'bad', model: 'llama3', apiKey: '', batchSize: 20, maxTokensPerSummary: 100 }, embeddings: { model: 'Xenova/all-MiniLM-L6-v2', enabled: false }, analysis: { maxFileSizeKB: 512, ignorePatterns: [], incrementalByDefault: false }, serve: { defaultPort: 4747, openBrowser: true }, auth: { mode: 'local' }, updates: { checkOnStartup: true, intervalHours: 24 }, telemetry: { enabled: false } } },
       headers: { Cookie: sessionCookie },
     });
     assert.equal(res.status, 400);
@@ -291,11 +338,284 @@ describe('HTTP API — auth routes', () => {
     assert.equal(body.config.llm.provider, 'openai');
     assert.equal(body.config.serve.defaultPort, 4848);
 
-    const stored = JSON.parse(fs.readFileSync(path.join(globalDir, 'config.json'), 'utf-8')) as { llm: { provider: string } };
+    const stored = JSON.parse(fs.readFileSync(path.join(globalDir, 'config.json'), 'utf-8')) as { llm: { provider: string }; embeddings: { model: string } };
     assert.equal(stored.llm.provider, 'openai');
+    assert.equal(stored.embeddings.model, 'Xenova/all-MiniLM-L6-v2');
 
     fs.rmSync(globalDir, { recursive: true, force: true });
     delete process.env['CODE_INTEL_GLOBAL_DIR'];
+  });
+});
+
+describe('HTTP API — GQL query route', () => {
+  let server: http.Server;
+  let dbPath: string;
+  let db: UsersDB;
+  let graph: ReturnType<typeof createKnowledgeGraph>;
+
+  before(() => {
+    dbPath = path.join(os.tmpdir(), `http-api-gql-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.db`);
+    process.env['CODE_INTEL_USERS_DB_PATH'] = dbPath;
+    resetUsersDBForTesting();
+    db = new UsersDB(dbPath);
+    db.createUser('viewer', 'viewer-pass-123', 'viewer');
+
+    graph = createKnowledgeGraph();
+    graph.addNode({ id: 'fn1', kind: 'function', name: 'handleLogin', filePath: 'auth/login.ts', exported: true, metadata: { cluster: 'auth' } });
+    graph.addNode({ id: 'fn2', kind: 'function', name: 'handleLogout', filePath: 'auth/logout.ts', exported: true, metadata: { cluster: 'auth' } });
+    graph.addNode({ id: 'fn3', kind: 'function', name: 'sendEmail', filePath: 'mail/send.ts', exported: true });
+    graph.addEdge({ id: 'e1', source: 'fn1', target: 'fn2', kind: 'calls' });
+
+    const app = createApp(graph, 'test-repo');
+    server = http.createServer(app);
+    return new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  });
+
+  after(() => {
+    db.close();
+    try { fs.unlinkSync(dbPath); } catch { /* ignore */ }
+    delete process.env['CODE_INTEL_USERS_DB_PATH'];
+    resetUsersDBForTesting();
+    return new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+  });
+
+  async function loginViewer(): Promise<string> {
+    const loginRes = await req(server, {
+      method: 'POST',
+      path: '/auth/login',
+      body: { username: 'viewer', password: 'viewer-pass-123' },
+    });
+    assert.equal(loginRes.status, 200);
+    const cookies = loginRes.headers['set-cookie'] ?? [];
+    return cookies.map((c) => c.split(';')[0] ?? '').join('; ');
+  }
+
+  it('returns normalized grouped COUNT result for the exact reported payload', async () => {
+    const sessionCookie = await loginViewer();
+    const res = await req(server, {
+      method: 'POST',
+      path: '/api/v1/query',
+      body: { gql: 'COUNT function GROUP BY cluster' },
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(res.status, 200);
+    const body = res.body as { kind: string; nodes: unknown[]; edges: unknown[]; groups: Array<{ key: string; count: number }>; path: null; totalCount: number; executionTimeMs: number; truncated: boolean; scope?: { type: string; repoId: string; repoName: string } };
+    assert.equal(body.kind, 'aggregate');
+    assert.deepEqual(body.nodes, []);
+    assert.deepEqual(body.edges, []);
+    assert.equal(body.path, null);
+    assert.equal(body.totalCount, 3);
+    assert.equal(body.truncated, false);
+    assert.ok(body.executionTimeMs >= 0);
+    assert.ok(body.groups.some((group) => group.key === 'auth' && group.count === 2));
+    assert.ok(body.groups.some((group) => group.key === '(none)' && group.count === 1));
+    assert.equal(body.scope?.type, 'repo');
+    assert.equal(body.scope?.repoName, 'test-repo');
+  });
+
+  it('returns normalized plain COUNT result', async () => {
+    const sessionCookie = await loginViewer();
+    const res = await req(server, {
+      method: 'POST',
+      path: '/api/v1/query',
+      body: { gql: 'COUNT function' },
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(res.status, 200);
+    const body = res.body as { kind: string; nodes: unknown[]; edges: unknown[]; groups: Array<{ key: string; count: number }>; path: null };
+    assert.equal(body.kind, 'aggregate');
+    assert.deepEqual(body.nodes, []);
+    assert.deepEqual(body.edges, []);
+    assert.equal(body.path, null);
+    assert.equal(body.groups[0]?.key, 'total');
+    assert.equal(body.groups[0]?.count, 3);
+  });
+
+  it('returns normalized FIND result shape', async () => {
+    const sessionCookie = await loginViewer();
+    const res = await req(server, {
+      method: 'POST',
+      path: '/api/v1/query',
+      body: { gql: 'FIND function' },
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(res.status, 200);
+    const body = res.body as { kind: string; nodes: Array<{ name: string }>; edges: unknown[]; groups: unknown[]; path: null; totalCount: number };
+    assert.equal(body.kind, 'nodes');
+    assert.equal(body.nodes.length, 3);
+    assert.deepEqual(body.edges, []);
+    assert.deepEqual(body.groups, []);
+    assert.equal(body.path, null);
+    assert.equal(body.totalCount, 3);
+  });
+
+  it('returns normalized TRAVERSE result shape', async () => {
+    const sessionCookie = await loginViewer();
+    const res = await req(server, {
+      method: 'POST',
+      path: '/api/v1/query',
+      body: { gql: 'TRAVERSE CALLS FROM "handleLogin" DEPTH 1' },
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(res.status, 200);
+    const body = res.body as { kind: string; nodes: Array<{ name: string }>; edges: Array<{ kind: string }>; groups: unknown[]; path: null };
+    assert.equal(body.kind, 'traversal');
+    assert.ok(body.nodes.some((node) => node.name === 'handleLogin'));
+    assert.ok(body.nodes.some((node) => node.name === 'handleLogout'));
+    assert.ok(body.edges.length >= 1);
+    assert.deepEqual(body.groups, []);
+    assert.equal(body.path, null);
+  });
+
+  it('returns normalized PATH result shape', async () => {
+    const sessionCookie = await loginViewer();
+    const res = await req(server, {
+      method: 'POST',
+      path: '/api/v1/query',
+      body: { gql: 'PATH FROM "handleLogin" TO "handleLogout"' },
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(res.status, 200);
+    const body = res.body as { kind: string; nodes: Array<{ name: string }>; edges: Array<{ kind: string }>; groups: unknown[]; path: Array<{ name: string }> | null };
+    assert.equal(body.kind, 'path');
+    assert.ok(Array.isArray(body.path));
+    assert.ok(body.path && body.path.length >= 2);
+    assert.deepEqual(body.groups, []);
+    assert.ok(body.edges.length >= 1);
+    assert.ok(body.nodes.length >= 2);
+  });
+
+  it('preserves 400 for missing gql', async () => {
+    const sessionCookie = await loginViewer();
+    const res = await req(server, {
+      method: 'POST',
+      path: '/api/v1/query',
+      body: {},
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(res.status, 400);
+    const body = res.body as { error: { code: string; requestId: string } };
+    assert.equal(body.error.code, 'CI-1200');
+    assert.ok(body.error.requestId);
+  });
+
+  it('rejects unknown explicit repoId for GQL scope', async () => {
+    const sessionCookie = await loginViewer();
+    const res = await req(server, {
+      method: 'POST',
+      path: '/api/v1/query',
+      body: { gql: 'FIND function', scope: { type: 'repo', repoId: 'missing-repo' } },
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(res.status, 404);
+    const body = res.body as { error: { message: string } };
+    assert.match(body.error.message, /missing-repo/);
+  });
+
+  it('query explain preserves 400 for malformed explicit scope', async () => {
+    const sessionCookie = await loginViewer();
+    const res = await req(server, {
+      method: 'POST',
+      path: '/api/v1/query/explain',
+      body: { gql: 'FIND function', scope: { type: 'repo' } },
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(res.status, 400);
+    const body = res.body as { error: { message: string } };
+    assert.match(body.error.message, /scope\.repoId/);
+  });
+
+  it('query explain preserves 404 for unknown explicit scope target', async () => {
+    const sessionCookie = await loginViewer();
+    const res = await req(server, {
+      method: 'POST',
+      path: '/api/v1/query/explain',
+      body: { gql: 'FIND function', scope: { type: 'repo', repoId: 'missing-repo' } },
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(res.status, 404);
+    const body = res.body as { error: { message: string } };
+    assert.match(body.error.message, /missing-repo/);
+  });
+
+  it('preserves 422 for parse errors', async () => {
+    const sessionCookie = await loginViewer();
+    const res = await req(server, {
+      method: 'POST',
+      path: '/api/v1/query',
+      body: { gql: 'COUNT function GROUP BY' },
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(res.status, 422);
+    const body = res.body as { error: { code: string; message: string; requestId: string } };
+    assert.equal(body.error.code, 'CI-1200');
+    assert.match(body.error.message, /GQL parse error/);
+    assert.ok(body.error.requestId);
+  });
+
+  it('rejects unknown explicit repoId for source preview', async () => {
+    const sessionCookie = await loginViewer();
+    const res = await req(server, {
+      method: 'GET',
+      path: '/api/v1/source?file=src/any.ts&repoId=missing-repo',
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(res.status, 404);
+    const body = res.body as { error: { message: string } };
+    assert.match(body.error.message, /missing-repo/);
+  });
+
+  it('preserves 408 for truncated partial results', async () => {
+    const overrideApp = createApp(graph, 'test-repo', undefined, undefined, undefined, {
+      executeGQL: () => ({ kind: 'nodes', nodes: [], edges: [], groups: [], path: null, executionTimeMs: 1, truncated: true, totalCount: 0 }),
+    });
+    const overrideServer = http.createServer(overrideApp);
+    await new Promise<void>((resolve) => overrideServer.listen(0, '127.0.0.1', resolve));
+    try {
+      const sessionCookie = await loginViewer();
+      const res = await req(overrideServer, {
+        method: 'POST',
+        path: '/api/v1/query',
+        body: { gql: 'FIND function' },
+        headers: { Cookie: sessionCookie },
+      });
+      assert.equal(res.status, 408);
+      const body = res.body as { kind: string; truncated: boolean; nodes: unknown[]; edges: unknown[]; groups: unknown[]; path: null };
+      assert.equal(body.kind, 'nodes');
+      assert.equal(body.truncated, true);
+      assert.deepEqual(body.nodes, []);
+      assert.deepEqual(body.edges, []);
+      assert.deepEqual(body.groups, []);
+      assert.equal(body.path, null);
+    } finally {
+      await new Promise<void>((resolve, reject) => overrideServer.close((err) => err ? reject(err) : resolve()));
+    }
+  });
+
+  it('returns structured 500 for malformed internal results without stack traces', async () => {
+    const overrideApp = createApp(graph, 'test-repo', undefined, undefined, undefined, {
+      executeGQL: () => ({ kind: 'aggregate', nodes: [], edges: [], groups: 'bad', path: null, executionTimeMs: 1, truncated: false, totalCount: 0 }),
+    });
+    const overrideServer = http.createServer(overrideApp);
+    await new Promise<void>((resolve) => overrideServer.listen(0, '127.0.0.1', resolve));
+    try {
+      const sessionCookie = await loginViewer();
+      const res = await req(overrideServer, {
+        method: 'POST',
+        path: '/api/v1/query',
+        body: { gql: 'COUNT function' },
+        headers: { Cookie: sessionCookie },
+      });
+      assert.equal(res.status, 500);
+      const body = res.body as { error: { code: string; message: string; requestId: string; hint?: string } };
+      assert.equal(body.error.code, 'CI-5000');
+      assert.equal(body.error.message, 'Invalid GQL result shape');
+      assert.ok(body.error.requestId);
+      assert.ok(typeof body.error.hint === 'string');
+      assert.ok(!JSON.stringify(body).includes('at '));
+    } finally {
+      await new Promise<void>((resolve, reject) => overrideServer.close((err) => err ? reject(err) : resolve()));
+    }
   });
 });
 
@@ -315,6 +635,7 @@ describe('HTTP API — protected routes require auth', () => {
 
   const protectedRoutes: Array<{ method: string; path: string; body?: unknown }> = [
     { method: 'GET', path: '/api/v1/repos' },
+    { method: 'GET', path: '/api/v1/embeddings/models' },
     { method: 'POST', path: '/api/v1/search', body: { query: 'test' } },
     { method: 'GET', path: '/api/v1/flows' },
     { method: 'GET', path: '/api/v1/clusters' },
@@ -468,6 +789,156 @@ describe('HTTP API — repo-scoped token enforcement', () => {
   });
 });
 
+describe('HTTP API — published generation vector degradation', () => {
+  let server: http.Server;
+  let dbPath: string;
+  let db: UsersDB;
+  let repoRoot: string;
+
+  function digestPublishedState(root: string, generationId: string): string {
+    const hash = crypto.createHash('sha256');
+    for (const filePath of [
+      path.join(root, '.code-intel', 'current.json'),
+      path.join(root, '.code-intel', 'generations', generationId, 'graph.db'),
+      path.join(root, '.code-intel', 'generations', generationId, 'bm25.db'),
+      path.join(root, '.code-intel', 'generations', generationId, 'meta.json'),
+      path.join(root, '.code-intel', 'generations', generationId, 'vector.db'),
+    ]) {
+      hash.update(filePath);
+      if (fs.existsSync(filePath)) hash.update(fs.readFileSync(filePath));
+      else hash.update('missing');
+    }
+    return hash.digest('hex');
+  }
+
+  async function loginViewer(): Promise<string> {
+    const loginRes = await req(server, {
+      method: 'POST',
+      path: '/auth/login',
+      body: { username: 'viewer', password: 'viewer-pass-123' },
+    });
+    assert.equal(loginRes.status, 200);
+    const cookies = loginRes.headers['set-cookie'] ?? [];
+    return cookies.map((c) => c.split(';')[0] ?? '').join('; ');
+  }
+
+  before(() => {
+    delete process.env['NODE_ENV'];
+    dbPath = path.join(os.tmpdir(), `http-api-vectors-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.db`);
+    repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'http-api-vectors-repo-'));
+    process.env['CODE_INTEL_USERS_DB_PATH'] = dbPath;
+    resetUsersDBForTesting();
+    db = new UsersDB(dbPath);
+    db.createUser('viewer', 'viewer-pass-123', 'viewer');
+  });
+
+  after(async () => {
+    await new Promise<void>((resolve, reject) => server?.close((err) => err ? reject(err) : resolve()) ?? resolve());
+    db.close();
+    try { fs.unlinkSync(dbPath); } catch { /* ignore */ }
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+    delete process.env['CODE_INTEL_USERS_DB_PATH'];
+    resetUsersDBForTesting();
+  });
+
+  it('degrades vector startup without mutating published generation when vectors are missing', async () => {
+    const generation = createIndexGeneration(repoRoot, 'g-missing-vector');
+    fs.writeFileSync(generation.graphDbPath, 'graph');
+    fs.writeFileSync(generation.bm25DbPath, 'bm25');
+    const manifest = publishIndexGeneration(repoRoot, generation, {
+      indexedAt: '2026-08-03T00:00:00.000Z',
+      stats: { nodes: 1, edges: 0, files: 1, duration: 1 },
+    });
+
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: 'n1', kind: 'function', name: 'searchTarget', filePath: 'src/search-target.ts', content: 'searchTarget token' });
+    new Bm25Index(path.join(repoRoot, '.code-intel', 'generations', manifest.generationId, 'bm25.db')).build(graph);
+    const app = createApp(graph, 'test-repo', repoRoot);
+    server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+
+    const beforeDigest = digestPublishedState(repoRoot, manifest.generationId);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const sessionCookie = await loginViewer();
+
+    const vectorStatus = await req(server, {
+      method: 'GET',
+      path: '/api/v1/vector-status',
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(vectorStatus.status, 200);
+    assert.equal((vectorStatus.body as { ready: boolean }).ready, false);
+    assert.equal((vectorStatus.body as { degraded: boolean }).degraded, true);
+    assert.match(String((vectorStatus.body as { guidance?: string }).guidance), /analyze --embeddings/);
+
+    const searchRes = await req(server, {
+      method: 'POST',
+      path: '/api/v1/search',
+      body: { query: 'searchTarget', explain: true },
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(searchRes.status, 200);
+    assert.equal((searchRes.body as { actualMode: string }).actualMode, 'bm25');
+    assert.equal((searchRes.body as { vectorReady: boolean }).vectorReady, false);
+    assert.equal((searchRes.body as { results: unknown[] }).results.length, 1);
+
+    const afterDigest = digestPublishedState(repoRoot, manifest.generationId);
+    assert.equal(afterDigest, beforeDigest);
+  });
+
+  it('degrades incompatible published vectors without mutating manifest or metadata', async () => {
+    await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+
+    const generation = createIndexGeneration(repoRoot, 'g-incompatible-vector');
+    fs.writeFileSync(generation.graphDbPath, 'graph');
+    fs.writeFileSync(generation.bm25DbPath, 'bm25');
+    fs.writeFileSync(generation.vectorDbPath, 'not-a-real-sqlite-db');
+    const manifest = publishIndexGeneration(repoRoot, generation, {
+      indexedAt: '2026-08-03T00:00:00.000Z',
+      embeddings: {
+        enabled: true,
+        status: 'ready',
+        provider: 'test-provider',
+        model: 'wrong-model',
+        dimension: 1,
+      },
+      stats: { nodes: 1, edges: 0, files: 1, duration: 1 },
+    }, { vectorRequired: true });
+
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: 'n1', kind: 'function', name: 'fallbackTarget', filePath: 'src/fallback-target.ts', content: 'fallbackTarget token' });
+    new Bm25Index(path.join(repoRoot, '.code-intel', 'generations', manifest.generationId, 'bm25.db')).build(graph);
+    const app = createApp(graph, 'test-repo', repoRoot);
+    server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+
+    const beforeDigest = digestPublishedState(repoRoot, manifest.generationId);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const sessionCookie = await loginViewer();
+
+    const vectorStatus = await req(server, {
+      method: 'GET',
+      path: '/api/v1/vector-status',
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(vectorStatus.status, 200);
+    assert.equal((vectorStatus.body as { ready: boolean }).ready, false);
+    assert.match(String((vectorStatus.body as { unavailableReason?: string }).unavailableReason), /(incompatible|stale)/);
+
+    const searchRes = await req(server, {
+      method: 'POST',
+      path: '/api/v1/search',
+      body: { query: 'fallbackTarget', explain: true },
+      headers: { Cookie: sessionCookie },
+    });
+    assert.equal(searchRes.status, 200);
+    assert.equal((searchRes.body as { actualMode: string }).actualMode, 'bm25');
+
+    const afterDigest = digestPublishedState(repoRoot, manifest.generationId);
+    assert.equal(afterDigest, beforeDigest);
+  });
+});
+
 describe('HTTP API — tool-scoped token enforcement', () => {
   let server: http.Server;
 
@@ -521,29 +992,129 @@ describe('Reliability — atomic index swap (graph.db.new → rename)', () => {
     // Clean up
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
+});
 
-  it('X-Index-Version header is present when workspaceRoot with meta.json is set', async () => {
-    const tmpDir = path.join(os.tmpdir(), `version-test-${Date.now()}`);
-    fs.mkdirSync(path.join(tmpDir, '.code-intel'), { recursive: true });
-    const indexVersion = crypto.randomUUID();
-    fs.writeFileSync(
-      path.join(tmpDir, '.code-intel', 'meta.json'),
-      JSON.stringify({ indexedAt: new Date().toISOString(), indexVersion, stats: { nodes: 0, edges: 0, files: 0, duration: 0 } }),
-    );
-
+describe('HTTP API — index observability headers', () => {
+  async function withServer(
+    workspaceRoot: string,
+    run: (server: http.Server) => Promise<void>,
+  ): Promise<void> {
     process.env['CODE_INTEL_DEV_AUTO_LOGIN'] = 'true';
     const graph = createKnowledgeGraph();
-    const app = createApp(graph, 'test-repo', tmpDir);
+    const app = createApp(graph, 'test-repo', workspaceRoot);
     const server = http.createServer(app);
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      await run(server);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+      delete process.env['CODE_INTEL_DEV_AUTO_LOGIN'];
+    }
+  }
 
-    const res = await rawReq(server, { method: 'GET', path: '/health/live' });
-    await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+  function writeLegacyMeta(tmpDir: string, indexVersion?: string): void {
+    fs.mkdirSync(path.join(tmpDir, '.code-intel'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpDir, '.code-intel', 'meta.json'),
+      JSON.stringify({ indexedAt: new Date().toISOString(), ...(indexVersion ? { indexVersion } : {}), stats: { nodes: 0, edges: 0, files: 0, duration: 0 } }),
+    );
+  }
 
-    delete process.env['CODE_INTEL_DEV_AUTO_LOGIN'];
+  function publishGenerationMeta(tmpDir: string, generationId: string, indexVersion: string): void {
+    const generation = createIndexGeneration(tmpDir, generationId);
+    fs.writeFileSync(generation.graphDbPath, 'graph');
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: `n-${generationId}`, kind: 'function', name: `fn-${generationId}`, filePath: `src/${generationId}.ts`, content: indexVersion });
+    new Bm25Index(generation.bm25DbPath).build(graph);
+    publishIndexGeneration(tmpDir, generation, {
+      indexedAt: new Date().toISOString(),
+      indexVersion,
+      stats: { nodes: 1, edges: 0, files: 1, duration: 0 },
+    });
+  }
+
+  it('uses pinned Generation V2 metadata for X-Index-Version', async () => {
+    const tmpDir = path.join(os.tmpdir(), `version-test-${Date.now()}`);
+    const indexVersion = crypto.randomUUID();
+    publishGenerationMeta(tmpDir, 'g-header-v2', indexVersion);
+
+    await withServer(tmpDir, async (server) => {
+      const res = await rawReq(server, { method: 'GET', path: '/health/live' });
+      assert.equal(res.headers['x-index-version'], indexVersion, 'X-Index-Version header must match pinned generation metadata');
+    });
+
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
 
-    assert.equal(res.headers['x-index-version'], indexVersion, 'X-Index-Version header must match indexVersion from meta.json');
+  it('marks response stale when pinned metadata lacks indexVersion', async () => {
+    const tmpDir = path.join(os.tmpdir(), `version-test-missing-index-version-${Date.now()}`);
+    publishGenerationMeta(tmpDir, 'g-header-no-version', 'temporary-version');
+    fs.writeFileSync(
+      path.join(tmpDir, '.code-intel', 'generations', 'g-header-no-version', 'meta.json'),
+      JSON.stringify({ indexedAt: new Date().toISOString(), stats: { nodes: 1, edges: 0, files: 1, duration: 0 } }),
+    );
+
+    await withServer(tmpDir, async (server) => {
+      const res = await rawReq(server, { method: 'GET', path: '/health/live' });
+      assert.equal(res.headers['x-stale'], 'true');
+      assert.ok(typeof res.headers['x-stale-since'] === 'string');
+      assert.equal(res.headers['x-index-version'], undefined);
+    });
+
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('ignores conflicting legacy flat metadata when Generation V2 snapshot is active', async () => {
+    const tmpDir = path.join(os.tmpdir(), `version-test-conflict-${Date.now()}`);
+    writeLegacyMeta(tmpDir, 'legacy-old');
+    publishGenerationMeta(tmpDir, 'g-header-conflict', 'generation-new');
+
+    await withServer(tmpDir, async (server) => {
+      const res = await rawReq(server, { method: 'GET', path: '/health/live' });
+      assert.equal(res.headers['x-index-version'], 'generation-new');
+    });
+
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('falls back to legacy flat metadata when no Generation V2 snapshot is active', async () => {
+    const tmpDir = path.join(os.tmpdir(), `version-test-legacy-${Date.now()}`);
+    const indexVersion = crypto.randomUUID();
+    writeLegacyMeta(tmpDir, indexVersion);
+
+    await withServer(tmpDir, async (server) => {
+      const res = await rawReq(server, { method: 'GET', path: '/health/live' });
+      assert.equal(res.headers['x-index-version'], indexVersion, 'X-Index-Version header must match legacy meta.json when no snapshot exists');
+    });
+
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('marks response stale when legacy metadata lacks indexVersion and no Generation V2 snapshot is active', async () => {
+    const tmpDir = path.join(os.tmpdir(), `version-test-legacy-no-version-${Date.now()}`);
+    writeLegacyMeta(tmpDir);
+
+    await withServer(tmpDir, async (server) => {
+      const res = await rawReq(server, { method: 'GET', path: '/health/live' });
+      assert.equal(res.headers['x-stale'], 'true');
+      assert.ok(typeof res.headers['x-stale-since'] === 'string');
+      assert.equal(res.headers['x-index-version'], undefined);
+    });
+
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('marks response stale when legacy metadata is missing and no Generation V2 snapshot is active', async () => {
+    const tmpDir = path.join(os.tmpdir(), `version-test-legacy-missing-${Date.now()}`);
+    fs.mkdirSync(path.join(tmpDir, '.code-intel'), { recursive: true });
+
+    await withServer(tmpDir, async (server) => {
+      const res = await rawReq(server, { method: 'GET', path: '/health/live' });
+      assert.equal(res.headers['x-stale'], 'true');
+      assert.ok(typeof res.headers['x-stale-since'] === 'string');
+    });
+
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 });
 

@@ -13,6 +13,7 @@ export interface User {
   username: string;
   role: Role;
   createdAt: string;
+  disabledAt?: string;
 }
 
 export interface Token {
@@ -55,55 +56,75 @@ export class UsersDB {
   }
 
   private createTables(): void {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS users (
-        id TEXT PRIMARY KEY,
-        username TEXT UNIQUE NOT NULL,
-        passwordHash TEXT NOT NULL,
-        role TEXT NOT NULL,
-        createdAt TEXT NOT NULL
-      );
+    const migrate = this.db.transaction(() => {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS users (
+          id TEXT PRIMARY KEY,
+          username TEXT UNIQUE NOT NULL,
+          passwordHash TEXT NOT NULL,
+          role TEXT NOT NULL,
+          createdAt TEXT NOT NULL,
+          disabledAt TEXT NULL
+        );
 
-      CREATE TABLE IF NOT EXISTS tokens (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        hashedToken TEXT UNIQUE NOT NULL,
-        role TEXT NOT NULL,
-        expiresAt TEXT NULL,
-        lastUsedAt TEXT NULL,
-        createdAt TEXT NOT NULL,
-        revokedAt TEXT NULL
-      );
+        CREATE TABLE IF NOT EXISTS tokens (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          hashedToken TEXT UNIQUE NOT NULL,
+          role TEXT NOT NULL,
+          expiresAt TEXT NULL,
+          lastUsedAt TEXT NULL,
+          createdAt TEXT NOT NULL,
+          revokedAt TEXT NULL
+        );
 
-      CREATE TABLE IF NOT EXISTS audit_log (
-        id TEXT PRIMARY KEY,
-        userId TEXT NOT NULL,
-        resource TEXT NOT NULL,
-        action TEXT NOT NULL,
-        outcome TEXT NOT NULL,
-        ip TEXT NOT NULL,
-        timestamp TEXT NOT NULL
-      );
-    `);
+        CREATE TABLE IF NOT EXISTS audit_log (
+          id TEXT PRIMARY KEY,
+          userId TEXT NOT NULL,
+          resource TEXT NOT NULL,
+          action TEXT NOT NULL,
+          outcome TEXT NOT NULL,
+          ip TEXT NOT NULL,
+          timestamp TEXT NOT NULL
+        );
 
-    // OIDC identities — links a local user to an external provider subject
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS oidc_identities (
-        id TEXT PRIMARY KEY,
-        userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        provider TEXT NOT NULL,
-        sub TEXT NOT NULL,
-        email TEXT NULL,
-        name TEXT NULL,
-        createdAt TEXT NOT NULL,
-        lastLoginAt TEXT NULL,
-        UNIQUE (provider, sub)
-      );
-    `);
+        CREATE TABLE IF NOT EXISTS auth_sessions (
+          id TEXT PRIMARY KEY,
+          userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          tokenHash TEXT UNIQUE NOT NULL,
+          createdAt INTEGER NOT NULL,
+          lastSeenAt INTEGER NOT NULL,
+          expiresAt INTEGER NOT NULL,
+          ttlMs INTEGER NOT NULL,
+          rememberMe INTEGER NOT NULL DEFAULT 0,
+          revokedAt INTEGER NULL
+        );
 
-    // Add columns if they don't exist (idempotent migration)
-    try { this.db.exec(`ALTER TABLE tokens ADD COLUMN scopedRepos TEXT NULL`); } catch { /* already exists */ }
-    try { this.db.exec(`ALTER TABLE tokens ADD COLUMN scopedTools TEXT NULL`); } catch { /* already exists */ }
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_sessions_token_hash ON auth_sessions(tokenHash);
+        CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions(userId);
+        CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires_at ON auth_sessions(expiresAt);
+      `);
+
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS oidc_identities (
+          id TEXT PRIMARY KEY,
+          userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          provider TEXT NOT NULL,
+          sub TEXT NOT NULL,
+          email TEXT NULL,
+          name TEXT NULL,
+          createdAt TEXT NOT NULL,
+          lastLoginAt TEXT NULL,
+          UNIQUE (provider, sub)
+        );
+      `);
+
+      // Idempotent upgrades from pre-session databases.
+      try { this.db.exec(`ALTER TABLE tokens ADD COLUMN scopedRepos TEXT NULL`); } catch { /* already exists */ }
+      try { this.db.exec(`ALTER TABLE tokens ADD COLUMN scopedTools TEXT NULL`); } catch { /* already exists */ }
+      try { this.db.exec(`ALTER TABLE users ADD COLUMN disabledAt TEXT NULL`); } catch { /* already exists */ }
+    });
+    migrate();
   }
 
   // ── Users ──────────────────────────────────────────────────────────────────
@@ -124,7 +145,7 @@ export class UsersDB {
 
   findUserByUsername(username: string): (User & { passwordHash: string }) | null {
     const row = this.db
-      .prepare('SELECT id, username, passwordHash, role, createdAt FROM users WHERE username = ?')
+      .prepare('SELECT id, username, passwordHash, role, createdAt FROM users WHERE username = ? AND disabledAt IS NULL')
       .get(username) as { id: string; username: string; passwordHash: string; role: string; createdAt: string } | undefined;
 
     if (!row) return null;
@@ -137,15 +158,41 @@ export class UsersDB {
     };
   }
 
+  findUserById(userId: string): User | null {
+    const row = this.db
+      .prepare('SELECT id, username, role, createdAt, disabledAt FROM users WHERE id = ?')
+      .get(userId) as { id: string; username: string; role: string; createdAt: string; disabledAt: string | null } | undefined;
+    if (!row) return null;
+    return {
+      id: row.id,
+      username: row.username,
+      role: row.role as Role,
+      createdAt: row.createdAt,
+      disabledAt: row.disabledAt ?? undefined,
+    };
+  }
+
   listUsers(): User[] {
     const rows = this.db
-      .prepare('SELECT id, username, role, createdAt FROM users ORDER BY createdAt ASC')
-      .all() as { id: string; username: string; role: string; createdAt: string }[];
-    return rows.map((r) => ({ id: r.id, username: r.username, role: r.role as Role, createdAt: r.createdAt }));
+      .prepare('SELECT id, username, role, createdAt, disabledAt FROM users ORDER BY createdAt ASC')
+      .all() as { id: string; username: string; role: string; createdAt: string; disabledAt: string | null }[];
+    return rows.map((r) => ({
+      id: r.id,
+      username: r.username,
+      role: r.role as Role,
+      createdAt: r.createdAt,
+      disabledAt: r.disabledAt ?? undefined,
+    }));
   }
 
   deleteUser(username: string): void {
-    this.db.prepare('DELETE FROM users WHERE username = ?').run(username);
+    const run = this.db.transaction(() => {
+      const user = this.db.prepare('SELECT id FROM users WHERE username = ?').get(username) as { id: string } | undefined;
+      if (!user) return;
+      this.revokeAllSessionsForUserId(user.id);
+      this.db.prepare('DELETE FROM users WHERE id = ?').run(user.id);
+    });
+    run();
   }
 
   setRole(username: string, role: Role): void {
@@ -154,7 +201,34 @@ export class UsersDB {
 
   resetPassword(username: string, newPassword: string): void {
     const passwordHash = bcrypt.hashSync(newPassword, BCRYPT_ROUNDS);
-    this.db.prepare('UPDATE users SET passwordHash = ? WHERE username = ?').run(passwordHash, username);
+    const run = this.db.transaction(() => {
+      const user = this.db.prepare('SELECT id FROM users WHERE username = ?').get(username) as { id: string } | undefined;
+      if (!user) return;
+      this.db.prepare('UPDATE users SET passwordHash = ? WHERE id = ?').run(passwordHash, user.id);
+      this.revokeAllSessionsForUserId(user.id);
+    });
+    run();
+  }
+
+  disableUser(username: string): void {
+    const now = new Date().toISOString();
+    const run = this.db.transaction(() => {
+      const user = this.db.prepare('SELECT id FROM users WHERE username = ?').get(username) as { id: string } | undefined;
+      if (!user) return;
+      this.db.prepare('UPDATE users SET disabledAt = ? WHERE id = ?').run(now, user.id);
+      this.revokeAllSessionsForUserId(user.id);
+    });
+    run();
+  }
+
+  enableUser(username: string): void {
+    this.db.prepare('UPDATE users SET disabledAt = NULL WHERE username = ?').run(username);
+  }
+
+  revokeAllSessionsForUserId(userId: string, now = Date.now()): number {
+    return this.db.prepare(
+      'UPDATE auth_sessions SET revokedAt = ? WHERE userId = ? AND revokedAt IS NULL',
+    ).run(now, userId).changes;
   }
 
   // ── Tokens ─────────────────────────────────────────────────────────────────

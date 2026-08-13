@@ -79,8 +79,8 @@ function AppContent() {
               if (activeRepo) {
                 const PAGE = 200;
                 const [fullGraph, firstPage] = await Promise.all([
-                  client.fetchGraph(activeRepo.name),
-                  client.fetchGraphNodes(activeRepo.name, 0, PAGE),
+                  client.fetchGraph(activeRepo.id),
+                  client.fetchGraphNodes(activeRepo.id, 0, PAGE),
                 ]);
 
                 const total = firstPage.total;
@@ -95,7 +95,7 @@ function AppContent() {
                   for (let i = 0; i < offsets.length; i += CONCURRENCY) {
                     const batch = offsets.slice(i, i + CONCURRENCY);
                     const pages = await Promise.all(
-                      batch.map((off) => client.fetchGraphNodes(activeRepo.name, off, PAGE).catch(() => null))
+                      batch.map((off) => client.fetchGraphNodes(activeRepo.id, off, PAGE).catch(() => null))
                     );
                     for (const page of pages) {
                       if (!page) continue;
@@ -110,7 +110,7 @@ function AppContent() {
                 }
 
                 dispatch({ type: 'SET_MODE', mode: 'repo' });
-                dispatch({ type: 'SET_REPO_NAME', name: activeRepo.name });
+                dispatch({ type: 'SET_REPO', repoId: activeRepo.id, name: activeRepo.name });
                 dispatch({ type: 'SET_GRAPH', nodes: allNodes, edges: fullGraph.edges });
                 dispatch({ type: 'SET_CONNECTED', connected: true });
               }

@@ -1,6 +1,6 @@
 {
   "name": "code-intel-platform",
-  "version": "0.5.0",
+  "version": "1.0.10",
   "private": true,
   "license": "MIT",
   "files": [],
@@ -36,7 +36,7 @@
     "vite": "^8.1.5"
   },
   "dependencies": {
-    "@vohongtho.infotech/code-intel": "^1.0.6"
+    "@vohongtho.infotech/code-intel": "^1.0.10"
   },
   "overrides": {
     "sharp": "^0.35.0",
@@ -44,15 +44,21 @@
     "node-domexception": "^2.0.2",
     "qs": "^6.15.3",
     "tar": "^7.5.19",
-    "hono": "^4.12.27",
-    "brace-expansion": "5.0.8",
+    "hono": "4.13.0",
+    "brace-expansion": "5.0.9",
     "esbuild": "^0.28.1",
     "protobufjs": "^8.6.6",
     "@grpc/grpc-js": "^1.14.4",
     "@modelcontextprotocol/sdk": {
-      "hono": "^4.12.27"
+      "hono": "4.13.0",
+      "fast-uri": "3.1.5",
+      "ip-address": "10.4.0"
     },
     "@hono/node-server": "2.0.11",
+    "fast-uri": "3.1.5",
+    "ip-address": "10.4.0",
+    "nanoid": "^3.3.17",
+    "postcss": "^8.5.23",
     "tsup": {
       "esbuild": "^0.28.1"
     }

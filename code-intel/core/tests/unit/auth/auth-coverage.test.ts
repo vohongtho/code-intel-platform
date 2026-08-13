@@ -6,14 +6,16 @@
  * that are not exercised by existing tests.
  */
 
-import { describe, it, after } from 'node:test';
+import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import {
   createSession,
   getSession,
   deleteSession,
-  sessionStore,
   buildSessionCookie,
   clearSessionCookie,
   parseCookies,
@@ -23,6 +25,8 @@ import {
   requireToolScope,
   requestIdMiddleware,
 } from '../../../src/auth/middleware.js';
+import { UsersDB, getOrCreateUsersDB, resetUsersDBForTesting, type User } from '../../../src/auth/users-db.js';
+import { getOrCreateSessionStore, resetSessionStoreForTesting } from '../../../src/auth/session-store.js';
 import type { Request, Response, NextFunction } from 'express';
 
 // ── Minimal mocks ─────────────────────────────────────────────────────────────
@@ -84,50 +88,64 @@ describe('parseCookies — branches', () => {
 
 // ── Session sliding window renewal ────────────────────────────────────────────
 
-describe('getSession — sliding window', () => {
-  after(() => sessionStore.clear());
+describe('getSession — persistent sliding window', () => {
+  let dbPath: string;
+  let db: UsersDB;
+  let users: User[];
+
+  before(() => {
+    dbPath = path.join(os.tmpdir(), `auth-coverage-session-${Date.now()}.db`);
+    process.env['CODE_INTEL_USERS_DB_PATH'] = dbPath;
+    resetSessionStoreForTesting();
+    resetUsersDBForTesting();
+    db = getOrCreateUsersDB();
+    users = [
+      db.createUser('coverage-alice', 'password123', 'admin'),
+      db.createUser('coverage-bob', 'password123', 'viewer'),
+      db.createUser('coverage-carol', 'password123', 'analyst'),
+    ];
+  });
+
+  after(() => {
+    resetSessionStoreForTesting();
+    resetUsersDBForTesting();
+    delete process.env['CODE_INTEL_USERS_DB_PATH'];
+    for (const suffix of ['', '-wal', '-shm']) {
+      try { fs.unlinkSync(`${dbPath}${suffix}`); } catch { /* ignore */ }
+    }
+  });
 
   it('renews expiresAt when < 75% TTL remains', () => {
-    const { sessionId: sid } = createSession({ id: 'sw1', username: 'alice', role: 'admin' });
-    const entry = sessionStore.get(sid)!;
-    const ttlMs = 8 * 60 * 60 * 1000;
-    entry.expiresAt = Date.now() + ttlMs * 0.1; // only 10% left → should renew
-    const oldExpiry = entry.expiresAt;
+    const { sessionId: sid } = createSession(users[0]!);
+    const store = getOrCreateSessionStore();
+    const record = store.getRecordForTesting(sid)!;
+    store.setExpiresAtForTesting(sid, Date.now() + record.ttlMs * 0.1);
+    const oldExpiry = store.getRecordForTesting(sid)!.expiresAt;
     const result = getSession(sid);
     assert.ok(result !== null);
-    assert.ok(sessionStore.get(sid)!.expiresAt > oldExpiry, 'expiresAt should renew');
+    assert.ok(store.getRecordForTesting(sid)!.expiresAt > oldExpiry, 'expiresAt should renew');
   });
 
   it('does not renew when > 75% TTL remains', () => {
-    const { sessionId: sid } = createSession({ id: 'sw2', username: 'bob', role: 'viewer' });
-    const entry = sessionStore.get(sid)!;
-    const originalExpiry = entry.expiresAt;
+    const { sessionId: sid } = createSession(users[1]!);
+    const store = getOrCreateSessionStore();
+    const originalExpiry = store.getRecordForTesting(sid)!.expiresAt;
     getSession(sid);
-    assert.ok(Math.abs(sessionStore.get(sid)!.expiresAt - originalExpiry) <= 2);
+    assert.equal(store.getRecordForTesting(sid)!.expiresAt, originalExpiry);
   });
 
-  it('returns null and deletes expired session', () => {
-    const { sessionId: sid } = createSession({ id: 'sw3', username: 'carol', role: 'analyst' });
-    sessionStore.get(sid)!.expiresAt = Date.now() - 1;
+  it('returns null for expired session', () => {
+    const { sessionId: sid } = createSession(users[2]!);
+    const store = getOrCreateSessionStore();
+    store.setExpiresAtForTesting(sid, Date.now() - 1);
     assert.equal(getSession(sid), null);
-    assert.equal(sessionStore.has(sid), false);
   });
-});
 
-// ── deleteSession ─────────────────────────────────────────────────────────────
-
-describe('deleteSession', () => {
-  after(() => sessionStore.clear());
-
-  it('removes session from store', () => {
-    const { sessionId: sid } = createSession({ id: 'del1', username: 'alice', role: 'admin' });
-    assert.ok(sessionStore.has(sid));
+  it('deleteSession revokes and is idempotent', () => {
+    const { sessionId: sid } = createSession(users[0]!);
     deleteSession(sid);
-    assert.ok(!sessionStore.has(sid));
-  });
-
-  it('no-op for unknown session', () => {
-    assert.doesNotThrow(() => deleteSession('unknown-session-xyz'));
+    assert.equal(getSession(sid), null);
+    assert.doesNotThrow(() => deleteSession(sid));
   });
 });
 

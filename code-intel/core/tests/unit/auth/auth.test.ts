@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { UsersDB } from '../../../src/auth/users-db.js';
+import { UsersDB, getOrCreateUsersDB, resetUsersDBForTesting, type User } from '../../../src/auth/users-db.js';
+import { resetSessionStoreForTesting } from '../../../src/auth/session-store.js';
 import {
   createSession,
   getSession,
   deleteSession,
-  sessionStore,
 } from '../../../src/auth/middleware.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -178,15 +178,35 @@ describe('UsersDB — audit log', () => {
 // ── Session middleware ────────────────────────────────────────────────────────
 
 describe('Session middleware', () => {
+  let dbPath: string;
+  let db: UsersDB;
+  let alice: User;
+  let bob: User;
+
+  before(() => {
+    dbPath = path.join(os.tmpdir(), `session-middleware-${Date.now()}.db`);
+    process.env['CODE_INTEL_USERS_DB_PATH'] = dbPath;
+    resetSessionStoreForTesting();
+    resetUsersDBForTesting();
+    db = getOrCreateUsersDB();
+    alice = db.createUser('session-alice', 'password123', 'admin');
+    bob = db.createUser('session-bob', 'password123', 'viewer');
+  });
+
   after(() => {
-    sessionStore.clear();
+    resetSessionStoreForTesting();
+    resetUsersDBForTesting();
+    delete process.env['CODE_INTEL_USERS_DB_PATH'];
+    for (const suffix of ['', '-wal', '-shm']) {
+      try { fs.unlinkSync(`${dbPath}${suffix}`); } catch { /* ignore */ }
+    }
   });
 
   it('createSession + getSession — returns valid session', () => {
-    const { sessionId } = createSession({ id: 'u1', username: 'alice', role: 'admin' });
+    const { sessionId } = createSession(alice);
     const session = getSession(sessionId);
     assert.ok(session !== null);
-    assert.equal(session!.username, 'alice');
+    assert.equal(session!.username, 'session-alice');
     assert.equal(session!.role, 'admin');
   });
 
@@ -196,7 +216,7 @@ describe('Session middleware', () => {
   });
 
   it('deleteSession — removes session', () => {
-    const { sessionId } = createSession({ id: 'u2', username: 'bob', role: 'viewer' });
+    const { sessionId } = createSession(bob);
     deleteSession(sessionId);
     const session = getSession(sessionId);
     assert.equal(session, null);

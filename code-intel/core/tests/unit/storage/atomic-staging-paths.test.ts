@@ -6,7 +6,8 @@ import path from 'node:path';
 import { getDbPath, getVectorDbPath, saveMetadata } from '../../../src/storage/metadata.js';
 import { getBm25DbPath } from '../../../src/search/bm25-index.js';
 import { createIndexGeneration, publishIndexGeneration } from '../../../src/storage/index-generation.js';
-import { resolveAnalyzeWorkspaceRoot, seedIndexGeneration } from '../../../src/cli/atomic-analyze.js';
+import { resolveAnalyzeWorkspaceRoot, runAtomicAnalyze, seedIndexGeneration } from '../../../src/cli/atomic-analyze.js';
+import { saveRegistry } from '../../../src/storage/repo-registry.js';
 
 const original = process.env['CODE_INTEL_INDEX_STAGING_DIR'];
 
@@ -25,6 +26,104 @@ describe('atomic analyze argument parsing', () => {
   it('does not mistake option values for the repository path', () => {
     assert.equal(resolveAnalyzeWorkspaceRoot(['analyze', '--llm-model', 'gpt-4o-mini'], '/cwd'), '/cwd');
     assert.equal(resolveAnalyzeWorkspaceRoot(['analyze', '--name=api', './repo'], '/cwd'), '/cwd/repo');
+  });
+});
+
+describe('cli package metadata fallback', () => {
+  it('atomic analyze no-op helper tolerates dist-tests package.json absence', () => {
+    const prevHome = process.env['HOME'];
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-atomic-home-'));
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-atomic-noop-'));
+    process.env['HOME'] = home;
+    try {
+      saveRegistry([{ id: 'repo-1', name: 'alpha', path: repo, indexedAt: new Date(0).toISOString(), stats: { nodes: 1, edges: 0, files: 1 } }]);
+      const live = createIndexGeneration(repo, 'live');
+      fs.writeFileSync(live.graphDbPath, 'graph');
+      fs.writeFileSync(live.bm25DbPath, 'bm25');
+      publishIndexGeneration(repo, live, { indexedAt: new Date(0).toISOString(), stats: { nodes: 1, edges: 0, files: 1, duration: 1 } });
+      const status = runAtomicAnalyze(['analyze', repo], new URL('../../../src/cli/main.js', import.meta.url));
+      assert.equal(status, 0);
+    } finally {
+      if (prevHome === undefined) delete process.env['HOME'];
+      else process.env['HOME'] = prevHome;
+      fs.rmSync(home, { recursive: true, force: true });
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('atomic analyze no-op validation', () => {
+  it('noop analyze still rejects conflicting explicit name for existing path', () => {
+    const prevHome = process.env['HOME'];
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-atomic-home-'));
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-atomic-noop-'));
+    process.env['HOME'] = home;
+    try {
+      saveRegistry([{ id: 'repo-1', name: 'alpha', path: repo, indexedAt: new Date(0).toISOString(), stats: { nodes: 1, edges: 0, files: 1 } }]);
+      const live = createIndexGeneration(repo, 'live');
+      fs.writeFileSync(live.graphDbPath, 'graph');
+      fs.writeFileSync(live.bm25DbPath, 'bm25');
+      publishIndexGeneration(repo, live, { indexedAt: new Date(0).toISOString(), stats: { nodes: 1, edges: 0, files: 1, duration: 1 } });
+      const status = runAtomicAnalyze(['analyze', repo, '--name', 'beta'], new URL('../../../src/cli/main.js', import.meta.url));
+      assert.equal(status, 1);
+    } finally {
+      if (prevHome === undefined) delete process.env['HOME'];
+      else process.env['HOME'] = prevHome;
+      fs.rmSync(home, { recursive: true, force: true });
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('noop analyze still rejects relink conflict for existing name on new path', () => {
+    const prevHome = process.env['HOME'];
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-atomic-home-'));
+    const repoA = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-atomic-a-'));
+    const repoB = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-atomic-b-'));
+    process.env['HOME'] = home;
+    try {
+      saveRegistry([{ id: 'repo-1', name: 'alpha', path: repoA, indexedAt: new Date(0).toISOString(), stats: { nodes: 1, edges: 0, files: 1 } }]);
+      const live = createIndexGeneration(repoB, 'live');
+      fs.writeFileSync(live.graphDbPath, 'graph');
+      fs.writeFileSync(live.bm25DbPath, 'bm25');
+      publishIndexGeneration(repoB, live, { indexedAt: new Date(0).toISOString(), stats: { nodes: 1, edges: 0, files: 1, duration: 1 } });
+      const status = runAtomicAnalyze(['analyze', repoB, '--name=alpha'], new URL('../../../src/cli/main.js', import.meta.url));
+      assert.equal(status, 1);
+    } finally {
+      if (prevHome === undefined) delete process.env['HOME'];
+      else process.env['HOME'] = prevHome;
+      fs.rmSync(home, { recursive: true, force: true });
+      fs.rmSync(repoA, { recursive: true, force: true });
+      fs.rmSync(repoB, { recursive: true, force: true });
+    }
+  });
+
+  it('noop analyze rejects published repoId already owned by another path', () => {
+    const prevHome = process.env['HOME'];
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-atomic-home-'));
+    const repoA = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-atomic-a-'));
+    const repoB = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-atomic-b-'));
+    process.env['HOME'] = home;
+    try {
+      saveRegistry([{ id: 'repo-1', name: 'alpha', path: repoA, indexedAt: new Date(0).toISOString(), stats: { nodes: 1, edges: 0, files: 1 } }]);
+      const live = createIndexGeneration(repoB, 'live');
+      fs.writeFileSync(live.graphDbPath, 'graph');
+      fs.writeFileSync(live.bm25DbPath, 'bm25');
+      publishIndexGeneration(repoB, live, {
+        repoId: 'repo-1',
+        indexedAt: new Date(0).toISOString(),
+        stats: { nodes: 1, edges: 0, files: 1, duration: 1 },
+      });
+      const status = runAtomicAnalyze(['analyze', repoB, '--name', 'beta'], new URL('../../../src/cli/main.js', import.meta.url));
+      assert.equal(status, 1);
+      const current = JSON.parse(fs.readFileSync(path.join(repoB, '.code-intel', 'current.json'), 'utf8')) as { generationId: string };
+      assert.equal(current.generationId, 'live');
+    } finally {
+      if (prevHome === undefined) delete process.env['HOME'];
+      else process.env['HOME'] = prevHome;
+      fs.rmSync(home, { recursive: true, force: true });
+      fs.rmSync(repoA, { recursive: true, force: true });
+      fs.rmSync(repoB, { recursive: true, force: true });
+    }
   });
 });
 

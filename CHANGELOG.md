@@ -4,6 +4,40 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.0.10] - 2026-08-03
+
+### 🗃️ Generation V2
+
+- Added a true no-op analysis plan that preserves the active generation when source and index state are unchanged.
+- Added repository-level analysis locking, selective artifact seeding, reflink-first cloning, pinned index snapshots, and stale staging cleanup.
+- Changed known source updates to rebuild graph/BM25 while cloning only the healthy vector database required for incremental vector mutation.
+- Updated index trust verification to read graph, BM25, vector, and metadata from one pinned generation snapshot.
+- Stabilized published-generation ownership: `code-intel serve` now treats published vector artifacts as read-only, degrades to BM25 when vectors are missing/stale/incompatible/corrupt, and reports guidance to run `code-intel analyze --embeddings` instead of rebuilding in place.
+- Hardened staging cleanup so lock-owned, remote-host, recent, or otherwise uncertain `.staging-*` directories are preserved and delete-time ownership is revalidated before removal.
+- Replaced stale analyze-lock `read + rmSync` recovery with an ownership-safe atomic claim protocol; release and manual unlock now remove only the claimed lock instance and fail closed when ownership cannot be proven.
+- Enforced fail-closed explicit scope validation across HTTP, MCP, and query-explain paths: malformed `scope` now returns 400, unknown explicit repo/group targets preserve 404, and malformed MCP scope no longer widens to the default repository.
+- Fixed `code-intel setup [path]` to emit MCP configuration for the resolved selected repository root, not ambient `.`.
+- Fixed true no-op analyze flows so explicit `--name` validation and relink/rename reconciliation still run before exit.
+
+### 🤖 Agent-aware setup
+
+- `code-intel setup` now reads `.code-intel/agent-targets.json` and installs only selected-agent global integrations.
+- Setup no longer creates project-scoped `.cursor`, `.github`, `.kilocode`, `.agents`, `.clinerules`, `.windsurfrules`, or `AGENTS.md` files.
+- Added `setup [path]`, `--mcp-only`, `--all-agents`, and `--dry-run` behavior.
+- `code-intel mcp` no longer auto-analyzes unindexed repositories on startup; it now keeps the MCP connection open and graph-backed tools tell users to run `code-intel analyze` first.
+- After a later explicit `code-intel analyze`, the next graph-backed MCP tool call auto-reloads without requiring reconnect.
+- Recommended MCP first-run sequence is now `code-intel analyze && code-intel setup`.
+
+### 🧠 Embedding model selector
+
+- Added backend embedding model registry with canonical `Xenova/all-MiniLM-L6-v2` default, legacy short-ID normalization, and availability reporting without triggering model downloads.
+- Added authenticated `GET /api/v1/embeddings/models` plus Web client catalog loading and structured malformed-response handling.
+- Replaced the Settings Embeddings Model free-text input with a disabled-aware selector that shows canonical model metadata and unsupported legacy values.
+- Config validation now rejects unknown or unavailable embedding models when embeddings are enabled and persists the canonical ID.
+- Embedding runtime, fingerprint metadata, and vector-index rebuild decisions now derive model ID and dimension from the selected descriptor.
+
+---
+
 ## [1.0.9] - 2026-07-31
 
 ### 🧠 Incremental vector update correctness
@@ -425,7 +459,7 @@ Fixed three confirmed false-positive mechanisms in the security-signal detectors
 - **`LazyKnowledgeGraph`** — nodes not loaded into memory on startup; fetched from DB on demand with LRU cache
 - **LRU cache** — keeps last N nodes in memory (default: 5,000; `GRAPH_CACHE_SIZE` env var)
 - **Background warm** — pre-loads top-N highest-blast-radius nodes on startup
-- **Paginated graph API** — `GET /api/v1/graph/:repo/nodes?limit=100&offset=0`; single-node fetch without full graph load
+- **Paginated graph API** — `GET /api/v1/graph/:repoId/nodes?limit=100&offset=0`; single-node fetch without full graph load
 - **Web UI progressive loading** — loads visible nodes first; fetches neighbors on pan/zoom
 - **Serve startup** — only loads `meta.json` + node/edge counts on startup; no full graph load
 
@@ -965,6 +999,19 @@ All runbooks in `docs/runbooks/`:
 ## [Unreleased] — 2026-04-27
 
 ### 🐛 Bug Fixes
+
+#### `fix: normalize GQL aggregate results and prevent Query Console crashes`
+- Normalized every successful GQL response to a stable transport contract: `{ kind, nodes, edges, groups, path, executionTimeMs, truncated, totalCount }`
+- Added `GQLResultKind` with `nodes`, `traversal`, `path`, and `aggregate` variants
+- Updated executor paths so `FIND`, `TRAVERSE`, `PATH`, and `COUNT` all return complete collection fields
+- Preserved aggregate semantics: grouped counts remain descending; missing group values still bucket under `(none)`
+- Added HTTP validation for successful query results before serialization; malformed internal results now return structured `500` responses without stack traces
+- Kept `400` for missing `gql`, `422` for parse errors, and current `408` truncated-result behavior
+- Updated OpenAPI and README docs to document the normalized contract
+- Added Web runtime normalization so legacy aggregate responses that omit `nodes`, `edges`, `path`, and `kind` still render safely
+- Query Console now renders by `result.kind`, shows explicit empty states, keeps metadata visible, and contains render-time failures locally instead of crashing the UI
+- Added regression coverage for grouped COUNT, plain COUNT, FIND/TRAVERSE/PATH result shapes, malformed internal `500` responses, legacy aggregate normalization, non-JSON API failures, and Query Panel aggregate/traversal/path rendering
+
 
 #### `fix: wipe stale .wal/.shm DB files before write to prevent corruption`
 - `analyzeWorkspace --force`: proactively wipes both `graph.db` and `vector.db` stale files (`.wal`, `.shm`, `-wal`, `-shm` variants) upfront before any write

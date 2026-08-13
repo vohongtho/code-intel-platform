@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { runStandaloneCommand } from './standalone-commands.js';
@@ -8,7 +8,24 @@ import { runAtomicAnalyze } from './atomic-analyze.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const pkg = JSON.parse(readFileSync(path.join(__dirname, '../../package.json'), 'utf-8')) as { version: string };
+
+function loadPackageMeta(): { version: string } {
+  for (const candidate of [
+    path.join(__dirname, '../../package.json'),
+    path.join(__dirname, '../../../package.json'),
+    path.join(__dirname, '../../../../package.json'),
+  ]) {
+    if (!existsSync(candidate)) continue;
+    try {
+      return JSON.parse(readFileSync(candidate, 'utf-8')) as { version: string };
+    } catch {
+      // Try next candidate.
+    }
+  }
+  return { version: '0.0.0' };
+}
+
+const pkg = loadPackageMeta();
 const arg = process.argv[2];
 
 if (process.argv.length === 3 && (arg === '--version' || arg === '-V')) {

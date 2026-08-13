@@ -35,14 +35,18 @@ export function verifyWebSocketHandshake(req: IncomingMessage): WebSocketUser | 
   const cookies = parseCookies(cookieHeader);
   const sessionId = cookies['code_intel_session'];
   if (sessionId) {
-    const session = getSession(sessionId);
-    if (session) {
-      return {
-        id: session.userId,
-        username: session.username,
-        role: session.role,
-        authMethod: 'session',
-      };
+    try {
+      const session = getSession(sessionId);
+      if (session) {
+        return {
+          id: session.userId,
+          username: session.username,
+          role: session.role,
+          authMethod: 'session',
+        };
+      }
+    } catch {
+      // Fail closed for the cookie, but preserve the independent Bearer-token path below.
     }
   }
 
