@@ -1,6 +1,10 @@
-# Language Capability Baseline Specification
+# Language Capability Baseline
 
-## ADDED Requirements
+## Purpose
+
+Define the canonical semantic-capability and resolver-scalability baseline for every advertised Code Intel language.
+
+## Requirements
 
 ### Requirement: Every advertised language MUST have one canonical capability descriptor
 
@@ -15,6 +19,8 @@ The system MUST represent every advertised language exactly once in the canonica
 
 ### Requirement: Grammar availability MUST NOT be treated as proof of semantic support
 
+The system MUST NOT treat grammar availability as proof of semantic support.
+
 #### Scenario: Grammar loads but semantic query is missing
 
 - **GIVEN** a language whose WASM grammar is available
@@ -25,6 +31,8 @@ The system MUST represent every advertised language exactly once in the canonica
 
 ### Requirement: Shared semantic changes MUST preserve all accepted language rows
 
+The shared semantic release gate MUST preserve every accepted language row.
+
 #### Scenario: One language regresses while aggregate metrics improve
 
 - **GIVEN** accepted per-language semantic baselines
@@ -33,6 +41,8 @@ The system MUST represent every advertised language exactly once in the canonica
 - **AND** the regression MUST NOT be hidden by aggregate averages.
 
 ### Requirement: HTML support MUST be truthful and structural
+
+HTML support MUST remain truthful and structural.
 
 #### Scenario: HTML document contains resources and form/navigation references
 
@@ -43,6 +53,8 @@ The system MUST represent every advertised language exactly once in the canonica
 - **AND** raw HTML control-flow/data-flow capability MUST be `not-applicable` unless an executable embedded language region is analyzed separately.
 
 ### Requirement: Resolver scalability MUST be registry-gated
+
+Resolver scalability MUST be enforced by registry-gated contracts.
 
 #### Scenario: Production adapter accidentally scans all files per import/reference
 

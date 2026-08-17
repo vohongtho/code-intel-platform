@@ -1,0 +1,27 @@
+{
+  "language": "javascript",
+  "fixtures": {
+    "main": "main.js",
+    "grouped": "grouped.js"
+  },
+  "expected": {
+    "definitions": [
+      "UserService",
+      "createUser",
+      "DEFAULT_ROLE"
+    ],
+    "forbidden": [
+      "internalHelper"
+    ]
+  },
+  "groupedExpected": [
+    "ALPHA",
+    "BETA",
+    "PairOne",
+    "PairTwo"
+  ],
+  "notes": [
+    "Main fixture captures baseline semantic observations.",
+    "Grouped fixture captures multi-declaration or wrapper-contained entities."
+  ]
+}

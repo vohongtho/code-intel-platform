@@ -1,0 +1,845 @@
+{
+  "generatedAt": "2026-08-17T10:18:35.105Z",
+  "rows": [
+    {
+      "language": "typescript",
+      "parser": "tree-sitter",
+      "serialCount": 8,
+      "parallelCount": 8,
+      "persistedCount": 8,
+      "acceptedMissing": [],
+      "forbiddenExported": [],
+      "groupedHits": [
+        "ALPHA",
+        "BETA",
+        "PairOne",
+        "PairTwo"
+      ],
+      "stableOrder": true,
+      "searchVisible": true,
+      "inspectVisible": true,
+      "capabilities": {
+        "definitions": "supported",
+        "ownership": "supported",
+        "imports": "supported",
+        "exports": "supported",
+        "calls": "supported",
+        "references": "partial",
+        "heritage": "supported",
+        "typeHints": "supported",
+        "controlFlow": "unsupported",
+        "dataFlow": "unsupported",
+        "embeddedLanguages": "unsupported"
+      },
+      "accepted": true,
+      "correctness": {
+        "acceptedMissing": 0,
+        "forbiddenExported": 0,
+        "searchVisible": true,
+        "inspectVisible": true
+      },
+      "determinism": {
+        "stableOrder": true,
+        "serialCount": 8,
+        "parallelCount": 8
+      },
+      "completeness": {
+        "persistedCount": 8,
+        "groupedHits": 4
+      },
+      "scalability": {
+        "maxWorkspaceTraversalsPerPass": 4,
+        "maxPreparedIndexBuildsPerPass": 1,
+        "candidateLookupBudget": 4,
+        "truncationBudget": 0,
+        "depthScalingBudget": 4
+      },
+      "resourceUse": {
+        "retainedHeapMiB": 1
+      }
+    },
+    {
+      "language": "javascript",
+      "parser": "tree-sitter",
+      "serialCount": 7,
+      "parallelCount": 7,
+      "persistedCount": 7,
+      "acceptedMissing": [],
+      "forbiddenExported": [],
+      "groupedHits": [
+        "ALPHA",
+        "BETA",
+        "PairOne",
+        "PairTwo"
+      ],
+      "stableOrder": true,
+      "searchVisible": true,
+      "inspectVisible": true,
+      "capabilities": {
+        "definitions": "supported",
+        "ownership": "supported",
+        "imports": "supported",
+        "exports": "supported",
+        "calls": "supported",
+        "references": "partial",
+        "heritage": "supported",
+        "typeHints": "supported",
+        "controlFlow": "unsupported",
+        "dataFlow": "unsupported",
+        "embeddedLanguages": "unsupported"
+      },
+      "accepted": true,
+      "correctness": {
+        "acceptedMissing": 0,
+        "forbiddenExported": 0,
+        "searchVisible": true,
+        "inspectVisible": true
+      },
+      "determinism": {
+        "stableOrder": true,
+        "serialCount": 7,
+        "parallelCount": 7
+      },
+      "completeness": {
+        "persistedCount": 7,
+        "groupedHits": 4
+      },
+      "scalability": {
+        "maxWorkspaceTraversalsPerPass": 4,
+        "maxPreparedIndexBuildsPerPass": 1,
+        "candidateLookupBudget": 4,
+        "truncationBudget": 0,
+        "depthScalingBudget": 4
+      },
+      "resourceUse": {
+        "retainedHeapMiB": 1
+      }
+    },
+    {
+      "language": "python",
+      "parser": "tree-sitter",
+      "serialCount": 5,
+      "parallelCount": 5,
+      "persistedCount": 5,
+      "acceptedMissing": [],
+      "forbiddenExported": [],
+      "groupedHits": [
+        "first",
+        "second",
+        "PairOne",
+        "PairTwo"
+      ],
+      "stableOrder": true,
+      "searchVisible": true,
+      "inspectVisible": true,
+      "capabilities": {
+        "definitions": "supported",
+        "ownership": "supported",
+        "imports": "supported",
+        "exports": "supported",
+        "calls": "supported",
+        "references": "partial",
+        "heritage": "supported",
+        "typeHints": "supported",
+        "controlFlow": "unsupported",
+        "dataFlow": "unsupported",
+        "embeddedLanguages": "unsupported"
+      },
+      "accepted": true,
+      "correctness": {
+        "acceptedMissing": 0,
+        "forbiddenExported": 0,
+        "searchVisible": true,
+        "inspectVisible": true
+      },
+      "determinism": {
+        "stableOrder": true,
+        "serialCount": 5,
+        "parallelCount": 5
+      },
+      "completeness": {
+        "persistedCount": 5,
+        "groupedHits": 4
+      },
+      "scalability": {
+        "maxWorkspaceTraversalsPerPass": 4,
+        "maxPreparedIndexBuildsPerPass": 1,
+        "candidateLookupBudget": 4,
+        "truncationBudget": 0,
+        "depthScalingBudget": 4
+      },
+      "resourceUse": {
+        "retainedHeapMiB": 1
+      }
+    },
+    {
+      "language": "java",
+      "parser": "tree-sitter",
+      "serialCount": 5,
+      "parallelCount": 5,
+      "persistedCount": 5,
+      "acceptedMissing": [],
+      "forbiddenExported": [],
+      "groupedHits": [
+        "PairOne",
+        "PairTwo"
+      ],
+      "stableOrder": true,
+      "searchVisible": true,
+      "inspectVisible": true,
+      "capabilities": {
+        "definitions": "supported",
+        "ownership": "supported",
+        "imports": "supported",
+        "exports": "supported",
+        "calls": "supported",
+        "references": "partial",
+        "heritage": "supported",
+        "typeHints": "supported",
+        "controlFlow": "unsupported",
+        "dataFlow": "unsupported",
+        "embeddedLanguages": "unsupported"
+      },
+      "accepted": true,
+      "correctness": {
+        "acceptedMissing": 0,
+        "forbiddenExported": 0,
+        "searchVisible": true,
+        "inspectVisible": true
+      },
+      "determinism": {
+        "stableOrder": true,
+        "serialCount": 5,
+        "parallelCount": 5
+      },
+      "completeness": {
+        "persistedCount": 5,
+        "groupedHits": 2
+      },
+      "scalability": {
+        "maxWorkspaceTraversalsPerPass": 4,
+        "maxPreparedIndexBuildsPerPass": 1,
+        "candidateLookupBudget": 4,
+        "truncationBudget": 0,
+        "depthScalingBudget": 4
+      },
+      "resourceUse": {
+        "retainedHeapMiB": 1
+      }
+    },
+    {
+      "language": "go",
+      "parser": "tree-sitter",
+      "serialCount": 6,
+      "parallelCount": 6,
+      "persistedCount": 6,
+      "acceptedMissing": [],
+      "forbiddenExported": [],
+      "groupedHits": [
+        "first",
+        "second",
+        "PairOne",
+        "PairTwo"
+      ],
+      "stableOrder": true,
+      "searchVisible": true,
+      "inspectVisible": true,
+      "capabilities": {
+        "definitions": "supported",
+        "ownership": "supported",
+        "imports": "supported",
+        "exports": "supported",
+        "calls": "supported",
+        "references": "partial",
+        "heritage": "supported",
+        "typeHints": "supported",
+        "controlFlow": "unsupported",
+        "dataFlow": "unsupported",
+        "embeddedLanguages": "unsupported"
+      },
+      "accepted": true,
+      "correctness": {
+        "acceptedMissing": 0,
+        "forbiddenExported": 0,
+        "searchVisible": true,
+        "inspectVisible": true
+      },
+      "determinism": {
+        "stableOrder": true,
+        "serialCount": 6,
+        "parallelCount": 6
+      },
+      "completeness": {
+        "persistedCount": 6,
+        "groupedHits": 4
+      },
+      "scalability": {
+        "maxWorkspaceTraversalsPerPass": 4,
+        "maxPreparedIndexBuildsPerPass": 1,
+        "candidateLookupBudget": 4,
+        "truncationBudget": 0,
+        "depthScalingBudget": 4
+      },
+      "resourceUse": {
+        "retainedHeapMiB": 1
+      }
+    },
+    {
+      "language": "c",
+      "parser": "tree-sitter",
+      "serialCount": 7,
+      "parallelCount": 7,
+      "persistedCount": 7,
+      "acceptedMissing": [],
+      "forbiddenExported": [],
+      "groupedHits": [
+        "first",
+        "second",
+        "PairOne",
+        "PairTwo"
+      ],
+      "stableOrder": true,
+      "searchVisible": true,
+      "inspectVisible": true,
+      "capabilities": {
+        "definitions": "supported",
+        "ownership": "partial",
+        "imports": "partial",
+        "exports": "partial",
+        "calls": "partial",
+        "references": "partial",
+        "heritage": "partial",
+        "typeHints": "partial",
+        "controlFlow": "unsupported",
+        "dataFlow": "unsupported",
+        "embeddedLanguages": "unsupported"
+      },
+      "accepted": true,
+      "correctness": {
+        "acceptedMissing": 0,
+        "forbiddenExported": 0,
+        "searchVisible": true,
+        "inspectVisible": true
+      },
+      "determinism": {
+        "stableOrder": true,
+        "serialCount": 7,
+        "parallelCount": 7
+      },
+      "completeness": {
+        "persistedCount": 7,
+        "groupedHits": 4
+      },
+      "scalability": {
+        "maxWorkspaceTraversalsPerPass": 4,
+        "maxPreparedIndexBuildsPerPass": 1,
+        "candidateLookupBudget": 4,
+        "truncationBudget": 0,
+        "depthScalingBudget": 4
+      },
+      "resourceUse": {
+        "retainedHeapMiB": 1
+      }
+    },
+    {
+      "language": "cpp",
+      "parser": "tree-sitter",
+      "serialCount": 5,
+      "parallelCount": 5,
+      "persistedCount": 5,
+      "acceptedMissing": [],
+      "forbiddenExported": [],
+      "groupedHits": [
+        "PairOne",
+        "PairTwo"
+      ],
+      "stableOrder": true,
+      "searchVisible": true,
+      "inspectVisible": true,
+      "capabilities": {
+        "definitions": "supported",
+        "ownership": "partial",
+        "imports": "partial",
+        "exports": "partial",
+        "calls": "partial",
+        "references": "partial",
+        "heritage": "partial",
+        "typeHints": "partial",
+        "controlFlow": "unsupported",
+        "dataFlow": "unsupported",
+        "embeddedLanguages": "unsupported"
+      },
+      "accepted": true,
+      "correctness": {
+        "acceptedMissing": 0,
+        "forbiddenExported": 0,
+        "searchVisible": true,
+        "inspectVisible": true
+      },
+      "determinism": {
+        "stableOrder": true,
+        "serialCount": 5,
+        "parallelCount": 5
+      },
+      "completeness": {
+        "persistedCount": 5,
+        "groupedHits": 2
+      },
+      "scalability": {
+        "maxWorkspaceTraversalsPerPass": 4,
+        "maxPreparedIndexBuildsPerPass": 1,
+        "candidateLookupBudget": 4,
+        "truncationBudget": 0,
+        "depthScalingBudget": 4
+      },
+      "resourceUse": {
+        "retainedHeapMiB": 1
+      }
+    },
+    {
+      "language": "csharp",
+      "parser": "tree-sitter",
+      "serialCount": 6,
+      "parallelCount": 6,
+      "persistedCount": 6,
+      "acceptedMissing": [],
+      "forbiddenExported": [],
+      "groupedHits": [
+        "PairOne",
+        "PairTwo"
+      ],
+      "stableOrder": true,
+      "searchVisible": true,
+      "inspectVisible": true,
+      "capabilities": {
+        "definitions": "supported",
+        "ownership": "partial",
+        "imports": "partial",
+        "exports": "partial",
+        "calls": "partial",
+        "references": "partial",
+        "heritage": "partial",
+        "typeHints": "partial",
+        "controlFlow": "unsupported",
+        "dataFlow": "unsupported",
+        "embeddedLanguages": "unsupported"
+      },
+      "accepted": true,
+      "correctness": {
+        "acceptedMissing": 0,
+        "forbiddenExported": 0,
+        "searchVisible": true,
+        "inspectVisible": true
+      },
+      "determinism": {
+        "stableOrder": true,
+        "serialCount": 6,
+        "parallelCount": 6
+      },
+      "completeness": {
+        "persistedCount": 6,
+        "groupedHits": 2
+      },
+      "scalability": {
+        "maxWorkspaceTraversalsPerPass": 4,
+        "maxPreparedIndexBuildsPerPass": 1,
+        "candidateLookupBudget": 4,
+        "truncationBudget": 0,
+        "depthScalingBudget": 4
+      },
+      "resourceUse": {
+        "retainedHeapMiB": 1
+      }
+    },
+    {
+      "language": "rust",
+      "parser": "tree-sitter",
+      "serialCount": 9,
+      "parallelCount": 9,
+      "persistedCount": 9,
+      "acceptedMissing": [],
+      "forbiddenExported": [],
+      "groupedHits": [
+        "PairOne",
+        "PairTwo"
+      ],
+      "stableOrder": true,
+      "searchVisible": true,
+      "inspectVisible": true,
+      "capabilities": {
+        "definitions": "supported",
+        "ownership": "supported",
+        "imports": "supported",
+        "exports": "supported",
+        "calls": "supported",
+        "references": "partial",
+        "heritage": "supported",
+        "typeHints": "supported",
+        "controlFlow": "unsupported",
+        "dataFlow": "unsupported",
+        "embeddedLanguages": "unsupported"
+      },
+      "accepted": true,
+      "correctness": {
+        "acceptedMissing": 0,
+        "forbiddenExported": 0,
+        "searchVisible": true,
+        "inspectVisible": true
+      },
+      "determinism": {
+        "stableOrder": true,
+        "serialCount": 9,
+        "parallelCount": 9
+      },
+      "completeness": {
+        "persistedCount": 9,
+        "groupedHits": 2
+      },
+      "scalability": {
+        "maxWorkspaceTraversalsPerPass": 4,
+        "maxPreparedIndexBuildsPerPass": 1,
+        "candidateLookupBudget": 4,
+        "truncationBudget": 0,
+        "depthScalingBudget": 4
+      },
+      "resourceUse": {
+        "retainedHeapMiB": 1
+      }
+    },
+    {
+      "language": "php",
+      "parser": "tree-sitter",
+      "serialCount": 8,
+      "parallelCount": 8,
+      "persistedCount": 8,
+      "acceptedMissing": [],
+      "forbiddenExported": [],
+      "groupedHits": [
+        "PairOne",
+        "PairTwo"
+      ],
+      "stableOrder": true,
+      "searchVisible": true,
+      "inspectVisible": true,
+      "capabilities": {
+        "definitions": "supported",
+        "ownership": "partial",
+        "imports": "partial",
+        "exports": "partial",
+        "calls": "partial",
+        "references": "partial",
+        "heritage": "partial",
+        "typeHints": "partial",
+        "controlFlow": "unsupported",
+        "dataFlow": "unsupported",
+        "embeddedLanguages": "unsupported"
+      },
+      "accepted": true,
+      "correctness": {
+        "acceptedMissing": 0,
+        "forbiddenExported": 0,
+        "searchVisible": true,
+        "inspectVisible": true
+      },
+      "determinism": {
+        "stableOrder": true,
+        "serialCount": 8,
+        "parallelCount": 8
+      },
+      "completeness": {
+        "persistedCount": 8,
+        "groupedHits": 2
+      },
+      "scalability": {
+        "maxWorkspaceTraversalsPerPass": 4,
+        "maxPreparedIndexBuildsPerPass": 1,
+        "candidateLookupBudget": 4,
+        "truncationBudget": 0,
+        "depthScalingBudget": 4
+      },
+      "resourceUse": {
+        "retainedHeapMiB": 1
+      }
+    },
+    {
+      "language": "kotlin",
+      "parser": "regex",
+      "serialCount": 4,
+      "parallelCount": 0,
+      "persistedCount": 4,
+      "acceptedMissing": [],
+      "forbiddenExported": [],
+      "groupedHits": [
+        "PairOne",
+        "PairTwo"
+      ],
+      "stableOrder": false,
+      "searchVisible": true,
+      "inspectVisible": true,
+      "capabilities": {
+        "definitions": "supported",
+        "ownership": "partial",
+        "imports": "partial",
+        "exports": "partial",
+        "calls": "partial",
+        "references": "partial",
+        "heritage": "partial",
+        "typeHints": "partial",
+        "controlFlow": "unsupported",
+        "dataFlow": "unsupported",
+        "embeddedLanguages": "unsupported"
+      },
+      "accepted": true,
+      "correctness": {
+        "acceptedMissing": 0,
+        "forbiddenExported": 0,
+        "searchVisible": true,
+        "inspectVisible": true
+      },
+      "determinism": {
+        "stableOrder": false,
+        "serialCount": 4,
+        "parallelCount": 0
+      },
+      "completeness": {
+        "persistedCount": 4,
+        "groupedHits": 2
+      },
+      "scalability": {
+        "maxWorkspaceTraversalsPerPass": 4,
+        "maxPreparedIndexBuildsPerPass": 1,
+        "candidateLookupBudget": 4,
+        "truncationBudget": 0,
+        "depthScalingBudget": 4
+      },
+      "resourceUse": {
+        "retainedHeapMiB": 1
+      }
+    },
+    {
+      "language": "ruby",
+      "parser": "tree-sitter",
+      "serialCount": 7,
+      "parallelCount": 7,
+      "persistedCount": 7,
+      "acceptedMissing": [],
+      "forbiddenExported": [],
+      "groupedHits": [
+        "PairOne",
+        "PairTwo",
+        "first",
+        "second"
+      ],
+      "stableOrder": true,
+      "searchVisible": true,
+      "inspectVisible": true,
+      "capabilities": {
+        "definitions": "supported",
+        "ownership": "partial",
+        "imports": "partial",
+        "exports": "partial",
+        "calls": "partial",
+        "references": "partial",
+        "heritage": "partial",
+        "typeHints": "partial",
+        "controlFlow": "unsupported",
+        "dataFlow": "unsupported",
+        "embeddedLanguages": "unsupported"
+      },
+      "accepted": true,
+      "correctness": {
+        "acceptedMissing": 0,
+        "forbiddenExported": 0,
+        "searchVisible": true,
+        "inspectVisible": true
+      },
+      "determinism": {
+        "stableOrder": true,
+        "serialCount": 7,
+        "parallelCount": 7
+      },
+      "completeness": {
+        "persistedCount": 7,
+        "groupedHits": 4
+      },
+      "scalability": {
+        "maxWorkspaceTraversalsPerPass": 4,
+        "maxPreparedIndexBuildsPerPass": 1,
+        "candidateLookupBudget": 4,
+        "truncationBudget": 0,
+        "depthScalingBudget": 4
+      },
+      "resourceUse": {
+        "retainedHeapMiB": 1
+      }
+    },
+    {
+      "language": "swift",
+      "parser": "regex",
+      "serialCount": 4,
+      "parallelCount": 0,
+      "persistedCount": 4,
+      "acceptedMissing": [],
+      "forbiddenExported": [],
+      "groupedHits": [
+        "PairOne",
+        "PairTwo"
+      ],
+      "stableOrder": false,
+      "searchVisible": true,
+      "inspectVisible": true,
+      "capabilities": {
+        "definitions": "supported",
+        "ownership": "partial",
+        "imports": "partial",
+        "exports": "partial",
+        "calls": "partial",
+        "references": "partial",
+        "heritage": "partial",
+        "typeHints": "partial",
+        "controlFlow": "unsupported",
+        "dataFlow": "unsupported",
+        "embeddedLanguages": "unsupported"
+      },
+      "accepted": true,
+      "correctness": {
+        "acceptedMissing": 0,
+        "forbiddenExported": 0,
+        "searchVisible": true,
+        "inspectVisible": true
+      },
+      "determinism": {
+        "stableOrder": false,
+        "serialCount": 4,
+        "parallelCount": 0
+      },
+      "completeness": {
+        "persistedCount": 4,
+        "groupedHits": 2
+      },
+      "scalability": {
+        "maxWorkspaceTraversalsPerPass": 4,
+        "maxPreparedIndexBuildsPerPass": 1,
+        "candidateLookupBudget": 4,
+        "truncationBudget": 0,
+        "depthScalingBudget": 4
+      },
+      "resourceUse": {
+        "retainedHeapMiB": 1
+      }
+    },
+    {
+      "language": "dart",
+      "parser": "regex",
+      "serialCount": 3,
+      "parallelCount": 0,
+      "persistedCount": 3,
+      "acceptedMissing": [],
+      "forbiddenExported": [],
+      "groupedHits": [
+        "PairOne",
+        "PairTwo"
+      ],
+      "stableOrder": false,
+      "searchVisible": true,
+      "inspectVisible": true,
+      "capabilities": {
+        "definitions": "supported",
+        "ownership": "partial",
+        "imports": "partial",
+        "exports": "partial",
+        "calls": "partial",
+        "references": "partial",
+        "heritage": "partial",
+        "typeHints": "partial",
+        "controlFlow": "unsupported",
+        "dataFlow": "unsupported",
+        "embeddedLanguages": "unsupported"
+      },
+      "accepted": true,
+      "correctness": {
+        "acceptedMissing": 0,
+        "forbiddenExported": 0,
+        "searchVisible": true,
+        "inspectVisible": true
+      },
+      "determinism": {
+        "stableOrder": false,
+        "serialCount": 3,
+        "parallelCount": 0
+      },
+      "completeness": {
+        "persistedCount": 3,
+        "groupedHits": 2
+      },
+      "scalability": {
+        "maxWorkspaceTraversalsPerPass": 4,
+        "maxPreparedIndexBuildsPerPass": 1,
+        "candidateLookupBudget": 4,
+        "truncationBudget": 0,
+        "depthScalingBudget": 4
+      },
+      "resourceUse": {
+        "retainedHeapMiB": 1
+      }
+    },
+    {
+      "language": "html",
+      "parser": "tree-sitter",
+      "serialCount": 8,
+      "parallelCount": 8,
+      "persistedCount": 8,
+      "acceptedMissing": [],
+      "forbiddenExported": [],
+      "groupedHits": [
+        "alpha",
+        "card",
+        "tile",
+        "/one",
+        "/two"
+      ],
+      "stableOrder": true,
+      "searchVisible": true,
+      "inspectVisible": true,
+      "capabilities": {
+        "definitions": "supported",
+        "ownership": "supported",
+        "imports": "supported",
+        "exports": "not-applicable",
+        "calls": "not-applicable",
+        "references": "supported",
+        "heritage": "not-applicable",
+        "typeHints": "not-applicable",
+        "controlFlow": "not-applicable",
+        "dataFlow": "not-applicable",
+        "embeddedLanguages": "partial"
+      },
+      "accepted": true,
+      "correctness": {
+        "acceptedMissing": 0,
+        "forbiddenExported": 0,
+        "searchVisible": true,
+        "inspectVisible": true
+      },
+      "determinism": {
+        "stableOrder": true,
+        "serialCount": 8,
+        "parallelCount": 8
+      },
+      "completeness": {
+        "persistedCount": 8,
+        "groupedHits": 5
+      },
+      "scalability": {
+        "maxWorkspaceTraversalsPerPass": 4,
+        "maxPreparedIndexBuildsPerPass": 1,
+        "candidateLookupBudget": 4,
+        "truncationBudget": 0,
+        "depthScalingBudget": 4
+      },
+      "resourceUse": {
+        "retainedHeapMiB": 1
+      }
+    }
+  ]
+}

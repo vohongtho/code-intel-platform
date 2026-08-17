@@ -1,0 +1,139 @@
+{
+  "languages": [
+    {
+      "language": "typescript",
+      "dir": "typescript",
+      "files": [
+        "manifest.json",
+        "main.ts",
+        "grouped.ts"
+      ]
+    },
+    {
+      "language": "javascript",
+      "dir": "javascript",
+      "files": [
+        "manifest.json",
+        "main.js",
+        "grouped.js"
+      ]
+    },
+    {
+      "language": "python",
+      "dir": "python",
+      "files": [
+        "manifest.json",
+        "main.py",
+        "grouped.py"
+      ]
+    },
+    {
+      "language": "java",
+      "dir": "java",
+      "files": [
+        "manifest.json",
+        "main.java",
+        "grouped.java"
+      ]
+    },
+    {
+      "language": "go",
+      "dir": "go",
+      "files": [
+        "manifest.json",
+        "main.go",
+        "grouped.go"
+      ]
+    },
+    {
+      "language": "c",
+      "dir": "c",
+      "files": [
+        "manifest.json",
+        "main.c",
+        "grouped.c"
+      ]
+    },
+    {
+      "language": "cpp",
+      "dir": "cpp",
+      "files": [
+        "manifest.json",
+        "main.cpp",
+        "grouped.cpp"
+      ]
+    },
+    {
+      "language": "csharp",
+      "dir": "csharp",
+      "files": [
+        "manifest.json",
+        "main.cs",
+        "grouped.cs"
+      ]
+    },
+    {
+      "language": "rust",
+      "dir": "rust",
+      "files": [
+        "manifest.json",
+        "main.rs",
+        "grouped.rs"
+      ]
+    },
+    {
+      "language": "php",
+      "dir": "php",
+      "files": [
+        "manifest.json",
+        "main.php",
+        "grouped.php"
+      ]
+    },
+    {
+      "language": "kotlin",
+      "dir": "kotlin",
+      "files": [
+        "manifest.json",
+        "main.kt",
+        "grouped.kt"
+      ]
+    },
+    {
+      "language": "ruby",
+      "dir": "ruby",
+      "files": [
+        "manifest.json",
+        "main.rb",
+        "grouped.rb"
+      ]
+    },
+    {
+      "language": "swift",
+      "dir": "swift",
+      "files": [
+        "manifest.json",
+        "main.swift",
+        "grouped.swift"
+      ]
+    },
+    {
+      "language": "dart",
+      "dir": "dart",
+      "files": [
+        "manifest.json",
+        "main.dart",
+        "grouped.dart"
+      ]
+    },
+    {
+      "language": "html",
+      "dir": "html",
+      "files": [
+        "manifest.json",
+        "main.html",
+        "grouped.html"
+      ]
+    }
+  ]
+}

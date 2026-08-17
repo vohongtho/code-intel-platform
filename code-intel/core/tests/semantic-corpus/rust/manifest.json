@@ -1,0 +1,31 @@
+{
+  "language": "rust",
+  "fixtures": {
+    "main": "main.rs",
+    "grouped": "grouped.rs"
+  },
+  "expected": {
+    "definitions": [
+      "Server",
+      "Config",
+      "ServerError",
+      "Handler",
+      "new",
+      "start",
+      "parse_config"
+    ],
+    "forbidden": [
+      "internal_helper"
+    ]
+  },
+  "groupedExpected": [
+    "PairOne",
+    "PairTwo",
+    "first",
+    "second"
+  ],
+  "notes": [
+    "Main fixture captures baseline semantic observations.",
+    "Grouped fixture captures multi-declaration or wrapper-contained entities."
+  ]
+}

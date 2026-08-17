@@ -11,33 +11,12 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { detectLanguage, Language } from '../../shared/index.js';
+import { getLanguageQuery } from '../../languages/capability-registry.js';
 import type { Phase, PhaseResult, PipelineContext } from '../types.js';
 import { generateNodeId } from '../../graph/id-generator.js';
 import Logger from '../../shared/logger.js';
 import { WorkerPool } from './worker-pool.js';
 import type { ParseTask, ParseResult } from './parse-worker.js';
-import {
-  typescriptQueries, javascriptQueries, pythonQueries, javaQueries, goQueries,
-  cQueries, cppQueries, csharpQueries, rustQueries, phpQueries,
-  kotlinQueries, rubyQueries, swiftQueries, dartQueries,
-} from '../../parsing/queries/index.js';
-
-const LANG_QUERIES: Partial<Record<Language, string>> = {
-  [Language.TypeScript]: typescriptQueries,
-  [Language.JavaScript]: javascriptQueries,
-  [Language.Python]:     pythonQueries,
-  [Language.Java]:       javaQueries,
-  [Language.Go]:         goQueries,
-  [Language.C]:          cQueries,
-  [Language.Cpp]:        cppQueries,
-  [Language.CSharp]:     csharpQueries,
-  [Language.Rust]:       rustQueries,
-  [Language.PHP]:        phpQueries,
-  [Language.Kotlin]:     kotlinQueries,
-  [Language.Ruby]:       rubyQueries,
-  [Language.Swift]:      swiftQueries,
-  [Language.Dart]:       dartQueries,
-};
 
 // Resolve the compiled worker script path (dist/pipeline/workers/parse-worker.js)
 function workerScriptPath(): string {
@@ -103,7 +82,7 @@ export const parsePhaseParallel: Phase = {
         source,
         lang: lang as string,
         fileNodeId,
-        queryStr: LANG_QUERIES[lang] ?? null,
+        queryStr: getLanguageQuery(lang),
       });
     }
 

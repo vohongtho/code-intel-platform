@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { detectLanguage, Language } from '../../shared/index.js';
+import { getLanguageCapabilityDescriptor, getLanguageQuery } from '../../languages/capability-registry.js';
+import { getLanguageModule } from '../../languages/registry.js';
 import type { Phase, PhaseResult, PipelineContext } from '../types.js';
 import { generateNodeId, generateEdgeId } from '../../graph/id-generator.js';
 import type { CodeNode, CodeEdge, NodeKind } from '../../shared/index.js';
@@ -8,41 +10,6 @@ import Logger from '../../shared/logger.js';
 import { parseSource, getLanguage } from '../../parsing/parser-manager.js';
 import { runQueryMatches } from '../../parsing/query-runner.js';
 import type { Node as TSNode, Language as TSLanguage } from 'web-tree-sitter';
-import {
-  typescriptQueries,
-  javascriptQueries,
-  pythonQueries,
-  javaQueries,
-  goQueries,
-  cQueries,
-  cppQueries,
-  csharpQueries,
-  rustQueries,
-  phpQueries,
-  kotlinQueries,
-  rubyQueries,
-  swiftQueries,
-  dartQueries,
-} from '../../parsing/queries/index.js';
-
-// ─── Query map ───────────────────────────────────────────────────────────────
-
-const LANG_QUERIES: Partial<Record<Language, string>> = {
-  [Language.TypeScript]: typescriptQueries,
-  [Language.JavaScript]: javascriptQueries,
-  [Language.Python]:     pythonQueries,
-  [Language.Java]:       javaQueries,
-  [Language.Go]:         goQueries,
-  [Language.C]:          cQueries,
-  [Language.Cpp]:        cppQueries,
-  [Language.CSharp]:     csharpQueries,
-  [Language.Rust]:       rustQueries,
-  [Language.PHP]:        phpQueries,
-  [Language.Kotlin]:     kotlinQueries,
-  [Language.Ruby]:       rubyQueries,
-  [Language.Swift]:      swiftQueries,
-  [Language.Dart]:       dartQueries,
-};
 
 // ─── Capture-name → NodeKind map ─────────────────────────────────────────────
 
@@ -64,6 +31,7 @@ const CAPTURE_KIND: Record<string, NodeKind> = {
   'def.namespace':   'namespace',
   'def.module':      'module',
   'def.property':    'property',
+  'def.property.class': 'property',
   'def.var':         'variable',
   'def.constructor': 'constructor',
 };
@@ -86,9 +54,8 @@ function captureKind(name: string): NodeKind | null {
 
 // ─── Exported-ness helpers ────────────────────────────────────────────────────
 
-function isExported(node: TSNode, lang: Language, name?: string): boolean {
+function isExported(node: TSNode, lang: Language, _name?: string): boolean {
   if (lang === Language.TypeScript || lang === Language.JavaScript) {
-    // Walk ancestor chain looking for export_statement
     let cur: TSNode | null = node.parent;
     while (cur) {
       if (cur.type === 'export_statement') return true;
@@ -97,7 +64,6 @@ function isExported(node: TSNode, lang: Language, name?: string): boolean {
     return false;
   }
   if (lang === Language.Java || lang === Language.CSharp) {
-    // Check for 'public' modifier in enclosing modifiers or parent text
     let cur: TSNode | null = node.parent;
     while (cur) {
       if (cur.type === 'modifiers') return cur.text.includes('public');
@@ -110,28 +76,25 @@ function isExported(node: TSNode, lang: Language, name?: string): boolean {
     return false;
   }
   if (lang === Language.Go) {
-    // Go: exported iff first letter is uppercase
-    const n = name ?? node.text;
-    return n.length > 0 && n[0] === n[0].toUpperCase() && /[A-Z]/.test(n[0]);
+    const nameNode = node.childForFieldName?.('name');
+    const name = nameNode?.text ?? node.text;
+    return name.length > 0 && name[0] === name[0].toUpperCase() && /[A-Z]/.test(name[0]);
   }
   if (lang === Language.Rust) {
-    // Walk ancestors for visibility_modifier (pub)
     let cur: TSNode | null = node.parent;
     while (cur) {
       if (cur.type === 'visibility_modifier') return true;
-      // Stop at impl block boundary
       if (cur.type === 'source_file') break;
       cur = cur.parent;
     }
     return false;
   }
   if (lang === Language.Python) {
-    // Python: exported iff name doesn't start with underscore
-    const n = name ?? node.text;
-    return !n.startsWith('_');
+    const nameNode = node.childForFieldName?.('name');
+    const name = nameNode?.text ?? node.text;
+    return !name.startsWith('_');
   }
-  // Default: everything is exported (C, C++, PHP, Ruby, Swift, etc.)
-  return true;
+  return getLanguageModule(lang).isExported(node as unknown as import('web-tree-sitter').Node);
 }
 
 // ─── Parameter extraction ─────────────────────────────────────────────────────
@@ -512,7 +475,7 @@ export const parsePhase: Phase = {
 
       // ── Try tree-sitter first ──────────────────────────────────────────────
       let usedTreeSitter = false;
-      const queryStr = LANG_QUERIES[lang];
+      const queryStr = getLanguageQuery(lang);
 
       if (queryStr) {
         try {
@@ -636,67 +599,81 @@ function extractFromTree(
     const kind = captureKind(defCapture.name);
     if (!kind) continue;
 
-    const name = nameCapture.text.trim();
-    if (!name) continue;
+    const names = extractCaptureNames(defCapture.name, nameCapture.text);
+    if (names.length === 0) continue;
 
-    const dedupeKey = `${kind}:${name}`;
-    if (seen.has(dedupeKey)) continue;
-    seen.add(dedupeKey);
+    for (const name of names) {
+      const dedupeKey = `${kind}:${name}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
 
-    const defNode = defCapture.node;
-    const startLine = defNode.startPosition.row + 1; // 1-based
-    const endLine = defNode.endPosition.row + 1;
+      const defNode = defCapture.node;
+      const startLine = defNode.startPosition.row + 1; // 1-based
+      const endLine = defNode.endPosition.row + 1;
 
-    // Validate
-    if (startLine > endLine) {
-      Logger.warn(`  [parse] ${relativePath}: ${name} startLine(${startLine}) > endLine(${endLine}), skipping`);
-      continue;
+      // Validate
+      if (startLine > endLine) {
+        Logger.warn(`  [parse] ${relativePath}: ${name} startLine(${startLine}) > endLine(${endLine}), skipping`);
+        continue;
+      }
+
+      // Extract rich metadata
+      const params = (kind === 'function' || kind === 'method' || kind === 'constructor')
+        ? extractParams(defNode, lang)
+        : undefined;
+
+      const returnType = (kind === 'function' || kind === 'method')
+        ? extractReturnType(defNode, lang)
+        : undefined;
+
+      const doc = extractDoc(defNode, source, lang);
+      const decorators = extractDecorators(defNode, lang);
+
+      const metadata: Record<string, unknown> = {};
+      if (params && params.length > 0) metadata.parameters = params;
+      if (returnType) metadata.returnType = truncate(returnType, 200);
+      if (doc) metadata.doc = doc;
+      if (decorators.length > 0) metadata.decorators = decorators;
+      if (lang === Language.HTML && defCapture.name === 'def.var') {
+        metadata.embedded = true;
+      }
+
+      const nodeId = generateNodeId(kind, relativePath, name);
+      nodes.push({
+        id: nodeId,
+        kind,
+        name,
+        filePath: relativePath,
+        startLine,
+        endLine,
+        exported: isExported(defNode, lang, name),
+        content: sourceLines.slice(startLine - 1, Math.min(startLine + 19, endLine)).join('\n'),
+        metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+      });
+
+      edges.push({
+        id: generateEdgeId(fileNodeId, nodeId, 'contains'),
+        source: fileNodeId,
+        target: nodeId,
+        kind: 'contains',
+        weight: 1.0,
+      });
     }
-
-    // Extract rich metadata
-    const params = (kind === 'function' || kind === 'method' || kind === 'constructor')
-      ? extractParams(defNode, lang)
-      : undefined;
-
-    const returnType = (kind === 'function' || kind === 'method')
-      ? extractReturnType(defNode, lang)
-      : undefined;
-
-    const doc = extractDoc(defNode, source, lang);
-    const decorators = extractDecorators(defNode, lang);
-
-    const metadata: Record<string, unknown> = {};
-    if (params && params.length > 0) metadata.parameters = params;
-    if (returnType) metadata.returnType = truncate(returnType, 200);
-    if (doc) metadata.doc = doc;
-    if (decorators.length > 0) metadata.decorators = decorators;
-
-    const nodeId = generateNodeId(kind, relativePath, name);
-    nodes.push({
-      id: nodeId,
-      kind,
-      name,
-      filePath: relativePath,
-      startLine,
-      endLine,
-      exported: isExported(defNode, lang, name),
-      content: sourceLines.slice(startLine - 1, Math.min(startLine + 19, endLine)).join('\n'),
-      metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
-    });
-
-    edges.push({
-      id: generateEdgeId(fileNodeId, nodeId, 'contains'),
-      source: fileNodeId,
-      target: nodeId,
-      kind: 'contains',
-      weight: 1.0,
-    });
   }
 
   return { nodes, edges };
 }
 
 // ─── Regex fallback (original logic, preserved for unsupported languages) ─────
+
+function extractCaptureNames(captureName: string, rawName: string): string[] {
+  const text = rawName.trim();
+  if (!text) return [];
+  if (captureName === 'def.property.class') {
+    return text.split(/\s+/).map((part) => part.trim()).filter(Boolean);
+  }
+  return [text];
+}
 
 function extractWithRegex(
   source: string,

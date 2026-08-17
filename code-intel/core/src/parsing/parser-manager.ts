@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import nodePath from 'node:path';
 import { existsSync } from 'node:fs';
 import { Language } from '../shared/index.js';
+import { getLanguageCapabilityDescriptor } from '../languages/capability-registry.js';
 import { Parser, Language as TSLanguage } from 'web-tree-sitter';
 
 const _require = createRequire(import.meta.url);
@@ -42,58 +43,16 @@ const _bundledWasmDir = findBundledWasmDir();
  * wasm directly from node_modules as a fallback.
  */
 function wasmPath(lang: Language): string | null {
-  const BUNDLED_WASM_MAP: Partial<Record<Language, string>> = {
-    [Language.TypeScript]: 'tree-sitter-typescript.wasm',
-    [Language.JavaScript]: 'tree-sitter-javascript.wasm',
-    [Language.Python]: 'tree-sitter-python.wasm',
-    [Language.Java]: 'tree-sitter-java.wasm',
-    [Language.Go]: 'tree-sitter-go.wasm',
-    [Language.C]: 'tree-sitter-c.wasm',
-    [Language.Cpp]: 'tree-sitter-cpp.wasm',
-    [Language.CSharp]: 'tree-sitter-c_sharp.wasm',
-    [Language.Rust]: 'tree-sitter-rust.wasm',
-    [Language.PHP]: 'tree-sitter-php.wasm',
-    [Language.Ruby]: 'tree-sitter-ruby.wasm',
-    [Language.Swift]: 'tree-sitter-swift.wasm',
-    [Language.Kotlin]: 'tree-sitter-kotlin.wasm',
-    [Language.Dart]: 'tree-sitter-dart.wasm',
-    [Language.HTML]: 'tree-sitter-html.wasm',
-  };
+  const descriptor = getLanguageCapabilityDescriptor(lang);
 
-  const DEV_WASM_PACKAGE_MAP: Partial<Record<Language, string>> = {
-    [Language.TypeScript]: 'tree-sitter-typescript/tree-sitter-typescript.wasm',
-    [Language.JavaScript]: 'tree-sitter-javascript/tree-sitter-javascript.wasm',
-    [Language.Python]: 'tree-sitter-python/tree-sitter-python.wasm',
-    [Language.Java]: 'tree-sitter-java/tree-sitter-java.wasm',
-    [Language.Go]: 'tree-sitter-go/tree-sitter-go.wasm',
-    [Language.C]: 'tree-sitter-c/tree-sitter-c.wasm',
-    [Language.Cpp]: 'tree-sitter-cpp/tree-sitter-cpp.wasm',
-    [Language.CSharp]: 'tree-sitter-c-sharp/tree-sitter-c_sharp.wasm',
-    [Language.Rust]: 'tree-sitter-rust/tree-sitter-rust.wasm',
-    [Language.PHP]: 'tree-sitter-php/tree-sitter-php.wasm',
-    [Language.Ruby]: 'tree-sitter-ruby/tree-sitter-ruby.wasm',
-    [Language.Swift]: 'tree-sitter-swift/tree-sitter-swift.wasm',
-    [Language.Kotlin]: 'tree-sitter-kotlin/tree-sitter-kotlin.wasm',
-    [Language.Dart]: 'tree-sitter-dart/tree-sitter-dart.wasm',
-    [Language.HTML]: 'tree-sitter-html/tree-sitter-html.wasm',
-  };
+  const bundledPath = nodePath.join(_bundledWasmDir, descriptor.grammarArtifact);
+  if (existsSync(bundledPath)) return bundledPath;
 
-  const bundled = BUNDLED_WASM_MAP[lang];
-  if (bundled) {
-    const bundledPath = nodePath.join(_bundledWasmDir, bundled);
-    if (existsSync(bundledPath)) return bundledPath;
+  try {
+    return _require.resolve(descriptor.devGrammarPackage);
+  } catch {
+    return null;
   }
-
-  const relative = DEV_WASM_PACKAGE_MAP[lang];
-  if (relative) {
-    try {
-      return _require.resolve(relative);
-    } catch {
-      // dev fallback unavailable
-    }
-  }
-
-  return null;
 }
 
 let initPromise: Promise<void> | null = null;

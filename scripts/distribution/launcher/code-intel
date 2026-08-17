@@ -1,0 +1,23 @@
+#!/usr/bin/env sh
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+INSTALL_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+CURRENT_ROOT="$INSTALL_ROOT/current"
+NODE_BIN="$CURRENT_ROOT/runtime/bin/node"
+APP_MAIN="$CURRENT_ROOT/app/code-intel/core/dist/cli/main.js"
+
+if [ ! -x "$NODE_BIN" ]; then
+  echo "Bundled Node runtime not found: $NODE_BIN" >&2
+  exit 1
+fi
+
+if [ ! -f "$APP_MAIN" ]; then
+  echo "Bundled CLI entrypoint not found: $APP_MAIN" >&2
+  exit 1
+fi
+
+export CODE_INTEL_LAUNCHER_PATH="$0"
+export CODE_INTEL_BUNDLED_NODE_PATH="$NODE_BIN"
+export CODE_INTEL_BUNDLED_CURRENT_ROOT="$CURRENT_ROOT"
+exec "$NODE_BIN" "$APP_MAIN" "$@"

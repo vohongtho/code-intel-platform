@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { cModule } from '../../../src/languages/modules/c.js';
 import { goModule } from '../../../src/languages/modules/go.js';
 import { dartModule } from '../../../src/languages/modules/dart.js';
+import { rubyModule } from '../../../src/languages/modules/ruby.js';
+import { phpModule } from '../../../src/languages/modules/php.js';
 import type { FileSet } from '../../../src/languages/types.js';
 import type { Node } from 'web-tree-sitter';
 
@@ -19,13 +21,17 @@ function makeFileSet(files: string[]): FileSet {
 function makeNode(
   overrides: Partial<{
     type: string;
+    text: string;
     parent: Partial<{ type: string }> | null;
+    previousSibling: unknown;
     childForFieldName: (name: string) => { text: string } | null;
   }> = {},
 ): Node {
   return {
     type: 'identifier',
+    text: '',
     parent: null,
+    previousSibling: null,
     childForFieldName: (_name: string) => null,
     ...overrides,
   } as unknown as Node;
@@ -141,6 +147,32 @@ describe('goModule', () => {
 });
 
 // ── Dart module ───────────────────────────────────────────────────────────────
+
+describe('phpModule', () => {
+  it('isExported — returns true for public methods', () => {
+    const node = makeNode({ text: 'public function visible() {}' });
+    assert.equal(phpModule.isExported(node), true);
+  });
+
+  it('isExported — returns false for private methods', () => {
+    const node = makeNode({ text: 'private function hidden() {}' });
+    assert.equal(phpModule.isExported(node), false);
+  });
+});
+
+describe('rubyModule', () => {
+  it('isExported — returns true for ordinary methods', () => {
+    const node = makeNode({ text: 'def save_user(user) end' });
+    assert.equal(rubyModule.isExported(node), true);
+  });
+
+  it('isExported — returns false when previous sibling is private visibility marker', () => {
+    const privateMarker = { type: 'identifier', text: 'private', previousSibling: null } as unknown as Node;
+    const node = makeNode({ text: 'def format_name(input) end', previousSibling: privateMarker as unknown as Partial<{ type: string }> });
+    (node as unknown as { previousSibling?: Node | null }).previousSibling = privateMarker;
+    assert.equal(rubyModule.isExported(node), false);
+  });
+});
 
 describe('dartModule', () => {
   it('has lang "dart"', () => {
