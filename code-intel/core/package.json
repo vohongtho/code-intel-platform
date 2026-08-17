@@ -1,6 +1,6 @@
 {
   "name": "@vohongtho.infotech/code-intel",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "description": "Static code analysis platform \u2014 builds a Knowledge Graph from source code with Web UI, HTTP API, CLI, and MCP server",
   "license": "MIT",
   "type": "module",
@@ -38,12 +38,12 @@
     "node": ">=22.0.0"
   },
   "scripts": {
-    "build": "npm --prefix ../shared run build && tsup --config tsup.config.ts && node scripts/add-shebang.mjs && node scripts/copy-grammars.mjs",
+    "build": "npm --prefix ../shared run build && tsup --config tsup.config.ts && node scripts/add-shebang.mjs && node scripts/copy-grammars.mjs && node ../../scripts/distribution/runtime-manifest.mjs --validate",
     "validate:dist": "rm -f vohongtho.infotech-code-intel-*.tgz && npm pack --silent >/dev/null && rm -f vohongtho.infotech-code-intel-*.tgz",
     "typecheck": "tsc -b --noEmit",
     "prepublishOnly": "npm run build",
     "clean": "rm -rf dist dist-tests *.tsbuildinfo",
-    "test": "npm --prefix ../web run build && tsc -b tsconfig.test.json && NODE_ENV=test node --test --test-concurrency=1 dist-tests/tests/**/*.test.js",
+    "test": "npm --prefix ../web run build && npm run build && tsc -b tsconfig.test.json && NODE_ENV=test node --test --test-concurrency=1 dist-tests/tests/**/*.test.js",
     "test:e2e": "npm --prefix ../web run build && tsc -b tsconfig.test.json && NODE_ENV=production node --test dist-tests/tests/e2e/**/*.test.js",
     "test:all": "npm run test && npm run test:e2e",
     "test:e2e:watch": "npm --prefix ../web run build && tsc -b tsconfig.test.json && NODE_ENV=production node --test --watch dist-tests/tests/e2e/**/*.test.js",

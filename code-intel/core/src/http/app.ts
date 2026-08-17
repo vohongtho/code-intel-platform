@@ -80,6 +80,8 @@ function resolveWebDist(): string | null {
     path.resolve(__dirname, '..', 'web'),
     path.resolve(__dirname, '..', '..', 'web'),
     path.resolve(__dirname, 'web'),
+    path.resolve(__dirname, '..', '..', 'app', 'code-intel', 'core', 'dist', 'web'),
+    path.resolve(__dirname, '..', '..', '..', 'app', 'code-intel', 'core', 'dist', 'web'),
     // Monorepo dev/test layouts
     path.resolve(__dirname, '..', '..', '..', 'dist', 'web'),
     path.resolve(__dirname, '..', '..', '..', 'web', 'dist'),

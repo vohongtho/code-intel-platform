@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.0.11] - 2026-08-04
+
+### 📦 Self-contained runtime distribution
+
+- Added self-contained runtime bundle build for `linux-x64`, `linux-arm64`, `darwin-x64`, and `darwin-arm64`, with pinned bundled Node, explicit runtime manifest entries, deterministic archive naming, and bundled parser/native/web assets.
+- Added stable bundled launcher support, runtime-aware `code-intel --version`, and deterministic `code-intel doctor --json` diagnostics for bundled installs.
+- Added verified install and lifecycle flows for self-contained bundles: side-by-side immutable versions, atomic activation, `code-intel upgrade --archive ...`, `code-intel version list`, `code-intel version pin`, schema-safe `code-intel rollback`, and retention cleanup that preserves current, pinned, and rollback-safe previous versions.
+- Added `code-intel uninstall` with managed-file-only default removal, `--purge-data` ownership verification, dry-run inventory, and preservation of repository indexes/config/logs unless explicit destructive confirmation is provided.
+- Runtime bundle outputs now include per-target `.sha256`, `.sbom.cdx.json`, and `.provenance.json` sidecars. Release workflows now build, verify, attest, and publish these artifacts.
+- Known limitation: self-contained runtime lifecycle commands are intended for bundled installs; npm/developer installs remain supported separately and still use the existing `code-intel update` npm flow.
+
 ## [1.0.10] - 2026-08-03
 
 ### 🗃️ Generation V2

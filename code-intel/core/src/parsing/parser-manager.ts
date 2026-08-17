@@ -21,6 +21,8 @@ function findBundledWasmDir(): string {
   const candidates = [
     nodePath.join(fileDir, 'wasm'),    // dist/index.js → dist/wasm/
     nodePath.join(fileDir, '../wasm'), // dist/cli/main.js → dist/wasm/
+    nodePath.join(fileDir, '../app/code-intel/core/dist/wasm'),
+    nodePath.join(fileDir, '../../app/code-intel/core/dist/wasm'),
   ];
   for (const candidate of candidates) {
     if (existsSync(candidate)) return candidate;

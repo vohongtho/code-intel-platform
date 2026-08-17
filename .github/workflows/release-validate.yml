@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  attestations: write
   security-events: write
 
 jobs:
@@ -36,8 +37,24 @@ jobs:
       - name: Build core dist
         run: npm run build --workspace=code-intel/core
 
+      - name: Build self-contained runtime artifacts
+        run: |
+          node scripts/distribution/build-runtime-bundle.mjs --target linux-x64 --out-dir dist/runtime-bundles
+          node scripts/distribution/build-runtime-bundle.mjs --target linux-arm64 --out-dir dist/runtime-bundles
+          node scripts/distribution/build-runtime-bundle.mjs --target darwin-x64 --out-dir dist/runtime-bundles
+          node scripts/distribution/build-runtime-bundle.mjs --target darwin-arm64 --out-dir dist/runtime-bundles
+
+      - name: Verify runtime artifact sidecars
+        run: |
+          test -n "$(ls dist/runtime-bundles/*.sha256)"
+          test -n "$(ls dist/runtime-bundles/*.sbom.cdx.json)"
+          test -n "$(ls dist/runtime-bundles/*.provenance.json)"
+
       - name: Validate packaged dist layout
         run: npm run validate:dist --workspace=code-intel/core
+
+      - name: Verify runtime distribution flow
+        run: npm run verify:runtime-distribution
 
       - name: npm audit — 0 high/critical CVEs (production deps only)
         run: npm audit --audit-level=high --omit=dev

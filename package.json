@@ -24,7 +24,12 @@
     "bench": "node eval/run-agent-bench.mjs --json",
     "bench:mcp": "node eval/run-mcp-bench.mjs --json",
     "verify:clean-install": "node scripts/verify-clean-install.mjs",
-    "verify:docker-publish": "node scripts/verify-docker-publish.mjs"
+    "verify:runtime-distribution": "node scripts/verify-runtime-distribution.mjs",
+    "verify:docker-publish": "node scripts/verify-docker-publish.mjs",
+    "distribution:manifest": "node scripts/distribution/runtime-manifest.mjs --json",
+    "distribution:manifest:validate": "node scripts/distribution/runtime-manifest.mjs --validate",
+    "distribution:bundle": "node scripts/distribution/build-runtime-bundle.mjs",
+    "distribution:install": "node scripts/distribution/install/install-runtime.mjs"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.65.0",

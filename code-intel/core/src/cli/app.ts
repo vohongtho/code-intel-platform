@@ -119,6 +119,7 @@ import {
 import { generateCompletion, autoInstallCompletion } from './completion.js';
 import { backgroundVersionCheck, runUpdate } from './update-checker.js';
 import { runRewrite, runClaudeHook } from './hook-rewriter.js';
+import { resolveStableHookCommand, resolveStableMcpConfig } from './runtime-command.js';
 
 // ── Hook mode detection ───────────────────────────────────────────────────────
 // When called as `code-intel hook <agent>`, the process runs on EVERY Bash
@@ -1146,7 +1147,9 @@ program
 
 // ─── Claude Code hook installation helpers ────────────────────────────────────
 
-const CODE_INTEL_HOOK_CMD = 'code-intel-hook claude';
+function codeIntelHookCommand(agent: string): string {
+  return resolveStableHookCommand(agent, process.argv[1]);
+}
 const CODE_INTEL_CURSOR_HOOK_CMD = 'code-intel-hook cursor';
 const CODE_INTEL_GEMINI_HOOK_CMD = 'code-intel-hook gemini';
 
@@ -1188,7 +1191,7 @@ function insertHookEntry(root: SettingsJson): SettingsJson {
 
   const newEntry: SettingsPreToolUseEntry = {
     matcher: 'Bash',
-    hooks: [{ type: 'command', command: CODE_INTEL_HOOK_CMD }],
+    hooks: [{ type: 'command', command: codeIntelHookCommand('claude') }],
   };
 
   // PREPEND so code-intel runs before RTK — prevents RTK from rewriting
@@ -1264,7 +1267,7 @@ function installClaudeHook(): HookInstallResult {
 const COPILOT_HOOK_JSON_CONTENT = JSON.stringify({
   hooks: {
     PreToolUse: [
-      { type: 'command', command: CODE_INTEL_HOOK_CMD.replace('claude', 'copilot'), cwd: '.', timeout: 5 },
+      { type: 'command', command: codeIntelHookCommand('copilot'), cwd: '.', timeout: 5 },
     ],
   },
 }, null, 2) + '\n';
@@ -1704,11 +1707,12 @@ program
     console.log('\n  ◈  Code Intelligence — MCP Setup\n');
     printSetupSelection(plan);
 
+    const stableMcp = resolveStableMcpConfig(plan.repositoryRoot, process.argv[1]);
     const mcpConfig = {
       mcpServers: {
         'code-intel': {
-command: 'npx',
-args: ['code-intel', 'mcp', plan.repositoryRoot],
+command: stableMcp.command,
+args: stableMcp.args,
         },
       },
     };
@@ -4787,7 +4791,7 @@ program
     }
   });
 
-// ─── update ───────────────────────────────────────────────────────────────────
+// ─── update / upgrade / rollback / uninstall ─────────────────────────────────
 program
   .command('update')
   .description('Check for a newer version of code-intel and update if available')
@@ -4809,146 +4813,71 @@ program
     await runUpdate({ yes: opts.yes });
   });
 
-// ─── doctor ───────────────────────────────────────────────────────────────────
+program
+  .command('upgrade')
+  .description('Activate a verified bundled runtime archive side-by-side')
+  .option('--archive <path>', 'Runtime archive produced by scripts/distribution/build-runtime-bundle.mjs')
+  .option('--checksum <sha256>', 'Expected SHA-256 for the archive')
+  .option('--checksum-file <path>', 'Checksum file containing the archive hash')
+  .option('--version <v>', 'Expected product version inside the archive')
+  .option('--install-root <path>', 'Override install root')
+  .option('--temp-root <path>', 'Override temporary extraction root')
+  .option('--skip-path-check', 'Skip PATH conflict detection')
+  .action(() => {
+    // handled by standalone bootstrap before commander runs
+  });
+
+program
+  .command('rollback')
+  .description('Switch current bundled runtime to a previously installed version')
+  .argument('[version]', 'Installed version to activate; default keeps latest rollback-safe previous version')
+  .option('--install-root <path>', 'Override install root')
+  .action(() => {
+    // handled by standalone bootstrap before commander runs
+  });
+
+program
+  .command('uninstall')
+  .description('Remove managed bundled runtime files; preserve user data by default')
+  .option('--purge-data', 'Also remove owned ~/.code-intel data after ownership verification')
+  .option('--data-root <path>', 'Override expected Code Intel data root for purge verification')
+  .option('--dry-run', 'Print uninstall inventory without deleting files')
+  .option('--yes', 'Confirm destructive uninstall when --purge-data is set')
+  .option('--json', 'Emit machine-readable result')
+  .action(() => {
+    // handled by standalone bootstrap before commander runs
+  });
+
+const versionCommand = program
+  .command('version')
+  .description('Bundled runtime version management');
+
+versionCommand
+  .command('list')
+  .description('List installed bundled runtime versions')
+  .option('--json', 'Emit machine-readable output')
+  .option('--install-root <path>', 'Override install root')
+  .action(() => {
+    // handled by standalone bootstrap before commander runs
+  });
+
+versionCommand
+  .command('pin')
+  .description('Pin one installed bundled runtime version')
+  .argument('<version>', 'Installed version to pin')
+  .option('--install-root <path>', 'Override install root')
+  .action(() => {
+    // handled by standalone bootstrap before commander runs
+  });
+
+// doctor handled in standalone bootstrap for bundled/runtime-aware JSON support.
 program
   .command('doctor')
   .description('Run diagnostics — check Node.js, git, config, registry, DB integrity, and network')
-  .addHelpText('after', `
-  Runs all startup checks and repo health checks, then prints a summary.
-  Exit code 0 if all checks pass; 1 if any check fails.
-
-  Examples:
-    $ code-intel doctor
-`)
-  .action(async () => {
-    const { execSync: exec2 } = await import('node:child_process');
-    const { getDbPath, getVectorDbPath } = await import('../storage/index.js');
-    const { loadMetadata: loadMeta2 } = await import('../storage/metadata.js');
-    const { loadRegistry: loadReg } = await import('../storage/repo-registry.js');
-    const { validateConfig } = await import('./config-manager.js');
-    const { loadConfig } = await import('./init-wizard.js');
-
-    let hasError = false;
-    const line = (icon: string, label: string, detail: string) =>
-      console.log(`  ${icon}  ${label.padEnd(38)} ${detail}`);
-
-    console.log('\n  ◈  code-intel doctor\n');
-
-    // ── Node.js version ───────────────────────────────────────────────────
-    const [major] = process.versions.node.split('.').map(Number);
-    if ((major ?? 0) >= 22) {
-      line('✅', `Node.js v${process.versions.node}`, 'required ≥ 22');
-    } else {
-      line('⚠️ ', `Node.js v${process.versions.node}`, 'v22 or higher recommended');
-    }
-
-    // ── git ───────────────────────────────────────────────────────────────
-    try {
-      const gitVer = exec2('git --version', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim().split('\n')[0];
-      line('✅', 'git', gitVer ?? 'found');
-    } catch {
-      line('⚠️ ', 'git', 'not found in PATH — incremental analysis disabled');
-    }
-
-    // ── config.json ───────────────────────────────────────────────────────
-    const cfg = loadConfig();
-    if (!cfg) {
-      line('⚠️ ', '~/.code-intel/config.json', 'not found — run `code-intel init`');
-    } else {
-      const errs = validateConfig(cfg);
-      if (errs.length === 0) {
-        line('✅', '~/.code-intel/config.json', 'valid');
-      } else {
-        hasError = true;
-        line('❌', '~/.code-intel/config.json', `${errs.length} error(s) — run \`code-intel config validate\``);
-        for (const e of errs.slice(0, 3)) {
-          console.log(`       • ${e.path}: ${e.reason}`);
-        }
-      }
-    }
-
-    // ── registry ──────────────────────────────────────────────────────────
-    const registry = loadReg();
-    line('✅', 'Registry', `${registry.length} repo(s) indexed`);
-
-    // ── per-repo health ───────────────────────────────────────────────────
-    const STALE_DAYS = 7;
-    for (const repo of registry) {
-      const meta = loadMeta2(repo.path);
-      if (!meta) {
-        line('⚠️ ', repo.name, 'index metadata missing');
-        continue;
-      }
-      const ageDays = (Date.now() - new Date(meta.indexedAt).getTime()) / 86_400_000;
-
-      // DB integrity check
-      const dbPath = getDbPath(repo.path);
-      let dbOk = false;
-      try {
-        const db = new Database(dbPath, { readonly: true, fileMustExist: true });
-        db.prepare('SELECT COUNT(*) FROM nodes').get();
-        db.close();
-        dbOk = true;
-      } catch {
-        /* corrupted */
-      }
-
-      if (!dbOk) {
-        hasError = true;
-        line('❌', repo.name, 'graph.db corrupted — run `clean && analyze`');
-        continue;
-      }
-
-      // Vector DB (optional)
-      const vdbPath = getVectorDbPath(repo.path);
-      if (fs.existsSync(vdbPath)) {
-        try {
-          const vdb = new Database(vdbPath, { readonly: true, fileMustExist: true });
-          vdb.prepare('SELECT COUNT(*) FROM embed_nodes').get();
-          vdb.close();
-        } catch {
-          hasError = true;
-          line('❌', `${repo.name} / vector.db`, 'corrupted — run `code-intel analyze` to rebuild remembered embeddings');
-        }
-      } else if (meta.embeddings?.enabled) {
-        line('⚠️ ', `${repo.name} / vector.db`, 'missing — next `code-intel analyze` will rebuild remembered embeddings');
-      }
-
-      if (meta.embeddings?.enabled && meta.embeddings.status === 'stale') {
-        line('⚠️ ', `${repo.name} / embeddings`, 'stale — run `code-intel analyze` to refresh vectors');
-      }
-
-      if (ageDays > STALE_DAYS) {
-        line('⚠️ ', repo.name, `index is ${Math.floor(ageDays)} days old (run \`analyze\`)`);
-      } else {
-        const embeddingDetail = meta.embeddings?.enabled
-          ? ` · embeddings:${meta.embeddings.status}`
-          : '';
-        line('✅', repo.name, `${meta.stats.nodes} nodes · ${meta.stats.edges} edges${embeddingDetail} · ${Math.floor(ageDays)}d old`);
-      }
-    }
-
-    // ── network ───────────────────────────────────────────────────────────
-    try {
-      const resp = await fetch('https://registry.npmjs.org/code-intel/latest', {
-        signal: AbortSignal.timeout(5000),
-      });
-      if (resp.ok) {
-        line('✅', 'npm registry', 'reachable');
-      } else {
-        line('⚠️ ', 'npm registry', `unreachable (HTTP ${resp.status})`);
-      }
-    } catch {
-      line('⚠️ ', 'npm registry', 'unreachable — check internet connection');
-    }
-
-    console.log('');
-    if (hasError) {
-      console.log('  ✗  One or more checks failed. Review the ❌ items above.\n');
-      process.exit(1);
-    } else {
-      console.log('  ✅  All checks passed.\n');
-    }
+  .option('--json', 'Emit stable machine-readable checks')
+  .allowUnknownOption()
+  .action(() => {
+    // handled by standalone bootstrap before commander runs
   });
 
 // ─── context (B.7.1 --show-context) ──────────────────────────────────────────

@@ -44,6 +44,7 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 - **Shell Completion** _(v0.9)_ — `code-intel completion bash|zsh|fish`; dynamic repo + group name completion; `setup --completion` auto-installs
 - **VS Code Extension** _(v0.9)_ — symbol hover tooltips, Symbol Explorer panel, status bar freshness indicator, "Open in Graph" command, command palette integration
 - **Self-Update** _(v0.9)_ — `code-intel update` checks npm registry; background version check on startup; `--no-update-check` to suppress
+- **Self-contained Runtime Lifecycle** _(v1.0.11)_ — bundled install, `doctor --json`, side-by-side `upgrade`, `version list`, `version pin`, schema-safe `rollback`, default data-preserving `uninstall`, per-target checksum/SBOM/provenance artifacts
 - **`--dry-run` flag** _(v0.9)_ — `analyze`, `clean`, `group sync` preview what would happen without side effects
 - **`code-intel doctor`** _(v0.9)_ — full diagnostics: Node.js, git, config, registry, DB integrity, network; exit 1 on any failure
 - **Lazy Graph Loading** _(v1.0)_ — `serve` starts in <2s for 10k-file repos; LRU node cache (5,000 nodes by default, `GRAPH_CACHE_SIZE` env var); background warm of high-blast-radius nodes
@@ -68,7 +69,44 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 
 ---
 
-### Option A — Install globally from npm _(recommended)_
+### Option A — Self-contained runtime install _(no system Node/npm required)_
+
+Supported self-contained targets:
+- linux-x64
+- linux-arm64
+- darwin-x64
+- darwin-arm64
+
+Install root defaults to `~/.local/share/code-intel`.
+User data stays in `~/.code-intel`.
+
+```bash
+node scripts/distribution/install/install-runtime.mjs \
+  --archive code-intel-runtime-v1.0.11-linux-x64.tar.gz \
+  --checksum-file code-intel-runtime-v1.0.11-linux-x64.tar.gz.sha256
+```
+
+Verify:
+
+```bash
+~/.local/share/code-intel/bin/code-intel --version
+~/.local/share/code-intel/bin/code-intel doctor --json
+```
+
+Lifecycle:
+
+```bash
+code-intel version list --json
+code-intel upgrade --archive ./code-intel-runtime-v1.0.11-linux-x64.tar.gz --checksum-file ./code-intel-runtime-v1.0.11-linux-x64.tar.gz.sha256 --version 1.0.11
+code-intel version pin 1.0.11
+code-intel rollback 1.0.10
+code-intel uninstall --dry-run
+code-intel uninstall
+```
+
+`rollback` fails if the selected runtime declares an older index schema than current persisted data. Re-run `code-intel analyze` after rollback when prompted.
+
+### Option B — Install globally from npm _(developer / npm workflow)_
 
 ```bash
 npm install -g @vohongtho.infotech/code-intel
@@ -94,7 +132,7 @@ code-intel --version
 
 ---
 
-### Option B — Build from source
+### Option C — Build from source
 
 Use this if you want to develop, modify, or contribute to the platform.
 
@@ -135,7 +173,7 @@ code-intel --version
 
 ---
 
-### Option C — Build locally & install globally _(CI / automation)_
+### Option D — Build locally & install globally _(CI / automation)_
 
 Use this approach in CI pipelines, Docker images, or any environment where you need a clean, self-contained global install from local source without a persistent `node_modules` link.
 
@@ -250,6 +288,16 @@ code-intel repo relink api-platform ../new-location
 Legacy registries without repo IDs migrate automatically on load. If old entries share the same basename-derived name, the migration repairs duplicates deterministically and prints a warning so you can rename them later.
 
 Then open **http://localhost:4747** in your browser — the Web UI auto-connects and loads the graph.
+
+### Self-contained runtime troubleshooting
+
+- `code-intel doctor --json` reports bundled runtime integrity, installed versions, uninstall inventory, parser assets, repo trust, vector state, and PATH conflicts.
+- `code-intel uninstall` removes only managed launcher/runtime files by default. Repository indexes, config, logs, and agent files remain under `~/.code-intel`.
+- `code-intel uninstall --purge-data --dry-run` prints the deletion inventory first.
+- `code-intel uninstall --purge-data --yes` deletes data only when ownership markers match the expected Code Intel data root.
+- PATH conflicts are warnings only. Move the stable launcher earlier in `PATH`.
+- Missing native or WASM assets show as `fail` in doctor. Reinstall the bundle.
+- Rollback across incompatible index schema is blocked. Re-run `code-intel analyze` after switching runtimes.
 
 If no admin account exists yet, the first-run setup screen appears. The login and bootstrap forms include eye-icon password visibility toggles, and the username input placeholder reads `User Name`.
 

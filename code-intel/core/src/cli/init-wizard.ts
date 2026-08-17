@@ -16,6 +16,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { execSync } from 'node:child_process';
+import { resolveStableMcpConfig } from './runtime-command.js';
 
 // ── Paths ────────────────────────────────────────────────────────────────────
 function getGlobalDir(): string {
@@ -273,9 +274,10 @@ export async function runInitWizard(opts: { reset?: boolean; yes?: boolean } = {
       if (registerMcp) {
         for (const name of found) {
           const editor = EDITORS.find((e) => e.name === name)!;
+          const stableMcp = resolveStableMcpConfig('.');
           const mcpConfig = {
             servers: {
-              'code-intel': { type: 'stdio', command: 'npx', args: ['code-intel', 'mcp', '.'] },
+              'code-intel': { type: 'stdio', command: stableMcp.command, args: stableMcp.args },
             },
           };
           const mcpFile = path.resolve(editor.mcpConfigKey);

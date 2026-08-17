@@ -7,9 +7,10 @@ on:
 
 # Permissions required across all jobs (jobs can restrict further)
 permissions:
-  contents: write        # create GitHub releases + upload SBOM
+  contents: write        # create GitHub releases + upload artifacts
   packages: write        # push image to GHCR
   id-token: write        # cosign keyless signing + npm provenance
+  attestations: write    # github artifact attestations
   security-events: write # upload Trivy SARIF to GitHub Security tab
 
 jobs:
@@ -46,8 +47,18 @@ jobs:
       - name: Build core dist
         run: npm run build --workspace=code-intel/core
 
+      - name: Build self-contained runtime artifacts
+        run: |
+          node scripts/distribution/build-runtime-bundle.mjs --target linux-x64 --out-dir dist/runtime-bundles
+          node scripts/distribution/build-runtime-bundle.mjs --target linux-arm64 --out-dir dist/runtime-bundles
+          node scripts/distribution/build-runtime-bundle.mjs --target darwin-x64 --out-dir dist/runtime-bundles
+          node scripts/distribution/build-runtime-bundle.mjs --target darwin-arm64 --out-dir dist/runtime-bundles
+
       - name: Validate packaged dist layout
         run: npm run validate:dist --workspace=code-intel/core
+
+      - name: Verify runtime distribution flow
+        run: npm run verify:runtime-distribution
 
       - name: Verify Docker publish build path
         env:
@@ -205,10 +216,57 @@ jobs:
           cosign sign --yes \
             '${{ needs.publish-docker.outputs.image }}@${{ needs.publish-docker.outputs.digest }}'
 
+  runtime-artifacts:
+    name: Runtime Artifacts
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps --ignore-scripts --include=optional
+
+      - name: Rebuild native modules
+        run: npm rebuild @ladybugdb/core better-sqlite3 @huggingface/transformers --legacy-peer-deps
+
+      - name: Build web
+        run: npm run build --workspace=code-intel/web
+
+      - name: Build core
+        run: npm run build --workspace=code-intel/core
+
+      - name: Build self-contained runtime artifacts
+        run: |
+          node scripts/distribution/build-runtime-bundle.mjs --target linux-x64 --out-dir dist/runtime-bundles
+          node scripts/distribution/build-runtime-bundle.mjs --target linux-arm64 --out-dir dist/runtime-bundles
+          node scripts/distribution/build-runtime-bundle.mjs --target darwin-x64 --out-dir dist/runtime-bundles
+          node scripts/distribution/build-runtime-bundle.mjs --target darwin-arm64 --out-dir dist/runtime-bundles
+
+      - name: Attest runtime artifacts
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: |
+            dist/runtime-bundles/*.tar.gz
+            dist/runtime-bundles/*.sha256
+            dist/runtime-bundles/*.sbom.cdx.json
+            dist/runtime-bundles/*.provenance.json
+
+      - name: Upload runtime artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-intel-runtime-bundles
+          path: dist/runtime-bundles/*
+          if-no-files-found: error
+
   # ── 6. GitHub Release: SBOM (CycloneDX) + auto release notes ─────────────
   release:
     name: GitHub Release
-    needs: [publish-npm, sign-image]
+    needs: [publish-npm, sign-image, runtime-artifacts]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -219,6 +277,12 @@ jobs:
         with:
           node-version: '24'
           cache: 'npm'
+
+      - name: Download runtime artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: code-intel-runtime-bundles
+          path: dist/runtime-bundles
 
       - name: Install dependencies
         run: npm ci --legacy-peer-deps --ignore-scripts
@@ -237,11 +301,22 @@ jobs:
             --output-file sbom-${{ github.ref_name }}.cdx.json || \
           echo "SBOM generation completed with warnings (non-fatal)"
 
+      - name: Verify runtime provenance sidecars
+        run: |
+          test -n "$(ls dist/runtime-bundles/*.provenance.json)"
+          test -n "$(ls dist/runtime-bundles/*.sbom.cdx.json)"
+          test -n "$(ls dist/runtime-bundles/*.sha256)"
+
+      - name: Exercise README / CHANGELOG examples via clean-machine script
+        run: npm run verify:runtime-distribution
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: sbom-${{ github.ref_name }}.cdx.json
+          files: |
+            sbom-${{ github.ref_name }}.cdx.json
+            dist/runtime-bundles/*
           body: |
             ## 🐳 Docker Image
 
@@ -266,7 +341,11 @@ jobs:
 
             ## 🗂 SBOM
 
-            A CycloneDX JSON SBOM is attached to this release (`sbom-${{ github.ref_name }}.cdx.json`).
+            A CycloneDX JSON SBOM is attached to this release (`sbom-${{ github.ref_name }}.cdx.json`). Runtime bundles also ship per-target `.sbom.cdx.json`, `.sha256`, and `.provenance.json` sidecars.
+
+            ## 📦 Self-contained runtime bundles
+
+            Attached runtime archives include linux-x64, linux-arm64, darwin-x64, and darwin-arm64 bundles plus checksum, SBOM, and provenance sidecars.
 
   # ── 7. Notify ──────────────────────────────────────────────────────────────
   notify:
