@@ -4,7 +4,15 @@ All notable changes to this project are documented in this file.
 
 ---
 
-## [1.0.11] - 2026-08-04
+## [1.0.11] - 2026-08-18
+
+### 🧩 Framework semantic adapters
+
+- Added framework adapter contracts, deterministic registry ordering, lazy adapter loading, and multi-signal framework detection with false-positive controls.
+- Added static framework fact extraction for NestJS, Express, Fastify, ASP.NET Core, Microsoft DI, Spring, FastAPI, Flask, Django, Go HTTP router patterns, Laravel, Symfony, Rails, MCP SDK registrations, and HTML form/script bindings.
+- Projected framework route, handler, registration, and dependency-binding facts into graph nodes/edges with adapter ID/version registration evidence.
+- Extended relationship explanations and index metadata with framework evidence, detected-framework inventories, and framework fingerprints for trust verification.
+- Added framework-focused unit coverage for detection, projection, query evidence, trust-state handling, and adapter fixture extraction across supported ecosystems.
 
 ### 📦 Self-contained runtime distribution
 

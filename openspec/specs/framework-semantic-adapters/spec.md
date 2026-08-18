@@ -4,6 +4,8 @@
 
 ### Requirement: Framework analysis MUST extend rather than replace base language semantics
 
+Framework analysis MUST extend base language semantics without disabling or replacing them.
+
 #### Scenario: No supported framework is confidently detected
 
 - **WHEN** a repository is analyzed
@@ -11,6 +13,8 @@
 - **AND** no framework configuration MUST be required.
 
 ### Requirement: Framework relationships MUST have registration evidence
+
+Framework-derived relationships MUST carry explicit registration evidence in the requirement body and emitted facts.
 
 #### Scenario: Route or DI relationship is materialized
 
@@ -20,6 +24,8 @@
 
 ### Requirement: Ambiguous framework registration MUST remain ambiguous
 
+Ambiguous framework registration MUST remain ambiguous until explicit static evidence proves a single target.
+
 #### Scenario: Multiple providers/handlers are statically possible
 
 - **WHEN** no framework evidence proves one active target
@@ -28,12 +34,16 @@
 
 ### Requirement: Framework registration changes MUST participate in incremental invalidation
 
+Framework registration changes MUST participate in incremental invalidation and re-resolution of affected consumers.
+
 #### Scenario: DI binding changes while consumer file is unchanged
 
 - **WHEN** dependency-aware incremental analysis computes closure
 - **THEN** affected unchanged consumers MUST be eligible for re-resolution.
 
 ### Requirement: Framework adapters MUST NOT scan the repository once per registration
+
+Framework adapters MUST NOT rescan the full repository once per registration during extraction or resolution.
 
 #### Scenario: Route/provider count grows
 

@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 // path is imported further below as a default import; use that to avoid
 // importing 'node:path' multiple times.
@@ -937,6 +938,12 @@ async function analyzeWorkspace(targetPath: string, options?: {
   if (graphPersisted) {
     const indexedAt = new Date().toISOString();
     const schemaVersion = CURRENT_SCHEMA_VERSION;
+    const factDiagnostics = context.factDiagnostics ?? [];
+    const factSchemaVersion = context.factSchemaVersion;
+    const frameworkDetections = (context.frameworkDetections ?? []).map((item) => item.frameworkId).sort();
+    const frameworkFingerprint = frameworkDetections.length > 0
+      ? crypto.createHash('sha256').update(JSON.stringify({ frameworks: frameworkDetections, factSchemaVersion })).digest('hex')
+      : undefined;
     saveMetadata(workspaceRoot, {
       indexedAt,
       schemaVersion,
@@ -945,6 +952,13 @@ async function analyzeWorkspace(targetPath: string, options?: {
       commitHash: currentCommitHash,
       lastAnalyzedMtimes: mergedMtimes,
       parser: resolveParserForMetadata(context.parserUsed, previousMetadata),
+      factSchemaVersion,
+      factSchemaFingerprint: factSchemaVersion
+        ? crypto.createHash('sha256').update(JSON.stringify({ version: factSchemaVersion, parser: context.parserUsed ?? previousMetadata?.parser ?? 'regex' })).digest('hex')
+        : undefined,
+      frameworkFingerprint,
+      frameworkDetections: frameworkDetections.length > 0 ? frameworkDetections : undefined,
+      factDiagnostics: factDiagnostics.length > 0 ? factDiagnostics : undefined,
       embeddings: embeddingMetadataForSave ?? (embeddingBuildFailed ? buildEmbeddingMetadata('stale') : undefined),
       stats: {
         nodes: indexedGraph.size.nodes,

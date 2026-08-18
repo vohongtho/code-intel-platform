@@ -9,6 +9,11 @@ import type { CodeNode, CodeEdge, NodeKind } from '../../shared/index.js';
 import Logger from '../../shared/logger.js';
 import { parseSource, getLanguage } from '../../parsing/parser-manager.js';
 import { runQueryMatches } from '../../parsing/query-runner.js';
+import { FACT_SCHEMA_VERSION } from '../../semantic/fact-bundle.js';
+import { getLanguageFactAdapter } from '../../semantic/adapters/registry.js';
+import { projectFactBundle } from '../../semantic/graph-projector.js';
+import { detectFrameworks } from '../../frameworks/detection.js';
+import { loadFrameworkAdapters } from '../../frameworks/registry.js';
 import type { Node as TSNode, Language as TSLanguage } from 'web-tree-sitter';
 
 // ─── Capture-name → NodeKind map ─────────────────────────────────────────────
@@ -429,6 +434,8 @@ export const parsePhase: Phase = {
     // Initialise shared caches that resolve phase will reuse
     if (!context.fileCache) context.fileCache = new Map();
     if (!context.fileFunctionIndex) context.fileFunctionIndex = new Map();
+    if (!context.factDiagnostics) context.factDiagnostics = [];
+    context.factSchemaVersion = FACT_SCHEMA_VERSION;
 
     const CONCURRENCY = 64;
     const filePaths = context.filePaths;
@@ -447,6 +454,28 @@ export const parsePhase: Phase = {
       }));
       readDone += batch.length;
       context.onPhaseProgress?.('parse:read', readDone, filePaths.length);
+    }
+
+    const frameworkAdapters = await loadFrameworkAdapters();
+    context.frameworkDetections = await detectFrameworks(
+      {
+        workspaceRoot: context.workspaceRoot,
+        filePaths,
+        fileCache: context.fileCache,
+      },
+      frameworkAdapters,
+    );
+
+    for (const adapter of frameworkAdapters) {
+      const detection = context.frameworkDetections.find((item) => item.frameworkId === adapter.id);
+      if (!detection || detection.confidence === 'none') continue;
+      const projected = projectFactBundle(adapter.extract({
+        workspaceRoot: context.workspaceRoot,
+        filePaths,
+        fileCache: context.fileCache,
+      }));
+      for (const node of projected.nodes) context.graph.addNode(node);
+      for (const edge of projected.edges) context.graph.addEdge(edge);
     }
 
     // ── Parse each file ───────────────────────────────────────────────────────
@@ -476,6 +505,21 @@ export const parsePhase: Phase = {
       // ── Try tree-sitter first ──────────────────────────────────────────────
       let usedTreeSitter = false;
       const queryStr = getLanguageQuery(lang);
+      const factAdapter = getLanguageFactAdapter(lang);
+      const factBundle = factAdapter.extract({
+        language: lang,
+        filePath: relativePath,
+        workspaceRoot: context.workspaceRoot,
+        source,
+      });
+      const factValidation = factAdapter.validate(factBundle);
+      context.factDiagnostics.push(...factValidation.diagnostics);
+      if (context.verbose && factValidation.diagnostics.length > 0) {
+        Logger.info(`  [parse] semantic adapter ${factAdapter.adapterId}: ${factValidation.diagnostics.length} diagnostic(s) for ${relativePath}`);
+        for (const diagnostic of factValidation.diagnostics) {
+          Logger.info(`    [semantic:${diagnostic.severity}] ${diagnostic.affectedCapability} ${diagnostic.code} ${diagnostic.filePath ?? relativePath}`);
+        }
+      }
 
       if (queryStr) {
         try {

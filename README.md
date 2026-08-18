@@ -1,6 +1,6 @@
 # Code Intelligence Platform
 
-[![npm version](https://img.shields.io/badge/npm-v1.0.10-blue)](https://www.npmjs.com/package/@vohongtho.infotech/code-intel)
+[![npm version](https://img.shields.io/badge/npm-v1.0.11-blue)](https://www.npmjs.com/package/@vohongtho.infotech/code-intel)
 
 A static code analysis platform that builds a **Knowledge Graph** from your source code and makes it explorable through a Web UI, HTTP API, CLI, and MCP server.
 
@@ -10,7 +10,7 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 
 ## ✨ Features
 
-- **Knowledge Graph** — parses 15 languages into nodes (functions, classes, files, etc.) and edges (calls, imports, extends, etc.)
+- **Knowledge Graph** — parses 15 languages into nodes (functions, classes, files, etc.) and edges (calls, imports, extends, implements, handles, and framework-derived relationships)
 - **Force-directed Graph Explorer** — interactive Sigma.js visualization with color-coded node types, hover highlighting, and filters
 - **Graph Query Language (GQL)** — query your codebase with `FIND`, `TRAVERSE`, `PATH`, `COUNT GROUP BY`; CLI, HTTP API, and MCP tool
 - **Source Code Preview** — click any node to open syntax-highlighted source at the exact line; "Open in editor" (`vscode://`) button
@@ -30,6 +30,9 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 - **CLI** — analyze, serve, watch, query, search, inspect, impact, health commands with animated `█░` progress bars and braille spinners
 - **Multi-language** — TypeScript, JavaScript, Python, Java, Go, C, C++, C#, Rust, PHP, Ruby, Swift, Kotlin, Dart, HTML (15 languages via tree-sitter AST)
 - **Truthful capability states** — language capability reporting distinguishes `supported`, `partial`, `not-applicable`, and `unsupported` so grammar availability is not mistaken for semantic completeness
+- **Framework Semantic Adapters** _(v1.0.11)_ — auto-detects framework registrations and emits static route, handler, DI, resource, prompt, form, and embedded-script facts for NestJS, Express, Fastify, ASP.NET Core, Microsoft DI, Spring, FastAPI, Flask, Django, Go HTTP routers, Laravel, Symfony, Rails, MCP SDK, and HTML.
+- **Evidence-Carrying Relationships** _(v1.0.11)_ — framework-derived graph edges and `explain_relationship` results now include adapter ID/version registration evidence instead of relying on naming conventions alone.
+- **Framework Fingerprint Metadata** _(v1.0.11)_ — published index metadata records detected frameworks and a framework fingerprint so trust checks can distinguish stale framework-semantic state from corrupt artifacts.
 - **Correctness-First Incremental Analysis** _(v1.0.8)_ — detects committed, staged, unstaged, untracked, mtime-changed, and deleted files. Zero-change runs keep the fast path; any non-empty change set performs a clean full graph rebuild so cross-file `calls`, `imports`, `extends`, `implements`, clusters, and flows cannot be lost.
 - **Parallel Analysis** — `--parallel` flag runs parse + resolve phases on worker threads for large repos
 - **Selection-aware AI Context Files** — the first interactive `code-intel analyze` stores the selected agents in `.code-intel/agent-targets.json`; later analyses update only those selected repository instruction files, such as `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `.cursor/rules/code-intel.mdc`, `.kiro/steering/code-intel.md`, `.clinerules`, `.windsurfrules`, `.kilocode/rules/code-intel-rules.md`, or `.agents/rules/code-intel-rules.md`

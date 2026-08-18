@@ -17,7 +17,7 @@ function buildTestGraph(): KnowledgeGraph {
   graph.addNode({ id: 'unrelated', kind: 'function', name: 'unrelatedFn', filePath: 'other/fn.ts' });
 
   // Direct call: UserService → createUser → sendWelcome → EmailService (3-hop path)
-  graph.addEdge({ id: 'e1', source: 'user', target: 'createUser', kind: 'calls' });
+  graph.addEdge({ id: 'e1', source: 'user', target: 'createUser', kind: 'calls', label: 'framework:nest | 0.1.0 | @Get' });
   graph.addEdge({ id: 'e2', source: 'createUser', target: 'sendWelcome', kind: 'calls' });
   graph.addEdge({ id: 'e3', source: 'sendWelcome', target: 'email', kind: 'calls' });
 
@@ -109,5 +109,13 @@ describe('explainRelationship', () => {
     const r = result as ExplainRelationshipResult;
     assert.ok(r.summary.includes('path'), `summary should mention paths, got: ${r.summary}`);
     assert.ok(r.summary.includes('mailer') || r.summary.includes('Shared'), `summary should mention shared imports, got: ${r.summary}`);
+  });
+
+  it('includes framework evidence when present on path edges', () => {
+    const result = explainRelationship(graph, 'UserService', 'createUser');
+    assert.ok(!('error' in result));
+    const r = result as ExplainRelationshipResult;
+    assert.equal(r.paths[0]?.evidence, 'framework:nest | 0.1.0 | @Get');
+    assert.ok(r.summary.includes('Evidence:'), `summary should mention evidence, got: ${r.summary}`);
   });
 });

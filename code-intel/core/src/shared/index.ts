@@ -6,3 +6,4 @@ export type {
   PipelineProgress,
   PipelineResult,
 } from './pipeline-types.js';
+export * from '../semantic/index.js';

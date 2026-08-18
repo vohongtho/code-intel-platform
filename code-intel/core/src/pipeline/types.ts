@@ -1,4 +1,5 @@
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
+import type { FrameworkDetection } from '../frameworks/contracts.js';
 import type { LLMConfig } from '../llm/provider.js';
 
 export type PipelinePhaseStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
@@ -31,6 +32,12 @@ export interface PipelineContext {
   skipFiles?: string[];
   /** Set by parse-phase after execution: which parser was used */
   parserUsed?: 'tree-sitter' | 'regex';
+  /** Aggregated semantic fact diagnostics collected during parse. */
+  factDiagnostics?: Array<{ code: string; severity: 'info' | 'warning' | 'error'; language: string; affectedCapability: string; impact: 'local' | 'cross-file' | 'repository-wide'; filePath?: string; message?: string; count?: number }>;
+  /** Fact schema fingerprint/version for generation compatibility. */
+  factSchemaVersion?: string;
+  /** Repository-scoped framework detections reused across phases. */
+  frameworkDetections?: FrameworkDetection[];
   /**
    * v0.4.0 — opt-in summarize phase.
    * Set to true via `--summarize` flag or `analysis.summarizeOnAnalyze: true` config.

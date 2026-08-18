@@ -1,7 +1,7 @@
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
 
 export interface ExplainRelationshipResult {
-  paths: Array<{ hops: number; nodes: string[]; edgeKind: string }>;
+  paths: Array<{ hops: number; nodes: string[]; edgeKind: string; evidence?: string }>;
   sharedImports: string[];
   heritage: string | null;
   summary: string;
@@ -37,7 +37,7 @@ export function explainRelationship(
   }
 
   // BFS: find all directed paths from `from` → `to`, max 5 hops, up to 10 paths
-  const paths: Array<{ hops: number; nodes: string[]; edgeKind: string }> = [];
+  const paths: Array<{ hops: number; nodes: string[]; edgeKind: string; evidence?: string }> = [];
 
   type QueueEntry = { id: string; nodeNames: string[]; lastEdgeKind: string; visited: Set<string> };
   const queue: QueueEntry[] = [{
@@ -64,7 +64,7 @@ export function explainRelationship(
       const newNames = [...nodeNames, targetNode.name];
 
       if (edge.target === toNode.id) {
-        paths.push({ hops: newNames.length - 1, nodes: newNames, edgeKind: edge.kind });
+        paths.push({ hops: newNames.length - 1, nodes: newNames, edgeKind: edge.kind, evidence: edge.label });
         if (paths.length >= 10) break;
         // Don't continue BFS from the destination
         continue;
@@ -114,8 +114,10 @@ export function explainRelationship(
   // Summary
   const sharedStr = sharedImports.length > 0 ? sharedImports.join(', ') : 'none';
   const heritageStr = heritage ?? 'none';
+  const evidenceBits = [...new Set(paths.map((path) => path.evidence).filter(Boolean))].slice(0, 3);
+  const evidenceStr = evidenceBits.length > 0 ? ` Evidence: [${evidenceBits.join('; ')}].` : '';
   const connectionStr = paths.length === 0 ? 'No connection found.' : `${from} → ${to} via ${paths.length} path(s).`;
-  const summary = `${connectionStr} Shared imports: [${sharedStr}]. Heritage: ${heritageStr}.`;
+  const summary = `${connectionStr} Shared imports: [${sharedStr}]. Heritage: ${heritageStr}.${evidenceStr}`;
 
   return { paths, sharedImports, heritage, summary };
 }

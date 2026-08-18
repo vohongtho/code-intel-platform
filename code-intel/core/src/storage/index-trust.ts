@@ -106,13 +106,14 @@ export function verifyIndexTrust(repoDir: string): IndexTrustResult {
     reasons.push('GENERATION_ID_MISMATCH');
   }
   if (metadata.embeddings?.enabled && metadata.embeddings.status === 'stale') reasons.push('EMBEDDINGS_STALE');
+  if ((metadata.frameworkDetections?.length ?? 0) > 0 && !metadata.frameworkFingerprint) reasons.push('FRAMEWORK_FINGERPRINT_MISSING');
 
   const currentCommit = readCurrentCommit(repoDir);
   const fresh = !metadata.commitHash || !currentCommit || metadata.commitHash === currentCommit;
   if (!fresh) reasons.push('SOURCE_COMMIT_CHANGED');
 
   const corrupt = reasons.some((reason) =>
-    reason.endsWith('_MISSING') || reason.endsWith('_EMPTY')
+    (reason.endsWith('_MISSING') && reason !== 'FRAMEWORK_FINGERPRINT_MISSING') || reason.endsWith('_EMPTY')
     || reason === 'INDEX_FINGERPRINT_MISMATCH' || reason === 'GENERATION_ID_MISMATCH',
   );
   const state: IndexTrustState = corrupt

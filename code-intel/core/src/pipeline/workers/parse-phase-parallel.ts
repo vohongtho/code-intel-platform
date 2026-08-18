@@ -12,6 +12,11 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { detectLanguage, Language } from '../../shared/index.js';
 import { getLanguageQuery } from '../../languages/capability-registry.js';
+import { FACT_SCHEMA_VERSION } from '../../semantic/fact-bundle.js';
+import { getLanguageFactAdapter } from '../../semantic/adapters/registry.js';
+import { projectFactBundle } from '../../semantic/graph-projector.js';
+import { detectFrameworks } from '../../frameworks/detection.js';
+import { loadFrameworkAdapters } from '../../frameworks/registry.js';
 import type { Phase, PhaseResult, PipelineContext } from '../types.js';
 import { generateNodeId } from '../../graph/id-generator.js';
 import Logger from '../../shared/logger.js';
@@ -33,6 +38,8 @@ export const parsePhaseParallel: Phase = {
 
     if (!context.fileCache) context.fileCache = new Map();
     if (!context.fileFunctionIndex) context.fileFunctionIndex = new Map();
+    if (!context.factDiagnostics) context.factDiagnostics = [];
+    context.factSchemaVersion = FACT_SCHEMA_VERSION;
 
     const filePaths = context.filePaths;
     const workerCount = parseInt(process.env['PARSE_WORKERS'] ?? '', 10) || Math.max(1, os.cpus().length - 1);
@@ -47,6 +54,27 @@ export const parsePhaseParallel: Phase = {
           context.fileCache!.set(filePath, source);
         } catch { /* skip */ }
       }));
+    }
+
+    const frameworkAdapters = await loadFrameworkAdapters();
+    context.frameworkDetections = await detectFrameworks(
+      {
+        workspaceRoot: context.workspaceRoot,
+        filePaths,
+        fileCache: context.fileCache,
+      },
+      frameworkAdapters,
+    );
+    for (const adapter of frameworkAdapters) {
+      const detection = context.frameworkDetections.find((item) => item.frameworkId === adapter.id);
+      if (!detection || detection.confidence === 'none') continue;
+      const projected = projectFactBundle(adapter.extract({
+        workspaceRoot: context.workspaceRoot,
+        filePaths,
+        fileCache: context.fileCache,
+      }));
+      for (const node of projected.nodes) context.graph.addNode(node);
+      for (const edge of projected.edges) context.graph.addEdge(edge);
     }
 
     // ── Try to start the worker pool ──────────────────────────────────────────
@@ -74,6 +102,19 @@ export const parsePhaseParallel: Phase = {
       // Store file content snippet on the file node
       const fileNode = context.graph.getNode(fileNodeId);
       if (fileNode) fileNode.content = source.slice(0, 2000);
+
+      const factAdapter = getLanguageFactAdapter(lang);
+      const factBundle = factAdapter.extract({
+        language: lang,
+        filePath: relativePath,
+        workspaceRoot: context.workspaceRoot,
+        source,
+      });
+      const factValidation = factAdapter.validate(factBundle);
+      context.factDiagnostics.push(...factValidation.diagnostics);
+      if (context.verbose && factValidation.diagnostics.length > 0) {
+        Logger.info(`[parse-parallel] semantic adapter ${factAdapter.adapterId}: ${factValidation.diagnostics.length} diagnostic(s) for ${relativePath}`);
+      }
 
       tasks.push({
         taskId: filePath,

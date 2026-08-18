@@ -31,6 +31,8 @@ export interface IndexGenerationManifestV2 {
   baseGenerationId?: string;
   schemaVersion?: number;
   parser?: 'tree-sitter' | 'regex';
+  factSchemaVersion?: string;
+  factSchemaFingerprint?: string;
   artifacts: IndexArtifactName[];
   artifactDetails?: Partial<Record<IndexArtifactName, IndexArtifactDetails>>;
 }
@@ -106,6 +108,8 @@ export function normalizeIndexGenerationManifest(value: unknown): IndexGeneratio
     && (typeof candidate.baseGenerationId !== 'string' || !safeGenerationId(candidate.baseGenerationId))) return null;
   if (candidate.parser !== undefined && candidate.parser !== 'tree-sitter' && candidate.parser !== 'regex') return null;
   if (candidate.schemaVersion !== undefined && !Number.isInteger(candidate.schemaVersion)) return null;
+  if (candidate.factSchemaVersion !== undefined && typeof candidate.factSchemaVersion !== 'string') return null;
+  if (candidate.factSchemaFingerprint !== undefined && typeof candidate.factSchemaFingerprint !== 'string') return null;
 
   return {
     version: 2,
@@ -114,6 +118,8 @@ export function normalizeIndexGenerationManifest(value: unknown): IndexGeneratio
     baseGenerationId: candidate.baseGenerationId as string | undefined,
     schemaVersion: candidate.schemaVersion as number | undefined,
     parser: candidate.parser as 'tree-sitter' | 'regex' | undefined,
+    factSchemaVersion: candidate.factSchemaVersion as string | undefined,
+    factSchemaFingerprint: candidate.factSchemaFingerprint as string | undefined,
     artifacts: [...new Set(candidate.artifacts as IndexArtifactName[])],
     artifactDetails: candidate.artifactDetails as IndexGenerationManifestV2['artifactDetails'],
   };
@@ -285,7 +291,7 @@ export function publishIndexGeneration(
   const artifacts: IndexArtifactName[] = ['graph.db', 'bm25.db', 'meta.json'];
   if (fs.existsSync(path.join(generation.finalDir, 'vector.db'))) artifacts.push('vector.db');
   const metadataRecord = metadataValue && typeof metadataValue === 'object'
-    ? metadataValue as { schemaVersion?: number; parser?: 'tree-sitter' | 'regex' }
+    ? metadataValue as { schemaVersion?: number; parser?: 'tree-sitter' | 'regex'; factSchemaVersion?: string; factSchemaFingerprint?: string }
     : undefined;
   const artifactDetails = Object.fromEntries(artifacts.map((artifact) => {
     const artifactPath = path.join(generation.finalDir, artifact);
@@ -301,6 +307,8 @@ export function publishIndexGeneration(
     publishedAt: new Date().toISOString(),
     schemaVersion: metadataRecord?.schemaVersion,
     parser: metadataRecord?.parser,
+    factSchemaVersion: metadataRecord?.factSchemaVersion,
+    factSchemaFingerprint: metadataRecord?.factSchemaFingerprint,
     artifacts,
     artifactDetails,
   };

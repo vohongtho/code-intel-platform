@@ -45,6 +45,8 @@ describe('index trust', () => {
         indexedAt,
         schemaVersion,
         indexVersion: computeIndexVersion(root, schemaVersion, indexedAt),
+        frameworkFingerprint: 'fp1',
+        frameworkDetections: ['express'],
         embeddings: { enabled: true, status: 'ready', provider: 'test', model: 'test', dimension: 3 },
         stats: { nodes: 1, edges: 0, files: 1, duration: 1 },
       });
@@ -87,6 +89,27 @@ describe('index trust', () => {
       const upgraded = upgradeLegacyIndexMetadata(root, 7);
       assert.equal(upgraded.schemaVersion, 7);
       assert.ok(upgraded.indexVersion);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reports stale when framework detections exist but framework fingerprint is missing', () => {
+    const root = tempRepo();
+    try {
+      writeArtifact(getDbPath(root));
+      writeArtifact(getBm25DbPath(root));
+      const indexedAt = new Date().toISOString();
+      saveMetadata(root, {
+        indexedAt,
+        schemaVersion: 1,
+        indexVersion: computeIndexVersion(root, 1, indexedAt),
+        frameworkDetections: ['express'],
+        stats: { nodes: 1, edges: 0, files: 1, duration: 1 },
+      });
+      const result = verifyIndexTrust(root);
+      assert.equal(result.state, 'stale');
+      assert.ok(result.reasons.includes('FRAMEWORK_FINGERPRINT_MISSING'));
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

@@ -38,6 +38,20 @@ export interface IndexMetadata {
   repoId?: string;
   commitHash?: string;
   parser?: 'tree-sitter' | 'regex';
+  factSchemaVersion?: string;
+  factSchemaFingerprint?: string;
+  frameworkFingerprint?: string;
+  frameworkDetections?: string[];
+  factDiagnostics?: Array<{
+    code: string;
+    severity: 'info' | 'warning' | 'error';
+    language: string;
+    affectedCapability: string;
+    impact: 'local' | 'cross-file' | 'repository-wide';
+    filePath?: string;
+    message?: string;
+    count?: number;
+  }>;
   lastAnalyzedMtimes?: Record<string, number>;
   embeddings?: EmbeddingMetadata;
   stats: {

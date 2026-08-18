@@ -83,4 +83,5 @@ export interface CodeEdge {
   kind: EdgeKind;
   weight?: number;
   label?: string;
+  metadata?: Record<string, unknown>;
 }
