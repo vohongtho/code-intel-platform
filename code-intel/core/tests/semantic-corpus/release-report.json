@@ -1,12 +1,12 @@
 {
-  "generatedAt": "2026-08-18T03:23:48.274Z",
+  "generatedAt": "2026-08-26T04:22:06.950Z",
   "rows": [
     {
       "language": "typescript",
       "parser": "tree-sitter",
-      "serialCount": 8,
-      "parallelCount": 8,
-      "persistedCount": 8,
+      "serialCount": 4,
+      "parallelCount": 4,
+      "persistedCount": 4,
       "acceptedMissing": [],
       "forbiddenExported": [],
       "groupedHits": [
@@ -40,11 +40,11 @@
       },
       "determinism": {
         "stableOrder": true,
-        "serialCount": 8,
-        "parallelCount": 8
+        "serialCount": 4,
+        "parallelCount": 4
       },
       "completeness": {
-        "persistedCount": 8,
+        "persistedCount": 4,
         "groupedHits": 4
       },
       "scalability": {
@@ -61,16 +61,13 @@
     {
       "language": "javascript",
       "parser": "tree-sitter",
-      "serialCount": 7,
-      "parallelCount": 7,
-      "persistedCount": 7,
+      "serialCount": 3,
+      "parallelCount": 3,
+      "persistedCount": 3,
       "acceptedMissing": [],
       "forbiddenExported": [],
       "groupedHits": [
-        "ALPHA",
-        "BETA",
-        "PairOne",
-        "PairTwo"
+        "ALPHA"
       ],
       "stableOrder": true,
       "searchVisible": true,
@@ -97,12 +94,12 @@
       },
       "determinism": {
         "stableOrder": true,
-        "serialCount": 7,
-        "parallelCount": 7
+        "serialCount": 3,
+        "parallelCount": 3
       },
       "completeness": {
-        "persistedCount": 7,
-        "groupedHits": 4
+        "persistedCount": 3,
+        "groupedHits": 1
       },
       "scalability": {
         "maxWorkspaceTraversalsPerPass": 4,
@@ -230,14 +227,12 @@
     {
       "language": "go",
       "parser": "tree-sitter",
-      "serialCount": 6,
-      "parallelCount": 6,
-      "persistedCount": 6,
+      "serialCount": 7,
+      "parallelCount": 7,
+      "persistedCount": 7,
       "acceptedMissing": [],
       "forbiddenExported": [],
       "groupedHits": [
-        "first",
-        "second",
         "PairOne",
         "PairTwo"
       ],
@@ -266,12 +261,12 @@
       },
       "determinism": {
         "stableOrder": true,
-        "serialCount": 6,
-        "parallelCount": 6
+        "serialCount": 7,
+        "parallelCount": 7
       },
       "completeness": {
-        "persistedCount": 6,
-        "groupedHits": 4
+        "persistedCount": 7,
+        "groupedHits": 2
       },
       "scalability": {
         "maxWorkspaceTraversalsPerPass": 4,
@@ -454,14 +449,16 @@
     {
       "language": "rust",
       "parser": "tree-sitter",
-      "serialCount": 9,
-      "parallelCount": 9,
-      "persistedCount": 9,
+      "serialCount": 8,
+      "parallelCount": 8,
+      "persistedCount": 8,
       "acceptedMissing": [],
       "forbiddenExported": [],
       "groupedHits": [
         "PairOne",
-        "PairTwo"
+        "PairTwo",
+        "first",
+        "second"
       ],
       "stableOrder": true,
       "searchVisible": true,
@@ -488,12 +485,12 @@
       },
       "determinism": {
         "stableOrder": true,
-        "serialCount": 9,
-        "parallelCount": 9
+        "serialCount": 8,
+        "parallelCount": 8
       },
       "completeness": {
-        "persistedCount": 9,
-        "groupedHits": 2
+        "persistedCount": 8,
+        "groupedHits": 4
       },
       "scalability": {
         "maxWorkspaceTraversalsPerPass": 4,

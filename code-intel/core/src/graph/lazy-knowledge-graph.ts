@@ -91,6 +91,16 @@ function parseNodeRow(row: Record<string, unknown>, kind: NodeKind): CodeNode {
     endLine: row['end_line'] != null ? Number(row['end_line']) : undefined,
     exported: row['exported'] != null ? Boolean(row['exported']) : undefined,
     content: row['content'] ? String(row['content']) : undefined,
+    identityId: row['identity_id'] ? String(row['identity_id']) : undefined,
+    legacyIds: row['legacy_ids']
+      ? (() => {
+          try {
+            return JSON.parse(String(row['legacy_ids'])) as string[];
+          } catch {
+            return undefined;
+          }
+        })()
+      : undefined,
     metadata: row['metadata']
       ? (() => {
           try {
@@ -212,7 +222,7 @@ export class LazyKnowledgeGraph implements KnowledgeGraph, LazyGraphExtensions {
 
     try {
       const rows = await this.dbManager.query(
-        `MATCH (n:${table} {id: '${escCypher(id)}'}) RETURN n.id, n.name, n.file_path, n.start_line, n.end_line, n.exported, n.content, n.metadata`,
+        `MATCH (n:${table} {id: '${escCypher(id)}'}) RETURN n.id, n.name, n.file_path, n.start_line, n.end_line, n.exported, n.content, n.identity_id, n.legacy_ids, n.metadata`,
       );
       if (rows.length === 0) return undefined;
 
@@ -226,6 +236,8 @@ export class LazyKnowledgeGraph implements KnowledgeGraph, LazyGraphExtensions {
           end_line: row['n.end_line'],
           exported: row['n.exported'],
           content: row['n.content'],
+          identity_id: row['n.identity_id'],
+          legacy_ids: row['n.legacy_ids'],
           metadata: row['n.metadata'],
         },
         kind,
@@ -278,7 +290,7 @@ export class LazyKnowledgeGraph implements KnowledgeGraph, LazyGraphExtensions {
 
       try {
         const rows = await this.dbManager.query(
-          `MATCH (n:${table}) RETURN n.id, n.name, n.file_path, n.start_line, n.end_line, n.exported, n.content, n.metadata SKIP ${skipInTable} LIMIT ${remaining}`,
+          `MATCH (n:${table}) RETURN n.id, n.name, n.file_path, n.start_line, n.end_line, n.exported, n.content, n.identity_id, n.legacy_ids, n.metadata SKIP ${skipInTable} LIMIT ${remaining}`,
         );
         for (const row of rows) {
           const node = parseNodeRow(
@@ -348,7 +360,7 @@ export class LazyKnowledgeGraph implements KnowledgeGraph, LazyGraphExtensions {
 
       try {
         const rows = await this.dbManager.query(
-          `MATCH (n:${table}) RETURN n.id, n.name, n.file_path, n.start_line, n.end_line, n.exported, n.content, n.metadata`,
+          `MATCH (n:${table}) RETURN n.id, n.name, n.file_path, n.start_line, n.end_line, n.exported, n.content, n.identity_id, n.legacy_ids, n.metadata`,
         );
         for (const row of rows) {
           const node = parseNodeRow(
@@ -484,7 +496,7 @@ export class LazyKnowledgeGraph implements KnowledgeGraph, LazyGraphExtensions {
     if (!this.dbManager) return;
     try {
       const edgeRows = await this.dbManager.query(
-        `MATCH (a)-[e:code_edges]->(b) RETURN a.id, b.id, e.kind, e.weight, e.label`,
+        `MATCH (a)-[e:code_edges]->(b) RETURN a.id, b.id, e.id, e.kind, e.weight, e.label, e.callsite_id, e.metadata`,
       );
       for (const row of edgeRows) {
         const sourceId = String(row['a.id'] ?? '');
@@ -492,12 +504,14 @@ export class LazyKnowledgeGraph implements KnowledgeGraph, LazyGraphExtensions {
         const kind = String(row['e.kind'] ?? '') as EdgeKind;
         if (!sourceId || !targetId || !kind) continue;
         const edge: CodeEdge = {
-          id: `${sourceId}::${kind}::${targetId}`,
+          id: String(row['e.id'] ?? `${sourceId}::${kind}::${targetId}`),
           source: sourceId,
           target: targetId,
           kind,
           weight: row['e.weight'] != null ? Number(row['e.weight']) : undefined,
           label: row['e.label'] ? String(row['e.label']) : undefined,
+          callSiteId: row['e.callsite_id'] ? String(row['e.callsite_id']) : undefined,
+          metadata: row['e.metadata'] ? (() => { try { return JSON.parse(String(row['e.metadata'])) as Record<string, unknown>; } catch { return undefined; } })() : undefined,
         };
         this.edges.set(edge.id, edge);
         this._indexEdge(edge);

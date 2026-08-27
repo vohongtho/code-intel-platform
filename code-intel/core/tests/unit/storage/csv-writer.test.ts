@@ -66,13 +66,14 @@ describe('writeNodeCSVs', () => {
 
   it('CSV contains node data', async () => {
     const graph = createKnowledgeGraph();
-    graph.addNode({ id: 'method-1', kind: 'method', name: 'run', filePath: '/src/runner.ts', startLine: 10, endLine: 20, exported: true });
+    graph.addNode({ id: 'method-1', kind: 'method', name: 'run', filePath: '/src/runner.ts', startLine: 10, endLine: 20, exported: true, identityId: 'sym:v2:method:x', legacyIds: ['method:/src/runner.ts:run'] });
     const outDir = path.join(dir, 'with-meta');
     const result = writeNodeCSVs(graph, outDir);
     await flush();
     const content = fs.readFileSync(result.get('method_nodes')!, 'utf-8');
     assert.ok(content.includes('method-1'));
     assert.ok(content.includes('run'));
+    assert.ok(content.includes('sym:v2:method:x'));
   });
 
   it('handles content with commas by quoting', async () => {
@@ -102,7 +103,7 @@ describe('writeEdgeCSV', () => {
     const graph = createKnowledgeGraph();
     graph.addNode({ id: 'a', kind: 'function', name: 'a', filePath: '/src/a.ts' });
     graph.addNode({ id: 'b', kind: 'function', name: 'b', filePath: '/src/b.ts' });
-    graph.addEdge({ id: 'e1', source: 'a', target: 'b', kind: 'calls', weight: 1.0, label: 'b' });
+    graph.addEdge({ id: 'e1', source: 'a', target: 'b', kind: 'calls', weight: 1.0, label: 'b', callSiteId: 'callsite:v1:x', metadata: { ordinal: 1 } });
     const outDir = path.join(dir, 'fn-edge');
     const result = writeEdgeCSV(graph, outDir);
     await flush();
@@ -112,6 +113,7 @@ describe('writeEdgeCSV', () => {
     assert.ok(content.includes('calls'));
     assert.ok(content.includes('a'));
     assert.ok(content.includes('b'));
+    assert.ok(content.includes('callsite:v1:x'));
   });
 
   it('skips edges whose source/target nodes are missing', async () => {

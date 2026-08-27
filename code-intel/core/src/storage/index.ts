@@ -7,6 +7,7 @@ export { loadRegistry, saveRegistry, findRepoById, findRepoByName, findRepoByPat
 export type { RepoEntry } from './repo-registry.js';
 export { saveMetadata, loadMetadata, getDbPath, getVectorDbPath, computeIndexVersion, computeIndexVersionForPaths } from './metadata.js';
 export type { IndexMetadata } from './metadata.js';
+export { normalizeIndexGenerationManifest } from './index-generation.js';
 export { verifyIndexTrust, upgradeLegacyIndexMetadata } from './index-trust.js';
 export type { IndexTrustState, IndexTrustResult, IndexArtifactState } from './index-trust.js';
 export {

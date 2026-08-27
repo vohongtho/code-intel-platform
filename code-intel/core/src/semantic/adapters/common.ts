@@ -2,12 +2,14 @@ import type { Language } from '../../shared/languages.js';
 import type { SemanticAnchors, SourceRange } from '../anchors.js';
 import type {
   DeclarationFact,
+  DeclarationFragmentFact,
   HeritageFact,
   ImportBindingFact,
   PublishedNameFact,
   ReferenceFact,
   SemanticKindTraits,
   TypeReferenceFact,
+  VisibilityFact,
 } from '../facts.js';
 
 export function lineRange(filePath: string, lineNumber: number, text: string, startColumn = 0): SourceRange {
@@ -65,9 +67,37 @@ export function declaration(
     sourceRange,
     declarationKind,
     name,
+    qualifiedName: extras.qualifiedName ?? name,
     anchors: anchors(sourceRange),
     ...extras,
   };
+}
+
+export function declarationFragment(
+  factId: string,
+  language: Language,
+  filePath: string,
+  lineNumber: number,
+  declarationRef: string,
+  name: string,
+  options: { partial?: boolean; hasBody?: boolean } = {},
+): DeclarationFragmentFact {
+  const range = lineRange(filePath, lineNumber, name);
+  return {
+    factId,
+    language,
+    filePath,
+    sourceRange: range,
+    declarationRef,
+    fragmentId: factId,
+    range,
+    partial: options.partial ?? false,
+    hasBody: options.hasBody ?? true,
+  };
+}
+
+export function visibility(level: VisibilityFact['level']): VisibilityFact {
+  return { level };
 }
 
 export function published(

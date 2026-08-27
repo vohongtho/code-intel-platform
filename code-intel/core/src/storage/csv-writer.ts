@@ -17,7 +17,7 @@ import { NODE_TABLE_MAP } from './schema.js';
 export function writeNodeCSVs(graph: KnowledgeGraph, outputDir: string): Map<string, string> {
   fs.mkdirSync(outputDir, { recursive: true });
 
-  const header = 'id,name,file_path,start_line,end_line,exported,content,metadata\n';
+  const header = 'id,name,file_path,start_line,end_line,exported,content,identity_id,legacy_ids,metadata\n';
   const tableBuffers = new Map<string, string[]>();
   const tableFilePaths = new Map<string, string>();
 
@@ -40,6 +40,8 @@ export function writeNodeCSVs(graph: KnowledgeGraph, outputDir: string): Map<str
         // mis-parses quoted fields with embedded newlines that contain no
         // internal "" sequences (treating them as truncated records).
         escapeNewlines((node.content ?? '').slice(0, 1000)),
+        node.identityId ?? '',
+        node.legacyIds ? escapeNewlines(JSON.stringify(node.legacyIds)) : '',
         node.metadata ? escapeNewlines(JSON.stringify(node.metadata)) : '',
       ]) + '\n',
     );
@@ -65,7 +67,7 @@ export interface EdgeCSVGroup {
 export function writeEdgeCSV(graph: KnowledgeGraph, outputDir: string): EdgeCSVGroup[] {
   fs.mkdirSync(outputDir, { recursive: true });
 
-  const header = 'from_id,to_id,kind,weight,label\n';
+  const header = 'from_id,to_id,id,kind,weight,label,callsite_id,metadata\n';
   const groups = new Map<string, { lines: string[]; from: string; to: string; filePath: string }>();
 
   for (const edge of graph.allEdges()) {
@@ -86,9 +88,12 @@ export function writeEdgeCSV(graph: KnowledgeGraph, outputDir: string): EdgeCSVG
       csvRow([
         edge.source,
         edge.target,
+        edge.id,
         edge.kind,
         String(edge.weight ?? 1.0),
         edge.label ?? '',
+        edge.callSiteId ?? '',
+        edge.metadata ? escapeNewlines(JSON.stringify(edge.metadata)) : '',
       ]) + '\n',
     );
   }

@@ -588,6 +588,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
   let scannedFilePaths: string[] = [];
   let zeroChangeIncremental = false;
   let fullIndexGraph: KnowledgeGraph | null = null;
+  const currentIdentityFingerprint = 'symbol-identity-v2';
   const analyzeMode = resolveAnalyzeMode({
     explicitIncremental: options?.incremental,
     force: options?.force,
@@ -595,57 +596,63 @@ async function analyzeWorkspace(targetPath: string, options?: {
   });
   if (analyzeMode.attemptIncremental) {
     const prevMeta = previousMetadata;
-    const scanResult = await runPipeline([scanPhase], context);
-    scannedFilePaths = [...context.filePaths];
-    if (scanResult.success) {
-      const decision = decideIncremental(
-        workspaceRoot,
-        scannedFilePaths,
-        prevMeta?.commitHash,
-        prevMeta?.lastAnalyzedMtimes,
-      );
-      // Preserve the detected change set even when graph analysis deliberately
-      // falls back to a clean full rebuild for cross-file correctness.
-      detectedChangedFiles = decision.changedExistingFiles ?? [];
-      detectedDeletedFiles = decision.deletedFiles ?? [];
-      detectedChangeSetKnown = true;
-      if (decision.incremental) {
-        const dbPath = getDbPath(workspaceRoot);
-        if (fs.existsSync(dbPath)) {
-          fullIndexGraph = activeGraph;
-          const db = new DbManager(dbPath, true);
-          await db.init();
-          await loadGraphFromDB(fullIndexGraph, db);
-          db.close();
-          activeGraph = fullIndexGraph;
-          context.graph = fullIndexGraph;
-          isIncremental = true;
-          incrementalChangedFiles = detectedChangedFiles;
-          incrementalDeletedFiles = detectedDeletedFiles;
-          removeAffectedNodesFromGraph(fullIndexGraph, workspaceRoot, incrementalChangedFiles, incrementalDeletedFiles);
-          if (!options?.silent) {
-            const label = analyzeMode.source === 'auto' ? 'Auto-incremental' : 'Incremental';
-            console.log(`  ◈ ${label}: ${incrementalChangedFiles.length} changed file(s), ${incrementalDeletedFiles.length} deleted file(s) of ${decision.totalFiles ?? scannedFilePaths.length} total`);
+    if (prevMeta?.identityFingerprint && prevMeta.identityFingerprint !== currentIdentityFingerprint) {
+      if (!options?.silent) {
+        console.log(`  ◈ Falling back to full analysis: identity fingerprint changed from ${prevMeta.identityFingerprint} to ${currentIdentityFingerprint}`);
+      }
+      Logger.info(`[incremental] fallback: identity fingerprint changed from ${prevMeta.identityFingerprint} to ${currentIdentityFingerprint}`);
+      context.filePaths = [];
+    } else {
+      const scanResult = await runPipeline([scanPhase], context);
+      scannedFilePaths = [...context.filePaths];
+      if (scanResult.success) {
+        const decision = decideIncremental(
+          workspaceRoot,
+          scannedFilePaths,
+          prevMeta?.commitHash,
+          prevMeta?.lastAnalyzedMtimes,
+        );
+        detectedChangedFiles = decision.changedExistingFiles ?? [];
+        detectedDeletedFiles = decision.deletedFiles ?? [];
+        detectedChangeSetKnown = true;
+        if (decision.incremental) {
+          const dbPath = getDbPath(workspaceRoot);
+          if (fs.existsSync(dbPath)) {
+            fullIndexGraph = activeGraph;
+            const db = new DbManager(dbPath, true);
+            await db.init();
+            await loadGraphFromDB(fullIndexGraph, db);
+            db.close();
+            activeGraph = fullIndexGraph;
+            context.graph = fullIndexGraph;
+            isIncremental = true;
+            incrementalChangedFiles = detectedChangedFiles;
+            incrementalDeletedFiles = detectedDeletedFiles;
+            removeAffectedNodesFromGraph(fullIndexGraph, workspaceRoot, incrementalChangedFiles, incrementalDeletedFiles);
+            if (!options?.silent) {
+              const label = analyzeMode.source === 'auto' ? 'Auto-incremental' : 'Incremental';
+              console.log(`  ◈ ${label}: ${incrementalChangedFiles.length} changed file(s), ${incrementalDeletedFiles.length} deleted file(s) of ${decision.totalFiles ?? scannedFilePaths.length} total`);
+            }
+            Logger.info(`[incremental] re-parsing ${incrementalChangedFiles.length} files; deleting ${incrementalDeletedFiles.length} files`);
+            zeroChangeIncremental = incrementalChangedFiles.length === 0 && incrementalDeletedFiles.length === 0;
+            context.filePaths = incrementalChangedFiles;
+          } else {
+            if (!options?.silent && analyzeMode.source === 'auto') {
+              console.log('  ◈ Auto-incremental unavailable: existing graph.db missing');
+            }
+            Logger.info('[incremental] fallback: existing graph.db missing');
+            context.filePaths = [];
           }
-          Logger.info(`[incremental] re-parsing ${incrementalChangedFiles.length} files; deleting ${incrementalDeletedFiles.length} files`);
-          zeroChangeIncremental = incrementalChangedFiles.length === 0 && incrementalDeletedFiles.length === 0;
-          context.filePaths = incrementalChangedFiles;
         } else {
-          if (!options?.silent && analyzeMode.source === 'auto') {
-            console.log('  ◈ Auto-incremental unavailable: existing graph.db missing');
+          if (!options?.silent) {
+            if (analyzeMode.source === 'auto') {
+              console.log(`  ◈ Auto-incremental unavailable: ${decision.fallbackReason}`);
+            }
+            console.log(`  ◈ Falling back to full analysis: ${decision.fallbackReason}`);
           }
-          Logger.info('[incremental] fallback: existing graph.db missing');
+          Logger.info(`[incremental] fallback: ${decision.fallbackReason}`);
           context.filePaths = [];
         }
-      } else {
-        if (!options?.silent) {
-          if (analyzeMode.source === 'auto') {
-            console.log(`  ◈ Auto-incremental unavailable: ${decision.fallbackReason}`);
-          }
-          console.log(`  ◈ Falling back to full analysis: ${decision.fallbackReason}`);
-        }
-        Logger.info(`[incremental] fallback: ${decision.fallbackReason}`);
-        context.filePaths = [];
       }
     }
   }
@@ -956,6 +963,9 @@ async function analyzeWorkspace(targetPath: string, options?: {
       factSchemaFingerprint: factSchemaVersion
         ? crypto.createHash('sha256').update(JSON.stringify({ version: factSchemaVersion, parser: context.parserUsed ?? previousMetadata?.parser ?? 'regex' })).digest('hex')
         : undefined,
+      identityFingerprint: context.identityFingerprint ?? currentIdentityFingerprint,
+      resolverVersion: context.resolverVersion,
+      resolverFingerprint: context.resolverFingerprint,
       frameworkFingerprint,
       frameworkDetections: frameworkDetections.length > 0 ? frameworkDetections : undefined,
       factDiagnostics: factDiagnostics.length > 0 ? factDiagnostics : undefined,

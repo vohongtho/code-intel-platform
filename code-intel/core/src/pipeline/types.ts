@@ -36,8 +36,15 @@ export interface PipelineContext {
   factDiagnostics?: Array<{ code: string; severity: 'info' | 'warning' | 'error'; language: string; affectedCapability: string; impact: 'local' | 'cross-file' | 'repository-wide'; filePath?: string; message?: string; count?: number }>;
   /** Fact schema fingerprint/version for generation compatibility. */
   factSchemaVersion?: string;
+  identityFingerprint?: string;
   /** Repository-scoped framework detections reused across phases. */
   frameworkDetections?: FrameworkDetection[];
+  /** Semantic facts collected during parse for resolver/index consumers. */
+  semanticFacts?: import('../semantic/facts.js').SemanticFact[];
+  /** Resolver instrumentation/version for generation compatibility and guards. */
+  resolverVersion?: string;
+  resolverFingerprint?: string;
+  resolutionInstrumentation?: import('../resolution/indexes.js').ResolutionInstrumentation;
   /**
    * v0.4.0 — opt-in summarize phase.
    * Set to true via `--summarize` flag or `analysis.summarizeOnAnalyze: true` config.

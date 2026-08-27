@@ -435,7 +435,9 @@ export const parsePhase: Phase = {
     if (!context.fileCache) context.fileCache = new Map();
     if (!context.fileFunctionIndex) context.fileFunctionIndex = new Map();
     if (!context.factDiagnostics) context.factDiagnostics = [];
+    if (!context.semanticFacts) context.semanticFacts = [];
     context.factSchemaVersion = FACT_SCHEMA_VERSION;
+    context.identityFingerprint = 'symbol-identity-v2';
 
     const CONCURRENCY = 64;
     const filePaths = context.filePaths;
@@ -502,7 +504,7 @@ export const parsePhase: Phase = {
         fileNode.content = source.slice(0, 2000);
       }
 
-      // ── Try tree-sitter first ──────────────────────────────────────────────
+      // ── Semantic-first projection ───────────────────────────────────────────
       let usedTreeSitter = false;
       const queryStr = getLanguageQuery(lang);
       const factAdapter = getLanguageFactAdapter(lang);
@@ -512,6 +514,7 @@ export const parsePhase: Phase = {
         workspaceRoot: context.workspaceRoot,
         source,
       });
+      context.semanticFacts.push(...factBundle.facts);
       const factValidation = factAdapter.validate(factBundle);
       context.factDiagnostics.push(...factValidation.diagnostics);
       if (context.verbose && factValidation.diagnostics.length > 0) {
@@ -521,7 +524,23 @@ export const parsePhase: Phase = {
         }
       }
 
-      if (queryStr) {
+      const projected = projectFactBundle(factBundle);
+      const semanticFirst = [Language.TypeScript, Language.JavaScript, Language.Python, Language.Rust, Language.HTML, Language.Go].includes(lang);
+      if (semanticFirst && (projected.nodes.length > 0 || projected.edges.length > 0)) {
+        for (const n of projected.nodes) context.graph.addNode(n);
+        for (const e of projected.edges) context.graph.addEdge(e);
+        symbolCount += projected.nodes.length;
+        treeSitterCount++;
+        usedTreeSitter = true;
+
+        const funcs = projected.nodes
+          .filter((n) => n.kind === 'function' || n.kind === 'method')
+          .map((n) => ({ id: n.id, startLine: n.startLine ?? 0, endLine: n.endLine }))
+          .sort((a, b) => a.startLine - b.startLine);
+        if (funcs.length > 0) {
+          context.fileFunctionIndex!.set(relativePath, funcs);
+        }
+      } else if (queryStr) {
         try {
           const { nodes, edges } = await extractFromTreeAsync(
             lang,
@@ -538,7 +557,6 @@ export const parsePhase: Phase = {
             treeSitterCount++;
             usedTreeSitter = true;
 
-            // Build per-file sorted function/method index
             const funcs = nodes
               .filter((n) => n.kind === 'function' || n.kind === 'method')
               .map((n) => ({ id: n.id, startLine: n.startLine ?? 0, endLine: n.endLine }))

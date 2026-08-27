@@ -38,6 +38,7 @@ import { DbManager } from '../storage/db-manager.js';
 import { loadGraphFromDB } from '../multi-repo/graph-from-db.js';
 import { createKnowledgeGraph } from '../graph/knowledge-graph.js';
 import { CURRENT_SCHEMA_VERSION } from '../migrations/migration-runner.js';
+import { resolveSymbolTarget } from '../cli/symbol-target.js';
 
 /** Strip null/undefined fields and serialize compactly — saves ~10–15% tokens on sparse graph nodes */
 function compact(obj: unknown): string {
@@ -1897,10 +1898,8 @@ export async function startMcpStdio(
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
 function findNodeByName(graph: KnowledgeGraph, name: string) {
-  for (const node of graph.allNodes()) {
-    if (node.name === name) return node;
-  }
-  return undefined;
+  const resolution = resolveSymbolTarget(graph, name);
+  return resolution.status === 'found' ? resolution.node : undefined;
 }
 
 /**

@@ -91,6 +91,8 @@ describe('getCreateNodeTableDDL', () => {
     assert.ok(ddl.includes('start_line'));
     assert.ok(ddl.includes('end_line'));
     assert.ok(ddl.includes('exported'));
+    assert.ok(ddl.includes('identity_id'));
+    assert.ok(ddl.includes('legacy_ids'));
   });
 });
 
@@ -114,9 +116,12 @@ describe('getCreateEdgeTableDDL', () => {
   it('contains kind, weight, label fields', () => {
     const ddls = getCreateEdgeTableDDL();
     const combined = ddls.join('\n');
+    assert.ok(combined.includes('id STRING'));
     assert.ok(combined.includes('kind'));
     assert.ok(combined.includes('weight'));
     assert.ok(combined.includes('label'));
+    assert.ok(combined.includes('callsite_id'));
+    assert.ok(combined.includes('metadata'));
   });
 
   it('contains FROM ... TO pairs for node tables', () => {

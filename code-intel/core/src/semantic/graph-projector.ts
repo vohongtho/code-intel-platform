@@ -1,7 +1,8 @@
-import { generateEdgeId, generateNodeId } from '../graph/id-generator.js';
+import { generateEdgeId, generateNodeId, generateNodeIdV2 } from '../graph/id-generator.js';
 import type { CodeEdge, CodeNode, NodeKind } from '../shared/graph-types.js';
 import type { FactBundle } from './fact-bundle.js';
-import type { DeclarationFact, DependencyBindingFact, RegistrationFact, RouteFact, SemanticFact } from './facts.js';
+import type { DeclarationFact, DependencyBindingFact, RegistrationFact, RouteFact, SemanticFact, SignatureFact } from './facts.js';
+import { serializeSourceRange } from './anchors.js';
 
 function toNodeKind(kind: string): NodeKind {
   switch (kind) {
@@ -48,6 +49,29 @@ function evidenceLabel(fact: { framework?: string; frameworkEvidence?: { framewo
   return parts.join(' | ');
 }
 
+function signatureDiscriminator(signature?: SignatureFact): string | undefined {
+  if (!signature) return undefined;
+  const params = signature.parameters.map((param) => `${param.name}:${param.type?.text ?? ''}${param.optional ? '?' : ''}${param.variadic ? '...' : ''}`).join(',');
+  const returnType = signature.returnType?.text ?? '';
+  return `(${params}):${returnType}`;
+}
+
+function declarationNodeId(fact: DeclarationFact): string {
+  return generateNodeIdV2({
+    version: 2,
+    language: fact.language,
+    kind: toNodeKind(fact.declarationKind),
+    filePath: fact.filePath,
+    qualifiedName: fact.qualifiedName ?? fact.name,
+    lexicalOwner: fact.ownerRef,
+    signatureDiscriminator: signatureDiscriminator(fact.signature),
+    declarationDiscriminator: serializeSourceRange(fact.anchors.identity),
+    qualifier: {
+      visibilityDomain: fact.visibility?.level,
+    },
+  });
+}
+
 export function projectFactBundle(bundle: FactBundle): { nodes: CodeNode[]; edges: CodeEdge[] } {
   const nodes: CodeNode[] = [];
   const edges: CodeEdge[] = [];
@@ -56,10 +80,13 @@ export function projectFactBundle(bundle: FactBundle): { nodes: CodeNode[]; edge
   for (const fact of bundle.facts) {
     if (!isDeclarationFact(fact)) continue;
     const nodeKind = toNodeKind(fact.declarationKind);
-    const nodeId = generateNodeId(nodeKind, fact.filePath, fact.name);
+    const nodeId = declarationNodeId(fact);
     declarationNodeIds.set(fact.factId, nodeId);
+    const legacyId = generateNodeId(nodeKind, fact.filePath, fact.name);
     nodes.push({
       id: nodeId,
+      identityId: nodeId,
+      legacyIds: legacyId === nodeId ? undefined : [legacyId],
       kind: nodeKind,
       name: fact.name,
       filePath: fact.filePath,
@@ -67,11 +94,16 @@ export function projectFactBundle(bundle: FactBundle): { nodes: CodeNode[]; edge
       endLine: fact.anchors.identity.endLine,
       exported: fact.visibility?.level === 'public' ? true : undefined,
       metadata: {
+        ...(fact.language === 'html' && fact.declarationKind === 'variable' && /\s|=|;/.test(fact.name) ? { embedded: true } : {}),
         semantic: {
           factId: fact.factId,
           qualifiedName: fact.qualifiedName,
           anchors: fact.anchors,
           traits: fact.traits,
+          signature: fact.signature,
+          visibility: fact.visibility,
+          ownerRef: fact.ownerRef,
+          legacyId,
         },
       },
     });

@@ -40,6 +40,9 @@ export interface IndexMetadata {
   parser?: 'tree-sitter' | 'regex';
   factSchemaVersion?: string;
   factSchemaFingerprint?: string;
+  identityFingerprint?: string;
+  resolverVersion?: string;
+  resolverFingerprint?: string;
   frameworkFingerprint?: string;
   frameworkDetections?: string[];
   factDiagnostics?: Array<{

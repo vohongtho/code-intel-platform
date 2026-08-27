@@ -114,4 +114,26 @@ describe('index trust', () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it('preserves resolver version and fingerprint in trusted metadata', () => {
+    const root = tempRepo();
+    try {
+      writeArtifact(getDbPath(root));
+      writeArtifact(getBm25DbPath(root));
+      const indexedAt = new Date().toISOString();
+      saveMetadata(root, {
+        indexedAt,
+        schemaVersion: 1,
+        indexVersion: computeIndexVersion(root, 1, indexedAt),
+        resolverVersion: 'evidence-based-v1',
+        resolverFingerprint: 'resolver-fp-1',
+        stats: { nodes: 1, edges: 0, files: 1, duration: 1 },
+      });
+      const result = verifyIndexTrust(root);
+      assert.equal(result.metadata?.resolverVersion, 'evidence-based-v1');
+      assert.equal(result.metadata?.resolverFingerprint, 'resolver-fp-1');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

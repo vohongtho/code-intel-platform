@@ -34,6 +34,8 @@ export function getCreateNodeTableDDL(tableName: string): string {
   end_line INT64,
   exported BOOLEAN,
   content STRING,
+  identity_id STRING,
+  legacy_ids STRING,
   metadata STRING,
   PRIMARY KEY (id)
 )`;
@@ -54,8 +56,11 @@ export function getCreateEdgeTableDDL(): string[] {
 
   return [`CREATE REL TABLE GROUP IF NOT EXISTS code_edges (
   ${fromToPairs.join(',\n  ')},
+  id STRING,
   kind STRING,
   weight DOUBLE,
-  label STRING
+  label STRING,
+  callsite_id STRING,
+  metadata STRING
 )`];
 }

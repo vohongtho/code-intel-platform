@@ -39,7 +39,9 @@ export const parsePhaseParallel: Phase = {
     if (!context.fileCache) context.fileCache = new Map();
     if (!context.fileFunctionIndex) context.fileFunctionIndex = new Map();
     if (!context.factDiagnostics) context.factDiagnostics = [];
+    if (!context.semanticFacts) context.semanticFacts = [];
     context.factSchemaVersion = FACT_SCHEMA_VERSION;
+    context.identityFingerprint = 'symbol-identity-v2';
 
     const filePaths = context.filePaths;
     const workerCount = parseInt(process.env['PARSE_WORKERS'] ?? '', 10) || Math.max(1, os.cpus().length - 1);
@@ -89,6 +91,11 @@ export const parsePhaseParallel: Phase = {
       return parsePhase.execute(context, new Map());
     }
 
+    let symbolCount = 0;
+    let treeSitterCount = 0;
+    let regexCount = 0;
+    let parseDone = 0;
+
     // ── Build tasks ───────────────────────────────────────────────────────────
     const tasks: ParseTask[] = [];
     for (const filePath of filePaths) {
@@ -110,10 +117,29 @@ export const parsePhaseParallel: Phase = {
         workspaceRoot: context.workspaceRoot,
         source,
       });
+      context.semanticFacts.push(...factBundle.facts);
       const factValidation = factAdapter.validate(factBundle);
       context.factDiagnostics.push(...factValidation.diagnostics);
       if (context.verbose && factValidation.diagnostics.length > 0) {
         Logger.info(`[parse-parallel] semantic adapter ${factAdapter.adapterId}: ${factValidation.diagnostics.length} diagnostic(s) for ${relativePath}`);
+      }
+
+      const projected = projectFactBundle(factBundle);
+      const semanticFirst = [Language.TypeScript, Language.JavaScript, Language.Python, Language.Rust, Language.HTML, Language.Go].includes(lang);
+      if (semanticFirst && (projected.nodes.length > 0 || projected.edges.length > 0)) {
+        for (const node of projected.nodes) context.graph.addNode(node);
+        for (const edge of projected.edges) context.graph.addEdge(edge);
+        symbolCount += projected.nodes.length;
+        treeSitterCount++;
+        parseDone++;
+        context.onPhaseProgress?.('parse', parseDone, filePaths.length);
+
+        const funcs = projected.nodes
+          .filter((n) => n.kind === 'function' || n.kind === 'method')
+          .map((n) => ({ id: n.id, startLine: n.startLine ?? 0, endLine: n.endLine }))
+          .sort((a, b) => a.startLine - b.startLine);
+        if (funcs.length > 0) context.fileFunctionIndex!.set(relativePath, funcs);
+        continue;
       }
 
       tasks.push({
@@ -134,11 +160,6 @@ export const parsePhaseParallel: Phase = {
       maxQueueSize: 200,
     });
     await pool.init();
-
-    let symbolCount = 0;
-    let treeSitterCount = 0;
-    let regexCount = 0;
-    let parseDone = 0;
 
     // Backpressure: wait for queue to drain below threshold before submitting more
     const BATCH_SIZE = 100;

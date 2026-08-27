@@ -1,6 +1,6 @@
 export { createKnowledgeGraph } from './graph/index.js';
 export type { KnowledgeGraph } from './graph/index.js';
-export { generateNodeId, generateEdgeId } from './graph/index.js';
+export { generateNodeId, generateLegacyNodeId, generateNodeIdV2, generateEdgeId, generateLegacyEdgeId, generateCallSiteEdgeId } from './graph/index.js';
 
 export { initParser, getParser, getLanguage, parseSource, isTreeSitterAvailable, runQuery, runQueryMatches, AstCache } from './parsing/index.js';
 export type { QueryCapture, QueryMatch } from './parsing/index.js';

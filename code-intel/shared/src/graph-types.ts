@@ -71,6 +71,8 @@ export interface CodeNode {
   endLine?: number;
   exported?: boolean;
   content?: string;
+  identityId?: string;
+  legacyIds?: string[];
   metadata?: Record<string, unknown> & {
     securitySignals?: SecuritySignal[];
   };
@@ -83,5 +85,6 @@ export interface CodeEdge {
   kind: EdgeKind;
   weight?: number;
   label?: string;
+  callSiteId?: string;
   metadata?: Record<string, unknown>;
 }
