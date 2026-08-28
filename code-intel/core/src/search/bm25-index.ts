@@ -33,6 +33,11 @@ const SEARCH_CACHE_MAX = 128;
 interface PostingEntry { nodeId: string; tf: number }
 interface NodeMeta { name: string; kind: string; filePath: string; snippet?: string }
 
+export interface Bm25ReadBackReceipt {
+  docCount: number;
+  avgdl: number;
+}
+
 // ── Tokenizer ─────────────────────────────────────────────────────────────────
 
 function tokenize(text: string): string[] {
@@ -467,6 +472,11 @@ export class Bm25Index {
         ? [...this.docLengths.values()].reduce((a, b) => a + b, 0) / this.docCount
         : 1;
     }
+  }
+
+  getReadBackReceipt(): Bm25ReadBackReceipt {
+    if (!this._loaded) this.load();
+    return { docCount: this.docCount, avgdl: this.avgdl };
   }
 }
 

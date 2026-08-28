@@ -1,6 +1,7 @@
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
 import type { FrameworkDetection } from '../frameworks/contracts.js';
 import type { LLMConfig } from '../llm/provider.js';
+import type { AnalyzerCompatibilityReceipt, ArtifactVerification, EvolutionAction } from '../storage/index-generation.js';
 
 export type PipelinePhaseStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
 
@@ -37,6 +38,12 @@ export interface PipelineContext {
   /** Fact schema fingerprint/version for generation compatibility. */
   factSchemaVersion?: string;
   identityFingerprint?: string;
+  compatibilityReceipt?: AnalyzerCompatibilityReceipt;
+  graphVerification?: ArtifactVerification;
+  bm25Verification?: ArtifactVerification;
+  vectorVerification?: ArtifactVerification;
+  evidenceVerification?: ArtifactVerification;
+  evolutionAction?: EvolutionAction;
   /** Repository-scoped framework detections reused across phases. */
   frameworkDetections?: FrameworkDetection[];
   /** Semantic facts collected during parse for resolver/index consumers. */

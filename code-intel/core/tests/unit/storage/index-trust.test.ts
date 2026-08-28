@@ -53,6 +53,8 @@ describe('index trust', () => {
       const result = verifyIndexTrust(root);
       assert.equal(result.state, 'trusted');
       assert.equal(result.trusted, true);
+      assert.equal(result.artifacts.graph.state, 'unverified');
+      assert.equal(result.artifacts.vector.state, 'unverified');
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -110,6 +112,30 @@ describe('index trust', () => {
       const result = verifyIndexTrust(root);
       assert.equal(result.state, 'stale');
       assert.ok(result.reasons.includes('FRAMEWORK_FINGERPRINT_MISSING'));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reports artifact-specific collapsed and unavailable states', () => {
+    const root = tempRepo();
+    try {
+      writeArtifact(getDbPath(root));
+      writeArtifact(getBm25DbPath(root));
+      const indexedAt = new Date().toISOString();
+      saveMetadata(root, {
+        indexedAt,
+        schemaVersion: 1,
+        indexVersion: computeIndexVersion(root, 1, indexedAt),
+        graphVerification: { status: 'collapsed', producedCount: 2, persistedCount: 1 },
+        vectorVerification: { status: 'unavailable', producedCount: 0, persistedCount: 0, reason: 'disabled' },
+        stats: { nodes: 1, edges: 0, files: 1, duration: 1 },
+      });
+      const result = verifyIndexTrust(root);
+      assert.equal(result.state, 'corrupt');
+      assert.equal(result.artifacts.graph.state, 'collapsed');
+      assert.equal(result.artifacts.vector.state, 'unavailable');
+      assert.ok(result.reasons.includes('GRAPH_ARTIFACT_COLLAPSED'));
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

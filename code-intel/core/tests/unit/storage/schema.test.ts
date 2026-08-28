@@ -5,6 +5,7 @@ import {
   ALL_NODE_TABLES,
   getCreateNodeTableDDL,
   getCreateEdgeTableDDL,
+  getSchemaDdlFingerprint,
 } from '../../../src/storage/schema.js';
 
 describe('NODE_TABLE_MAP', () => {
@@ -93,6 +94,13 @@ describe('getCreateNodeTableDDL', () => {
     assert.ok(ddl.includes('exported'));
     assert.ok(ddl.includes('identity_id'));
     assert.ok(ddl.includes('legacy_ids'));
+  });
+});
+
+describe('getSchemaDdlFingerprint', () => {
+  it('is deterministic for the current schema', () => {
+    assert.equal(getSchemaDdlFingerprint(), getSchemaDdlFingerprint());
+    assert.match(getSchemaDdlFingerprint(), /^[a-f0-9]{64}$/);
   });
 });
 

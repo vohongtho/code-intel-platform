@@ -5,6 +5,8 @@ import { buildResolutionIndexes, createResolutionInstrumentation } from '../../r
 import { RESOLUTION_LANGUAGE_STRATEGIES } from '../../resolution/languages.js';
 import { materializeSemanticRelationships } from '../../resolution/materialize-relationships.js';
 import { createEvidenceStore, EVIDENCE_SCHEMA_VERSION } from '../../evidence/store.js';
+import { getSchemaDdlFingerprint } from '../../storage/schema.js';
+import { getAllLanguageModules } from '../../languages/registry.js';
 
 export const resolvePhase: Phase = {
   name: 'resolve',
@@ -31,6 +33,25 @@ export const resolvePhase: Phase = {
         resolverVersion: RESOLVER_VERSION,
       }))
       .digest('hex');
+    context.compatibilityReceipt = {
+      ddlFingerprint: getSchemaDdlFingerprint(),
+      analyzerFingerprint: crypto.createHash('sha256')
+        .update(JSON.stringify({
+          parser: context.parserUsed ?? 'regex',
+          factSchemaVersion: context.factSchemaVersion ?? null,
+          languages: getAllLanguageModules().map((mod) => ({ language: mod.lang, query: mod.queries, extensions: [...mod.fileExtensions].sort() })),
+        }))
+        .digest('hex'),
+      languageRegistryFingerprint: crypto.createHash('sha256')
+        .update(JSON.stringify(getAllLanguageModules().map((mod) => ({ language: mod.lang, query: mod.queries, extensions: [...mod.fileExtensions].sort() }))))
+        .digest('hex'),
+      factSchemaFingerprint: crypto.createHash('sha256')
+        .update(JSON.stringify({ version: context.factSchemaVersion ?? null, parser: context.parserUsed ?? 'regex' }))
+        .digest('hex'),
+      identityFingerprint: context.identityFingerprint ?? 'symbol-identity-v2',
+      resolverFingerprint: context.resolverFingerprint,
+      evidenceFingerprint: context.evidenceSchemaFingerprint,
+    };
 
     const evidenceStore = createEvidenceStore(context.workspaceRoot);
     const materialized = materializeSemanticRelationships({
@@ -41,6 +62,21 @@ export const resolvePhase: Phase = {
       resolverVersion: RESOLVER_VERSION,
     });
     evidenceStore.close();
+    context.evolutionAction ??= 'full-reanalysis';
+    context.evidenceVerification = materialized.evidenceCount > 0
+      ? {
+          status: 'verified',
+          producedCount: materialized.evidenceCount,
+          persistedCount: materialized.evidenceCount,
+          contentFingerprint: context.evidenceSchemaFingerprint,
+        }
+      : {
+          status: 'unavailable',
+          producedCount: 0,
+          persistedCount: 0,
+          reason: 'no evidence records materialized',
+          contentFingerprint: context.evidenceSchemaFingerprint,
+        };
 
     return {
       status: 'completed',

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Database, type SqliteDatabase } from '../shared/sqlite.js';
 import type { AnalysisBoundary, AnalysisCoverage } from '../shared/index.js';
-import { getIndexDir } from '../storage/index-generation.js';
+import { getIndexDir, resolvePublishedArtifactPath } from '../storage/index-generation.js';
 
 export const EVIDENCE_SCHEMA_VERSION = 1;
 export const EVIDENCE_DB_FILE = 'evidence.db';
@@ -173,7 +173,9 @@ function parseJson<T>(value: string | null): T | undefined {
 }
 
 export function getEvidenceDbPath(repoDir: string): string {
-  return path.join(getIndexDir(repoDir), EVIDENCE_DB_FILE);
+  const stagingDir = process.env['CODE_INTEL_INDEX_STAGING_DIR']?.trim();
+  if (stagingDir) return path.join(path.resolve(stagingDir), EVIDENCE_DB_FILE);
+  return resolvePublishedArtifactPath(repoDir, EVIDENCE_DB_FILE);
 }
 
 export function createEvidenceStore(repoDir: string): ResolutionEvidenceStore {

@@ -1,7 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { resolvePublishedArtifactPath } from './index-generation.js';
+import {
+  resolvePublishedArtifactPath,
+  type AnalyzerCompatibilityReceipt,
+  type ArtifactVerification,
+  type EvolutionAction,
+} from './index-generation.js';
 import type { IndexSnapshot } from './index-snapshot.js';
 
 const META_DIRNAME = '.code-intel';
@@ -38,6 +43,12 @@ export interface IndexMetadata {
   repoId?: string;
   commitHash?: string;
   parser?: 'tree-sitter' | 'regex';
+  compatibilityReceipt?: AnalyzerCompatibilityReceipt;
+  graphVerification?: ArtifactVerification;
+  bm25Verification?: ArtifactVerification;
+  vectorVerification?: ArtifactVerification;
+  evidenceVerification?: ArtifactVerification;
+  evolutionAction?: EvolutionAction;
   factSchemaVersion?: string;
   factSchemaFingerprint?: string;
   identityFingerprint?: string;

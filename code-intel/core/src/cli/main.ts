@@ -56,7 +56,7 @@ if (await runStandaloneCommand(process.argv.slice(2))) {
 }
 
 if (arg === 'analyze' && process.env['CODE_INTEL_ATOMIC_CHILD'] !== '1') {
-  const status = runAtomicAnalyze(process.argv.slice(2), new URL(import.meta.url));
+  const status = await runAtomicAnalyze(process.argv.slice(2), new URL(import.meta.url));
   process.exit(status);
 }
 

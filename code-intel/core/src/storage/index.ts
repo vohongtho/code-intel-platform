@@ -1,5 +1,5 @@
 export { DbManager } from './db-manager.js';
-export { ALL_NODE_TABLES, NODE_TABLE_MAP, getCreateNodeTableDDL, getCreateEdgeTableDDL } from './schema.js';
+export { ALL_NODE_TABLES, NODE_TABLE_MAP, getCreateNodeTableDDL, getCreateEdgeTableDDL, getSchemaDdlFingerprint } from './schema.js';
 export { writeNodeCSVs, writeEdgeCSV } from './csv-writer.js';
 export type { EdgeCSVGroup } from './csv-writer.js';
 export { loadGraphToDB, upsertNode, upsertNodes, removeNodesForFile, removeEdgesForFile } from './graph-loader.js';
@@ -10,7 +10,7 @@ export type { IndexMetadata } from './metadata.js';
 export { normalizeIndexGenerationManifest } from './index-generation.js';
 export { EVIDENCE_DB_FILE, getEvidenceDbPath } from '../evidence/store.js';
 export { verifyIndexTrust, upgradeLegacyIndexMetadata } from './index-trust.js';
-export type { IndexTrustState, IndexTrustResult, IndexArtifactState } from './index-trust.js';
+export type { IndexTrustState, IndexTrustResult, IndexArtifactState, IndexArtifactTrustState } from './index-trust.js';
 export {
   createIndexGeneration,
   publishIndexGeneration,
@@ -26,4 +26,8 @@ export type {
   IndexGeneration,
   IndexGenerationManifest,
   IndexArtifactName,
+  AnalyzerCompatibilityReceipt,
+  ArtifactStatus,
+  ArtifactVerification,
+  EvolutionAction,
 } from './index-generation.js';

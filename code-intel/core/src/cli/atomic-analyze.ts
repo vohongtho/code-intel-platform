@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import {
@@ -23,6 +24,12 @@ import {
 import { planAtomicAnalysis } from '../pipeline/analysis-plan.js';
 import type { IndexMetadata } from '../storage/metadata.js';
 import { DEFAULT_CONFIG, loadConfig } from './init-wizard.js';
+import { createKnowledgeGraph } from '../graph/knowledge-graph.js';
+import { DbManager } from '../storage/db-manager.js';
+import { loadGraphFromDB } from '../multi-repo/graph-from-db.js';
+import { Bm25Index } from '../search/bm25-index.js';
+import { VectorIndex } from '../search/vector-index.js';
+import { createEvidenceStore } from '../evidence/store.js';
 
 const ANALYZE_VALUE_OPTIONS = new Set([
   '--name', '--llm-provider', '--llm-model', '--llm-base-url', '--llm-api-key',
@@ -88,11 +95,81 @@ function runChild(args: string[], binUrl: URL, extraEnv: NodeJS.ProcessEnv = {})
   return child.status ?? 1;
 }
 
+function sha256(value: unknown): string {
+  return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+async function verifyStagingReadBack(generation: IndexGeneration, metadata: IndexMetadata): Promise<IndexMetadata> {
+  const graph = createKnowledgeGraph();
+  const db = new DbManager(generation.graphDbPath, true);
+  await db.init();
+  try {
+    await loadGraphFromDB(graph, db);
+  } finally {
+    db.close();
+  }
+  const graphPersisted = graph.size.nodes + graph.size.edges;
+  const graphProduced = metadata.graphVerification?.producedCount ?? graphPersisted;
+  metadata.graphVerification = {
+    ...(metadata.graphVerification ?? { status: 'verified' }),
+    persistedCount: graphPersisted,
+    contentFingerprint: sha256({ nodes: graph.size.nodes, edges: graph.size.edges }),
+    status: graphPersisted < graphProduced ? 'collapsed' : 'verified',
+    reason: graphPersisted < graphProduced ? 'staging graph read-back smaller than produced graph' : metadata.graphVerification?.reason,
+  };
+
+  const bm25 = new Bm25Index(generation.bm25DbPath);
+  const bm25Receipt = bm25.getReadBackReceipt();
+  metadata.bm25Verification = {
+    ...(metadata.bm25Verification ?? { status: 'verified' }),
+    persistedCount: bm25Receipt.docCount,
+    contentFingerprint: sha256(bm25Receipt),
+    status: bm25Receipt.docCount < (metadata.bm25Verification?.producedCount ?? bm25Receipt.docCount) ? 'collapsed' : 'verified',
+    reason: bm25Receipt.docCount < (metadata.bm25Verification?.producedCount ?? bm25Receipt.docCount) ? 'staging bm25 read-back smaller than produced membership' : metadata.bm25Verification?.reason,
+  };
+
+  if (metadata.embeddings?.enabled && metadata.embeddings.status === 'ready') {
+    const idx = new VectorIndex(generation.vectorDbPath, metadata.embeddings.dimension, { readonly: true, fileMustExist: true });
+    try {
+      await idx.init();
+      const built = await idx.isBuilt();
+      metadata.vectorVerification = {
+        ...(metadata.vectorVerification ?? { status: 'verified' }),
+        persistedCount: built ? (metadata.vectorVerification?.producedCount ?? 0) : 0,
+        contentFingerprint: metadata.compatibilityReceipt?.embeddingFingerprint,
+        status: built ? 'verified' : 'collapsed',
+        reason: built ? metadata.vectorVerification?.reason : 'staging vector read-back failed',
+      };
+    } finally {
+      idx.close();
+    }
+  }
+
+  if (fs.existsSync(generation.evidenceDbPath ?? '')) {
+    const evidenceStore = createEvidenceStore(path.dirname(path.dirname(generation.stagingDir)));
+    try {
+      const expected = metadata.evidenceVerification?.producedCount ?? 0;
+      const receiptId = metadata.evidenceVerification?.contentFingerprint;
+      const receipt = receiptId ? evidenceStore.getReceipt(receiptId) : null;
+      metadata.evidenceVerification = {
+        ...(metadata.evidenceVerification ?? { status: 'verified' }),
+        persistedCount: expected,
+        status: receipt || expected === 0 ? 'verified' : 'collapsed',
+        reason: receipt || expected === 0 ? metadata.evidenceVerification?.reason : 'staging evidence read-back failed',
+      };
+    } finally {
+      evidenceStore.close();
+    }
+  }
+
+  return metadata;
+}
+
 /**
  * Run analyze against an isolated staging directory and publish only after all
  * required artifacts validate. A repository lock serializes analyze processes.
  */
-export function runAtomicAnalyze(args: string[], binUrl: URL): number {
+export async function runAtomicAnalyze(args: string[], binUrl: URL): Promise<number> {
   const workspaceRoot = resolveAnalyzeWorkspaceRoot(args);
   let lock: ReturnType<typeof acquireAnalyzeLock> | null = null;
   try {
@@ -110,6 +187,7 @@ export function runAtomicAnalyze(args: string[], binUrl: URL): number {
       console.log(`    mode: ${plan.mode}`);
       console.log(`    reason: ${plan.reason}`);
       if (plan.mode === 'publish') {
+        console.log(`    evolution: ${plan.evolution}`);
         console.log(`    graph: ${plan.graph}`);
         console.log(`    bm25: ${plan.bm25}`);
         console.log(`    vector: ${plan.vector}`);
@@ -120,33 +198,29 @@ export function runAtomicAnalyze(args: string[], binUrl: URL): number {
     if (plan.mode === 'passthrough') {
       return runChild(args, binUrl);
     }
-    if (plan.mode === 'noop') {
-      // Extract requested repository name from args if provided
-      const requestedRepoName = (() => {
-        const nameFlagIndex = args.indexOf('--name');
-        if (nameFlagIndex >= 0) return args[nameFlagIndex + 1]?.trim();
-        const inline = args.find((arg) => arg.startsWith('--name='));
-        return inline ? inline.slice('--name='.length).trim() : undefined;
-      })();
-      
-      // Reconcile registry entry - restore if missing, detect conflicts
-      if (previous) {
-        const result = reconcileRegistryEntry({
-          workspaceRoot,
-          requestedName: requestedRepoName,
-          metadata: previous,
-        });
-        
-        if (result.outcome === 'conflict') {
-          throw new Error(`${result.message}${result.guidance ? `\n  ${result.guidance}` : ''}`);
-        }
-        
-        if (result.outcome === 'registered') {
-          console.log(`  ✓ ${result.message}`);
-        }
-        // For 'unchanged', we don't need to log anything - the registry is already correct
+
+    const requestedRepoName = (() => {
+      const nameFlagIndex = args.indexOf('--name');
+      if (nameFlagIndex >= 0) return args[nameFlagIndex + 1]?.trim();
+      const inline = args.find((arg) => arg.startsWith('--name='));
+      return inline ? inline.slice('--name='.length).trim() : undefined;
+    })();
+
+    if (previous) {
+      const result = reconcileRegistryEntry({
+        workspaceRoot,
+        requestedName: requestedRepoName,
+        metadata: previous,
+      });
+      if (result.outcome === 'conflict') {
+        throw new Error(`${result.message}${result.guidance ? `\n  ${result.guidance}` : ''}`);
       }
-      
+      if (result.outcome === 'registered') {
+        console.log(`  ✓ ${result.message}`);
+      }
+    }
+
+    if (plan.mode === 'noop') {
       console.log('  ✓ No source or index changes detected');
       console.log(`  ✓ Active generation preserved: ${snapshot?.generationId ?? 'legacy'}`);
       return 0;
@@ -183,7 +257,8 @@ export function runAtomicAnalyze(args: string[], binUrl: URL): number {
       touchIndexGeneration(generation);
       const metadata = JSON.parse(fs.readFileSync(generation.metadataPath, 'utf8')) as IndexMetadata;
       metadata.generationId = generation.generationId;
-      publishIndexGeneration(workspaceRoot, generation, metadata, {
+      const verifiedMetadata = await verifyStagingReadBack(generation, metadata);
+      publishIndexGeneration(workspaceRoot, generation, verifiedMetadata, {
         vectorRequired: Boolean(metadata.embeddings?.enabled && metadata.embeddings.status === 'ready'),
         keepGenerations: Math.max(1, Math.floor(indexConfig.keepGenerations)),
         staleStagingMs,

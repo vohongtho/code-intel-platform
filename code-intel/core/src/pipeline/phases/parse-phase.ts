@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { detectLanguage, Language } from '../../shared/index.js';
 import { getLanguageCapabilityDescriptor, getLanguageQuery } from '../../languages/capability-registry.js';
 import { getLanguageModule } from '../../languages/registry.js';
@@ -598,6 +599,13 @@ export const parsePhase: Phase = {
     if (context.verbose) {
       Logger.info(`  [parse] tree-sitter: ${treeSitterCount} files, regex fallback: ${regexCount} files`);
     }
+
+    context.graphVerification = {
+      status: 'verified',
+      producedCount: context.graph.size.nodes + context.graph.size.edges,
+      contentFingerprint: crypto.createHash('sha256').update(JSON.stringify({ nodes: context.graph.size.nodes, edges: context.graph.size.edges, parser: context.parserUsed })).digest('hex'),
+    };
+    context.evolutionAction ??= 'full-reanalysis';
 
     return {
       status: 'completed',

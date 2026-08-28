@@ -182,12 +182,18 @@ function readPinnedVersion(state: RuntimeInstallState): string | null {
   }
 }
 
+function atomicWriteJson(filePath: string, value: unknown): void {
+  const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+  fs.writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+  fs.renameSync(tmp, filePath);
+}
+
 function writePinnedVersion(state: RuntimeInstallState, version: string | null): void {
   if (!version) {
     fs.rmSync(state.pinFile, { force: true });
     return;
   }
-  fs.writeFileSync(state.pinFile, `${JSON.stringify({ version }, null, 2)}\n`, 'utf8');
+  atomicWriteJson(state.pinFile, { version });
 }
 
 function detectPathConflicts(installRoot: string): Array<{ path: string; resolved: string }> {
@@ -242,12 +248,12 @@ function writeOwnershipMarkers(state: RuntimeInstallState): void {
       state.installMarkerPath,
     ],
   };
-  fs.writeFileSync(state.installMarkerPath, `${JSON.stringify(installMarker, null, 2)}\n`, 'utf8');
-  fs.writeFileSync(state.dataMarkerPath, `${JSON.stringify({
+  atomicWriteJson(state.installMarkerPath, installMarker);
+  atomicWriteJson(state.dataMarkerPath, {
     version: 1,
     installRoot: state.installRoot,
     dataRoot: state.dataRoot,
-  }, null, 2)}\n`, 'utf8');
+  });
 }
 
 export function listInstalledRuntimeVersions(scriptPath = process.argv[1] ?? '', installRoot?: string): InstalledRuntimeVersion[] {

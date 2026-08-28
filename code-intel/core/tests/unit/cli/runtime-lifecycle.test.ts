@@ -62,6 +62,22 @@ describe('runtime lifecycle', () => {
     }
   });
 
+  it('writes pin file with atomic private staging names', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-lifecycle-'));
+    try {
+      writeVersion(root, '1.0.10');
+      fs.symlinkSync(path.join('versions', '1.0.10'), path.join(root, 'install', 'current'), 'dir');
+      const scriptPath = path.join(root, 'install', 'current', 'app', 'code-intel', 'core', 'dist', 'cli', 'main.js');
+      pinRuntimeVersion('1.0.10', scriptPath);
+      const entries = fs.readdirSync(path.join(root, 'install'));
+      assert.equal(entries.some((name) => name.includes('.tmp-')), false);
+      const pin = JSON.parse(fs.readFileSync(path.join(root, 'install', 'pinned-version.json'), 'utf8')) as { version: string };
+      assert.equal(pin.version, '1.0.10');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('blocks rollback to incompatible schema version', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-lifecycle-'));
     try {

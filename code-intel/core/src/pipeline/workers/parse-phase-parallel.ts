@@ -9,6 +9,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { detectLanguage, Language } from '../../shared/index.js';
 import { getLanguageQuery } from '../../languages/capability-registry.js';
@@ -205,6 +206,13 @@ export const parsePhaseParallel: Phase = {
     if (context.verbose) {
       Logger.info(`[parse-parallel] ${workerCount} workers, tree-sitter: ${treeSitterCount}, regex: ${regexCount}`);
     }
+
+    context.graphVerification = {
+      status: 'verified',
+      producedCount: context.graph.size.nodes + context.graph.size.edges,
+      contentFingerprint: crypto.createHash('sha256').update(JSON.stringify({ nodes: context.graph.size.nodes, edges: context.graph.size.edges, parser: parserUsed })).digest('hex'),
+    };
+    context.evolutionAction ??= 'full-reanalysis';
 
     return {
       status: 'completed',

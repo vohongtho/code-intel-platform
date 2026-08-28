@@ -57,7 +57,8 @@ describe('index generation publication', () => {
 
       const failed = createIndexGeneration(root, 'g2');
       write(failed.graphDbPath, 'graph-v2');
-      assert.throws(() => publishIndexGeneration(root, failed, metadata), /bm25\.db/);
+      write(failed.bm25DbPath, 'bm25-v2');
+      assert.throws(() => publishIndexGeneration(root, failed, { ...metadata, graphVerification: { status: 'collapsed', producedCount: 2, persistedCount: 1 } }), /collapsed/);
       abortIndexGeneration(failed);
 
       assert.equal(loadCurrentGenerationManifest(root)?.generationId, 'g1');
@@ -78,8 +79,10 @@ describe('index generation publication', () => {
       const manifest = migrateLegacyIndexToGeneration(root);
 
       assert.ok(manifest?.generationId.startsWith('legacy-'));
+      assert.equal(manifest?.version, 2);
       assert.equal(fs.readFileSync(resolvePublishedArtifactPath(root, 'graph.db'), 'utf8'), 'legacy-graph');
       assert.equal(fs.readFileSync(path.join(legacyDir, 'graph.db'), 'utf8'), 'legacy-graph');
+      assert.equal(JSON.parse(fs.readFileSync(path.join(legacyDir, 'meta.json'), 'utf8')).generationId, undefined);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -88,6 +91,21 @@ describe('index generation publication', () => {
 
 
 describe('index generation manifest compatibility', () => {
+  it('preserves no-op publication semantics for existing live generation', () => {
+    const root = tempRepo();
+    try {
+      const generation = createIndexGeneration(root, 'g-noop');
+      write(generation.graphDbPath, 'graph');
+      write(generation.bm25DbPath, 'bm25');
+      publishIndexGeneration(root, generation, metadata);
+      const before = fs.readFileSync(resolvePublishedArtifactPath(root, 'graph.db'), 'utf8');
+      assert.equal(before, 'graph');
+      assert.equal(loadCurrentGenerationManifest(root)?.generationId, 'g-noop');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('normalizes a v1 manifest without rewriting its compatibility fields', () => {
     const manifest = normalizeIndexGenerationManifest({
       generationId: 'g-v1',
@@ -112,6 +130,17 @@ describe('index generation manifest compatibility', () => {
         ...metadata,
         schemaVersion: 8,
         parser: 'tree-sitter',
+        compatibilityReceipt: {
+          ddlFingerprint: 'ddl-fp',
+          analyzerFingerprint: 'analyzer-fp',
+          languageRegistryFingerprint: 'lang-fp',
+          factSchemaFingerprint: 'abc123',
+          identityFingerprint: 'symbol-identity-v2',
+          resolverFingerprint: 'resolver-fp',
+        },
+        graphVerification: { status: 'verified', producedCount: 1, persistedCount: 1, contentFingerprint: 'graph-fp' },
+        bm25Verification: { status: 'verified', producedCount: 1, persistedCount: 1, contentFingerprint: 'bm25-fp' },
+        evolutionAction: 'reuse',
         factSchemaVersion: '1.0.11',
         factSchemaFingerprint: 'abc123',
         identityFingerprint: 'symbol-identity-v2',
@@ -122,6 +151,10 @@ describe('index generation manifest compatibility', () => {
       if (manifest.version === 2) {
         assert.equal(manifest.schemaVersion, 8);
         assert.equal(manifest.parser, 'tree-sitter');
+        assert.equal(manifest.compatibilityReceipt?.ddlFingerprint, 'ddl-fp');
+        assert.equal(manifest.graphVerification?.status, 'verified');
+        assert.equal(manifest.bm25Verification?.contentFingerprint, 'bm25-fp');
+        assert.equal(manifest.evolutionAction, 'reuse');
         assert.equal(manifest.factSchemaVersion, '1.0.11');
         assert.equal(manifest.factSchemaFingerprint, 'abc123');
         assert.equal(manifest.identityFingerprint, 'symbol-identity-v2');
@@ -130,6 +163,50 @@ describe('index generation manifest compatibility', () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it('rejects produced-vs-persisted collapse before publication', () => {
+    const root = tempRepo();
+    try {
+      const generation = createIndexGeneration(root, 'g-collapse');
+      write(generation.graphDbPath, 'graph');
+      write(generation.bm25DbPath, 'bm25');
+      assert.throws(() => publishIndexGeneration(root, generation, {
+        ...metadata,
+        graphVerification: { status: 'verified', producedCount: 5, persistedCount: 4 },
+      }), /persisted count 4 below produced count 5/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('normalizes additive v2 verification fields', () => {
+    const manifest = normalizeIndexGenerationManifest({
+      version: 2,
+      generationId: 'g-v2',
+      publishedAt: '2026-08-03T00:00:00.000Z',
+      compatibilityReceipt: {
+        ddlFingerprint: 'ddl',
+        analyzerFingerprint: 'analyzer',
+        languageRegistryFingerprint: 'lang',
+        factSchemaFingerprint: 'facts',
+        identityFingerprint: 'identity',
+        resolverFingerprint: 'resolver',
+        evidenceFingerprint: 'evidence',
+        embeddingFingerprint: 'embedding',
+      },
+      graphVerification: { status: 'verified', producedCount: 1, persistedCount: 1, contentFingerprint: 'g' },
+      bm25Verification: { status: 'verified' },
+      vectorVerification: { status: 'unavailable', reason: 'disabled' },
+      evidenceVerification: { status: 'partial-recoverable', reason: 'legacy' },
+      evolutionAction: 'artifact-rebuild',
+      artifacts: ['graph.db', 'bm25.db', 'meta.json'],
+    });
+    assert.equal(manifest?.version, 2);
+    if (!manifest || manifest.version !== 2) throw new Error('expected v2 manifest');
+    assert.equal(manifest.compatibilityReceipt?.embeddingFingerprint, 'embedding');
+    assert.equal(manifest.vectorVerification?.status, 'unavailable');
+    assert.equal(manifest.evolutionAction, 'artifact-rebuild');
   });
 
   it('rejects unsafe generation identifiers', () => {

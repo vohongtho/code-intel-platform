@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import type { NodeKind } from '../shared/index.js';
 
 export const NODE_TABLE_MAP: Record<NodeKind, string> = {
@@ -69,4 +70,12 @@ export function getCreateEdgeTableDDL(): string[] {
   ambiguous BOOLEAN,
   metadata STRING
 )`];
+}
+
+export function getSchemaDdlFingerprint(): string {
+  const payload = {
+    nodeTables: ALL_NODE_TABLES.map((tableName) => ({ tableName, ddl: getCreateNodeTableDDL(tableName) })),
+    edgeTables: getCreateEdgeTableDDL(),
+  };
+  return crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
 }

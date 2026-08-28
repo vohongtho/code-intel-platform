@@ -36,6 +36,12 @@ const BLOCK_START = '<!-- code-intel:start -->';
 const BLOCK_END   = '<!-- code-intel:end -->';
 const JSON_KEY = 'code-intel';
 
+function atomicWriteText(filePath: string, content: string): void {
+  const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+  fs.writeFileSync(tmp, content, 'utf-8');
+  fs.renameSync(tmp, filePath);
+}
+
 export interface ContextStats {
   nodes: number;
   edges: number;
@@ -122,7 +128,7 @@ function upsertFile(filePath: string, block: string, fileName: string): void {
       '<!-- Add your own custom notes below this line. They will never be overwritten by code-intel. -->',
       '',
     ].join('\n');
-    fs.writeFileSync(filePath, newContent, 'utf-8');
+    atomicWriteText(filePath, newContent);
     return;
   }
 
@@ -135,7 +141,7 @@ function upsertFile(filePath: string, block: string, fileName: string): void {
     const before = existing.slice(0, startIdx);
     const after  = existing.slice(endIdx + BLOCK_END.length);
     const updated = (before + block + after).trimEnd() + '\n';
-    fs.writeFileSync(filePath, updated, 'utf-8');
+    atomicWriteText(filePath, updated);
     return;
   }
 
@@ -150,7 +156,7 @@ function upsertFile(filePath: string, block: string, fileName: string): void {
     block,
     '',
   ].join('\n');
-  fs.writeFileSync(filePath, appended, 'utf-8');
+  atomicWriteText(filePath, appended);
 }
 
 function upsertJsonFile(filePath: string, block: string): void {
@@ -166,7 +172,7 @@ function upsertJsonFile(filePath: string, block: string): void {
     ...existing,
     [JSON_KEY]: block,
   };
-  fs.writeFileSync(filePath, JSON.stringify(updated, null, 2) + '\n', 'utf-8');
+  atomicWriteText(filePath, JSON.stringify(updated, null, 2) + '\n');
 }
 
 function readPackageVersion(): string {

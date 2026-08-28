@@ -4,6 +4,8 @@
 
 ### Requirement: Candidate generation MUST pass semantic read-back before publication
 
+The candidate generation MUST pass semantic read-back before publication.
+
 #### Scenario: Required files exist but persisted relationships are incomplete
 
 - **GIVEN** analyzer producer receipts for a staging generation
@@ -14,6 +16,8 @@
 
 ### Requirement: Compatibility MUST be derived from semantic analyzer artifacts
 
+Compatibility MUST be derived from semantic analyzer artifacts.
+
 #### Scenario: Resolver semantics change without basic graph-file layout change
 
 - **WHEN** the current resolver/identity/fact compatibility fingerprint differs from the published generation
@@ -21,6 +25,8 @@
 - **AND** MUST NOT trust the index solely because a manual schema version is unchanged.
 
 ### Requirement: Artifact trust MUST be capability-specific and truthful
+
+Artifact trust MUST be capability-specific and truthful.
 
 #### Scenario: Vector artifact is unavailable but BM25/graph are verified and vector is optional
 
@@ -30,6 +36,8 @@
 
 ### Requirement: Failed candidate verification MUST preserve the active published snapshot
 
+Failed candidate verification MUST preserve the active published snapshot.
+
 #### Scenario: Evidence or BM25 reopen fails
 
 - **WHEN** candidate verification aborts
@@ -37,6 +45,8 @@
 - **AND** the failed candidate MUST NOT become current.
 
 ### Requirement: Concurrent mutable control-file writers MUST not share one staging pathname
+
+Concurrent mutable control-file writers MUST not share one staging pathname.
 
 #### Scenario: Two processes atomically update the same mutable control file
 

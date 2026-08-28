@@ -50,9 +50,16 @@ import { startHttpServer } from '../http/app.js';
 import { startMcpStdio } from '../mcp-server/server.js';
 import { textSearch } from '../search/text-search.js';
 import { resolveEmbeddingUpdatePlan } from '../search/embedding-update-plan.js';
-import { getDefaultEmbeddingModel, getEmbeddingModel, normalizeEmbeddingModelId } from '../search/embedding-model-registry.js';
+import { EMBEDDING_MODELS, getDefaultEmbeddingModel, getEmbeddingModel, normalizeEmbeddingModelId } from '../search/embedding-model-registry.js';
 import type { PipelineContext } from '../pipeline/types.js';
 import { saveMetadata, loadMetadata, getDbPath, getVectorDbPath, loadAgentTargets, saveAgentTargets, computeIndexVersion, resolveEmbeddingMode, shouldRebuildEmbeddings, resolveAnalyzeMode, resolveParserForMetadata, type AgentTargetConfig, type AgentTargetSelection, type AgentTargetFormat, type EmbeddingMetadata } from '../storage/metadata.js';
+import { getSchemaDdlFingerprint } from '../storage/schema.js';
+import { getAllLanguageModules } from '../languages/registry.js';
+import { FACT_SCHEMA_VERSION } from '../semantic/fact-bundle.js';
+import { LANGUAGE_FACT_ADAPTERS } from '../semantic/adapters/registry.js';
+import { RESOLUTION_LANGUAGE_STRATEGIES } from '../resolution/languages.js';
+import { RESOLVER_VERSION } from '../resolution/contracts.js';
+import { EVIDENCE_SCHEMA_VERSION } from '../evidence/store.js';
 import { resolveIndexSnapshot } from '../storage/index-snapshot.js';
 import { writeContextFiles } from './context-writer.js';
 import { AGENT_OPTIONS, isValidRepoRelativeTargetPath, resolveBuiltinTarget } from './agent-targets.js';
@@ -412,6 +419,45 @@ function buildEmbeddingMetadata(status: 'ready' | 'stale', modelId?: string): Em
     provider: descriptor.provider,
     model: descriptor.id,
     dimension: descriptor.dimension,
+  };
+}
+
+function sha256(value: unknown): string {
+  return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+function buildAnalyzerCompatibilityReceipt(args: {
+  parser: 'tree-sitter' | 'regex';
+  factSchemaVersion?: string;
+  identityFingerprint: string;
+  resolverFingerprint?: string;
+  embeddingMetadata?: Pick<EmbeddingMetadata, 'provider' | 'model' | 'dimension'>;
+}) {
+  const languageRegistryFingerprint = sha256(
+    getAllLanguageModules().map((mod) => ({
+      language: mod.lang,
+      query: mod.queries,
+      extensions: [...mod.fileExtensions].sort(),
+    })),
+  );
+  const analyzerFingerprint = sha256({
+    parser: args.parser,
+    factSchemaVersion: args.factSchemaVersion ?? FACT_SCHEMA_VERSION,
+    languageRegistryFingerprint,
+    languageFactAdapters: Object.entries(LANGUAGE_FACT_ADAPTERS)
+      .map(([language, adapter]) => ({ language, adapterId: adapter.adapterId }))
+      .sort((a, b) => a.language.localeCompare(b.language)),
+    resolutionLanguages: Object.keys(RESOLUTION_LANGUAGE_STRATEGIES).sort(),
+  });
+  return {
+    ddlFingerprint: getSchemaDdlFingerprint(),
+    analyzerFingerprint,
+    languageRegistryFingerprint,
+    factSchemaFingerprint: sha256({ version: args.factSchemaVersion ?? FACT_SCHEMA_VERSION, parser: args.parser }),
+    identityFingerprint: args.identityFingerprint,
+    resolverFingerprint: args.resolverFingerprint ?? sha256({ resolverVersion: RESOLVER_VERSION, factSchemaVersion: args.factSchemaVersion ?? FACT_SCHEMA_VERSION, identityFingerprint: args.identityFingerprint }),
+    evidenceFingerprint: sha256({ evidenceSchemaVersion: EVIDENCE_SCHEMA_VERSION, resolverVersion: RESOLVER_VERSION }),
+    embeddingFingerprint: args.embeddingMetadata ? sha256(args.embeddingMetadata) : undefined,
   };
 }
 
@@ -947,6 +993,15 @@ async function analyzeWorkspace(targetPath: string, options?: {
     const schemaVersion = CURRENT_SCHEMA_VERSION;
     const factDiagnostics = context.factDiagnostics ?? [];
     const factSchemaVersion = context.factSchemaVersion;
+    const parser = resolveParserForMetadata(context.parserUsed, previousMetadata);
+    const identityFingerprint = context.identityFingerprint ?? currentIdentityFingerprint;
+    const compatibilityReceipt = buildAnalyzerCompatibilityReceipt({
+      parser,
+      factSchemaVersion,
+      identityFingerprint,
+      resolverFingerprint: context.resolverFingerprint,
+      embeddingMetadata: embeddingMetadataForSave,
+    });
     const frameworkDetections = (context.frameworkDetections ?? []).map((item) => item.frameworkId).sort();
     const frameworkFingerprint = frameworkDetections.length > 0
       ? crypto.createHash('sha256').update(JSON.stringify({ frameworks: frameworkDetections, factSchemaVersion })).digest('hex')
@@ -958,16 +1013,38 @@ async function analyzeWorkspace(targetPath: string, options?: {
       repoId: savedRepo.id,
       commitHash: currentCommitHash,
       lastAnalyzedMtimes: mergedMtimes,
-      parser: resolveParserForMetadata(context.parserUsed, previousMetadata),
+      parser,
+      compatibilityReceipt,
       factSchemaVersion,
-      factSchemaFingerprint: factSchemaVersion
-        ? crypto.createHash('sha256').update(JSON.stringify({ version: factSchemaVersion, parser: context.parserUsed ?? previousMetadata?.parser ?? 'regex' })).digest('hex')
-        : undefined,
-      identityFingerprint: context.identityFingerprint ?? currentIdentityFingerprint,
+      factSchemaFingerprint: compatibilityReceipt.factSchemaFingerprint,
+      identityFingerprint,
       resolverVersion: context.resolverVersion,
-      resolverFingerprint: context.resolverFingerprint,
+      resolverFingerprint: compatibilityReceipt.resolverFingerprint,
       evidenceSchemaVersion: context.evidenceSchemaVersion,
-      evidenceSchemaFingerprint: context.evidenceSchemaFingerprint,
+      evidenceSchemaFingerprint: compatibilityReceipt.evidenceFingerprint,
+      graphVerification: context.graphVerification,
+      bm25Verification: {
+        status: 'verified',
+        producedCount: indexedGraph.size.nodes,
+        persistedCount: indexedGraph.size.nodes,
+        contentFingerprint: sha256({ docCount: indexedGraph.size.nodes }),
+      },
+      vectorVerification: embeddingMetadataForSave?.enabled
+        ? {
+            status: embeddingMetadataForSave.status === 'ready' ? 'verified' : 'stale',
+            producedCount: indexedGraph.size.nodes,
+            persistedCount: indexedGraph.size.nodes,
+            contentFingerprint: compatibilityReceipt.embeddingFingerprint,
+            reason: embeddingMetadataForSave.status === 'ready' ? undefined : 'embedding metadata marked stale',
+          }
+        : {
+            status: 'unavailable',
+            producedCount: 0,
+            persistedCount: 0,
+            reason: 'embeddings disabled',
+          },
+      evidenceVerification: context.evidenceVerification,
+      evolutionAction: context.evolutionAction,
       frameworkFingerprint,
       frameworkDetections: frameworkDetections.length > 0 ? frameworkDetections : undefined,
       factDiagnostics: factDiagnostics.length > 0 ? factDiagnostics : undefined,

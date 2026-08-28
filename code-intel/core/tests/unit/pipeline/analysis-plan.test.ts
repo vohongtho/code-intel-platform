@@ -82,6 +82,7 @@ describe('resolveAnalysisPlan', () => {
     try {
       const plan = resolveAnalysisPlan({ args: ['analyze'], metadata: value.metadata, snapshot: value.snapshot, source: unchanged });
       assert.equal(plan.mode, 'noop');
+      assert.equal(plan.evolution, 'reuse');
     } finally { fs.rmSync(value.root, { recursive: true, force: true }); }
   });
 
@@ -105,6 +106,45 @@ describe('resolveAnalysisPlan', () => {
       if (plan.mode !== 'publish') return;
       assert.equal(plan.vector, 'full');
       assert.deepEqual(plan.seedArtifacts, ['graph.db', 'bm25.db', 'meta.json']);
+    } finally { fs.rmSync(value.root, { recursive: true, force: true }); }
+  });
+
+  it('selects full semantic reanalysis when identity fingerprint mismatches', () => {
+    const value = fixture();
+    try {
+      value.metadata.identityFingerprint = 'symbol-identity-v1';
+      const plan = resolveAnalysisPlan({ args: ['analyze'], metadata: value.metadata, snapshot: value.snapshot, source: unchanged });
+      assert.equal(plan.mode, 'publish');
+      if (plan.mode !== 'publish') return;
+      assert.equal(plan.evolution, 'full-reanalysis');
+      assert.equal(plan.graph, 'full');
+      assert.equal(plan.bm25, 'full');
+    } finally { fs.rmSync(value.root, { recursive: true, force: true }); }
+  });
+
+  it('selects full semantic reanalysis when resolver fingerprint mismatches', () => {
+    const value = fixture();
+    try {
+      value.metadata.resolverVersion = 'resolver-v1';
+      value.metadata.resolverFingerprint = 'resolver-fp-old';
+      const plan = resolveAnalysisPlan({ args: ['analyze'], metadata: value.metadata, snapshot: value.snapshot, source: unchanged });
+      assert.equal(plan.mode, 'publish');
+      if (plan.mode !== 'publish') return;
+      assert.equal(plan.evolution, 'full-reanalysis');
+      assert.equal(plan.graph, 'full');
+    } finally { fs.rmSync(value.root, { recursive: true, force: true }); }
+  });
+
+  it('selects full semantic reanalysis when fact or evidence fingerprints mismatch', () => {
+    const value = fixture();
+    try {
+      value.metadata.factSchemaVersion = '1.0.10';
+      value.metadata.evidenceSchemaVersion = 999;
+      const plan = resolveAnalysisPlan({ args: ['analyze'], metadata: value.metadata, snapshot: value.snapshot, source: unchanged });
+      assert.equal(plan.mode, 'publish');
+      if (plan.mode !== 'publish') return;
+      assert.equal(plan.evolution, 'full-reanalysis');
+      assert.equal(plan.graph, 'full');
     } finally { fs.rmSync(value.root, { recursive: true, force: true }); }
   });
 
