@@ -10,6 +10,9 @@ import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
 import { Bm25Index, getBm25DbPath } from '../search/bm25-index.js';
 import { executeSearchRequest, type SearchMode } from '../search/execute-scoped-search.js';
 import { build, detectQueryIntent, type QueryIntent, type SeedSymbol } from '../context/builder.js';
+import { ContextDeliverySession } from '../context/session.js';
+import { resolveContextSeed } from '../context/selection.js';
+import type { ContextOmission } from '../context/receipt.js';
 import { getVectorDbPath } from '../storage/index.js';
 import { loadRegistry } from '../storage/repo-registry.js';
 import { loadMetadata } from '../storage/metadata.js';
@@ -61,6 +64,19 @@ export function createMcpServer(
   // ── Pre-built BM25 index (faster than linear textSearch for large graphs) ──
   const startupSnapshot = pinnedSnapshot ?? (workspaceRoot ? resolveIndexSnapshot(workspaceRoot) : null);
   let bm25Index: Bm25Index | null = null;
+
+  // ── Per-connection, workspace-scoped context delivery memory. Lives for the
+  // lifetime of this stdio connection (one createMcpServer() call = one session);
+  // never a module-level/global singleton. ──────────────────────────────────
+  const contextSessionsByWorkspace = new Map<string, ContextDeliverySession>();
+  function getContextSession(workspaceIdentity: string): ContextDeliverySession {
+    let session = contextSessionsByWorkspace.get(workspaceIdentity);
+    if (!session) {
+      session = new ContextDeliverySession(workspaceIdentity);
+      contextSessionsByWorkspace.set(workspaceIdentity, session);
+    }
+    return session;
+  }
 
   function ensureBm25Index(): Bm25Index | null {
     if (bm25Index) return bm25Index;
@@ -178,6 +194,10 @@ export function createMcpServer(
               type: 'array',
               items: { type: 'string' },
               description: 'One or more symbol names to resolve and include as context seeds',
+            },
+            task: {
+              type: 'string',
+              description: 'Optional free-text description of what you are trying to do — used to auto-detect intent when `intent` is omitted/auto',
             },
             intent: {
               type: 'string',
@@ -589,7 +609,7 @@ export function createMcpServer(
 
     // ── OTel span + Prometheus metrics wrapper ─────────────────────────────
     const startMs = Date.now();
-    const dispatch = () => dispatchTool(name, a, graph, repoName, workspaceRoot, ensureBm25Index);
+    const dispatch = () => dispatchTool(name, a, graph, repoName, workspaceRoot, ensureBm25Index, getContextSession);
 
     // Epic 6: MCP tool timeout — if any tool takes > 30s, return partial result
     const MCP_TIMEOUT_MS = parseInt(process.env['CODE_INTEL_MCP_TIMEOUT_MS'] ?? '30000', 10);
@@ -848,6 +868,7 @@ export async function dispatchTool(
   repoName: string,
   workspaceRoot: string | undefined,
   bm25Resolver?: () => Bm25Index | null,
+  contextSessionResolver?: (workspaceIdentity: string) => ContextDeliverySession,
 ): Promise<ToolResult> {
   let activeRepoName = repoName;
   let activeWorkspaceRoot = workspaceRoot;
@@ -1123,41 +1144,68 @@ export async function dispatchTool(
           return { content: [{ type: 'text', text: 'Missing symbols. Provide { "symbols": ["..."] }.' }] };
         }
 
+        const task = typeof a.task === 'string' && a.task.trim().length > 0 ? a.task : undefined;
         const seedLimit = Math.max(1, Math.min((a.limit as number) ?? 10, 10));
         const requestedIntent = (a.intent as QueryIntent | undefined) ?? 'auto';
-        const queryIntent = requestedIntent === 'auto' ? detectQueryIntent(symbols.join(' ')) : requestedIntent;
+        const queryIntent = requestedIntent === 'auto' ? detectQueryIntent(task ?? symbols.join(' ')) : requestedIntent;
         const maxTokens = Math.min((a.max_tokens as number) ?? 6000, 6000);
 
         const resolvedSeeds: SeedSymbol[] = [];
         const resolvedNames: string[] = [];
         const unresolvedNames: string[] = [];
+        const ambiguousSeeds: { requested: string; candidates: { id: string; name: string; kind: string; filePath: string; startLine?: number }[] }[] = [];
+        const selectionOmissions: ContextOmission[] = [];
         for (const symbol of symbols.slice(0, seedLimit)) {
-          const node = findNodeByName(graph, symbol);
-          if (!node) {
-            unresolvedNames.push(symbol);
+          const resolution = resolveContextSeed(graph, symbol);
+          if (resolution.status === 'exact') {
+            resolvedSeeds.push({ nodeId: resolution.node.id, refinedScore: 1 });
+            resolvedNames.push(symbol);
             continue;
           }
-          resolvedSeeds.push({ nodeId: node.id, refinedScore: 1 });
-          resolvedNames.push(symbol);
+          if (resolution.status === 'ambiguous') {
+            ambiguousSeeds.push({ requested: symbol, candidates: resolution.candidates });
+            selectionOmissions.push({ artifactId: symbol, name: symbol, reason: 'ambiguous' });
+            continue;
+          }
+          unresolvedNames.push(symbol);
         }
 
         if (resolvedSeeds.length === 0) {
-          return { content: [{ type: 'text', text: `No symbols resolved for: ${symbols.slice(0, seedLimit).join(', ')}. Try search first.` }] };
+          return {
+            content: [{
+              type: 'text',
+              text: compact({
+                error: `No symbols resolved for: ${symbols.slice(0, seedLimit).join(', ')}. Try search first.`,
+                unresolvedSymbols: unresolvedNames,
+                ambiguousSymbols: ambiguousSeeds,
+              }),
+            }],
+          };
         }
 
-        const doc = build(resolvedSeeds, graph, { queryIntent, maxTokens });
+        const contextSession = contextSessionResolver?.(activeWorkspaceRoot ?? activeRepoName);
+        const doc = build(resolvedSeeds, graph, {
+          queryIntent,
+          maxTokens,
+          repoDir: activeWorkspaceRoot,
+          session: contextSession,
+        });
         return {
           content: [{
             type: 'text',
             text: compact({
               symbols: resolvedNames,
               unresolvedSymbols: unresolvedNames,
+              ambiguousSymbols: ambiguousSeeds,
               intent: doc.intent,
               summary: doc.summary,
               logic: doc.logic,
               relation: doc.relation,
               focusCode: doc.focusCode,
               truncated: doc.truncated,
+              coverage: doc.coverage,
+              trust: doc.trust,
+              omitted: [...selectionOmissions, ...(doc.omitted ?? [])],
             }),
           }],
         };

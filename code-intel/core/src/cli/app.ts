@@ -4990,6 +4990,7 @@ program
   .argument('<symbols...>', 'One or more symbol names to use as seeds')
   .option('-p, --path <path>', 'Path to the repository (default: current directory)', '.')
   .option('-l, --limit <n>', 'Max seeds to resolve (default: 10)', '10')
+  .option('--task <text>', 'Free-text description of what you are trying to do — used for intent auto-detection when --intent is auto/omitted')
   .option('--intent <intent>', 'Query intent: code | callers | architecture | auto (default: auto)', 'auto')
   .option('--max-tokens <n>', 'Max total tokens for output (default: 6000)', '6000')
   .option('--show-context', 'Print per-block token breakdown after output')
@@ -5003,10 +5004,12 @@ program
     $ code-intel context createUser login --intent callers
     $ code-intel context AuthService --show-context
     $ code-intel context handlePayment --max-tokens 3000 --intent code
+    $ code-intel context UserService --task "fix the login bug"
 `)
   .action(async (symbols: string[], opts: {
     path: string;
     limit: string;
+    task?: string;
     intent: string;
     maxTokens: string;
     showContext?: boolean;
@@ -5014,31 +5017,44 @@ program
     const { graph } = await loadOrAnalyzeWorkspace(opts.path);
     const { build, detectQueryIntent } = await import('../context/builder.js');
     const { measureBlocks } = await import('../context/token-counter.js');
+    const { resolveContextSeed } = await import('../context/selection.js');
 
     const maxSeeds = parseInt(opts.limit, 10);
     const maxTokens = parseInt(opts.maxTokens, 10);
+    const task = opts.task?.trim() || undefined;
     const intent = (['code', 'callers', 'architecture', 'auto'].includes(opts.intent)
-      ? opts.intent
+      ? opts.intent === 'auto'
+        ? detectQueryIntent(task ?? symbols.join(' '))
+        : opts.intent
       : detectQueryIntent(opts.intent)) as import('../context/builder.js').QueryIntent;
 
-    // Resolve symbol names to node IDs
+    // Resolve symbol names to node IDs — never silently pick a first match on ambiguity.
     const seeds: import('../context/builder.js').SeedSymbol[] = [];
+    const ambiguous: string[] = [];
+    const missing: string[] = [];
     for (const symbol of symbols.slice(0, maxSeeds)) {
-      for (const node of graph.allNodes()) {
-        if (node.name === symbol) {
-          seeds.push({ nodeId: node.id, refinedScore: 1.0 });
-          break;
+      const resolution = resolveContextSeed(graph, symbol);
+      if (resolution.status === 'exact') {
+        seeds.push({ nodeId: resolution.node.id, refinedScore: 1.0 });
+      } else if (resolution.status === 'ambiguous') {
+        ambiguous.push(symbol);
+        console.log(`\n  "${symbol}" is ambiguous — ${resolution.candidates.length} matches:`);
+        for (const candidate of resolution.candidates) {
+          console.log(`    ${candidate.kind}:${candidate.name} @ ${candidate.filePath}${candidate.startLine ? ':' + candidate.startLine : ''}`);
         }
+      } else {
+        missing.push(symbol);
       }
     }
 
     if (seeds.length === 0) {
-      console.log(`\n  No symbols found for: ${symbols.join(', ')}\n`);
+      if (ambiguous.length === 0 && missing.length === 0) return;
+      if (missing.length > 0) console.log(`\n  No symbols found for: ${missing.join(', ')}\n`);
       console.log('  Try: code-intel search "<name>" to find symbol names.\n');
       return;
     }
 
-    const doc = build(seeds, graph, { maxTokens, queryIntent: intent });
+    const doc = build(seeds, graph, { maxTokens, queryIntent: intent, repoDir: opts.path });
 
     // Print output blocks
     console.log('');

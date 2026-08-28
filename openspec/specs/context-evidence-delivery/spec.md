@@ -1,8 +1,14 @@
-# Context Evidence Delivery Specification
+# Context Evidence Delivery
 
-## MODIFIED Requirements
+## Purpose
+
+Define how the `context` operation selects, ranks, deduplicates, and delivers evidence so requested symbols are reliably represented, ambiguity is never silently collapsed, repeated delivery within a session is content-safe, and trust/boundary metadata survives budget trimming — all within the existing token-bounded response shape.
+
+## Requirements
 
 ### Requirement: Existing context workflow MUST remain valid
+
+The `context` operation MUST continue to accept and correctly serve requests that use only the existing `{ symbols: [...] }` shape.
 
 #### Scenario: Client sends current symbols-only request
 
@@ -12,6 +18,8 @@
 
 ### Requirement: Context symbol selection MUST preserve ambiguity
 
+Symbol selection MUST NOT collapse multiple canonical candidates into a single silently-chosen result.
+
 #### Scenario: Multiple canonical symbols share one requested simple name
 
 - **WHEN** existing request evidence cannot disambiguate them
@@ -19,6 +27,8 @@
 - **AND** MUST NOT silently label the first candidate exact.
 
 ### Requirement: Requested evidence MUST be delivered or have an explicit omission reason
+
+Every explicitly requested symbol MUST either appear in the rendered context or be listed with a structured omission reason.
 
 #### Scenario: Requested symbol resolves but budget is constrained
 
@@ -28,6 +38,8 @@
 
 ### Requirement: Session deduplication MUST be content-safe
 
+Session-scoped delivery deduplication MUST key on content fingerprints, not on the request alone, so edited source is never mistaken for unchanged source.
+
 #### Scenario: Source range was delivered earlier in same MCP workspace session
 
 - **WHEN** it is selected again and its fingerprint is unchanged
@@ -35,6 +47,8 @@
 - **BUT** if the fingerprint changed, current source MUST be emitted again.
 
 ### Requirement: Trust and boundary metadata MUST survive deduplication/trimming
+
+Compact trust, coverage, and boundary metadata MUST remain observable even when the underlying evidence is deduplicated, pointer-ized, or trimmed for budget.
 
 #### Scenario: Selected relationship is uncertain or analysis is incomplete
 

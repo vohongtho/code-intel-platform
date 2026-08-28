@@ -10,13 +10,17 @@
  *   B.3  Smart [RELATION] block (caller cap + logic↔relation dedup)
  *   B.4  Smart [FOCUS CODE]     (adaptive length + sig-only low relevance)
  *   B.5  Dynamic budget rebalancing + query-intent presets
- *   B.6  Cross-block dedup registry
+ *   B.6  Cross-block dedup registry (canonical identity, not display name)
+ *   B.7  Certainty-ranked evidence, allocation receipts, session-aware delivery
  */
 
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
-import type { CodeNode } from '../shared/index.js';
+import type { AnalysisBoundary, AnalysisCertainty, AnalysisCoverage, CodeEdge, CodeNode } from '../shared/index.js';
 import { estimateTokens } from './token-counter.js';
 import { enforceContextBudget, normalizeContextTokenBudget, trimTextToTokenBudget, type ContextBlockName } from './budget.js';
+import { certaintyRank, omissionsFromReceipts, type ContextAllocationReceipt, type ContextOmission } from './receipt.js';
+import { contentFingerprint, type ContextDeliverySession } from './session.js';
+import { summarizeEdgeTrust } from '../query/trust.js';
 
 // ── Public types ───────────────────────────────────────────────────────────────
 
@@ -35,6 +39,15 @@ export interface BuilderOptions {
   queryIntent?: QueryIntent;
   /** refinedScore below this → signature-only in FOCUS CODE (default: 0.3). */
   signatureOnlyThreshold?: number;
+  /** Repository directory used to look up relationship evidence for trust/coverage. */
+  repoDir?: string;
+  /** Per-workspace delivered-source memory — enables session-aware pointer back-references. */
+  session?: ContextDeliverySession;
+}
+
+export interface ContextTrustSummary {
+  certainty: AnalysisCertainty;
+  boundaries: readonly AnalysisBoundary[];
 }
 
 /** Rendered context document — one string per block. */
@@ -53,6 +66,12 @@ export interface ContextDocument {
   blockTokens?: { summary: number; logic: number; relation: number; focusCode: number; total: number };
   /** Stable block names whose content was shortened or omitted. */
   truncatedBlocks?: ContextBlockName[];
+  /** Compact evidence coverage across the calls/imports relationships considered. */
+  coverage?: AnalysisCoverage;
+  /** Compact trust summary (certainty + boundaries) for the same relationships. */
+  trust?: ContextTrustSummary;
+  /** Requested evidence that could not be delivered, with a structured reason. */
+  omitted?: ContextOmission[];
 }
 
 // ── Budget presets (B.5.2) ─────────────────────────────────────────────────────
@@ -77,6 +96,11 @@ export function detectQueryIntent(question: string): QueryIntent {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
+
+/** Canonical identity for cross-block dedup/allocation — falls back to graph id pre-identity-v2. */
+function canonicalId(node: CodeNode): string {
+  return node.identityId ?? node.id;
+}
 
 /** Last 2 path segments: `src/auth/user.ts` → `auth/user.ts` */
 function last2Segments(filePath: string): string {
@@ -134,47 +158,47 @@ function adaptiveSnippet(content: string | undefined): { lines: string; truncate
   };
 }
 
-// ── DedupeRegistry (B.6) ──────────────────────────────────────────────────────
+// ── DedupeRegistry (B.6) — keyed by canonical identity, not display name ──────
 
 class DedupeRegistry {
-  private seenSymbols = new Set<string>();
+  private seenArtifacts = new Set<string>();
   private seenFilePaths = new Set<string>();
   private seenCallPairs = new Set<string>();
-  private logicSymbols = new Set<string>(); // B.4.2: symbols referenced in LOGIC
+  private logicArtifacts = new Set<string>(); // B.4.2: artifacts referenced in LOGIC
 
   /** Returns full format on first mention, name-only on repeats. */
-  formatSymbol(name: string, filePath: string, extra: string): string {
-    const key = name;
-    if (this.seenSymbols.has(key)) return name;
-    this.seenSymbols.add(key);
-    this.seenFilePaths.add(filePath);
+  formatSymbol(node: CodeNode, extra: string): string {
+    const key = canonicalId(node);
+    if (this.seenArtifacts.has(key)) return node.name;
+    this.seenArtifacts.add(key);
+    this.seenFilePaths.add(node.filePath);
     return extra;
   }
 
-  hasSymbol(name: string): boolean {
-    return this.seenSymbols.has(name);
+  hasArtifact(node: CodeNode): boolean {
+    return this.seenArtifacts.has(canonicalId(node));
   }
 
-  markCallPair(caller: string, callee: string): void {
-    this.seenCallPairs.add(`${caller}→${callee}`);
+  markCallPair(caller: CodeNode, callee: CodeNode): void {
+    this.seenCallPairs.add(`${canonicalId(caller)}→${canonicalId(callee)}`);
   }
 
-  hasCallPair(caller: string, callee: string): boolean {
-    return this.seenCallPairs.has(`${caller}→${callee}`);
+  hasCallPair(caller: CodeNode, callee: CodeNode): boolean {
+    return this.seenCallPairs.has(`${canonicalId(caller)}→${canonicalId(callee)}`);
   }
 
   hasFilePath(fp: string): boolean {
     return this.seenFilePaths.has(fp);
   }
 
-  /** Mark a symbol as referenced in the LOGIC block (B.4.2). */
-  markInLogic(name: string): void {
-    this.logicSymbols.add(name);
+  /** Mark an artifact as referenced in the LOGIC block (B.4.2). */
+  markInLogic(node: CodeNode): void {
+    this.logicArtifacts.add(canonicalId(node));
   }
 
-  /** Returns true only if symbol was referenced in LOGIC (B.4.2). */
-  isInLogic(name: string): boolean {
-    return this.logicSymbols.has(name);
+  /** Returns true only if the artifact was referenced in LOGIC (B.4.2). */
+  isInLogic(node: CodeNode): boolean {
+    return this.logicArtifacts.has(canonicalId(node));
   }
 }
 
@@ -217,9 +241,10 @@ function buildSummaryBlock(
       const line = node.startLine ? `:${node.startLine}` : '';
 
       const fullFmt = `${node.name} [${node.kind}] ${path2}${line}${badgeStr ? ' ' + badgeStr : ''}${summary ? ' — ' + summary : ''}`;
-      const formatted = dedup.formatSymbol(node.name, node.filePath, fullFmt);
+      const formatted = dedup.formatSymbol(node, fullFmt);
 
       lines.push(useHeader ? `  ${formatted}` : formatted);
+      void cluster; // reserved for future cluster-aware formatting
     }
   }
 
@@ -232,45 +257,67 @@ function buildLogicBlock(
   nodes: CodeNode[],
   graph: KnowledgeGraph,
   dedup: DedupeRegistry,
-): string {
-  if (nodes.length === 0) return '';
+): { text: string; edges: CodeEdge[] } {
+  if (nodes.length === 0) return { text: '', edges: [] };
 
   const lines: string[] = ['[LOGIC]'];
+  const consideredEdges: CodeEdge[] = [];
 
-  // Collect all callees per node
-  const nodeCallees = new Map<string, string[]>();
-  const calleeUsage = new Map<string, number>(); // callee name → how many nodes use it
+  // caller node id -> deduped callee nodes (by canonical id), ordered by certainty
+  const nodeCallees = new Map<string, CodeNode[]>();
+  const calleeUsage = new Map<string, number>(); // canonical callee id → distinct-caller count
+  const calleeById = new Map<string, CodeNode>();
 
   for (const node of nodes) {
-    const callees: string[] = [];
+    const bestCertaintyForCallee = new Map<string, CodeEdge['certainty']>();
+    const callees: CodeNode[] = [];
+    const seenCalleeIds = new Set<string>();
+
     for (const edge of graph.findEdgesFrom(node.id)) {
-      if (edge.kind === 'calls') {
-        const callee = graph.getNode(edge.target);
-        if (callee && callee.name !== node.name) {
-          callees.push(callee.name);
-          calleeUsage.set(callee.name, (calleeUsage.get(callee.name) ?? 0) + 1);
-        }
+      if (edge.kind !== 'calls') continue;
+      const callee = graph.getNode(edge.target);
+      if (!callee || callee.name === node.name) continue;
+      consideredEdges.push(edge);
+      const cid = canonicalId(callee);
+      if (certaintyRank(edge.certainty) > certaintyRank(bestCertaintyForCallee.get(cid))) {
+        bestCertaintyForCallee.set(cid, edge.certainty);
       }
+      if (seenCalleeIds.has(cid)) continue;
+      seenCalleeIds.add(cid);
+      calleeById.set(cid, callee);
+      callees.push(callee);
+      calleeUsage.set(cid, (calleeUsage.get(cid) ?? 0) + 1);
     }
-    nodeCallees.set(node.id, [...new Set(callees)]);
+
+    // B.7: exact-certainty callees ranked first, then deterministic name/id tiebreak.
+    callees.sort((a, b) =>
+      certaintyRank(bestCertaintyForCallee.get(canonicalId(b))) - certaintyRank(bestCertaintyForCallee.get(canonicalId(a)))
+      || a.name.localeCompare(b.name)
+      || canonicalId(a).localeCompare(canonicalId(b)),
+    );
+    nodeCallees.set(node.id, callees);
   }
 
-  // B.2.2: Find shared callees (≥ 3 nodes)
-  const sharedCallees = new Set<string>(
-    [...calleeUsage.entries()].filter(([, cnt]) => cnt >= 3).map(([name]) => name),
+  // B.2.2: Find shared callees (≥ 3 distinct callers)
+  const sharedCalleeIds = new Set<string>(
+    [...calleeUsage.entries()].filter(([, cnt]) => cnt >= 3).map(([id]) => id),
   );
 
   // Emit shared callee note if any
-  if (sharedCallees.size > 0) {
-    lines.push(`(all above → ${[...sharedCallees].join(', ')})`);
+  if (sharedCalleeIds.size > 0) {
+    const sharedNames = [...sharedCalleeIds]
+      .map((id) => calleeById.get(id)?.name)
+      .filter((n): n is string => Boolean(n))
+      .sort((a, b) => a.localeCompare(b));
+    lines.push(`(all above → ${sharedNames.join(', ')})`);
   }
 
   for (const node of nodes) {
-    const callees = (nodeCallees.get(node.id) ?? []).filter((c) => !sharedCallees.has(c));
+    const callees = (nodeCallees.get(node.id) ?? []).filter((c) => !sharedCalleeIds.has(canonicalId(c)));
 
     // Track call pairs for B.3.2
     for (const callee of callees) {
-      dedup.markCallPair(node.name, callee);
+      dedup.markCallPair(node, callee);
     }
 
     if (callees.length === 0) continue;
@@ -278,25 +325,22 @@ function buildLogicBlock(
     if (callees.length <= 5) {
       // B.2.1: single inline line
       for (const callee of callees) dedup.markInLogic(callee);
-      lines.push(`${node.name} → ${callees.join(', ')}`);
+      lines.push(`${node.name} → ${callees.map((c) => c.name).join(', ')}`);
     } else {
-      // > 5: multi-line, omit path for symbols already in SUMMARY
+      // > 5: multi-line, omit path for artifacts already in SUMMARY
       lines.push(`${node.name} →`);
       for (const callee of callees) {
         dedup.markInLogic(callee);
-        if (dedup.hasSymbol(callee)) {
-          lines.push(`  ${callee}`);
+        if (dedup.hasArtifact(callee)) {
+          lines.push(`  ${callee.name}`);
         } else {
-          // find file
-          const calleeNode = [...graph.allNodes()].find((n) => n.name === callee);
-          const path = calleeNode ? ` (${last2Segments(calleeNode.filePath)})` : '';
-          lines.push(`  ${callee}${path}`);
+          lines.push(`  ${callee.name} (${last2Segments(callee.filePath)})`);
         }
       }
     }
   }
 
-  return lines.length > 1 ? lines.join('\n') : '';
+  return { text: lines.length > 1 ? lines.join('\n') : '', edges: consideredEdges };
 }
 
 // ── B.3 RELATION block ────────────────────────────────────────────────────────
@@ -305,16 +349,35 @@ function buildRelationBlock(
   nodes: CodeNode[],
   graph: KnowledgeGraph,
   dedup: DedupeRegistry,
-): string {
-  if (nodes.length === 0) return '';
+): { text: string; edges: CodeEdge[] } {
+  if (nodes.length === 0) return { text: '', edges: [] };
 
   const lines: string[] = ['[RELATION]'];
+  const consideredEdges: CodeEdge[] = [];
 
   for (const node of nodes) {
-    const callers = [...graph.findEdgesTo(node.id)]
-      .filter((e) => e.kind === 'calls')
-      .map((e) => graph.getNode(e.source)?.name)
-      .filter((n): n is string => Boolean(n));
+    const callerEdges = [...graph.findEdgesTo(node.id)].filter((e) => e.kind === 'calls');
+    consideredEdges.push(...callerEdges);
+
+    const bestByCallerId = new Map<string, { node: CodeNode; certainty: CodeEdge['certainty'] }>();
+    for (const edge of callerEdges) {
+      const callerNode = graph.getNode(edge.source);
+      if (!callerNode) continue;
+      const cid = canonicalId(callerNode);
+      const existing = bestByCallerId.get(cid);
+      if (!existing || certaintyRank(edge.certainty) > certaintyRank(existing.certainty)) {
+        bestByCallerId.set(cid, { node: callerNode, certainty: edge.certainty });
+      }
+    }
+
+    // B.7: exact-certainty callers ranked first, then deterministic name/id tiebreak.
+    const callers = [...bestByCallerId.values()]
+      .sort((a, b) =>
+        certaintyRank(b.certainty) - certaintyRank(a.certainty)
+        || a.node.name.localeCompare(b.node.name)
+        || canonicalId(a.node).localeCompare(canonicalId(b.node)),
+      )
+      .map((entry) => entry.node);
 
     const extendsNodes = [...graph.findEdgesFrom(node.id)]
       .filter((e) => e.kind === 'extends')
@@ -333,12 +396,12 @@ function buildRelationBlock(
     if (callers.length > 0) {
       // B.3.2: Skip entries already expressed in LOGIC (unless high blast radius)
       const nonDupCallers = callers.filter(
-        (c) => highBlast || !dedup.hasCallPair(c, node.name),
+        (c) => highBlast || !dedup.hasCallPair(c, node),
       );
       if (nonDupCallers.length > 0) {
         const top3 = nonDupCallers.slice(0, 3);
         const rest = nonDupCallers.length - 3;
-        const callerStr = top3.join(', ') + (rest > 0 ? ` (+${rest} more — use blast_radius for full list)` : '');
+        const callerStr = top3.map((c) => c.name).join(', ') + (rest > 0 ? ` (+${rest} more — use blast_radius for full list)` : '');
         lines.push(`${prefix}${node.name} ← ${callerStr}`);
       }
     }
@@ -350,10 +413,37 @@ function buildRelationBlock(
     if (heritage.length > 0) lines.push(`${node.name}: ${heritage.join(' · ')}`);
   }
 
-  return lines.length > 1 ? lines.join('\n') : '';
+  return { text: lines.length > 1 ? lines.join('\n') : '', edges: consideredEdges };
 }
 
 // ── B.4 FOCUS CODE block ──────────────────────────────────────────────────────
+
+interface FocusEntry {
+  node: CodeNode;
+  header: string;
+  entry: string;
+  demand: number;
+  skipInLogic: boolean;
+  missingSource: boolean;
+  pointerEligible: boolean;
+}
+
+/** Classic max-min water-filling: smallest demands are satisfied first, freeing excess for larger ones. */
+function waterFillAllowances(demands: readonly number[], totalBudget: number): number[] {
+  const n = demands.length;
+  const allowance = new Array<number>(n).fill(0);
+  const order = demands.map((_, i) => i).sort((a, b) => demands[a] - demands[b] || a - b);
+  let remaining = Math.max(0, totalBudget);
+  let remainingCount = n;
+  for (const idx of order) {
+    const fairShare = remainingCount > 0 ? Math.floor(remaining / remainingCount) : 0;
+    const grant = Math.max(0, Math.min(demands[idx], fairShare));
+    allowance[idx] = grant;
+    remaining -= grant;
+    remainingCount--;
+  }
+  return allowance;
+}
 
 function buildFocusCodeBlock(
   seeds: SeedSymbol[],
@@ -361,48 +451,136 @@ function buildFocusCodeBlock(
   dedup: DedupeRegistry,
   signatureOnlyThreshold: number,
   tokenBudget: number,
-): { text: string; truncated: boolean } {
-  if (nodes.length === 0) return { text: '', truncated: false };
+  session?: ContextDeliverySession,
+): { text: string; truncated: boolean; receipts: ContextAllocationReceipt[] } {
+  if (nodes.length === 0) return { text: '', truncated: false, receipts: [] };
 
   const lines: string[] = ['[FOCUS CODE]'];
   let usedTokens = estimateTokens('[FOCUS CODE]');
   let truncated = false;
+  const receipts: ContextAllocationReceipt[] = [];
 
-  for (let i = 0; i < nodes.length; i++) {
-    const node = nodes[i];
-    const seed = seeds.find((s) => s.nodeId === node.id);
-    const score = seed?.refinedScore ?? 1.0;
+  const scoreOf = (node: CodeNode): number => seeds.find((s) => s.nodeId === node.id)?.refinedScore ?? 1.0;
+
+  // ── Classify each node up front (B.4.2 skip / missing source / session pointer) ──
+  const classified: FocusEntry[] = nodes.map((node) => {
     const content = node.content;
-
-    // B.4.2: Skip short symbols already referenced in LOGIC
     const ml = content ? meaningfulLines(content).length : 0;
-    if (ml <= 5 && dedup.isInLogic(node.name)) continue;
+    const skipInLogic = ml <= 5 && dedup.isInLogic(node);
+    const missingSource = !content;
+    const pointerEligible = Boolean(session) && !skipInLogic && !missingSource
+      && session!.lookup(canonicalId(node))?.contentFingerprint === contentFingerprint(content);
 
     const header = `// ${node.name} — ${last2Segments(node.filePath)}${node.startLine ? ':' + node.startLine : ''}`;
+    let entry = '';
+    if (!skipInLogic && !missingSource && !pointerEligible) {
+      const score = scoreOf(node);
+      if (score < signatureOnlyThreshold) {
+        const sig = content?.split('\n').find((l) => l.trim().length > 0) ?? '';
+        const sigLine = sig ? sig.trimEnd() + (sig.includes('{') ? ' ... }' : '') : '';
+        entry = `${header}\n// (low relevance)\n${sigLine}`;
+      } else {
+        const { lines: snippet } = adaptiveSnippet(content);
+        entry = `${header}\n\`\`\`\n${snippet}\n\`\`\``;
+      }
+    }
 
-    // B.4.3: Signature-only for low relevance
-    if (score < signatureOnlyThreshold) {
-      const sig = content?.split('\n').find((l) => l.trim().length > 0) ?? '';
-      const sigLine = sig ? sig.trimEnd() + (sig.includes('{') ? ' ... }' : '') : '';
-      const entry = `${header}\n// (low relevance)\n${sigLine}`;
-      const toks = estimateTokens(entry);
-      if (usedTokens + toks > tokenBudget) { truncated = true; break; }
-      lines.push(entry);
-      usedTokens += toks;
+    return { node, header, entry, demand: entry ? estimateTokens(entry) : 0, skipInLogic, missingSource, pointerEligible };
+  });
+
+  // ── Prevent all-pointer responses: force the highest-priority node concrete ──
+  const allPointerEligible = classified.length > 0 && classified.every((c) => c.pointerEligible || c.skipInLogic || c.missingSource);
+  if (allPointerEligible) {
+    const forced = classified.find((c) => c.pointerEligible);
+    if (forced) {
+      forced.pointerEligible = false;
+      const score = scoreOf(forced.node);
+      const content = forced.node.content;
+      if (score < signatureOnlyThreshold) {
+        const sig = content?.split('\n').find((l) => l.trim().length > 0) ?? '';
+        const sigLine = sig ? sig.trimEnd() + (sig.includes('{') ? ' ... }' : '') : '';
+        forced.entry = `${forced.header}\n// (low relevance)\n${sigLine}`;
+      } else {
+        const { lines: snippet } = adaptiveSnippet(content);
+        forced.entry = `${forced.header}\n\`\`\`\n${snippet}\n\`\`\``;
+      }
+      forced.demand = estimateTokens(forced.entry);
+    }
+  }
+
+  // ── Reserve fair-share allowances for the nodes competing for budget ──
+  const competingIdx = classified
+    .map((c, i) => ({ c, i }))
+    .filter(({ c }) => !c.skipInLogic && !c.missingSource && !c.pointerEligible);
+  const pointerCost = classified
+    .filter((c) => c.pointerEligible)
+    .reduce((sum, c) => sum + estimateTokens(`${c.header} (unchanged — already delivered in this session)`), 0);
+  const remainingForCompetition = Math.max(0, tokenBudget - usedTokens - pointerCost);
+  const demands = competingIdx.map(({ c }) => c.demand);
+  const allowances = waterFillAllowances(demands, remainingForCompetition);
+  const allowanceByIndex = new Map<number, number>();
+  competingIdx.forEach(({ i }, k) => allowanceByIndex.set(i, allowances[k]));
+
+  // ── Render in original node order ──
+  for (let i = 0; i < classified.length; i++) {
+    const { node, header, entry, skipInLogic, missingSource, pointerEligible } = classified[i];
+    const artifactId = canonicalId(node);
+    const score = scoreOf(node);
+
+    if (skipInLogic) {
+      receipts.push({ artifactId, name: node.name, namedByUser: true, relevanceScore: score, reservedTokens: 0, deliveredTokens: 0, deliveryMode: 'pointer' });
       continue;
     }
 
-    // Full adaptive snippet
-    const { lines: snippet, truncated: snipTruncated } = adaptiveSnippet(content);
-    const entry = `${header}\n\`\`\`\n${snippet}\n\`\`\``;
-    const toks = estimateTokens(entry);
-    if (usedTokens + toks > tokenBudget) { truncated = true; break; }
-    lines.push(entry);
-    usedTokens += toks;
-    if (snipTruncated) truncated = true;
+    if (missingSource) {
+      receipts.push({ artifactId, name: node.name, namedByUser: true, relevanceScore: score, reservedTokens: 0, deliveredTokens: 0, deliveryMode: 'omitted', omissionReason: 'missing-source' });
+      continue;
+    }
+
+    if (pointerEligible) {
+      const pointerLine = `${header} (unchanged — already delivered in this session)`;
+      const toks = estimateTokens(pointerLine);
+      if (usedTokens + toks > tokenBudget) {
+        truncated = true;
+        receipts.push({ artifactId, name: node.name, namedByUser: true, relevanceScore: score, reservedTokens: 0, deliveredTokens: 0, deliveryMode: 'omitted', omissionReason: 'hard-limit' });
+        continue;
+      }
+      lines.push(pointerLine);
+      usedTokens += toks;
+      receipts.push({ artifactId, name: node.name, namedByUser: true, relevanceScore: score, reservedTokens: toks, deliveredTokens: toks, deliveryMode: 'pointer' });
+      continue;
+    }
+
+    const allowance = allowanceByIndex.get(i) ?? 0;
+    const fullToks = estimateTokens(entry);
+
+    if (allowance <= 0) {
+      truncated = true;
+      receipts.push({ artifactId, name: node.name, namedByUser: true, relevanceScore: score, reservedTokens: 0, deliveredTokens: 0, deliveryMode: 'omitted', omissionReason: 'budget' });
+      continue;
+    }
+
+    if (fullToks <= allowance && usedTokens + fullToks <= tokenBudget) {
+      lines.push(entry);
+      usedTokens += fullToks;
+      receipts.push({ artifactId, name: node.name, namedByUser: true, relevanceScore: score, reservedTokens: allowance, deliveredTokens: fullToks, deliveryMode: 'full' });
+      continue;
+    }
+
+    const trimmed = trimTextToTokenBudget(entry, Math.min(allowance, Math.max(0, tokenBudget - usedTokens)));
+    if (trimmed.text) {
+      lines.push(trimmed.text);
+      const toks = estimateTokens(trimmed.text);
+      usedTokens += toks;
+      truncated = true;
+      receipts.push({ artifactId, name: node.name, namedByUser: true, relevanceScore: score, reservedTokens: allowance, deliveredTokens: toks, deliveryMode: 'window' });
+    } else {
+      truncated = true;
+      receipts.push({ artifactId, name: node.name, namedByUser: true, relevanceScore: score, reservedTokens: allowance, deliveredTokens: 0, deliveryMode: 'omitted', omissionReason: 'budget' });
+    }
   }
 
-  return { text: lines.length > 1 ? lines.join('\n\n') : '', truncated };
+  return { text: lines.length > 1 ? lines.join('\n\n') : '', truncated, receipts };
 }
 
 // ── Main build() ──────────────────────────────────────────────────────────────
@@ -427,16 +605,19 @@ export function build(
   if (summaryFit.truncated) truncatedBlocks.add('summary');
   available -= estimateTokens(summaryFit.text);
 
-  const logicFit = trimTextToTokenBudget(buildLogicBlock(nodes, graph, dedup), Math.min(available, Math.floor(preset.logic * scale)));
+  const logicResult = buildLogicBlock(nodes, graph, dedup);
+  const logicFit = trimTextToTokenBudget(logicResult.text, Math.min(available, Math.floor(preset.logic * scale)));
   if (logicFit.truncated) truncatedBlocks.add('logic');
   available -= estimateTokens(logicFit.text);
 
-  const relationFit = trimTextToTokenBudget(buildRelationBlock(nodes, graph, dedup), Math.min(available, Math.floor(preset.relation * scale)));
+  const relationResult = buildRelationBlock(nodes, graph, dedup);
+  const relationFit = trimTextToTokenBudget(relationResult.text, Math.min(available, Math.floor(preset.relation * scale)));
   if (relationFit.truncated) truncatedBlocks.add('relation');
   available -= estimateTokens(relationFit.text);
 
-  const focus = buildFocusCodeBlock(seeds, nodes, dedup, signatureOnlyThreshold, Math.max(0, available));
+  const focus = buildFocusCodeBlock(seeds, nodes, dedup, signatureOnlyThreshold, Math.max(0, available), options.session);
   if (focus.truncated) truncatedBlocks.add('focusCode');
+
   const enforced = enforceContextBudget({
     summary: summaryFit.text,
     logic: logicFit.text,
@@ -444,6 +625,36 @@ export function build(
     focusCode: focus.text,
   }, maxTokens);
   for (const block of enforced.truncatedBlocks) truncatedBlocks.add(block);
+
+  // Reconcile receipts against the final hard-budget pass: a receipt claiming
+  // full/window delivery is downgraded if enforceContextBudget trimmed it away.
+  const receipts = focus.receipts.map((receipt) => {
+    if (receipt.deliveryMode !== 'full' && receipt.deliveryMode !== 'window') return receipt;
+    const node = nodes.find((n) => canonicalId(n) === receipt.artifactId);
+    const header = node ? `// ${node.name} — ${last2Segments(node.filePath)}${node.startLine ? ':' + node.startLine : ''}` : undefined;
+    if (header && !enforced.blocks.focusCode.includes(header)) {
+      return { ...receipt, deliveryMode: 'omitted' as const, omissionReason: 'hard-limit' as const, deliveredTokens: 0 };
+    }
+    return receipt;
+  });
+
+  // Session-aware delivery: record fingerprints for anything concretely delivered
+  // this call so an unchanged repeat can become a pointer next time.
+  if (options.session) {
+    options.session.beginCall();
+    for (const receipt of receipts) {
+      if (receipt.deliveryMode !== 'full' && receipt.deliveryMode !== 'window') continue;
+      const node = nodes.find((n) => canonicalId(n) === receipt.artifactId);
+      if (!node?.content) continue;
+      options.session.record(receipt.artifactId, contentFingerprint(node.content), node.content.length);
+    }
+  }
+
+  const consideredEdges = [...logicResult.edges, ...relationResult.edges];
+  const trustSummary = summarizeEdgeTrust(consideredEdges, options.repoDir, {
+    truncated: truncatedBlocks.has('logic') || truncatedBlocks.has('relation'),
+  });
+
   return {
     ...enforced.blocks,
     truncated: truncatedBlocks.size > 0,
@@ -451,5 +662,8 @@ export function build(
     maxTokens,
     blockTokens: enforced.blockTokens,
     truncatedBlocks: [...truncatedBlocks].sort(),
+    coverage: trustSummary.coverage,
+    trust: { certainty: trustSummary.certainty, boundaries: trustSummary.boundaries },
+    omitted: omissionsFromReceipts(receipts),
   };
 }
