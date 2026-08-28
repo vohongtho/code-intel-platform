@@ -78,6 +78,8 @@ export interface CodeNode {
   };
 }
 
+import type { RelationshipCertainty } from './evidence-types.js';
+
 export interface CodeEdge {
   id: string;
   source: string;
@@ -86,5 +88,11 @@ export interface CodeEdge {
   weight?: number;
   label?: string;
   callSiteId?: string;
+  confidence?: number;
+  certainty?: RelationshipCertainty;
+  strategy?: string;
+  resolverVersion?: string;
+  evidenceRef?: string;
+  ambiguous?: boolean;
   metadata?: Record<string, unknown>;
 }

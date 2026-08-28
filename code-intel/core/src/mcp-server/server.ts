@@ -34,11 +34,13 @@ import { findSimilarSymbols } from '../query/similar-symbols.js';
 import { computeHealthReport } from '../query/health-report.js';
 import { suggestTests } from '../query/suggest-tests.js';
 import { summarizeCluster } from '../query/cluster-summary.js';
+import { summarizeEdgeTrust } from '../query/trust.js';
 import { DbManager } from '../storage/db-manager.js';
 import { loadGraphFromDB } from '../multi-repo/graph-from-db.js';
 import { createKnowledgeGraph } from '../graph/knowledge-graph.js';
 import { CURRENT_SCHEMA_VERSION } from '../migrations/migration-runner.js';
 import { resolveSymbolTarget } from '../cli/symbol-target.js';
+import { computeBlastRadiusWithTrust } from './blast-radius-trust.js';
 
 /** Strip null/undefined fields and serialize compactly — saves ~10–15% tokens on sparse graph nodes */
 function compact(obj: unknown): string {
@@ -1169,34 +1171,24 @@ export async function dispatchTool(
         const node = findNodeByName(graph, target);
         if (!node) return { content: [{ type: 'text', text: `Symbol "${target}" not found.` }] };
 
-        const affected = new Set<string>();
-        const queue: { id: string; depth: number }[] = [{ id: node.id, depth: 0 }];
-        const visited = new Set<string>();
-
-        while (queue.length > 0) {
-          const { id, depth } = queue.shift()!;
-          if (visited.has(id) || depth > maxHops) continue;
-          visited.add(id);
-          affected.add(id);
-
-          if (direction === 'callers' || direction === 'both') {
-            for (const edge of graph.findEdgesTo(id)) {
-              if (edge.kind === 'calls' || edge.kind === 'imports') queue.push({ id: edge.source, depth: depth + 1 });
-            }
-          }
-          if (direction === 'callees' || direction === 'both') {
-            for (const edge of graph.findEdgesFrom(id)) {
-              if (edge.kind === 'calls' || edge.kind === 'imports') queue.push({ id: edge.target, depth: depth + 1 });
-            }
-          }
-        }
-
-        const affectedDetails = [...affected].map((id) => {
-          const n = graph.getNode(id);
-          return n ? { id, name: n.name, kind: n.kind, filePath: n.filePath } : { id };
+        const result = computeBlastRadiusWithTrust({
+          graph,
+          targetId: node.id,
+          targetName: node.name,
+          direction: direction as 'callers' | 'callees' | 'both',
+          maxHops,
+          repoDir: activeWorkspaceRoot,
         });
 
-        const risk = affected.size > 10 ? 'HIGH' : affected.size > 5 ? 'MEDIUM' : 'LOW';
+        const affectedDetails = result.affected.map((item) => ({
+          id: item.id,
+          name: item.name,
+          kind: item.kind,
+          filePath: item.filePath,
+          depth: item.depth,
+        }));
+
+        const risk = result.riskLevel;
 
         const suggestEnabled = process.env['CODE_INTEL_SUGGEST_NEXT_TOOLS'] === 'true';
         const suggestNextTools: unknown[] = [];
@@ -1214,9 +1206,12 @@ export async function dispatchTool(
             type: 'text',
             text: compact({
               target: node.name,
-              affectedCount: affected.size,
+              affectedCount: result.affectedCount,
               riskLevel: risk,
               affected: affectedDetails,
+              certainty: result.trust.certainty,
+              coverage: result.trust.coverage,
+              boundaries: result.trust.boundaries,
               ...(suggestEnabled ? { suggested_next_tools: suggestNextTools } : {}),
             }),
           }],
@@ -1286,6 +1281,11 @@ export async function dispatchTool(
           return { content: [{ type: 'text', text: `No path found from "${fromName}" to "${toName}" within ${maxHops} hops.` }] };
         }
 
+        const pathEdges = foundPath.slice(0, -1).map((id, index) => {
+          const nextId = foundPath[index + 1]!;
+          return [...graph.findEdgesFrom(id)].find((edge) => edge.target === nextId && (edge.kind === 'calls' || edge.kind === 'imports'));
+        }).filter((edge): edge is NonNullable<typeof edge> => Boolean(edge));
+        const pathTrust = summarizeEdgeTrust(pathEdges, activeWorkspaceRoot);
         const pathDetails = foundPath.map((id) => {
           const n = graph.getNode(id);
           return n ? { id, name: n.name, kind: n.kind, filePath: n.filePath } : { id };
@@ -1294,7 +1294,7 @@ export async function dispatchTool(
         return {
           content: [{
             type: 'text',
-            text: compact({ from: fromName, to: toName, hops: foundPath.length - 1, path: pathDetails }),
+            text: compact({ from: fromName, to: toName, hops: foundPath.length - 1, path: pathDetails, certainty: pathTrust.certainty, coverage: pathTrust.coverage, boundaries: pathTrust.boundaries }),
           }],
         };
       }
@@ -1709,7 +1709,7 @@ export async function dispatchTool(
       case 'explain_relationship': {
         const fromName = a.from as string;
         const toName = a.to as string;
-        const result = explainRelationship(graph, fromName, toName);
+        const result = explainRelationship(graph, fromName, toName, activeWorkspaceRoot);
         return { content: [{ type: 'text', text: compact(result) }] };
       }
 
@@ -1733,7 +1733,7 @@ export async function dispatchTool(
           };
         }
 
-        const result = computePRImpact(graph, changedFiles, maxHops);
+        const result = computePRImpact(graph, changedFiles, maxHops, activeWorkspaceRoot);
         return { content: [{ type: 'text', text: compact(result) }] };
       }
 
@@ -1755,7 +1755,7 @@ export async function dispatchTool(
       // ── suggest_tests ──────────────────────────────────────────────────────
       case 'suggest_tests': {
         const sym = a.symbol as string;
-        const result = suggestTests(graph, sym);
+        const result = suggestTests(graph, sym, activeWorkspaceRoot);
         return { content: [{ type: 'text', text: compact(result) }] };
       }
 

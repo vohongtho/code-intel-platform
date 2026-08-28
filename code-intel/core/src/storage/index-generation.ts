@@ -9,7 +9,7 @@ export const CURRENT_FILE = 'current.json';
 export const STAGING_OWNER_FILE = 'staging.json';
 export const DEFAULT_STALE_STAGING_MS = 24 * 60 * 60 * 1000;
 
-export type IndexArtifactName = 'graph.db' | 'bm25.db' | 'vector.db' | 'meta.json';
+export type IndexArtifactName = 'graph.db' | 'bm25.db' | 'vector.db' | 'meta.json' | 'evidence.db';
 export type ArtifactCloneMode = 'reflink' | 'copy';
 
 export interface IndexArtifactDetails {
@@ -36,6 +36,8 @@ export interface IndexGenerationManifestV2 {
   identityFingerprint?: string;
   resolverVersion?: string;
   resolverFingerprint?: string;
+  evidenceSchemaVersion?: number;
+  evidenceSchemaFingerprint?: string;
   artifacts: IndexArtifactName[];
   artifactDetails?: Partial<Record<IndexArtifactName, IndexArtifactDetails>>;
 }
@@ -50,6 +52,7 @@ export interface IndexGeneration {
   graphDbPath: string;
   bm25DbPath: string;
   vectorDbPath: string;
+  evidenceDbPath?: string;
   metadataPath: string;
 }
 
@@ -88,7 +91,7 @@ export function safeGenerationId(value: string): boolean {
 
 function isArtifactName(value: unknown): value is IndexArtifactName {
   return typeof value === 'string'
-    && ['graph.db', 'bm25.db', 'vector.db', 'meta.json'].includes(value);
+    && ['graph.db', 'bm25.db', 'vector.db', 'meta.json', 'evidence.db'].includes(value);
 }
 
 export function normalizeIndexGenerationManifest(value: unknown): IndexGenerationManifest | null {
@@ -116,6 +119,8 @@ export function normalizeIndexGenerationManifest(value: unknown): IndexGeneratio
   if (candidate.identityFingerprint !== undefined && typeof candidate.identityFingerprint !== 'string') return null;
   if (candidate.resolverVersion !== undefined && typeof candidate.resolverVersion !== 'string') return null;
   if (candidate.resolverFingerprint !== undefined && typeof candidate.resolverFingerprint !== 'string') return null;
+  if (candidate.evidenceSchemaVersion !== undefined && !Number.isInteger(candidate.evidenceSchemaVersion)) return null;
+  if (candidate.evidenceSchemaFingerprint !== undefined && typeof candidate.evidenceSchemaFingerprint !== 'string') return null;
 
   return {
     version: 2,
@@ -129,6 +134,8 @@ export function normalizeIndexGenerationManifest(value: unknown): IndexGeneratio
     identityFingerprint: candidate.identityFingerprint as string | undefined,
     resolverVersion: candidate.resolverVersion as string | undefined,
     resolverFingerprint: candidate.resolverFingerprint as string | undefined,
+    evidenceSchemaVersion: candidate.evidenceSchemaVersion as number | undefined,
+    evidenceSchemaFingerprint: candidate.evidenceSchemaFingerprint as string | undefined,
     artifacts: [...new Set(candidate.artifacts as IndexArtifactName[])],
     artifactDetails: candidate.artifactDetails as IndexGenerationManifestV2['artifactDetails'],
   };
@@ -199,6 +206,7 @@ export function createIndexGeneration(
     graphDbPath: path.join(stagingDir, 'graph.db'),
     bm25DbPath: path.join(stagingDir, 'bm25.db'),
     vectorDbPath: path.join(stagingDir, 'vector.db'),
+    evidenceDbPath: path.join(stagingDir, 'evidence.db'),
     metadataPath: path.join(stagingDir, 'meta.json'),
   };
   atomicWriteJson(path.join(stagingDir, STAGING_OWNER_FILE), ownerFor(generation));
@@ -299,8 +307,9 @@ export function publishIndexGeneration(
 
   const artifacts: IndexArtifactName[] = ['graph.db', 'bm25.db', 'meta.json'];
   if (fs.existsSync(path.join(generation.finalDir, 'vector.db'))) artifacts.push('vector.db');
+  if (fs.existsSync(path.join(generation.finalDir, 'evidence.db'))) artifacts.push('evidence.db');
   const metadataRecord = metadataValue && typeof metadataValue === 'object'
-    ? metadataValue as { schemaVersion?: number; parser?: 'tree-sitter' | 'regex'; factSchemaVersion?: string; factSchemaFingerprint?: string; identityFingerprint?: string }
+    ? metadataValue as { schemaVersion?: number; parser?: 'tree-sitter' | 'regex'; factSchemaVersion?: string; factSchemaFingerprint?: string; identityFingerprint?: string; resolverVersion?: string; resolverFingerprint?: string; evidenceSchemaVersion?: number; evidenceSchemaFingerprint?: string }
     : undefined;
   const artifactDetails = Object.fromEntries(artifacts.map((artifact) => {
     const artifactPath = path.join(generation.finalDir, artifact);
@@ -319,6 +328,10 @@ export function publishIndexGeneration(
     factSchemaVersion: metadataRecord?.factSchemaVersion,
     factSchemaFingerprint: metadataRecord?.factSchemaFingerprint,
     identityFingerprint: metadataRecord?.identityFingerprint,
+    resolverVersion: metadataRecord?.resolverVersion,
+    resolverFingerprint: metadataRecord?.resolverFingerprint,
+    evidenceSchemaVersion: metadataRecord?.evidenceSchemaVersion,
+    evidenceSchemaFingerprint: metadataRecord?.evidenceSchemaFingerprint,
     artifacts,
     artifactDetails,
   };
@@ -366,7 +379,7 @@ export function migrateLegacyIndexToGeneration(repoDir: string): IndexGeneration
   const required = ['graph.db', 'bm25.db', 'meta.json'] as const;
   if (!required.every((name) => fs.existsSync(path.join(legacyDir, name)))) return null;
   const generation = createIndexGeneration(repoDir, `legacy-${Date.now()}-${crypto.randomUUID()}`);
-  for (const artifact of ['graph.db', 'bm25.db', 'vector.db'] as const) {
+  for (const artifact of ['graph.db', 'bm25.db', 'vector.db', 'evidence.db'] as const) {
     const source = path.join(legacyDir, artifact);
     if (fs.existsSync(source)) cloneGenerationArtifact(source, path.join(generation.stagingDir, artifact));
   }

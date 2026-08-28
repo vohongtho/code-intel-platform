@@ -18,6 +18,7 @@ export interface IndexSnapshot {
   graphDbPath: string;
   bm25DbPath: string;
   vectorDbPath: string;
+  evidenceDbPath?: string;
   metadataPath: string;
 }
 
@@ -69,6 +70,7 @@ function buildSnapshot(
     graphDbPath: path.join(generationDir, 'graph.db'),
     bm25DbPath: path.join(generationDir, 'bm25.db'),
     vectorDbPath: path.join(generationDir, 'vector.db'),
+    evidenceDbPath: path.join(generationDir, 'evidence.db'),
     metadataPath: path.join(generationDir, 'meta.json'),
   });
 }
@@ -111,7 +113,7 @@ function resolveLegacySnapshot(repositoryRoot: string): IndexSnapshot | null {
   const repositoryReal = safeRealPath(repositoryRoot);
   const legacyReal = safeRealPath(legacyDir);
   if (!repositoryReal || !legacyReal || !isContainedPath(repositoryReal, legacyReal)) return null;
-  const legacyArtifacts: IndexArtifactName[] = ['graph.db', 'bm25.db', 'vector.db', 'meta.json'];
+  const legacyArtifacts: IndexArtifactName[] = ['graph.db', 'bm25.db', 'vector.db', 'evidence.db', 'meta.json'];
   if (!legacyArtifacts.some((artifact) => fs.existsSync(path.join(legacyReal, artifact)))) return null;
   return buildSnapshot(repositoryRoot, 'legacy', legacyReal, true, null);
 }
@@ -140,6 +142,7 @@ export function getSnapshotArtifactPath(
     case 'graph.db': return snapshot.graphDbPath;
     case 'bm25.db': return snapshot.bm25DbPath;
     case 'vector.db': return snapshot.vectorDbPath;
+    case 'evidence.db': return snapshot.evidenceDbPath ?? path.join(snapshot.generationDir, 'evidence.db');
     case 'meta.json': return snapshot.metadataPath;
   }
 }

@@ -43,6 +43,8 @@ export interface IndexMetadata {
   identityFingerprint?: string;
   resolverVersion?: string;
   resolverFingerprint?: string;
+  evidenceSchemaVersion?: number;
+  evidenceSchemaFingerprint?: string;
   frameworkFingerprint?: string;
   frameworkDetections?: string[];
   factDiagnostics?: Array<{

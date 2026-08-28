@@ -113,7 +113,7 @@ describe('getCreateEdgeTableDDL', () => {
     assert.ok(ddls.some((d) => d.includes('code_edges')));
   });
 
-  it('contains kind, weight, label fields', () => {
+  it('contains trust persistence fields', () => {
     const ddls = getCreateEdgeTableDDL();
     const combined = ddls.join('\n');
     assert.ok(combined.includes('id STRING'));
@@ -121,6 +121,12 @@ describe('getCreateEdgeTableDDL', () => {
     assert.ok(combined.includes('weight'));
     assert.ok(combined.includes('label'));
     assert.ok(combined.includes('callsite_id'));
+    assert.ok(combined.includes('confidence'));
+    assert.ok(combined.includes('certainty'));
+    assert.ok(combined.includes('strategy'));
+    assert.ok(combined.includes('resolver_version'));
+    assert.ok(combined.includes('evidence_ref'));
+    assert.ok(combined.includes('ambiguous'));
     assert.ok(combined.includes('metadata'));
   });
 

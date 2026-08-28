@@ -18,6 +18,7 @@ export interface ResolutionIndexes {
   heritageByDeclaration: ReadonlyMap<string, readonly HeritageFact[]>;
   registrationsBySubject: ReadonlyMap<string, readonly RegistrationFact[]>;
   instrumentation: ResolutionInstrumentation;
+  facts: readonly SemanticFact[];
 }
 
 function append<K, V>(map: Map<K, V[]>, key: K, value: V): void {
@@ -100,6 +101,7 @@ export function buildResolutionIndexes(facts: readonly SemanticFact[], instrumen
     heritageByDeclaration: freezeBuckets(heritageByDeclaration),
     registrationsBySubject: freezeBuckets(registrationsBySubject),
     instrumentation,
+    facts: Object.freeze([...facts]),
   };
 }
 

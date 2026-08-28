@@ -1,13 +1,16 @@
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
+import type { AnalysisBoundary, AnalysisCertainty, AnalysisCoverage } from '../shared/index.js';
 import { build, type ContextDocument, type SeedSymbol } from '../context/builder.js';
 import { computePRImpact, type PRImpactResult } from './pr-impact.js';
 import { suggestTests, type SuggestTestsResult } from './suggest-tests.js';
+import { mergeBoundaries, mergeCoverage } from './trust.js';
 
 export interface ChangeContextOptions {
   changedFiles: string[];
   maxHops?: number;
   maxTokens?: number;
   maxChangedSymbols?: number;
+  repoDir?: string;
 }
 
 export interface ChangeContextTestSuggestion {
@@ -24,8 +27,11 @@ export interface ChangeContextResult {
     changedSymbolCount: number;
     impactedSymbolCount: number;
     coverageGapCount: number;
-    highestRisk: 'HIGH' | 'MEDIUM' | 'LOW' | 'NONE';
+    highestRisk: 'HIGH' | 'MEDIUM' | 'LOW' | 'UNKNOWN' | 'NONE';
   };
+  certainty?: AnalysisCertainty;
+  coverage?: AnalysisCoverage;
+  boundaries?: readonly AnalysisBoundary[];
 }
 
 function normalizeChangedFiles(files: string[]): string[] {
@@ -57,7 +63,7 @@ export function buildChangeContext(
   const changedFiles = normalizeChangedFiles(options.changedFiles);
   const maxHops = Math.max(1, Math.min(10, options.maxHops ?? 3));
   const maxChangedSymbols = Math.max(1, Math.min(100, options.maxChangedSymbols ?? 20));
-  const impact = computePRImpact(graph, changedFiles, maxHops);
+  const impact = computePRImpact(graph, changedFiles, maxHops, options.repoDir);
   const seeds = seedSymbolsForChangedFiles(graph, changedFiles, maxChangedSymbols);
   const context = build(seeds, graph, {
     maxTokens: options.maxTokens,
@@ -66,14 +72,16 @@ export function buildChangeContext(
   const testSuggestions = impact.changedSymbols
     .filter((symbol) => symbol.risk !== 'LOW' || !symbol.testCoverage)
     .slice(0, 10)
-    .map((symbol) => ({ symbol: symbol.name, result: suggestTests(graph, symbol.name) }));
+    .map((symbol) => ({ symbol: symbol.name, result: suggestTests(graph, symbol.name, options.repoDir) }));
   const highestRisk = impact.riskSummary.HIGH > 0
     ? 'HIGH'
     : impact.riskSummary.MEDIUM > 0
       ? 'MEDIUM'
-      : impact.riskSummary.LOW > 0
-        ? 'LOW'
-        : 'NONE';
+      : (impact.riskSummary.UNKNOWN ?? 0) > 0
+        ? 'UNKNOWN'
+        : impact.riskSummary.LOW > 0
+          ? 'LOW'
+          : 'NONE';
   return {
     changedFiles,
     impact,
@@ -85,5 +93,8 @@ export function buildChangeContext(
       coverageGapCount: impact.coverageGaps.length,
       highestRisk,
     },
+    certainty: impact.certainty,
+    coverage: mergeCoverage([impact.coverage, ...testSuggestions.map((item) => 'error' in item.result ? undefined : item.result.coverage)]),
+    boundaries: mergeBoundaries([impact.boundaries, ...testSuggestions.map((item) => 'error' in item.result ? undefined : item.result.boundaries)]),
   };
 }

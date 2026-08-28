@@ -108,6 +108,7 @@ async function runChangeContext(args: string[]): Promise<void> {
     maxHops: numberOption(args, '--max-hops'),
     maxTokens: numberOption(args, '--max-tokens'),
     maxChangedSymbols: numberOption(args, '--max-symbols'),
+    repoDir,
   });
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 }

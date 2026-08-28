@@ -1,8 +1,16 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { createKnowledgeGraph } from '../../../src/graph/knowledge-graph.js';
 import type { KnowledgeGraph } from '../../../src/graph/knowledge-graph.js';
+import { createEvidenceStore } from '../../../src/evidence/store.js';
 import { computePRImpact, parseDiffFiles } from '../../../src/query/pr-impact.js';
+
+function tempRepo(): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'pr-impact-'));
+}
 
 function buildTestGraph(): KnowledgeGraph {
   const graph = createKnowledgeGraph();
@@ -134,5 +142,34 @@ describe('computePRImpact', () => {
   it('crossRepoImpact is null', () => {
     const result = computePRImpact(graph, ['src/auth/core.ts'], 5);
     assert.equal(result.crossRepoImpact, null);
+  });
+
+  it('marks uncertain impact as UNKNOWN when evidence coverage is incomplete', () => {
+    const repoDir = tempRepo();
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: 'target', kind: 'function', name: 'target', filePath: 'src/target.ts' });
+    graph.addNode({ id: 'caller', kind: 'function', name: 'caller', filePath: 'src/caller.ts' });
+    const store = createEvidenceStore(repoDir);
+    store.put({
+      id: 'ev:impact-1',
+      version: 1,
+      referenceId: 'ref:impact-1',
+      resolverVersion: 'evidence-based-v1',
+      strategy: 'semantic-call',
+      coverage: { complete: false, examinedCount: 1, totalKnownCount: 2, incompleteReasons: ['analysis-limit'] },
+      boundaries: [{ kind: 'analysis-limit', evidenceRefs: ['ev:impact-1'] }],
+      recordedAt: '2025-01-01T00:00:00.000Z',
+    });
+    store.close();
+    graph.addEdge({ id: 'e1', source: 'caller', target: 'target', kind: 'calls', certainty: 'candidate', evidenceRef: 'ev:impact-1' });
+
+    const result = computePRImpact(graph, ['src/target.ts'], 5, repoDir);
+    const sym = result.changedSymbols.find((s) => s.name === 'target');
+    assert.equal(sym?.risk, 'UNKNOWN');
+    assert.equal(sym?.certainty, 'lower-bound');
+    assert.equal(sym?.coverage?.complete, false);
+    assert.deepEqual(sym?.boundaries?.map((item) => item.kind), ['analysis-limit']);
+    assert.equal(result.riskSummary.UNKNOWN, 1);
+    fs.rmSync(repoDir, { recursive: true, force: true });
   });
 });

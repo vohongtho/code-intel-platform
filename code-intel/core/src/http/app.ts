@@ -71,6 +71,7 @@ import {
 } from '../observability/metrics.js';
 import { withSpan, isTracingEnabled } from '../observability/tracing.js';
 import { openApiSpec } from './openapi.js';
+import { computeBlastRadiusWithTrust } from '../mcp-server/blast-radius-trust.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -1346,30 +1347,26 @@ export function createApp(
       res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: `Symbol "${target}" not found`, requestId: req.requestId } });
       return;
     }
-    const affected = new Map<string, { name: string; kind: string; depth: number }>();
-    const queue: { id: string; depth: number }[] = [{ id: targetNode.id, depth: 0 }];
-    const visited = new Set<string>();
-    while (queue.length > 0) {
-      const { id, depth } = queue.shift()!;
-      if (visited.has(id) || depth > max_hops) continue;
-      visited.add(id);
-      const node = g.getNode(id);
-      if (node) affected.set(id, { name: node.name, kind: node.kind, depth });
-      if (direction === 'callers' || direction === 'both') {
-        for (const edge of g.findEdgesTo(id)) {
-          if (edge.kind === 'calls' || edge.kind === 'imports') queue.push({ id: edge.source, depth: depth + 1 });
-        }
-      }
-      if (direction === 'callees' || direction === 'both') {
-        for (const edge of g.findEdgesFrom(id)) {
-          if (edge.kind === 'calls' || edge.kind === 'imports') queue.push({ id: edge.target, depth: depth + 1 });
-        }
-      }
-    }
+    const registry = loadRegistry();
+    const repoDir = repoId
+      ? registry.find((entry) => entry.id === repoId)?.path
+      : workspaceRoot;
+    const result = computeBlastRadiusWithTrust({
+      graph: g,
+      targetId: targetNode.id,
+      targetName: targetNode.name,
+      direction: direction as 'callers' | 'callees' | 'both',
+      maxHops: max_hops,
+      repoDir,
+    });
       res.json({
-        target: targetNode.name,
-        affectedCount: [...affected.values()].filter((a) => a.depth > 0).length,
-        affected: [...affected.entries()].map(([id, info]) => ({ id, ...info })).filter((a) => a.depth > 0),
+        target: result.target,
+        affectedCount: Math.max(0, result.affectedCount - 1),
+        riskLevel: result.riskLevel,
+        certainty: result.trust.certainty,
+        coverage: result.trust.coverage,
+        boundaries: result.trust.boundaries,
+        affected: result.affected.filter((a) => a.depth > 0),
       });
     } catch (err) {
       if (err instanceof AppError) {

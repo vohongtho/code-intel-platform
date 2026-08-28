@@ -1,8 +1,9 @@
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
+import { detectDeadCode as detectTrustedDeadCode } from '../health/dead-code.js';
 
 export interface HealthReportResult {
   healthScore: number;
-  deadCode: Array<{ name: string; filePath: string; kind: string }>;
+  deadCode: Array<{ name: string; filePath: string; kind: string; status?: 'not-observed' | 'proved-unused'; certainty?: string; coverage?: { complete: boolean; examinedCount: number; totalKnownCount?: number; incompleteReasons: readonly string[] } }>;
   cycles: string[][];
   godNodes: Array<{ name: string; edgeCount: number; filePath: string }>;
   orphanFiles: string[];
@@ -31,25 +32,17 @@ export function computeHealthReport(graph: KnowledgeGraph, scope: string): Healt
   const scopedNodes = [...graph.allNodes()].filter((n) => inScope(n.filePath));
 
   // ── Dead code ──────────────────────────────────────────────────────────────
-  const deadCodeKinds = new Set(['function', 'method', 'class']);
-  const deadCode: HealthReportResult['deadCode'] = [];
-
-  for (const node of scopedNodes) {
-    if (!deadCodeKinds.has(node.kind)) continue;
-    if (node.exported === true) continue;
-
-    // Count incoming edges
-    let hasIncoming = false;
-    for (const _edge of graph.findEdgesTo(node.id)) {
-      hasIncoming = true;
-      break;
-    }
-
-    if (!hasIncoming) {
-      deadCode.push({ name: node.name, filePath: node.filePath, kind: node.kind });
-      if (deadCode.length >= 20) break;
-    }
-  }
+  const deadCode = detectTrustedDeadCode(graph)
+    .filter((node) => inScope(node.filePath))
+    .slice(0, 20)
+    .map((node) => ({
+      name: node.name,
+      filePath: node.filePath,
+      kind: node.kind,
+      status: node.status,
+      certainty: node.certainty,
+      coverage: node.coverage,
+    }));
 
   // ── Cycles (DFS on imports edges) ─────────────────────────────────────────
   const cycles: string[][] = [];

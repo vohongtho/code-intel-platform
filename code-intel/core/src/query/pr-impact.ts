@@ -1,12 +1,27 @@
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
+import type { AnalysisBoundary, AnalysisCertainty, AnalysisCoverage, CodeEdge } from '../shared/index.js';
+import { riskFromCount, summarizeEdgeTrust } from './trust.js';
+
+export interface PRImpactChangedSymbol {
+  name: string;
+  risk: 'HIGH' | 'MEDIUM' | 'LOW' | 'UNKNOWN';
+  callerCount: number;
+  testCoverage: boolean;
+  certainty?: AnalysisCertainty;
+  coverage?: AnalysisCoverage;
+  boundaries?: readonly AnalysisBoundary[];
+}
 
 export interface PRImpactResult {
-  changedSymbols: Array<{ name: string; risk: 'HIGH' | 'MEDIUM' | 'LOW'; callerCount: number; testCoverage: boolean }>;
+  changedSymbols: PRImpactChangedSymbol[];
   impactedSymbols: Array<{ name: string; filePath: string }>;
-  riskSummary: { HIGH: number; MEDIUM: number; LOW: number };
+  riskSummary: { HIGH: number; MEDIUM: number; LOW: number; UNKNOWN?: number };
   coverageGaps: string[];
   filesToReview: string[];
   crossRepoImpact: null;
+  certainty?: AnalysisCertainty;
+  coverage?: AnalysisCoverage;
+  boundaries?: readonly AnalysisBoundary[];
 }
 
 /**
@@ -28,8 +43,8 @@ export function computePRImpact(
   graph: KnowledgeGraph,
   changedFiles: string[],
   maxHops: number,
+  repoDir?: string,
 ): PRImpactResult {
-  // Collect all nodes belonging to changed files
   const changedSymbolIds = new Set<string>();
   for (const node of graph.allNodes()) {
     if (!node.filePath) continue;
@@ -45,16 +60,16 @@ export function computePRImpact(
     }
   }
 
-  // For each changed symbol, compute blast radius (BFS reverse: incoming calls + imports edges)
   const allBlastRadiusNodes = new Set<string>();
   const changedSymbols: PRImpactResult['changedSymbols'] = [];
+  const allTrustEdges: CodeEdge[] = [];
 
   for (const symbolId of changedSymbolIds) {
     const symbolNode = graph.getNode(symbolId);
     if (!symbolNode) continue;
 
-    // BFS reverse
     const blastRadius = new Set<string>();
+    const trustEdges: CodeEdge[] = [];
     const queue: { id: string; depth: number }[] = [{ id: symbolId, depth: 0 }];
     const visited = new Set<string>();
 
@@ -67,31 +82,23 @@ export function computePRImpact(
       for (const edge of graph.findEdgesTo(id)) {
         if (edge.kind === 'calls' || edge.kind === 'imports') {
           queue.push({ id: edge.source, depth: depth + 1 });
+          trustEdges.push(edge);
+          allTrustEdges.push(edge);
         }
       }
     }
 
-    // Add to global set
     for (const id of blastRadius) allBlastRadiusNodes.add(id);
 
-    // Risk scoring
-    const blastCount = blastRadius.size;
-    let risk: 'HIGH' | 'MEDIUM' | 'LOW';
-    if (blastCount > 50) {
-      risk = 'HIGH';
-    } else if (blastCount >= 10) {
-      risk = 'MEDIUM';
-    } else {
-      risk = 'LOW';
-    }
+    const trust = summarizeEdgeTrust(trustEdges, repoDir);
+    const baseRisk = riskFromCount(blastRadius.size);
+    const risk: PRImpactChangedSymbol['risk'] = trust.coverage.complete ? baseRisk : 'UNKNOWN';
 
-    // Caller count = incoming `calls` edges
     let callerCount = 0;
     for (const edge of graph.findEdgesTo(symbolId)) {
       if (edge.kind === 'calls') callerCount++;
     }
 
-    // Test coverage: any node with a test file path that imports this symbol
     let testCoverage = false;
     for (const edge of graph.findEdgesTo(symbolId)) {
       if (edge.kind === 'imports') {
@@ -106,10 +113,17 @@ export function computePRImpact(
       }
     }
 
-    changedSymbols.push({ name: symbolNode.name, risk, callerCount, testCoverage });
+    changedSymbols.push({
+      name: symbolNode.name,
+      risk,
+      callerCount,
+      testCoverage,
+      certainty: trust.certainty,
+      coverage: trust.coverage,
+      boundaries: trust.boundaries,
+    });
   }
 
-  // Impacted symbols: all nodes in blast radii that are NOT in changed files
   const impactedSymbols: PRImpactResult['impactedSymbols'] = [];
   for (const id of allBlastRadiusNodes) {
     if (changedSymbolIds.has(id)) continue;
@@ -119,21 +133,25 @@ export function computePRImpact(
     }
   }
 
-  // Risk summary
   const riskSummary: PRImpactResult['riskSummary'] = { HIGH: 0, MEDIUM: 0, LOW: 0 };
   for (const s of changedSymbols) {
+    if (s.risk === 'UNKNOWN') {
+      riskSummary.UNKNOWN = (riskSummary.UNKNOWN ?? 0) + 1;
+      continue;
+    }
     riskSummary[s.risk]++;
   }
 
-  // Coverage gaps: HIGH/MEDIUM risk symbols with testCoverage=false
   const coverageGaps: string[] = [];
   for (const s of changedSymbols) {
     if ((s.risk === 'HIGH' || s.risk === 'MEDIUM') && !s.testCoverage) {
       coverageGaps.push(`${s.name} has no test coverage`);
     }
+    if (s.risk === 'UNKNOWN') {
+      coverageGaps.push(`${s.name} impact coverage is incomplete`);
+    }
   }
 
-  // filesToReview: top 5 filePaths with most impacted symbols
   const fileImpactCount = new Map<string, number>();
   for (const sym of impactedSymbols) {
     if (sym.filePath) {
@@ -145,6 +163,8 @@ export function computePRImpact(
     .slice(0, 5)
     .map(([fp]) => fp);
 
+  const aggregateTrust = summarizeEdgeTrust(allTrustEdges, repoDir);
+
   return {
     changedSymbols,
     impactedSymbols,
@@ -152,5 +172,8 @@ export function computePRImpact(
     coverageGaps,
     filesToReview,
     crossRepoImpact: null,
+    certainty: aggregateTrust.certainty,
+    coverage: aggregateTrust.coverage,
+    boundaries: aggregateTrust.boundaries,
   };
 }

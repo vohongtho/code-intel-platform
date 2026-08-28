@@ -39,6 +39,8 @@ export type { EntryPoint, FlowTrace } from './flow-detection/index.js';
 
 export { textSearch, reciprocalRankFusion } from './search/index.js';
 export type { SearchResult } from './search/index.js';
+export type { ResolutionEvidenceRecord, ResolutionEvidenceStore } from './evidence/index.js';
+export { EVIDENCE_SCHEMA_VERSION, EVIDENCE_DB_FILE, SqliteResolutionEvidenceStore, getEvidenceDbPath, createEvidenceStore } from './evidence/index.js';
 export { Bm25Index, getBm25DbPath } from './search/index.js';
 
 export { createMcpServer, startMcpStdio } from './mcp-server/index.js';

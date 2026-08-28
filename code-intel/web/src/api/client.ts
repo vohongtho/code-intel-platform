@@ -90,7 +90,16 @@ export interface NodeInspectInfo {
 export interface BlastRadiusResult {
   target: string;
   affectedCount: number;
-  affected: { id: string; name: string; kind: string; depth: number }[];
+  riskLevel?: 'HIGH' | 'MEDIUM' | 'LOW' | 'UNKNOWN';
+  certainty?: 'exact' | 'lower-bound' | 'heuristic';
+  coverage?: {
+    complete: boolean;
+    examinedCount: number;
+    totalKnownCount?: number;
+    incompleteReasons: readonly string[];
+  };
+  boundaries?: { kind: string; evidenceRefs: readonly string[] }[];
+  affected: { id: string; name: string; kind: string; depth: number; filePath?: string }[];
 }
 
 export interface GrepHit {

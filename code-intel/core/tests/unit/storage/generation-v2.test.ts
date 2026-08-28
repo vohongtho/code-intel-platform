@@ -15,22 +15,24 @@ import { seedIndexGeneration } from '../../../src/cli/atomic-analyze.js';
 
 function tempRepo(): string { return fs.mkdtempSync(path.join(os.tmpdir(), 'generation-v2-')); }
 function write(pathname: string, value: string): void { fs.mkdirSync(path.dirname(pathname), { recursive: true }); fs.writeFileSync(pathname, value); }
-const metadata = { indexedAt: '2026-08-03T00:00:00.000Z', schemaVersion: 8, indexVersion: 'v', parser: 'tree-sitter', embeddings: { enabled: true, status: 'ready', provider: 'x', model: 'x', dimension: 3 }, stats: { nodes: 1, edges: 0, files: 1, duration: 1 } };
+const metadata = { indexedAt: '2026-08-03T00:00:00.000Z', schemaVersion: 8, indexVersion: 'v', parser: 'tree-sitter', factSchemaVersion: 'facts-v1', factSchemaFingerprint: 'fact-fp', identityFingerprint: 'identity-fp', resolverVersion: 'resolver-v1', resolverFingerprint: 'resolver-fp', evidenceSchemaVersion: 1, evidenceSchemaFingerprint: 'evidence-fp', embeddings: { enabled: true, status: 'ready', provider: 'x', model: 'x', dimension: 3 }, stats: { nodes: 1, edges: 0, files: 1, duration: 1 } };
 
 describe('Generation V2 storage', () => {
   it('clones only requested vector and metadata seed artifacts', () => {
     const root = tempRepo();
     try {
       const current = createIndexGeneration(root, 'g1');
-      write(current.graphDbPath, 'graph'); write(current.bm25DbPath, 'bm25'); write(current.vectorDbPath, 'vector');
+      write(current.graphDbPath, 'graph'); write(current.bm25DbPath, 'bm25'); write(current.vectorDbPath, 'vector'); write(current.evidenceDbPath!, 'evidence');
       publishIndexGeneration(root, current, metadata, { vectorRequired: true });
       const next = createIndexGeneration(root, 'g2', { baseGenerationId: 'g1' });
-      const modes = seedIndexGeneration(root, next, resolveIndexSnapshot(root), ['vector.db', 'meta.json']);
+      const modes = seedIndexGeneration(root, next, resolveIndexSnapshot(root), ['vector.db', 'evidence.db', 'meta.json']);
       assert.ok(fs.existsSync(next.vectorDbPath));
+      assert.ok(fs.existsSync(next.evidenceDbPath!));
       assert.ok(fs.existsSync(next.metadataPath));
       assert.equal(fs.existsSync(next.graphDbPath), false);
       assert.equal(fs.existsSync(next.bm25DbPath), false);
       assert.ok(modes['vector.db'] === 'copy' || modes['vector.db'] === 'reflink');
+      assert.ok(modes['evidence.db'] === 'copy' || modes['evidence.db'] === 'reflink');
       assert.ok(modes['meta.json'] === 'copy' || modes['meta.json'] === 'reflink');
       assert.equal(JSON.parse(fs.readFileSync(next.metadataPath, 'utf8')).generationId, 'g1');
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
@@ -61,6 +63,27 @@ describe('Generation V2 storage', () => {
       assert.equal(fs.existsSync(recent.stagingDir), true);
       assert.equal(fs.existsSync(active.stagingDir), true);
       assert.ok(fs.existsSync(getGenerationsDir(root)));
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('reopens published evidence artifact through snapshot', () => {
+    const root = tempRepo();
+    try {
+      const gen = createIndexGeneration(root, 'g1');
+      write(gen.graphDbPath, 'graph');
+      write(gen.bm25DbPath, 'bm25');
+      write(gen.evidenceDbPath!, 'evidence');
+      const manifest = publishIndexGeneration(root, gen, metadata, { vectorRequired: false });
+      const snapshot = resolveIndexSnapshot(root);
+      assert.ok(snapshot);
+      assert.equal(manifest.version, 2);
+      if (manifest.version !== 2) throw new Error('expected v2 manifest');
+      assert.equal(manifest.evidenceSchemaVersion, 1);
+      assert.equal(manifest.evidenceSchemaFingerprint, 'evidence-fp');
+      assert.equal(manifest.resolverVersion, 'resolver-v1');
+      assert.equal(snapshot?.manifest?.version, 2);
+      assert.equal(snapshot?.evidenceDbPath?.endsWith(path.join('g1', 'evidence.db')), true);
+      assert.equal(fs.readFileSync(snapshot!.evidenceDbPath!, 'utf8'), 'evidence');
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
 });

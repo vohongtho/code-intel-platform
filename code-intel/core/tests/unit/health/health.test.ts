@@ -47,6 +47,9 @@ describe('detectDeadCode', () => {
     assert.equal(results.length, 1);
     assert.equal(results[0]!.nodeId, 'fn1');
     assert.equal(results[0]!.name, 'orphanFn');
+    assert.equal(results[0]!.status, 'not-observed');
+    assert.equal(results[0]!.certainty, 'lower-bound');
+    assert.equal(results[0]!.coverage.complete, false);
   });
 
   // ── 2. Dead code: exported function with callers → NOT flagged ──────────────
@@ -142,6 +145,7 @@ describe('detectDeadCode', () => {
     const node = graph.getNode('fn99')!;
     const health = (node.metadata as Record<string, unknown>)?.['health'] as Record<string, unknown>;
     assert.equal(health?.['deadCode'], true);
+    assert.equal(health?.['deadCodeStatus'], 'not-observed');
   });
 });
 

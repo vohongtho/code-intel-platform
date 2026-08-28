@@ -44,7 +44,10 @@ export interface PipelineContext {
   /** Resolver instrumentation/version for generation compatibility and guards. */
   resolverVersion?: string;
   resolverFingerprint?: string;
+  evidenceSchemaVersion?: number;
+  evidenceSchemaFingerprint?: string;
   resolutionInstrumentation?: import('../resolution/indexes.js').ResolutionInstrumentation;
+  resolutionIndexes?: import('../resolution/indexes.js').ResolutionIndexes;
   /**
    * v0.4.0 — opt-in summarize phase.
    * Set to true via `--summarize` flag or `analysis.summarizeOnAnalyze: true` config.

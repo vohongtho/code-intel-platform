@@ -4,6 +4,8 @@
 
 ### Requirement: Materialized semantic relationships MUST be explainable
 
+The system MUST persist compact trust metadata and an addressable site identity for materialized semantic relationships.
+
 #### Scenario: Resolver emits a call/reference relationship
 
 - **WHEN** the relationship is persisted
@@ -11,6 +13,8 @@
 - **AND** the source call/reference site MUST be addressable when applicable.
 
 ### Requirement: Absence MUST NOT be treated as proof when coverage is incomplete
+
+The system MUST NOT treat empty or missing relationship results as exact proof when coverage is incomplete.
 
 #### Scenario: No caller edge is found but interface dispatch is unresolved
 
@@ -20,6 +24,8 @@
 
 ### Requirement: Truncation MUST reduce analysis certainty
 
+The system MUST downgrade certainty and mark coverage incomplete when traversal or candidate expansion is truncated.
+
 #### Scenario: Candidate/path expansion reaches a configured limit
 
 - **WHEN** analysis returns only a bounded subset
@@ -28,6 +34,8 @@
 
 ### Requirement: Unresolved outcomes MUST NOT require fake graph targets
 
+The system MUST record unresolved semantic outcomes as evidence without fabricating graph targets.
+
 #### Scenario: Runtime-dynamic/reflection behavior has no safe static target
 
 - **WHEN** resolution declines to bind a target
@@ -35,6 +43,8 @@
 - **AND** MUST NOT fabricate a target edge solely to preserve graph connectivity.
 
 ### Requirement: Trust fields MUST be additive to existing public contracts
+
+The system MUST expose trust fields additively so existing clients remain usable without mandatory migration.
 
 #### Scenario: Older client ignores new fields
 

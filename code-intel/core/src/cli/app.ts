@@ -966,6 +966,8 @@ async function analyzeWorkspace(targetPath: string, options?: {
       identityFingerprint: context.identityFingerprint ?? currentIdentityFingerprint,
       resolverVersion: context.resolverVersion,
       resolverFingerprint: context.resolverFingerprint,
+      evidenceSchemaVersion: context.evidenceSchemaVersion,
+      evidenceSchemaFingerprint: context.evidenceSchemaFingerprint,
       frameworkFingerprint,
       frameworkDetections: frameworkDetections.length > 0 ? frameworkDetections : undefined,
       factDiagnostics: factDiagnostics.length > 0 ? factDiagnostics : undefined,

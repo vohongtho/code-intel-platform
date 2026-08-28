@@ -31,7 +31,7 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 - **Multi-language** — TypeScript, JavaScript, Python, Java, Go, C, C++, C#, Rust, PHP, Ruby, Swift, Kotlin, Dart, HTML (15 languages via tree-sitter AST)
 - **Truthful capability states** — language capability reporting distinguishes `supported`, `partial`, `not-applicable`, and `unsupported` so grammar availability is not mistaken for semantic completeness
 - **Framework Semantic Adapters** _(v1.0.11)_ — auto-detects framework registrations and emits static route, handler, DI, resource, prompt, form, and embedded-script facts for NestJS, Express, Fastify, ASP.NET Core, Microsoft DI, Spring, FastAPI, Flask, Django, Go HTTP routers, Laravel, Symfony, Rails, MCP SDK, and HTML.
-- **Evidence-Carrying Relationships** _(v1.0.11)_ — framework-derived graph edges and `explain_relationship` results now include adapter ID/version registration evidence instead of relying on naming conventions alone.
+- **Evidence-Carrying Relationships** _(v1.0.11)_ — framework-derived and semantic-resolution graph edges now persist explicit trust metadata (`certainty`, `strategy`, `resolverVersion`, `evidenceRef`) and `explain_relationship` can return evidence-backed coverage/boundary detail instead of relying on naming conventions alone.
 - **Framework Fingerprint Metadata** _(v1.0.11)_ — published index metadata records detected frameworks and a framework fingerprint so trust checks can distinguish stale framework-semantic state from corrupt artifacts.
 - **Correctness-First Incremental Analysis** _(v1.0.8)_ — detects committed, staged, unstaged, untracked, mtime-changed, and deleted files. Zero-change runs keep the fast path; any non-empty change set performs a clean full graph rebuild so cross-file `calls`, `imports`, `extends`, `implements`, clusters, and flows cannot be lost.
 - **Parallel Analysis** — `--parallel` flag runs parse + resolve phases on worker threads for large repos
@@ -724,10 +724,10 @@ All tools are available to any MCP-capable editor (Claude Desktop, Claude Code, 
 | `overview` | _(none)_ | Repository summary: total nodes/edges + full breakdown by kind. **Use this first** to understand the codebase shape. |
 | `search` | `query` (string), `limit` (number, default 10), `mode` (`auto`\|`bm25`\|`vector`, default `auto`), `scope` (object, optional), legacy `repo`/`group` during migration | Scoped search with MCP default behavior matching HTTP: hybrid/semantic when vector is ready, BM25 otherwise; explicit `mode` can force BM25 or prefer vector with BM25 fallback |
 | `inspect` | `symbol_name` (string) | 360° view of a symbol: definition, callers, callees, imports, heritage (extends/implements), members, cluster, and source preview |
-| `context` | `symbols` (string[]), `intent` (`code`\|`callers`\|`architecture`\|`auto`, default `auto`), `max_tokens` (number, default/server max 6000), `limit` (number, default 10) | Token-budgeted deep context for one or more symbols: returns `summary`, `logic`, `relation`, `focusCode`, and `truncated` from the shared context builder |
-| `blast_radius` | `target` (string), `direction` (`callers`\|`callees`\|`both`), `max_hops` (number, default 2) | Impact analysis: traverse the call/import graph to find all affected symbols. Returns a `riskLevel` (LOW / MEDIUM / HIGH). |
+| `context` | `symbols` (string[]), `intent` (`code`\|`callers`\|`architecture`\|`auto`, default `auto`), `max_tokens` (number, default/server max 6000), `limit` (number, default 10) | Token-budgeted deep context for one or more symbols: returns `summary`, `logic`, `relation`, `focusCode`, and `truncated` from the shared context builder; change-context surfaces preserve additive trust summaries when impact/test evidence is incomplete |
+| `blast_radius` | `target` (string), `direction` (`callers`\|`callees`\|`both`), `max_hops` (number, default 2) | Impact analysis: traverse the call/import graph to find all affected symbols. Returns additive trust fields including `riskLevel` (`LOW` / `MEDIUM` / `HIGH` / `UNKNOWN`), `certainty`, `coverage`, and `boundaries`. |
 | `file_symbols` | `file_path` (string, partial match), `limit` (number, default 10) | List all symbols defined in a file, ordered by line number. Avoids having to read raw source. |
-| `find_path` | `from` (string), `to` (string), `max_hops` (number, default 8) | Find the shortest call/import path between two symbols via BFS. |
+| `find_path` | `from` (string), `to` (string), `max_hops` (number, default 8) | Find the shortest call/import path between two symbols via BFS. Additive trust fields (`certainty`, `coverage`, `boundaries`) surface when traversal is bounded or evidence-backed. |
 | `list_exports` | `kind` (string, optional), `limit` (number, default 10) | List all exported symbols — the public API surface of the codebase. Filter by kind: `function`, `class`, `interface`, etc. |
 | `routes` | _(none)_ | List all HTTP route handler mappings detected in the codebase |
 | `clusters` | `limit` (number, default 10) | List detected code clusters (directory-based communities) with member counts and top 10 symbols each |
@@ -740,11 +740,11 @@ All tools are available to any MCP-capable editor (Claude Desktop, Claude Code, 
 
 | Tool | Input | Description |
 |------|-------|-------------|
-| `explain_relationship` | `from` (string), `to` (string) | Explain how two symbols are connected: directed paths, shared imports, and heritage (extends/implements). Returns up to 10 paths with at most 5 hops each. |
-| `pr_impact` | `changedFiles` (string[]), `diff` (string, optional), `maxHops` (number, default 2) | Given changed files or a unified diff, compute full blast radius with risk scores (HIGH/MEDIUM/LOW), test coverage gaps, and top files to review. |
+| `explain_relationship` | `from` (string), `to` (string) | Explain how two symbols are connected: directed paths, shared imports, and heritage (extends/implements). Returns up to 10 paths with at most 5 hops each plus additive trust fields such as `certainty`, `coverage`, path `strategy`, and evidence-backed `boundaries`. |
+| `pr_impact` | `changedFiles` (string[]), `diff` (string, optional), `maxHops` (number, default 2) | Given changed files or a unified diff, compute full blast radius with risk scores (`HIGH` / `MEDIUM` / `LOW` / `UNKNOWN`), test coverage gaps, top files to review, and additive trust summaries when impact coverage is incomplete. |
 | `similar_symbols` | `symbol` (string), `limit` (number, default 10) | Find symbols with similar names or structure using Levenshtein distance and kind matching. Useful for finding related functions, classes, or interfaces. |
 | `health_report` | `scope` (string, optional) | Code health signals for a scope: dead code, cycles, god nodes, orphan files, complexity hotspots. |
-| `suggest_tests` | `symbol` (string) | Suggest test cases for a symbol: call paths, suggested cases, existing tests, untested callers. |
+| `suggest_tests` | `symbol` (string) | Suggest test cases for a symbol: call paths, suggested cases, existing tests, untested callers, plus additive trust fields when recommendations are derived from bounded or uncertain evidence. |
 | `cluster_summary` | `cluster` (string) | Rich summary of a module/cluster: purpose, key symbols, dependencies, dependents, and health score. |
 
 ### Security & Quality Tools

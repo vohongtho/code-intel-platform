@@ -67,7 +67,7 @@ export interface EdgeCSVGroup {
 export function writeEdgeCSV(graph: KnowledgeGraph, outputDir: string): EdgeCSVGroup[] {
   fs.mkdirSync(outputDir, { recursive: true });
 
-  const header = 'from_id,to_id,id,kind,weight,label,callsite_id,metadata\n';
+  const header = 'from_id,to_id,id,kind,weight,label,callsite_id,confidence,certainty,strategy,resolver_version,evidence_ref,ambiguous,metadata\n';
   const groups = new Map<string, { lines: string[]; from: string; to: string; filePath: string }>();
 
   for (const edge of graph.allEdges()) {
@@ -93,6 +93,12 @@ export function writeEdgeCSV(graph: KnowledgeGraph, outputDir: string): EdgeCSVG
         String(edge.weight ?? 1.0),
         edge.label ?? '',
         edge.callSiteId ?? '',
+        String(edge.confidence ?? ''),
+        edge.certainty ?? '',
+        edge.strategy ?? '',
+        edge.resolverVersion ?? '',
+        edge.evidenceRef ?? '',
+        edge.ambiguous == null ? '' : String(edge.ambiguous),
         edge.metadata ? escapeNewlines(JSON.stringify(edge.metadata)) : '',
       ]) + '\n',
     );

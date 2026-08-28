@@ -159,6 +159,50 @@ export const openApiSpec = {
         },
         required: ['results', 'searchMode'],
       },
+      AnalysisCoverage: {
+        type: 'object',
+        properties: {
+          complete: { type: 'boolean' },
+          examinedCount: { type: 'integer', minimum: 0 },
+          totalKnownCount: { type: 'integer', minimum: 0 },
+          incompleteReasons: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['complete', 'examinedCount', 'incompleteReasons'],
+      },
+      AnalysisBoundary: {
+        type: 'object',
+        properties: {
+          kind: { type: 'string' },
+          evidenceRefs: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['kind', 'evidenceRefs'],
+      },
+      BlastRadiusResponse: {
+        type: 'object',
+        properties: {
+          target: { type: 'string' },
+          affectedCount: { type: 'integer', minimum: 0 },
+          riskLevel: { type: 'string', enum: ['HIGH', 'MEDIUM', 'LOW', 'UNKNOWN'] },
+          certainty: { type: 'string', enum: ['exact', 'lower-bound', 'heuristic', 'truncated', 'unavailable'] },
+          coverage: { '$ref': '#/components/schemas/AnalysisCoverage' },
+          boundaries: { type: 'array', items: { '$ref': '#/components/schemas/AnalysisBoundary' } },
+          affected: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                name: { type: 'string' },
+                kind: { type: 'string' },
+                filePath: { type: 'string' },
+                depth: { type: 'integer', minimum: 1 },
+              },
+              required: ['id', 'name', 'kind', 'depth'],
+            },
+          },
+        },
+        required: ['target', 'affectedCount', 'affected'],
+      },
     },
   },
   security: [{ BearerAuth: [] }, { SessionCookie: [] }],
@@ -261,7 +305,7 @@ export const openApiSpec = {
           },
         },
         responses: {
-          '200': { description: 'Blast radius result', content: { 'application/json': { schema: { type: 'object' } } } },
+          '200': { description: 'Blast radius result with additive trust fields when coverage is incomplete or bounded', content: { 'application/json': { schema: { '$ref': '#/components/schemas/BlastRadiusResponse' } } } },
           '404': { description: 'Symbol not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
         },
       },

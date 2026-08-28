@@ -61,6 +61,12 @@ export function getCreateEdgeTableDDL(): string[] {
   weight DOUBLE,
   label STRING,
   callsite_id STRING,
+  confidence DOUBLE,
+  certainty STRING,
+  strategy STRING,
+  resolver_version STRING,
+  evidence_ref STRING,
+  ambiguous BOOLEAN,
   metadata STRING
 )`];
 }

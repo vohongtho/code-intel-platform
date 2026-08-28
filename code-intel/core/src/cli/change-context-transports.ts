@@ -60,10 +60,11 @@ function normalizeChangedFiles(value: unknown, diff: unknown): string[] {
   return [...new Set(files.map((file) => file.trim()).filter(Boolean))].sort();
 }
 
-function changeContextFromInput(graph: KnowledgeGraph, input: Record<string, unknown>) {
+function changeContextFromInput(repoDir: string, graph: KnowledgeGraph, input: Record<string, unknown>) {
   const changedFiles = normalizeChangedFiles(input['changedFiles'], input['diff']);
   if (changedFiles.length === 0) throw new Error('Supply changedFiles or diff');
   return buildChangeContext(graph, {
+    repoDir,
     changedFiles,
     maxHops: typeof input['maxHops'] === 'number' ? input['maxHops'] : undefined,
     maxTokens: typeof input['maxTokens'] === 'number' ? input['maxTokens'] : undefined,
@@ -104,7 +105,7 @@ export async function startChangeContextMcp(deps: ChangeContextTransportDeps): P
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     try {
       if (request.params.name === 'change_context') {
-        const result = changeContextFromInput(deps.graph, (request.params.arguments ?? {}) as Record<string, unknown>);
+        const result = changeContextFromInput(deps.repoDir, deps.graph, (request.params.arguments ?? {}) as Record<string, unknown>);
         return { content: [{ type: 'text', text: JSON.stringify(result) }] };
       }
       if (request.params.name === 'index_status') {
@@ -132,7 +133,7 @@ export function startChangeContextHttp(
   app.get('/api/v1/index-status', (_req, res) => res.json(verifyIndexTrust(deps.repoDir)));
   app.post('/api/v1/change-context', (req, res) => {
     try {
-      res.json(changeContextFromInput(deps.graph, req.body as Record<string, unknown>));
+      res.json(changeContextFromInput(deps.repoDir, deps.graph, req.body as Record<string, unknown>));
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }

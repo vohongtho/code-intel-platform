@@ -143,7 +143,7 @@ async function loadEdgeGroupFallback(
     try {
       await dbManager.execute(
         `MATCH (a:${fromTable} {id: '${escCypher(edge.source)}'}), (b:${toTable} {id: '${escCypher(edge.target)}'}) ` +
-        `CREATE (a)-[:code_edges {id: '${escCypher(edge.id)}', kind: '${edge.kind}', weight: ${edge.weight ?? 1.0}, label: '${escCypher(edge.label ?? '')}', callsite_id: '${escCypher(edge.callSiteId ?? '')}', metadata: '${escCypher(edge.metadata ? JSON.stringify(edge.metadata) : '')}'}]->(b)`,
+        `CREATE (a)-[:code_edges {id: '${escCypher(edge.id)}', kind: '${edge.kind}', weight: ${edge.weight ?? 1.0}, label: '${escCypher(edge.label ?? '')}', callsite_id: '${escCypher(edge.callSiteId ?? '')}', confidence: ${edge.confidence ?? 'NULL'}, certainty: '${escCypher(edge.certainty ?? '')}', strategy: '${escCypher(edge.strategy ?? '')}', resolver_version: '${escCypher(edge.resolverVersion ?? '')}', evidence_ref: '${escCypher(edge.evidenceRef ?? '')}', ambiguous: ${edge.ambiguous == null ? 'NULL' : String(edge.ambiguous)}, metadata: '${escCypher(edge.metadata ? JSON.stringify(edge.metadata) : '')}'}]->(b)`,
       );
       count++;
     } catch { /* skip */ }
