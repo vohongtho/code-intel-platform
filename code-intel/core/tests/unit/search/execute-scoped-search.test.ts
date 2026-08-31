@@ -42,6 +42,7 @@ describe('executeSearchRequest pinned metadata contract', () => {
           bm25DbPath: '/snapshots/gen-a/bm25.db',
           vectorDbPath: '/definitely/missing/vector.db',
           metadataPath: '/snapshots/gen-a/meta.json',
+          semanticIndexPath: '/snapshots/gen-a/semantic-index.json',
         } satisfies IndexSnapshot,
         metadata: {
           indexedAt: '2025-01-01T00:00:00.000Z',

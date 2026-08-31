@@ -11,11 +11,12 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { detectLanguage, Language } from '../../shared/index.js';
+import { detectLanguage } from '../../shared/index.js';
 import { getLanguageQuery } from '../../languages/capability-registry.js';
 import { FACT_SCHEMA_VERSION } from '../../semantic/fact-bundle.js';
 import { getLanguageFactAdapter } from '../../semantic/adapters/registry.js';
 import { projectFactBundle } from '../../semantic/graph-projector.js';
+import { SEMANTIC_FIRST_LANGUAGES } from '../../languages/semantic-first-languages.js';
 import { detectFrameworks } from '../../frameworks/detection.js';
 import { loadFrameworkAdapters } from '../../frameworks/registry.js';
 import type { Phase, PhaseResult, PipelineContext } from '../types.js';
@@ -126,7 +127,7 @@ export const parsePhaseParallel: Phase = {
       }
 
       const projected = projectFactBundle(factBundle);
-      const semanticFirst = [Language.TypeScript, Language.JavaScript, Language.Python, Language.Rust, Language.HTML, Language.Go].includes(lang);
+      const semanticFirst = SEMANTIC_FIRST_LANGUAGES.has(lang);
       if (semanticFirst && (projected.nodes.length > 0 || projected.edges.length > 0)) {
         for (const node of projected.nodes) context.graph.addNode(node);
         for (const edge of projected.edges) context.graph.addEdge(edge);

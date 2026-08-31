@@ -20,6 +20,7 @@ export interface IndexSnapshot {
   vectorDbPath: string;
   evidenceDbPath?: string;
   metadataPath: string;
+  semanticIndexPath: string;
 }
 
 export class IndexSnapshotError extends Error {
@@ -72,6 +73,7 @@ function buildSnapshot(
     vectorDbPath: path.join(generationDir, 'vector.db'),
     evidenceDbPath: path.join(generationDir, 'evidence.db'),
     metadataPath: path.join(generationDir, 'meta.json'),
+    semanticIndexPath: path.join(generationDir, 'semantic-index.json'),
   });
 }
 
@@ -144,6 +146,7 @@ export function getSnapshotArtifactPath(
     case 'vector.db': return snapshot.vectorDbPath;
     case 'evidence.db': return snapshot.evidenceDbPath ?? path.join(snapshot.generationDir, 'evidence.db');
     case 'meta.json': return snapshot.metadataPath;
+    case 'semantic-index.json': return snapshot.semanticIndexPath;
   }
 }
 

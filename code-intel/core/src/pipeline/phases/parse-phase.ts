@@ -12,6 +12,7 @@ import { parseSource, getLanguage } from '../../parsing/parser-manager.js';
 import { runQueryMatches } from '../../parsing/query-runner.js';
 import { FACT_SCHEMA_VERSION } from '../../semantic/fact-bundle.js';
 import { getLanguageFactAdapter } from '../../semantic/adapters/registry.js';
+import { SEMANTIC_FIRST_LANGUAGES } from '../../languages/semantic-first-languages.js';
 import { projectFactBundle } from '../../semantic/graph-projector.js';
 import { detectFrameworks } from '../../frameworks/detection.js';
 import { loadFrameworkAdapters } from '../../frameworks/registry.js';
@@ -526,7 +527,7 @@ export const parsePhase: Phase = {
       }
 
       const projected = projectFactBundle(factBundle);
-      const semanticFirst = [Language.TypeScript, Language.JavaScript, Language.Python, Language.Rust, Language.HTML, Language.Go].includes(lang);
+      const semanticFirst = SEMANTIC_FIRST_LANGUAGES.has(lang);
       if (semanticFirst && (projected.nodes.length > 0 || projected.edges.length > 0)) {
         for (const n of projected.nodes) context.graph.addNode(n);
         for (const e of projected.edges) context.graph.addEdge(e);

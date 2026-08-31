@@ -1,0 +1,37 @@
+{
+  "generatedAt": "2026-08-31T04:47:51.676Z",
+  "rows": [
+    {
+      "fileCount": 50,
+      "fullBuildMs": 11.81,
+      "incrementalEditMs": 7.92,
+      "freshFullRebuildOfEditedTreeMs": 12.55,
+      "requiresFullResolution": false,
+      "speedup": 1.6
+    },
+    {
+      "fileCount": 200,
+      "fullBuildMs": 51.53,
+      "incrementalEditMs": 22.59,
+      "freshFullRebuildOfEditedTreeMs": 72.52,
+      "requiresFullResolution": false,
+      "speedup": 3.2
+    },
+    {
+      "fileCount": 1000,
+      "fullBuildMs": 897.77,
+      "incrementalEditMs": 88.91,
+      "freshFullRebuildOfEditedTreeMs": 304.33,
+      "requiresFullResolution": false,
+      "speedup": 3.4
+    },
+    {
+      "fileCount": 4000,
+      "fullBuildMs": 2546.32,
+      "incrementalEditMs": 343.02,
+      "freshFullRebuildOfEditedTreeMs": 1978.3,
+      "requiresFullResolution": false,
+      "speedup": 5.8
+    }
+  ]
+}

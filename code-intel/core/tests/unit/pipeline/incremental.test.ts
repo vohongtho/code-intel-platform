@@ -242,4 +242,144 @@ describe('dirty working tree detection', () => {
       fs.rmSync(repo, { recursive: true, force: true });
     }
   });
+
+  it('detects staged, unstaged, untracked AND deleted files together, deterministically across repeated calls', () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-dirty-full-'));
+    try {
+      execSync('git init -q', { cwd: repo });
+      execSync('git config user.email test@example.com', { cwd: repo });
+      execSync('git config user.name Test', { cwd: repo });
+      const staged = path.join(repo, 'staged.ts');
+      const unstaged = path.join(repo, 'unstaged.ts');
+      const deleted = path.join(repo, 'deleted.ts');
+      const stable = path.join(repo, 'stable.ts');
+      fs.writeFileSync(staged, 'export const a = 1;');
+      fs.writeFileSync(unstaged, 'export const b = 1;');
+      fs.writeFileSync(deleted, 'export const c = 1;');
+      fs.writeFileSync(stable, 'export const d = 1;');
+      execSync('git add . && git commit -qm initial', { cwd: repo });
+      const base = getCurrentCommitHash(repo)!;
+      const allFiles = [staged, unstaged, deleted, stable];
+      const mtimes = buildMtimeSnapshot(allFiles, repo);
+
+      fs.writeFileSync(staged, 'export const a = 2;');
+      execSync('git add staged.ts', { cwd: repo });
+      fs.writeFileSync(unstaged, 'export const b = 2;');
+      fs.rmSync(deleted);
+      const untracked = path.join(repo, 'untracked.ts');
+      fs.writeFileSync(untracked, 'export const e = 1;');
+
+      const currentFiles = [staged, unstaged, stable, untracked];
+      const first = decideIncremental(repo, currentFiles, base, mtimes);
+      const second = decideIncremental(repo, currentFiles, base, mtimes);
+
+      assert.deepEqual(first, second, 'the decision must be deterministic across repeated calls against the same dirty tree');
+      assert.equal(first.incremental, false);
+      // Fallback to full rebuild is the correctness-first response to any non-empty
+      // change set — it doesn't need to enumerate deletions to be safe, but the
+      // count in its reason must faithfully reflect all 4 kinds of dirty state.
+      assert.match(first.fallbackReason ?? '', /3 changed and 1 deleted file\(s\)/);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('decideIncremental dependency-aware candidate gate', () => {
+  function proven(overrides: Partial<import('../../../src/incremental/semantic-delta.js').SemanticDelta> = {}) {
+    return {
+      changedFiles: [], deletedFiles: [], addedFacts: [], removedFacts: [], changedFacts: [],
+      bodyOnlyFiles: [], invalidatedReferences: [], invalidatedCallSites: [], invalidatedSymbols: [],
+      affectedArtifacts: new Set(['graph', 'bm25'] as const),
+      requiresFullResolution: false,
+      ...overrides,
+    };
+  }
+
+  it('keeps the correctness-first full rebuild fallback when no options are passed (unchanged behavior)', () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-gate-default-'));
+    try {
+      const file = path.join(repo, 'a.ts');
+      fs.writeFileSync(file, 'export const a = 1;\n');
+      const mtimes = buildMtimeSnapshot([file], repo);
+      mtimes['a.ts'] -= 10_000;
+      const result = decideIncremental(repo, [file], undefined, mtimes);
+      assert.equal(result.incremental, false);
+      assert.match(result.fallbackReason ?? '', /correctness-first full rebuild/);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('still falls back when the gate is enabled but no candidate delta is supplied', () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-gate-no-delta-'));
+    try {
+      const file = path.join(repo, 'a.ts');
+      fs.writeFileSync(file, 'export const a = 1;\n');
+      const mtimes = buildMtimeSnapshot([file], repo);
+      mtimes['a.ts'] -= 10_000;
+      const result = decideIncremental(repo, [file], undefined, mtimes, { incrementalSemanticEnabled: true });
+      assert.equal(result.incremental, false);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('still falls back when a candidate delta requires full resolution, even with the gate enabled', () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-gate-truncated-'));
+    try {
+      const file = path.join(repo, 'a.ts');
+      fs.writeFileSync(file, 'export const a = 1;\n');
+      const mtimes = buildMtimeSnapshot([file], repo);
+      mtimes['a.ts'] -= 10_000;
+      const result = decideIncremental(repo, [file], undefined, mtimes, {
+        incrementalSemanticEnabled: true,
+        dependencyAwareDelta: proven({ requiresFullResolution: true, reason: 'closure truncated' }),
+      });
+      assert.equal(result.incremental, false);
+      assert.equal(result.dependencyAwareCandidate?.requiresFullResolution, true);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('publishes incrementally only when the gate is enabled AND the candidate proves a complete closure', () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-gate-proven-'));
+    try {
+      const file = path.join(repo, 'a.ts');
+      fs.writeFileSync(file, 'export const a = 1;\n');
+      const mtimes = buildMtimeSnapshot([file], repo);
+      mtimes['a.ts'] -= 10_000;
+      const delta = proven();
+      const result = decideIncremental(repo, [file], undefined, mtimes, {
+        incrementalSemanticEnabled: true,
+        dependencyAwareDelta: delta,
+      });
+      assert.equal(result.incremental, true);
+      assert.equal(result.dependencyAwareCandidate, delta);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('still falls back when the changed set includes a non-fact-based language, even with the gate enabled and a proven candidate', () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-gate-mixed-lang-'));
+    try {
+      const tsFile = path.join(repo, 'a.ts');
+      const javaFile = path.join(repo, 'Service.java');
+      fs.writeFileSync(tsFile, 'export const a = 1;\n');
+      fs.writeFileSync(javaFile, 'class Service {}\n');
+      const mtimes = buildMtimeSnapshot([tsFile, javaFile], repo);
+      mtimes['a.ts'] -= 10_000;
+      mtimes['Service.java'] -= 10_000;
+      const result = decideIncremental(repo, [tsFile, javaFile], undefined, mtimes, {
+        incrementalSemanticEnabled: true,
+        dependencyAwareDelta: proven({ changedFiles: ['a.ts', 'Service.java'] }),
+      });
+      assert.equal(result.incremental, false);
+      assert.match(result.fallbackReason ?? '', /correctness-first full rebuild/);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
 });

@@ -9,7 +9,7 @@ export const CURRENT_FILE = 'current.json';
 export const STAGING_OWNER_FILE = 'staging.json';
 export const DEFAULT_STALE_STAGING_MS = 24 * 60 * 60 * 1000;
 
-export type IndexArtifactName = 'graph.db' | 'bm25.db' | 'vector.db' | 'meta.json' | 'evidence.db';
+export type IndexArtifactName = 'graph.db' | 'bm25.db' | 'vector.db' | 'meta.json' | 'evidence.db' | 'semantic-index.json';
 export type ArtifactCloneMode = 'reflink' | 'copy';
 
 export interface IndexArtifactDetails {
@@ -96,6 +96,7 @@ export interface IndexGeneration {
   vectorDbPath: string;
   evidenceDbPath?: string;
   metadataPath: string;
+  semanticIndexPath: string;
 }
 
 export interface StagingOwner {
@@ -133,7 +134,7 @@ export function safeGenerationId(value: string): boolean {
 
 function isArtifactName(value: unknown): value is IndexArtifactName {
   return typeof value === 'string'
-    && ['graph.db', 'bm25.db', 'vector.db', 'meta.json', 'evidence.db'].includes(value);
+    && ['graph.db', 'bm25.db', 'vector.db', 'meta.json', 'evidence.db', 'semantic-index.json'].includes(value);
 }
 
 export function normalizeIndexGenerationManifest(value: unknown): IndexGenerationManifest | null {
@@ -282,6 +283,7 @@ export function createIndexGeneration(
     vectorDbPath: path.join(stagingDir, 'vector.db'),
     evidenceDbPath: path.join(stagingDir, 'evidence.db'),
     metadataPath: path.join(stagingDir, 'meta.json'),
+    semanticIndexPath: path.join(stagingDir, 'semantic-index.json'),
   };
   atomicWriteJson(path.join(stagingDir, STAGING_OWNER_FILE), ownerFor(generation));
   return generation;
@@ -431,6 +433,7 @@ export function publishIndexGeneration(
   const artifacts: IndexArtifactName[] = ['graph.db', 'bm25.db', 'meta.json'];
   if (fs.existsSync(path.join(generation.finalDir, 'vector.db'))) artifacts.push('vector.db');
   if (fs.existsSync(path.join(generation.finalDir, 'evidence.db'))) artifacts.push('evidence.db');
+  if (fs.existsSync(path.join(generation.finalDir, 'semantic-index.json'))) artifacts.push('semantic-index.json');
   const artifactDetails = Object.fromEntries(artifacts.map((artifact) => {
     const artifactPath = path.join(generation.finalDir, artifact);
     return [artifact, {

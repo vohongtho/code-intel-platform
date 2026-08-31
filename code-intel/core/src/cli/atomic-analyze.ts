@@ -69,7 +69,7 @@ export function seedIndexGeneration(
   repoDir: string,
   generation: IndexGeneration,
   snapshot: IndexSnapshot | null = resolveIndexSnapshot(repoDir),
-  artifacts: IndexArtifactName[] = ['graph.db', 'bm25.db', 'vector.db', 'evidence.db', 'meta.json'],
+  artifacts: IndexArtifactName[] = ['graph.db', 'bm25.db', 'vector.db', 'evidence.db', 'semantic-index.json', 'meta.json'],
 ): Partial<Record<IndexArtifactName, ArtifactCloneMode>> {
   const modes: Partial<Record<IndexArtifactName, ArtifactCloneMode>> = {};
   if (!snapshot) return modes;

@@ -11,6 +11,24 @@ import {
 } from '../../../src/pipeline/analysis-plan.js';
 import type { IndexMetadata } from '../../../src/storage/metadata.js';
 import type { IndexSnapshot } from '../../../src/storage/index-snapshot.js';
+import type { SemanticDelta } from '../../../src/incremental/semantic-delta.js';
+
+function provenDelta(overrides: Partial<SemanticDelta> = {}): SemanticDelta {
+  return {
+    changedFiles: ['src/a.ts'],
+    deletedFiles: [],
+    addedFacts: [],
+    removedFacts: [],
+    changedFacts: [],
+    bodyOnlyFiles: [],
+    invalidatedReferences: [],
+    invalidatedCallSites: [],
+    invalidatedSymbols: [],
+    affectedArtifacts: new Set(['graph', 'bm25']),
+    requiresFullResolution: false,
+    ...overrides,
+  };
+}
 
 function fixture(vector = true): { root: string; snapshot: IndexSnapshot; metadata: IndexMetadata } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'analysis-plan-'));
@@ -22,6 +40,7 @@ function fixture(vector = true): { root: string; snapshot: IndexSnapshot; metada
     repositoryRoot: root, generationId: 'g1', generationDir: dir, legacy: false, manifestVersion: 2, manifest: null,
     graphDbPath: path.join(dir, 'graph.db'), bm25DbPath: path.join(dir, 'bm25.db'),
     vectorDbPath: path.join(dir, 'vector.db'), metadataPath: path.join(dir, 'meta.json'),
+    semanticIndexPath: path.join(dir, 'semantic-index.json'),
   };
   const metadata: IndexMetadata = {
     indexedAt: new Date().toISOString(), schemaVersion: 8, indexVersion: 'v', parser: 'tree-sitter',
@@ -96,6 +115,80 @@ describe('resolveAnalysisPlan', () => {
       assert.equal(plan.vector, 'incremental');
       assert.deepEqual(plan.seedArtifacts, ['vector.db', 'meta.json']);
     } finally { fs.rmSync(value.root, { recursive: true, force: true }); }
+  });
+
+  it('keeps the full rebuild fallback for a changed source even with a proven-complete candidate when the rollout gate is disabled', () => {
+    const value = fixture();
+    const previousEnv = process.env['CODE_INTEL_INCREMENTAL_SEMANTIC_ENABLED'];
+    try {
+      process.env['CODE_INTEL_INCREMENTAL_SEMANTIC_ENABLED'] = '0';
+      const plan = resolveAnalysisPlan({
+        args: ['analyze'], metadata: value.metadata, snapshot: value.snapshot, source: changed,
+        dependencyAwareDelta: provenDelta(),
+      });
+      assert.equal(plan.mode, 'publish');
+      if (plan.mode !== 'publish') return;
+      assert.equal(plan.graph, 'full');
+      assert.equal(plan.bm25, 'full');
+      assert.equal(plan.dependencyAwareCandidate, undefined);
+    } finally {
+      if (previousEnv === undefined) delete process.env['CODE_INTEL_INCREMENTAL_SEMANTIC_ENABLED'];
+      else process.env['CODE_INTEL_INCREMENTAL_SEMANTIC_ENABLED'] = previousEnv;
+      fs.rmSync(value.root, { recursive: true, force: true });
+    }
+  });
+
+  it('publishes incrementally only when the rollout gate is enabled AND the candidate proves a complete closure', () => {
+    const value = fixture();
+    const previousEnv = process.env['CODE_INTEL_INCREMENTAL_SEMANTIC_ENABLED'];
+    try {
+      process.env['CODE_INTEL_INCREMENTAL_SEMANTIC_ENABLED'] = '1';
+
+      const truncated = resolveAnalysisPlan({
+        args: ['analyze'], metadata: value.metadata, snapshot: value.snapshot, source: changed,
+        dependencyAwareDelta: provenDelta({ requiresFullResolution: true, reason: 'closure truncated' }),
+      });
+      assert.equal(truncated.mode, 'publish');
+      if (truncated.mode === 'publish') assert.equal(truncated.graph, 'full');
+
+      const proven = resolveAnalysisPlan({
+        args: ['analyze'], metadata: value.metadata, snapshot: value.snapshot, source: changed,
+        dependencyAwareDelta: provenDelta(),
+      });
+      assert.equal(proven.mode, 'publish');
+      if (proven.mode !== 'publish') return;
+      assert.equal(proven.graph, 'incremental');
+      assert.equal(proven.bm25, 'incremental');
+      assert.ok(proven.seedArtifacts.includes('graph.db'));
+      assert.ok(proven.seedArtifacts.includes('semantic-index.json'));
+      assert.deepEqual(proven.dependencyAwareCandidate, provenDelta());
+    } finally {
+      if (previousEnv === undefined) delete process.env['CODE_INTEL_INCREMENTAL_SEMANTIC_ENABLED'];
+      else process.env['CODE_INTEL_INCREMENTAL_SEMANTIC_ENABLED'] = previousEnv;
+      fs.rmSync(value.root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the full rebuild fallback when the change set touches a non-fact-based language, even with the gate enabled and a proven-complete candidate', () => {
+    const value = fixture();
+    const previousEnv = process.env['CODE_INTEL_INCREMENTAL_SEMANTIC_ENABLED'];
+    try {
+      process.env['CODE_INTEL_INCREMENTAL_SEMANTIC_ENABLED'] = '1';
+      const plan = resolveAnalysisPlan({
+        args: ['analyze'], metadata: value.metadata, snapshot: value.snapshot,
+        source: { kind: 'changed', changedPaths: ['src/a.ts', 'src/Service.java'], reason: 'two changes' },
+        dependencyAwareDelta: provenDelta({ changedFiles: ['src/a.ts', 'src/Service.java'] }),
+      });
+      assert.equal(plan.mode, 'publish');
+      if (plan.mode !== 'publish') return;
+      assert.equal(plan.graph, 'full');
+      assert.equal(plan.bm25, 'full');
+      assert.equal(plan.dependencyAwareCandidate, undefined);
+    } finally {
+      if (previousEnv === undefined) delete process.env['CODE_INTEL_INCREMENTAL_SEMANTIC_ENABLED'];
+      else process.env['CODE_INTEL_INCREMENTAL_SEMANTIC_ENABLED'] = previousEnv;
+      fs.rmSync(value.root, { recursive: true, force: true });
+    }
   });
 
   it('preserves graph, BM25, and metadata while rebuilding a missing vector index', () => {

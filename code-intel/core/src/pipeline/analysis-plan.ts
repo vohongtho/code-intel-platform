@@ -10,6 +10,8 @@ import { shouldRebuildEmbeddings as shouldRebuildEmbeddingsFromMetadata } from '
 import { FACT_SCHEMA_VERSION } from '../semantic/fact-bundle.js';
 import { RESOLVER_VERSION } from '../resolution/contracts.js';
 import { EVIDENCE_SCHEMA_VERSION } from '../evidence/store.js';
+import type { SemanticDelta } from '../incremental/semantic-delta.js';
+import { isDependencyAwareIncrementalEnabled, isEligibleForIncrementalPublication } from '../incremental/rollout-gate.js';
 
 export type SourceChangeKind = 'unchanged' | 'changed' | 'unknown';
 
@@ -27,10 +29,12 @@ export type AtomicAnalysisPlan =
       reason: string;
       source: SourceChangeState;
       evolution: EvolutionAction;
-      graph: 'full' | 'preserve';
-      bm25: 'full' | 'preserve';
+      graph: 'full' | 'incremental' | 'preserve';
+      bm25: 'full' | 'incremental' | 'preserve';
       vector: 'full' | 'incremental' | 'preserve' | 'disabled';
       seedArtifacts: IndexArtifactName[];
+      /** Present only when a proven-complete dependency-aware candidate was published incrementally (graph/bm25 === 'incremental'). */
+      dependencyAwareCandidate?: SemanticDelta;
     };
 
 function normalize(value: string): string {
@@ -142,8 +146,17 @@ export function resolveAnalysisPlan(input: {
   metadata: IndexMetadata | null;
   snapshot: IndexSnapshot | null;
   source: SourceChangeState;
+  /**
+   * A dependency-aware invalidation-closure result for `source.changedPaths`,
+   * pre-computed by the caller from the previous generation's persisted
+   * semantic snapshot + reverse dependency index. Only ever changes `graph`/
+   * `bm25` to `'incremental'` when it proves a complete closure AND
+   * rollout-gate.ts's `isDependencyAwareIncrementalEnabled()` is true —
+   * absent or ignored, this function's output is identical to today's.
+   */
+  dependencyAwareDelta?: SemanticDelta;
 }): AtomicAnalysisPlan {
-  const { args, metadata, snapshot, source } = input;
+  const { args, metadata, snapshot, source, dependencyAwareDelta } = input;
   if (hasArg(args, '--dry-run')) return { mode: 'passthrough', reason: 'dry-run' };
 
   const force = hasArg(args, '--force');
@@ -203,12 +216,24 @@ export function resolveAnalysisPlan(input: {
   if (source.kind === 'changed') {
     const seedArtifacts: IndexArtifactName[] = ['meta.json'];
     if (vectorHealthy) seedArtifacts.unshift('vector.db');
+    const dependencyAwareReady = evolution !== 'artifact-rebuild'
+      && isDependencyAwareIncrementalEnabled()
+      && Boolean(dependencyAwareDelta)
+      && dependencyAwareDelta?.requiresFullResolution === false
+      && isEligibleForIncrementalPublication([
+        ...(dependencyAwareDelta?.changedFiles ?? []),
+        ...(dependencyAwareDelta?.deletedFiles ?? []),
+      ]);
+    if (dependencyAwareReady) {
+      seedArtifacts.push('graph.db', 'bm25.db', 'semantic-index.json');
+    }
     return {
       mode: 'publish', reason: source.reason, source, evolution: evolution === 'reuse' ? 'full-reanalysis' : evolution,
-      graph: evolution === 'artifact-rebuild' ? 'preserve' : 'full',
-      bm25: evolution === 'artifact-rebuild' ? 'preserve' : 'full',
+      graph: dependencyAwareReady ? 'incremental' : (evolution === 'artifact-rebuild' ? 'preserve' : 'full'),
+      bm25: dependencyAwareReady ? 'incremental' : (evolution === 'artifact-rebuild' ? 'preserve' : 'full'),
       vector: vectorEnabled ? (vectorHealthy ? 'incremental' : 'full') : (hasArg(args, '--embeddings') ? 'full' : 'disabled'),
-      seedArtifacts,
+      seedArtifacts: unique(seedArtifacts),
+      dependencyAwareCandidate: dependencyAwareReady ? dependencyAwareDelta : undefined,
     };
   }
 
@@ -236,11 +261,13 @@ export function planAtomicAnalysis(
   args: string[],
   metadata: IndexMetadata | null,
   snapshot: IndexSnapshot | null,
+  dependencyAwareDelta?: SemanticDelta,
 ): AtomicAnalysisPlan {
   return resolveAnalysisPlan({
     args,
     metadata,
     snapshot,
     source: detectSourceChangeState(repoDir, metadata),
+    dependencyAwareDelta,
   });
 }
