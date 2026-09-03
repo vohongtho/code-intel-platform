@@ -36,6 +36,8 @@ export interface PRImpactResult {
   coverageGaps: string[];
   filesToReview: string[];
   crossRepoImpact: null;
+  /** Additive: present when semantic-snapshot PR impact can enrich local blast radius with synchronized group contract drift. */
+  crossRepositoryContracts?: unknown;
   certainty?: AnalysisCertainty;
   coverage?: AnalysisCoverage;
   boundaries?: readonly AnalysisBoundary[];

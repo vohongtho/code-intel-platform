@@ -11,6 +11,7 @@ import { loadGraphToDB } from '../../../src/storage/graph-loader.js';
 import { saveMetadata } from '../../../src/storage/metadata.js';
 import { saveRegistry } from '../../../src/storage/repo-registry.js';
 import { dispatchTool, resetRepoGraphCacheForTests } from '../../../src/mcp-server/server.js';
+import { saveGroup, saveSyncResult } from '../../../src/multi-repo/group-registry.js';
 import { CURRENT_SCHEMA_VERSION } from '../../../src/migrations/migration-runner.js';
 import { projectFactBundle } from '../../../src/semantic/graph-projector.js';
 import { createFactBundle, FACT_SCHEMA_VERSION } from '../../../src/semantic/fact-bundle.js';
@@ -51,6 +52,37 @@ async function writeRepoIndex(repoPath: string, graph: KnowledgeGraph): Promise<
     indexVersion: 'v1',
     stats: { nodes: graph.size.nodes, edges: graph.size.edges, files: 1, duration: 0 },
   });
+}
+
+async function writeSnapshotGraph(repoPath: string, snapshotId: string, graph: KnowledgeGraph): Promise<void> {
+  const dir = path.join(repoPath, '.code-intel', 'snapshots', snapshotId);
+  fs.mkdirSync(dir, { recursive: true });
+  const db = new DbManager(path.join(dir, 'graph.db'));
+  await db.init();
+  await loadGraphToDB(graph, db);
+  db.close();
+}
+
+function routeGraph(responseFields: readonly string[]): KnowledgeGraph {
+  const graph = createKnowledgeGraph();
+  const shapeId = `shape-fact:${responseFields.join(',')}`;
+  graph.addNode({
+    id: 'route-node',
+    identityId: 'route-fact',
+    kind: 'route',
+    name: 'GET /users',
+    filePath: 'src/routes.ts',
+    metadata: { apiContract: { factId: 'route-fact', language: 'typescript', method: 'GET', path: '/users', normalizedPath: '/users', framework: 'express', coverage: { complete: true, boundaryReasons: [] }, responses: [{ status: 200, responseShapeRef: shapeId, evidence: 'exact' }] } },
+  });
+  graph.addNode({
+    id: shapeId,
+    identityId: shapeId,
+    kind: 'api_shape',
+    name: 'UsersResponse',
+    filePath: 'src/routes.ts',
+    metadata: { semantic: { factId: shapeId, language: 'typescript', shapeFactKind: 'http-response-shape', shapeFingerprint: shapeId, status: 200, origin: { kind: 'inline', fields: responseFields.map((key) => ({ key, required: true })) }, coverage: { complete: true, boundaryReasons: [] } } },
+  });
+  return graph;
 }
 
 const SERVER_SOURCE = [
@@ -166,5 +198,41 @@ describe('MCP api_contract / api_impact / api_drift tools', () => {
     assert.equal(impactResult.isError, undefined);
     const impactBody = JSON.parse(impactResult.content[0]?.text ?? '{}') as { routes: unknown[] };
     assert.deepEqual(impactBody.routes, []);
+  });
+
+  it('group_contract_drift returns synchronized cross-repo findings across refs', async () => {
+    const backendPath = mkRepo('mcp-group-drift-backend');
+    fs.mkdirSync(path.join(backendPath, '.code-intel', 'snapshots'), { recursive: true });
+    await writeSnapshotGraph(backendPath, 'base-backend', routeGraph(['id', 'ssn']));
+    await writeSnapshotGraph(backendPath, 'head-backend', routeGraph(['id']));
+    saveRegistry([{ id: 'backend', name: 'backend', path: backendPath, indexedAt: new Date().toISOString(), stats: { nodes: 2, edges: 0, files: 1 } }]);
+    saveGroup({ name: 'mcp-group-drift', createdAt: new Date().toISOString(), members: [{ groupPath: 'backend', repoId: 'backend', registryName: 'backend' }] });
+    saveSyncResult({
+      groupName: 'mcp-group-drift',
+      syncedAt: new Date().toISOString(),
+      memberCount: 1,
+      contracts: [{ repoName: 'backend', repoPath: backendPath, repositoryId: 'backend', kind: 'route', name: 'GET /users', nodeId: 'route-node', nodeKind: 'route', filePath: 'src/routes.ts', method: 'GET', normalizedPath: '/users', sourceCanonicalId: 'route-fact', contractId: 'backend-route', snapshotId: 'head-backend', semanticFingerprint: 'fp-route', role: 'producer', certainty: 'exact', coverage: { complete: true, examinedCount: 1, incompleteReasons: [] } }],
+      links: [],
+      consumerIndex: { byContractId: { 'backend-route': [{ repositoryId: 'frontend', consumerId: 'consumer:ssn', sourceCanonicalId: 'consumer:ssn', certainty: 'exact', consumedFields: ['ssn'], callSites: ['consumer:ssn'], coverage: { complete: true, examinedCount: 1, incompleteReasons: [] } }] }, bySemanticFingerprint: {} },
+    });
+
+    const result = await dispatchTool('group_contract_drift', { name: 'mcp-group-drift', base_snapshot_ids: { backend: 'base-backend' }, head_snapshot_ids: { backend: 'head-backend' } }, createKnowledgeGraph(), 'fallback', backendPath);
+    assert.equal(result.isError, undefined);
+    const payload = JSON.parse(result.content[0]?.text ?? '{}') as { findings: Array<{ changeKind: string; compatibility: string }> };
+    assert.equal(payload.findings.some((finding) => finding.changeKind === 'response-field-removed' && finding.compatibility === 'breaking'), true);
+  });
+
+  it('group_contract_drift returns an error result (not a thrown exception) for an unknown group name', async () => {
+    const result = await dispatchTool('group_contract_drift', { name: 'no-such-group', base_ref: 'main', head_ref: 'HEAD' }, createKnowledgeGraph(), 'fallback', undefined);
+    assert.equal(result.isError, true);
+    const payload = JSON.parse(result.content[0]?.text ?? '{}') as { error?: string };
+    assert.match(payload.error ?? '', /no-such-group/);
+  });
+
+  it('group_contract_drift fails closed (error result) for a malformed scope missing both refs and snapshot ids', async () => {
+    const result = await dispatchTool('group_contract_drift', { name: 'mcp-group-drift' }, createKnowledgeGraph(), 'fallback', undefined);
+    assert.equal(result.isError, true);
+    const payload = JSON.parse(result.content[0]?.text ?? '{}') as { error?: string };
+    assert.match(payload.error ?? '', /base_ref|base_snapshot_ids/);
   });
 });

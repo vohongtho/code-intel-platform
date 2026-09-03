@@ -635,6 +635,24 @@ export const openApiSpec = {
         },
       },
     },
+    '/groups/{name}/drift': {
+      get: {
+        tags: ['Groups'],
+        summary: 'Compare synchronized group contracts across base/head Git refs',
+        parameters: [
+          { name: 'name', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'base_ref', in: 'query', required: true, schema: { type: 'string' } },
+          { name: 'head_ref', in: 'query', required: true, schema: { type: 'string' } },
+          { name: 'limit', in: 'query', schema: { type: 'integer' } },
+          { name: 'allow_cache', in: 'query', schema: { type: 'boolean' } },
+        ],
+        responses: {
+          '200': { description: 'Group contract drift findings with certainty and coverage', content: { 'application/json': { schema: { type: 'object' } } } },
+          '400': { description: 'Missing base_ref/head_ref', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '404': { description: 'Group or sync result not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
     '/groups/{name}/sync': {
       post: {
         tags: ['Groups'],

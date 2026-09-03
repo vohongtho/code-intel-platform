@@ -6,7 +6,8 @@
  */
 import path from 'node:path';
 import fs from 'node:fs';
-import type { RepoGroup, Contract, ContractLink, GroupSyncResult } from './types.js';
+import type { CodeNode } from '../shared/index.js';
+import type { RepoGroup, Contract, ContractLink, GroupSyncResult, GroupContractVersion, ContractRole } from './types.js';
 import { findRepoById, loadRegistry } from '../storage/repo-registry.js';
 import { DbManager } from '../storage/db-manager.js';
 import { createKnowledgeGraph, type KnowledgeGraph } from '../graph/knowledge-graph.js';
@@ -18,13 +19,65 @@ import { parseProtoContracts } from './schema-parsers/proto-parser.js';
 import { computeContractSimilarity } from './type-similarity.js';
 import { collectGraphFacts, matchApiContracts, routeFactFromNode, type ScopedFact } from '../semantic/api-contracts/index.js';
 import type { HttpConsumerFact, HttpRouteFact } from '../semantic/api-contracts/types.js';
+import { contractIdentityFromContract, getStableContractId } from './contract-identity.js';
+import { contractFingerprintFromContract, computeSemanticContractFingerprint, semanticFingerprintPayloadFromNode, GROUP_CONTRACT_SCHEMA_VERSION } from './contract-fingerprint.js';
+import { resolveIndexSnapshot } from '../storage/index-snapshot.js';
+import { buildContractConsumerIndex } from './contract-consumer-index.js';
+import { loadSyncResult } from './group-registry.js';
 
 // ─── Extract contracts from a single repo's graph ────────────────────────────
+
+function fullCoverage() {
+  return { complete: true, examinedCount: 1, incompleteReasons: [] as string[] };
+}
+
+function legacyAwareContractRole(kind: Contract['kind']): ContractRole {
+  return kind === 'export' || kind === 'route' || kind === 'schema' || kind === 'event' || kind === 'graphql' || kind === 'grpc'
+    ? 'producer'
+    : 'unknown';
+}
+
+function enrichContract(contract: Contract, repositoryId: string, snapshotId: string, node?: CodeNode): Contract {
+  const sourceCanonicalId = contract.sourceCanonicalId ?? contract.nodeId;
+  const enriched: Contract = {
+    ...contract,
+    sourceCanonicalId,
+    snapshotId,
+    role: contract.role ?? legacyAwareContractRole(contract.kind),
+    certainty: contract.certainty ?? 'exact',
+    coverage: contract.coverage ?? fullCoverage(),
+  };
+  return {
+    ...enriched,
+    contractId: enriched.contractId ?? getStableContractId(contractIdentityFromContract(enriched, repositoryId)),
+    semanticFingerprint: enriched.semanticFingerprint ?? computeSemanticContractFingerprint({
+      ...contractFingerprintFromContract(enriched),
+      semantic: semanticFingerprintPayloadFromNode(node, enriched.kind),
+    }),
+  };
+}
+
+function versionFromContract(contract: Contract, repositoryId: string): GroupContractVersion {
+  return {
+    contractId: contract.contractId!,
+    kind: contract.kind,
+    repositoryId,
+    repositoryName: contract.repoName,
+    snapshotId: contract.snapshotId!,
+    semanticFingerprint: contract.semanticFingerprint!,
+    sourceCanonicalId: contract.sourceCanonicalId,
+    role: contract.role ?? 'unknown',
+    certainty: contract.certainty ?? 'legacy',
+    coverage: contract.coverage ?? fullCoverage(),
+  };
+}
 
 function extractContracts(
   graph: KnowledgeGraph,
   repoName: string,
   repoPath: string,
+  repositoryId: string,
+  snapshotId: string,
 ): Contract[] {
   const contracts: Contract[] = [];
 
@@ -34,7 +87,7 @@ function extractContracts(
       node.exported === true &&
       ['function', 'class', 'interface', 'method', 'type_alias', 'constant', 'enum', 'struct', 'trait'].includes(node.kind)
     ) {
-      contracts.push({
+      contracts.push(enrichContract({
         repoName,
         repoPath,
         kind: 'export',
@@ -46,7 +99,8 @@ function extractContracts(
         parameters: (node.metadata?.parameters ?? node.metadata?.params) as Array<{ name: string; type?: string }> | undefined,
         returnType: node.metadata?.returnType as string | undefined,
         exported: node.exported,
-      });
+        sourceCanonicalId: node.identityId ?? node.id,
+      }, repositoryId, snapshotId, node));
     }
 
     // route nodes → 'route' contracts. When the route carries API-contract evidence
@@ -54,7 +108,7 @@ function extractContracts(
     // real evidence instead of name equality/substring — see matchRouteConsumersViaFacts.
     if (node.kind === 'route') {
       const routeFact = routeFactFromNode(node);
-      contracts.push({
+      contracts.push(enrichContract({
         repoName,
         repoPath,
         kind: 'route',
@@ -65,14 +119,15 @@ function extractContracts(
         signature: node.content?.split('\n')[0]?.trim(),
         method: routeFact?.method,
         normalizedPath: routeFact?.normalizedPath,
-      });
+        sourceCanonicalId: routeFact?.factId ?? node.identityId ?? node.id,
+      }, repositoryId, snapshotId, node));
     }
 
     // interfaces / type aliases with "event" or "schema" in name → schema/event contracts
     if (['interface', 'type_alias'].includes(node.kind)) {
       const nameLower = node.name.toLowerCase();
       if (nameLower.includes('event') || nameLower.includes('message')) {
-        contracts.push({
+        contracts.push(enrichContract({
           repoName,
           repoPath,
           kind: 'event',
@@ -80,9 +135,10 @@ function extractContracts(
           nodeId: node.id,
           nodeKind: node.kind,
           filePath: node.filePath,
-        });
+          sourceCanonicalId: node.identityId ?? node.id,
+        }, repositoryId, snapshotId, node));
       } else if (nameLower.includes('schema') || nameLower.includes('dto') || nameLower.includes('request') || nameLower.includes('response')) {
-        contracts.push({
+        contracts.push(enrichContract({
           repoName,
           repoPath,
           kind: 'schema',
@@ -90,7 +146,8 @@ function extractContracts(
           nodeId: node.id,
           nodeKind: node.kind,
           filePath: node.filePath,
-        });
+          sourceCanonicalId: node.identityId ?? node.id,
+        }, repositoryId, snapshotId, node));
       }
     }
   }
@@ -137,6 +194,18 @@ function matchRouteConsumersViaFacts(memberGraphs: ReadonlyArray<{ repoId: strin
         consumerContract: `${consumer.fact.filePath}:${consumer.fact.sourceRange.startLine}`,
         matchKind: 'route-match',
         confidence: candidate.confidence,
+        providerContractId: candidate.targetId,
+        consumerSourceCanonicalId: consumer.fact.factId,
+        providerSourceCanonicalId: route.fact.factId,
+        callSites: [consumer.fact.factId],
+        consumedFields: consumer.fact.consumedKeys,
+        certainty: match.certainty === 'exact' ? 'exact' : match.coverage.complete ? 'heuristic' : 'lower-bound',
+        coverage: {
+          complete: match.coverage.complete,
+          examinedCount: match.coverage.emittedCandidates,
+          totalKnownCount: match.coverage.totalKnownCandidates,
+          incompleteReasons: [...match.coverage.incompleteReasons],
+        },
       });
     }
   }
@@ -182,6 +251,12 @@ function matchContracts(allContracts: Contract[]): ContractLink[] {
             consumerContract: consumer.name,
             matchKind: 'name-match', // route-kind contracts are excluded above; see matchRouteConsumersViaFacts
             confidence: Math.min(1.0, confidence),
+            providerContractId: provider.contractId,
+            consumerContractId: consumer.contractId,
+            providerSourceCanonicalId: provider.sourceCanonicalId,
+            consumerSourceCanonicalId: consumer.sourceCanonicalId,
+            certainty: sameKind ? 'exact' : 'heuristic',
+            coverage: fullCoverage(),
           });
         } else {
           // partial-name match (camelCase contained)
@@ -196,6 +271,12 @@ function matchContracts(allContracts: Contract[]): ContractLink[] {
                   consumerContract: c.name,
                   matchKind: 'name-match',
                   confidence: 0.4,
+                  providerContractId: provider.contractId,
+                  consumerContractId: c.contractId,
+                  providerSourceCanonicalId: provider.sourceCanonicalId,
+                  consumerSourceCanonicalId: c.sourceCanonicalId,
+                  certainty: 'heuristic',
+                  coverage: fullCoverage(),
                 });
               }
             }
@@ -218,12 +299,46 @@ function matchContracts(allContracts: Contract[]): ContractLink[] {
   return [...seen.values()].sort((a, b) => b.confidence - a.confidence);
 }
 
+/**
+ * Diffs this sync's contract fingerprints against the previous sync's, so callers (and a future
+ * incremental drift pass) can see exactly what changed since the last `group_sync` without
+ * recomparing every contract. A missing/incompatible previous result is not a trustworthy
+ * baseline, so every current contract is honestly reported as changed rather than silently
+ * treated as stable — this is the safe-fallback signal for "legacy/corrupt/unknown" state.
+ */
+function computeChangedContractIds(
+  currentVersions: readonly GroupContractVersion[],
+  previousVersions: readonly GroupContractVersion[] | undefined,
+): string[] {
+  if (!previousVersions) return [...new Set(currentVersions.map((version) => version.contractId))].sort();
+
+  const previousFingerprintById = new Map(previousVersions.map((version) => [version.contractId, version.semanticFingerprint]));
+  const currentIds = new Set(currentVersions.map((version) => version.contractId));
+  const changed = new Set<string>();
+  for (const version of currentVersions) {
+    const previousFingerprint = previousFingerprintById.get(version.contractId);
+    if (previousFingerprint === undefined || previousFingerprint !== version.semanticFingerprint) {
+      changed.add(version.contractId);
+    }
+  }
+  for (const previousId of previousFingerprintById.keys()) {
+    if (!currentIds.has(previousId)) changed.add(previousId); // removed contract — still "changed"
+  }
+  return [...changed].sort();
+}
+
 // ─── Main sync function ───────────────────────────────────────────────────────
 
 export async function syncGroup(group: RepoGroup): Promise<GroupSyncResult> {
   const registry = loadRegistry();
+  const previousSync = loadSyncResult(group.name);
+  const previousVersions = previousSync?.schemaVersion === GROUP_CONTRACT_SCHEMA_VERSION && Array.isArray(previousSync.contractVersions)
+    ? previousSync.contractVersions
+    : undefined;
   const allContracts: Contract[] = [];
+  const contractVersions: GroupContractVersion[] = [];
   const memberGraphs: Array<{ repoId: string; graph: KnowledgeGraph }> = [];
+  const memberFacts: Array<{ repoId: string; repositoryName: string; facts: ReturnType<typeof collectGraphFacts> }> = [];
 
   for (const member of group.members) {
     // Resolve the actual repo path from the registry
@@ -233,11 +348,13 @@ export async function syncGroup(group: RepoGroup): Promise<GroupSyncResult> {
       continue;
     }
 
-    const dbPath = path.join(regEntry.path, '.code-intel', 'graph.db');
-    if (!fs.existsSync(dbPath)) {
-      Logger.warn(`  ⚠ No index at ${dbPath} — run \`code-intel analyze ${regEntry.path}\` first`);
+    const snapshot = resolveIndexSnapshot(regEntry.path);
+    if (!snapshot || !fs.existsSync(snapshot.graphDbPath)) {
+      Logger.warn(`  ⚠ No index at ${path.join(regEntry.path, '.code-intel', 'graph.db')} — run \`code-intel analyze ${regEntry.path}\` first`);
       continue;
     }
+
+    const dbPath = snapshot.graphDbPath;
 
     const graph = createKnowledgeGraph();
     const db = new DbManager(dbPath, true);
@@ -251,8 +368,13 @@ export async function syncGroup(group: RepoGroup): Promise<GroupSyncResult> {
       continue;
     }
 
-    memberGraphs.push({ repoId: regEntry.name, graph });
-    const contracts = extractContracts(graph, regEntry.name, regEntry.path);
+    memberGraphs.push({ repoId: regEntry.id, graph });
+    memberFacts.push({ repoId: regEntry.id, repositoryName: regEntry.name, facts: collectGraphFacts(graph) });
+    const snapshotId = snapshot.generationId === 'legacy' ? `legacy:${regEntry.id}` : snapshot.generationId;
+    const contracts: Contract[] = extractContracts(graph, regEntry.name, regEntry.path, regEntry.id, snapshotId).map((contract) => ({
+      ...contract,
+      repositoryId: regEntry.id,
+    }));
 
     // Schema-file contracts (OpenAPI, GraphQL, Protobuf)
     const [openapiContracts, graphqlContracts, protoContracts] = await Promise.all([
@@ -262,41 +384,50 @@ export async function syncGroup(group: RepoGroup): Promise<GroupSyncResult> {
     ]);
 
     for (const c of openapiContracts) {
-      contracts.push({
+      contracts.push(enrichContract({
         repoName: regEntry.name,
         repoPath: regEntry.path,
+        repositoryId: regEntry.id,
         kind: 'route',
         name: c.name,
         nodeId: `openapi:${c.method}:${c.path}`,
         nodeKind: 'route',
         filePath: c.filePath,
-      });
+        method: c.method,
+        normalizedPath: c.path,
+        sourceCanonicalId: `openapi:${c.method}:${c.path}`,
+      }, regEntry.id, snapshotId));
     }
     for (const c of graphqlContracts) {
-      contracts.push({
+      contracts.push(enrichContract({
         repoName: regEntry.name,
         repoPath: regEntry.path,
+        repositoryId: regEntry.id,
         kind: 'graphql',
         name: c.name,
         nodeId: `graphql:${c.name}`,
         nodeKind: 'graphql',
         filePath: c.filePath,
-      });
+        sourceCanonicalId: `graphql:${c.operation}:${c.name}`,
+      }, regEntry.id, snapshotId));
     }
     for (const c of protoContracts) {
-      contracts.push({
+      contracts.push(enrichContract({
         repoName: regEntry.name,
         repoPath: regEntry.path,
+        repositoryId: regEntry.id,
         kind: 'grpc',
         name: c.name,
         nodeId: `grpc:${c.serviceName}:${c.rpcName}`,
         nodeKind: 'grpc',
         filePath: c.filePath,
-      });
+        sourceCanonicalId: `grpc:${c.serviceName}:${c.rpcName}`,
+      }, regEntry.id, snapshotId));
     }
 
     Logger.info(`  ✓ ${regEntry.name} (${member.groupPath}): ${contracts.length} contracts`);
     allContracts.push(...contracts);
+    contractVersions.push(...contracts.map((contract) => versionFromContract(contract, regEntry.id)));
   }
 
   const links = [...matchContracts(allContracts), ...matchRouteConsumersViaFacts(memberGraphs)];
@@ -307,5 +438,9 @@ export async function syncGroup(group: RepoGroup): Promise<GroupSyncResult> {
     memberCount: group.members.length,
     contracts: allContracts,
     links,
+    schemaVersion: GROUP_CONTRACT_SCHEMA_VERSION,
+    contractVersions,
+    changedContractIds: computeChangedContractIds(contractVersions, previousVersions),
+    consumerIndex: buildContractConsumerIndex({ contracts: allContracts, links, memberFacts }),
   };
 }

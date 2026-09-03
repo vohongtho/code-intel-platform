@@ -23,9 +23,11 @@ import {
   saveGroup,
   loadSyncResult,
   saveSyncResult,
+  verifySyncResultReadBack,
 } from '../multi-repo/group-registry.js';
 import { syncGroup } from '../multi-repo/group-sync.js';
 import { queryGroup } from '../multi-repo/group-query.js';
+import { getGroupContractDrift } from '../multi-repo/contract-drift/service.js';
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -406,6 +408,24 @@ export function createMcpServer(
             },
             repo: { type: 'string', description: 'Filter by registry name (optional)' },
             min_confidence: { type: 'number', description: 'Minimum link confidence 0–1 (default: 0)' },
+            ..._tokenProp,
+          },
+          required: ['name'],
+        },
+      },
+      {
+        name: 'group_contract_drift',
+        description: 'Compare synchronized group contracts across Git refs using per-repo immutable semantic snapshots. Returns compatibility findings plus certainty/coverage and known-consumer scope.',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            name: { type: 'string', description: 'Group name' },
+            base_ref: { type: 'string', description: 'Base Git ref (branch/tag/commit)' },
+            head_ref: { type: 'string', description: 'Head Git ref (branch/tag/commit)' },
+            base_snapshot_ids: { type: 'object', additionalProperties: { type: 'string' }, description: 'Optional per-repo base snapshot ids keyed by repoId' },
+            head_snapshot_ids: { type: 'object', additionalProperties: { type: 'string' }, description: 'Optional per-repo head snapshot ids keyed by repoId' },
+            limit: { type: 'number', description: 'Presentation limit for returned findings; analysis still computes total findings' },
+            allow_cache: { type: 'boolean', description: 'Reuse snapshot cache when available (default: true)' },
             ..._tokenProp,
           },
           required: ['name'],
@@ -1717,6 +1737,8 @@ export async function dispatchTool(
 
         const result = await syncGroup(group);
         saveSyncResult(result);
+        const verified = verifySyncResultReadBack(result);
+        if (!verified.ok) return { content: [{ type: 'text', text: `Group sync read-back validation failed: ${verified.reason}` }] };
         group.lastSync = result.syncedAt;
         saveGroup(group);
 
@@ -1758,6 +1780,31 @@ export async function dispatchTool(
             text: compact({ syncedAt: result.syncedAt, contracts, links }),
           }],
         };
+      }
+
+      case 'group_contract_drift': {
+        const groupName = a.name as string;
+        const baseRef = a.base_ref as string | undefined;
+        const headRef = a.head_ref as string | undefined;
+        const baseSnapshotIds = a.base_snapshot_ids as Record<string, string> | undefined;
+        const headSnapshotIds = a.head_snapshot_ids as Record<string, string> | undefined;
+        if ((!baseRef || !headRef) && (!baseSnapshotIds || !headSnapshotIds)) {
+          return { content: [{ type: 'text', text: compact({ error: 'Provide base_ref/head_ref or base_snapshot_ids/head_snapshot_ids.' }) }], isError: true };
+        }
+        try {
+          const result = await getGroupContractDrift({
+            groupName,
+            baseRef,
+            headRef,
+            baseSnapshotIds,
+            headSnapshotIds,
+            limit: a.limit as number | undefined,
+            allowCache: (a.allow_cache as boolean | undefined) ?? true,
+          });
+          return { content: [{ type: 'text', text: compact(result) }] };
+        } catch (err) {
+          return { content: [{ type: 'text', text: compact({ error: err instanceof Error ? err.message : String(err) }) }], isError: true };
+        }
       }
 
       // ── group_query ────────────────────────────────────────────────────────
@@ -1877,12 +1924,34 @@ export async function dispatchTool(
         }
         try {
           const { diff, base, head } = await computeSemanticGraphDiff({ repoDir: activeWorkspaceRoot, base: baseRef, head: headRef });
+          let crossRepositoryContracts: unknown;
+          const registryEntry = loadRegistry().find((entry) => entry.name === activeRepoName || entry.path === activeWorkspaceRoot);
+          const group = registryEntry
+            ? listGroups().find((candidate) => candidate.members.some((member) => member.repoId === registryEntry.id || member.registryName === registryEntry.name))
+            : undefined;
+          if (group && loadSyncResult(group.name)) {
+            try {
+              crossRepositoryContracts = await getGroupContractDrift({ groupName: group.name, baseRef, headRef, allowCache: true });
+            } catch (error) {
+              crossRepositoryContracts = {
+                groupName: group.name,
+                findings: [],
+                totalFindings: 0,
+                summary: {
+                  totalFindings: 0,
+                  byCompatibility: { compatible: 0, 'potentially-breaking': 0, breaking: 0, unknown: 0 },
+                  coverage: { complete: false, examinedCount: 0, incompleteReasons: [error instanceof Error ? error.message : String(error)] },
+                  knownConsumerCoverage: { complete: false, inScope: 'partial-group-sync', certainty: 'unavailable', examinedConsumerCount: 0, incompleteReasons: [error instanceof Error ? error.message : String(error)] },
+                },
+              };
+            }
+          }
           return {
             content: [{
               type: 'text',
               text: compact({
                 analysisMode: 'semantic-snapshot',
-                textualImpact,
+                textualImpact: textualImpact ? { ...textualImpact, crossRepositoryContracts } : textualImpact,
                 semanticDiff: diff,
                 baseSnapshot: { status: base.status, fromCache: base.fromCache, boundaries: base.boundaries },
                 headSnapshot: { status: head.status, fromCache: head.fromCache, boundaries: head.boundaries },

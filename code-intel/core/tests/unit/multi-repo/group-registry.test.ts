@@ -14,6 +14,7 @@ import {
   removeMember,
   saveSyncResult,
   loadSyncResult,
+  verifySyncResultReadBack,
 } from '../../../src/multi-repo/group-registry.js';
 import { saveRegistry } from '../../../src/storage/repo-registry.js';
 
@@ -65,6 +66,15 @@ describe('saveGroup + loadGroup', () => {
   it('loadGroup — returns null for nonexistent group', () => {
     const result = loadGroup(grpName('does-not-exist'));
     assert.equal(result, null);
+  });
+
+  it('quarantines unreadable group state instead of overwriting it', () => {
+    const name = grpName('corrupt-group');
+    const filePath = path.join(groupsDir, `${name}.json`);
+    fs.mkdirSync(groupsDir, { recursive: true });
+    fs.writeFileSync(filePath, '{not-json');
+    assert.equal(loadGroup(name), null);
+    assert.equal(fs.existsSync(`${filePath}.unreadable`), true);
   });
 
   it('saves and loads a group with members', () => {
@@ -259,10 +269,90 @@ describe('saveSyncResult + loadSyncResult', () => {
     assert.ok(loaded !== null);
     assert.equal(loaded!.groupName, groupName);
     assert.equal(loaded!.memberCount, 3);
+    assert.equal(loaded!.schemaVersion, '1.0.11');
+  });
+
+  it('loads legacy sync state conservatively', () => {
+    const groupName = grpName('legacy-sync');
+    const filePath = path.join(groupsDir, `${groupName}.sync.json`);
+    fs.mkdirSync(groupsDir, { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify({
+      groupName,
+      syncedAt: '2025-01-01T00:00:00.000Z',
+      memberCount: 1,
+      contracts: [{
+        repoName: 'repo',
+        repoPath: '/repo',
+        kind: 'schema',
+        name: 'User',
+        nodeId: 'sym:1',
+        nodeKind: 'interface',
+        filePath: 'src/user.ts',
+      }],
+      links: [{
+        providerRepo: 'repo',
+        providerContract: 'User',
+        consumerRepo: 'web',
+        consumerContract: 'User',
+        matchKind: 'name-match',
+        confidence: 0.5,
+      }],
+    }, null, 2));
+
+    const loaded = loadSyncResult(groupName);
+    assert.ok(loaded !== null);
+    assert.equal(loaded!.contracts[0]!.certainty, 'legacy');
+    assert.equal(loaded!.contracts[0]!.role, 'unknown');
+    assert.equal(loaded!.contracts[0]!.coverage?.complete, false);
+    assert.equal(loaded!.links[0]!.certainty, 'legacy');
+    assert.equal(loaded!.links[0]!.coverage?.complete, false);
+  });
+
+  it('quarantines unreadable sync state instead of overwriting it', () => {
+    const groupName = grpName('corrupt-sync');
+    const filePath = path.join(groupsDir, `${groupName}.sync.json`);
+    fs.mkdirSync(groupsDir, { recursive: true });
+    fs.writeFileSync(filePath, '{not-json');
+    assert.equal(loadSyncResult(groupName), null);
+    assert.equal(fs.existsSync(`${filePath}.unreadable`), true);
   });
 
   it('loadSyncResult — returns null for nonexistent group', () => {
     const result = loadSyncResult(grpName('no-sync'));
     assert.equal(result, null);
+  });
+
+  it('verifies read-back invariants for stored sync state', () => {
+    const groupName = grpName('verify-sync');
+    const result: GroupSyncResult = {
+      groupName,
+      syncedAt: '2025-01-01T00:00:00.000Z',
+      memberCount: 1,
+      contracts: [{
+        repoName: 'repo',
+        repoPath: '/repo',
+        kind: 'schema',
+        name: 'User',
+        nodeId: 'sym:1',
+        nodeKind: 'interface',
+        filePath: 'src/user.ts',
+        contractId: 'c1',
+        semanticFingerprint: 'f1',
+        sourceCanonicalId: 'sym:1',
+      }],
+      links: [{
+        providerRepo: 'repo',
+        providerContract: 'User',
+        consumerRepo: 'web',
+        consumerContract: 'User',
+        matchKind: 'name-match',
+        confidence: 1,
+        providerContractId: 'c1',
+        consumerContractId: 'c2',
+        consumerSourceCanonicalId: 'sym:2',
+      }],
+    };
+    saveSyncResult(result);
+    assert.deepEqual(verifySyncResultReadBack(result), { ok: true });
   });
 });

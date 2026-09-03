@@ -1,7 +1,5 @@
-import path from 'node:path';
-import { createKnowledgeGraph, type KnowledgeGraph } from '../graph/knowledge-graph.js';
-import { DbManager } from '../storage/db-manager.js';
-import { loadGraphFromDB } from '../multi-repo/graph-from-db.js';
+import { type KnowledgeGraph } from '../graph/knowledge-graph.js';
+import { loadGraphSnapshotFromDbPath } from '../multi-repo/graph-from-db.js';
 import { getApiDrift } from '../semantic/api-contracts/service.js';
 import { detectRenamedFiles } from './git-materializer.js';
 import { DEFAULT_SNAPSHOT_CACHE_POLICY, getOrBuildSnapshot, type SnapshotCachePolicy } from './cache.js';
@@ -34,15 +32,7 @@ export interface GraphDiffResponse {
 }
 
 async function loadSnapshotGraph(artifactsDir: string): Promise<KnowledgeGraph> {
-  const graph = createKnowledgeGraph();
-  const db = new DbManager(path.join(artifactsDir, 'graph.db'), true);
-  await db.init();
-  try {
-    await loadGraphFromDB(graph, db);
-  } finally {
-    db.close();
-  }
-  return graph;
+  return loadGraphSnapshotFromDbPath(`${artifactsDir}/graph.db`);
 }
 
 function boundaryReasons(result: SnapshotBuildResult, side: 'base' | 'head'): string[] {

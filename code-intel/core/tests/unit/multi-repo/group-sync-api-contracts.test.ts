@@ -10,6 +10,7 @@ import { DbManager } from '../../../src/storage/db-manager.js';
 import { loadGraphToDB } from '../../../src/storage/graph-loader.js';
 import { saveRegistry } from '../../../src/storage/repo-registry.js';
 import { syncGroup } from '../../../src/multi-repo/group-sync.js';
+import { saveSyncResult, deleteGroup } from '../../../src/multi-repo/group-registry.js';
 import { projectFactBundle } from '../../../src/semantic/graph-projector.js';
 import { createFactBundle, FACT_SCHEMA_VERSION } from '../../../src/semantic/fact-bundle.js';
 import { expressFrameworkAdapter } from '../../../src/frameworks/adapters/express.js';
@@ -90,6 +91,15 @@ describe('syncGroup — evidence-based route matching', () => {
     assert.ok(routeLink.providerContract.startsWith('GET '));
     assert.ok(routeLink.consumerContract.includes('src/client.js'));
     assert.ok(routeLink.confidence > 0);
+    assert.ok(routeLink.providerSourceCanonicalId);
+    assert.ok(routeLink.consumerSourceCanonicalId);
+    assert.ok(result.contractVersions && result.contractVersions.length > 0);
+    const backendRoute = result.contracts.find((contract) => contract.repoName === 'backend' && contract.kind === 'route');
+    assert.ok(backendRoute?.contractId);
+    assert.ok(backendRoute?.semanticFingerprint);
+    assert.ok(backendRoute?.snapshotId);
+    assert.ok(result.consumerIndex?.byContractId[backendRoute!.contractId!]);
+    assert.equal(result.consumerIndex?.byContractId[backendRoute!.contractId!]?.[0]?.repositoryId, 'frontend');
 
     fs.rmSync(backendPath, { recursive: true, force: true });
     fs.rmSync(frontendPath, { recursive: true, force: true });
@@ -119,8 +129,39 @@ describe('syncGroup — evidence-based route matching', () => {
     });
 
     assert.equal(result.links.some((link) => link.matchKind === 'route-match'), false);
+    assert.equal(result.schemaVersion, '1.0.11');
 
     fs.rmSync(repoAPath, { recursive: true, force: true });
     fs.rmSync(repoBPath, { recursive: true, force: true });
+  });
+
+  it('reports changedContractIds relative to the previous sync, and everything-changed with no baseline', async () => {
+    const backendPath = mkRepo('group-sync-changed-backend');
+    await writeRepoGraph(backendPath, graphFromSource('src/app.js', BACKEND_SOURCE));
+    saveRegistry([{ id: 'backend-changed', name: 'backend-changed', path: backendPath, indexedAt: new Date().toISOString(), stats: { nodes: 1, edges: 1, files: 1 } }]);
+
+    const group = {
+      name: 'changed-ids-group',
+      createdAt: new Date().toISOString(),
+      members: [{ groupPath: 'backend', repoId: 'backend-changed', registryName: 'backend-changed' }],
+    };
+    // Group state persists in ~/.code-intel/groups across test runs (it is not sandboxed to a
+    // temp dir) — clear any leftover sync result from a prior run before asserting "no baseline".
+    deleteGroup(group.name);
+
+    const first = await syncGroup(group);
+    assert.ok(first.changedContractIds && first.changedContractIds.length > 0, 'no previous baseline — every contract must be reported as changed');
+    saveSyncResult(first);
+
+    const second = await syncGroup(group);
+    assert.deepEqual(second.changedContractIds, [], 'identical source re-synced — nothing changed');
+    saveSyncResult(second);
+
+    await writeRepoGraph(backendPath, graphFromSource('src/app.js', BACKEND_SOURCE.replace('/users/:id', '/users/:id/details')));
+    const third = await syncGroup(group);
+    assert.ok(third.changedContractIds && third.changedContractIds.length > 0, 'route path changed — old route removed, new route added');
+
+    deleteGroup(group.name);
+    fs.rmSync(backendPath, { recursive: true, force: true });
   });
 });

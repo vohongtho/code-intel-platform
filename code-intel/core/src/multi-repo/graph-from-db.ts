@@ -3,7 +3,7 @@
  * Loads a KnowledgeGraph from a persisted LadybugDB graph.db.
  * Used by group-sync to read each repo's index without re-analyzing.
  */
-import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
+import { createKnowledgeGraph, type KnowledgeGraph } from '../graph/knowledge-graph.js';
 import { DbManager } from '../storage/db-manager.js';
 import { ALL_NODE_TABLES, NODE_TABLE_MAP } from '../storage/schema.js';
 import type { CodeNode, CodeEdge, NodeKind, EdgeKind } from '../shared/index.js';
@@ -99,4 +99,16 @@ export async function loadGraphFromDB(
   } catch {
     // edges table may not exist in older DBs
   }
+}
+
+export async function loadGraphSnapshotFromDbPath(graphDbPath: string): Promise<KnowledgeGraph> {
+  const graph = createKnowledgeGraph();
+  const db = new DbManager(graphDbPath, true);
+  await db.init();
+  try {
+    await loadGraphFromDB(graph, db);
+  } finally {
+    db.close();
+  }
+  return graph;
 }

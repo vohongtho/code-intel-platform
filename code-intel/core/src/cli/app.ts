@@ -1081,9 +1081,11 @@ async function analyzeWorkspace(targetPath: string, options?: {
         if (!options?.silent) console.log(`  ⠹ Syncing group '${g.name}'…`);
         try {
           const { syncGroup: doSyncGroup } = await import('../multi-repo/group-sync.js');
-          const { saveSyncResult: doSaveSyncResult } = await import('../multi-repo/group-registry.js');
+          const { saveSyncResult: doSaveSyncResult, verifySyncResultReadBack: doVerifySyncResultReadBack } = await import('../multi-repo/group-registry.js');
           const syncResult = await doSyncGroup(group);
           doSaveSyncResult(syncResult);
+          const verified = doVerifySyncResultReadBack(syncResult);
+          if (!verified.ok) throw new Error(`group sync read-back validation failed: ${verified.reason}`);
           group.lastSync = syncResult.syncedAt;
           const { saveGroup: doSaveGroup } = await import('../multi-repo/group-registry.js');
           doSaveGroup(group);
@@ -3231,6 +3233,11 @@ groupCmd
     const result = await syncGroup(group);
 
     saveSyncResult(result);
+    {
+      const { verifySyncResultReadBack } = await import('../multi-repo/group-registry.js');
+      const verified = verifySyncResultReadBack(result);
+      if (!verified.ok) throw new Error(`group sync read-back validation failed: ${verified.reason}`);
+    }
     group.lastSync = result.syncedAt;
     saveGroup(group);
 
@@ -3485,6 +3492,11 @@ groupCmd
       const group = loadGroup(groupName)!;
       const syncResult = await syncGroup(group);
       saveSyncResult(syncResult);
+      {
+        const { verifySyncResultReadBack } = await import('../multi-repo/group-registry.js');
+        const verified = verifySyncResultReadBack(syncResult);
+        if (!verified.ok) throw new Error(`group sync read-back validation failed: ${verified.reason}`);
+      }
       group.lastSync = syncResult.syncedAt;
       saveGroup(group);
       console.log(`  ✅  Sync complete — ${syncResult.contracts.length} contracts, ${syncResult.links.length} cross-links`);

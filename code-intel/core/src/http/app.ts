@@ -18,9 +18,10 @@ import { resolveIndexSnapshot, type IndexSnapshot } from '../storage/index-snaps
 import { VectorIndex } from '../search/vector-index.js';
 // VectorIndex uses the shared SQLite wrapper directly.
 import fs from 'node:fs';
-import { listGroups, loadGroup, saveGroup, deleteGroup, groupExists, addMember, removeMember, loadSyncResult, saveSyncResult } from '../multi-repo/group-registry.js';
+import { listGroups, loadGroup, saveGroup, deleteGroup, groupExists, addMember, removeMember, loadSyncResult, saveSyncResult, verifySyncResultReadBack } from '../multi-repo/group-registry.js';
 import { syncGroup } from '../multi-repo/group-sync.js';
 import { queryGroup } from '../multi-repo/group-query.js';
+import { getGroupContractDrift } from '../multi-repo/contract-drift/service.js';
 import { createKnowledgeGraph } from '../graph/knowledge-graph.js';
 import { loadGraphFromDB } from '../multi-repo/graph-from-db.js';
 import { loadRegistry, findRepoByName } from '../storage/repo-registry.js';
@@ -1609,6 +1610,27 @@ export function createApp(
     res.json(result);
   });
 
+  app.get('/api/v1/groups/:name/drift', async (req, res) => {
+    const baseRef = Array.isArray(req.query['base_ref']) ? req.query['base_ref'][0] : req.query['base_ref'];
+    const headRef = Array.isArray(req.query['head_ref']) ? req.query['head_ref'][0] : req.query['head_ref'];
+    if (!baseRef || !headRef) {
+      res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: 'base_ref and head_ref are required' } });
+      return;
+    }
+    try {
+      const result = await getGroupContractDrift({
+        groupName: req.params.name,
+        baseRef: String(baseRef),
+        headRef: String(headRef),
+        limit: req.query['limit'] ? Number(req.query['limit']) : undefined,
+        allowCache: req.query['allow_cache'] === undefined ? true : String(req.query['allow_cache']) !== 'false',
+      });
+      res.json(result);
+    } catch (err) {
+      res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: err instanceof Error ? err.message : String(err) } });
+    }
+  });
+
   // ── Group CRUD ───────────────────────────────────────────────────────────────
 
   // POST /api/v1/groups — create a new group
@@ -1710,6 +1732,8 @@ export function createApp(
     try {
       const result = await syncGroup(group);
       saveSyncResult(result);
+      const verified = verifySyncResultReadBack(result);
+      if (!verified.ok) throw new Error(`group sync read-back validation failed: ${verified.reason}`);
       group.lastSync = result.syncedAt;
       saveGroup(group);
       res.json(result);
