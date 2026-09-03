@@ -15,7 +15,7 @@ import { seedIndexGeneration } from '../../../src/cli/atomic-analyze.js';
 
 function tempRepo(): string { return fs.mkdtempSync(path.join(os.tmpdir(), 'generation-v2-')); }
 function write(pathname: string, value: string): void { fs.mkdirSync(path.dirname(pathname), { recursive: true }); fs.writeFileSync(pathname, value); }
-const metadata = { indexedAt: '2026-08-03T00:00:00.000Z', schemaVersion: 8, indexVersion: 'v', parser: 'tree-sitter', factSchemaVersion: 'facts-v1', factSchemaFingerprint: 'fact-fp', identityFingerprint: 'identity-fp', resolverVersion: 'resolver-v1', resolverFingerprint: 'resolver-fp', evidenceSchemaVersion: 1, evidenceSchemaFingerprint: 'evidence-fp', embeddings: { enabled: true, status: 'ready', provider: 'x', model: 'x', dimension: 3 }, stats: { nodes: 1, edges: 0, files: 1, duration: 1 } };
+const metadata = { indexedAt: '2026-08-03T00:00:00.000Z', schemaVersion: 8, indexVersion: 'v', parser: 'tree-sitter', factSchemaVersion: 'facts-v1', factSchemaFingerprint: 'fact-fp', identityFingerprint: 'identity-fp', resolverVersion: 'resolver-v1', resolverFingerprint: 'resolver-fp', evidenceSchemaVersion: 1, evidenceSchemaFingerprint: 'evidence-fp', apiContractSchemaVersion: 'api-contract-v1', apiContractFingerprint: 'api-contract-fp', embeddings: { enabled: true, status: 'ready', provider: 'x', model: 'x', dimension: 3 }, stats: { nodes: 1, edges: 0, files: 1, duration: 1 } };
 
 describe('Generation V2 storage', () => {
   it('clones only requested vector and metadata seed artifacts', () => {
@@ -80,6 +80,8 @@ describe('Generation V2 storage', () => {
       if (manifest.version !== 2) throw new Error('expected v2 manifest');
       assert.equal(manifest.evidenceSchemaVersion, 1);
       assert.equal(manifest.evidenceSchemaFingerprint, 'evidence-fp');
+      assert.equal(manifest.apiContractSchemaVersion, 'api-contract-v1');
+      assert.equal(manifest.apiContractFingerprint, 'api-contract-fp');
       assert.equal(manifest.resolverVersion, 'resolver-v1');
       assert.equal(snapshot?.manifest?.version, 2);
       assert.equal(snapshot?.evidenceDbPath?.endsWith(path.join('g1', 'evidence.db')), true);

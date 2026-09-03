@@ -51,6 +51,21 @@ const FRAMEWORK_ADAPTER_REGISTRATIONS: readonly FrameworkAdapterRegistration[] =
     order: 100,
     load: async () => (await import('./adapters/html-web.js')).htmlWebFrameworkAdapter,
   },
+  {
+    id: 'fetch-client',
+    order: 110,
+    load: async () => (await import('../semantic/api-contracts/consumers/fetch.js')).fetchConsumerAdapter,
+  },
+  {
+    id: 'axios-client',
+    order: 120,
+    load: async () => (await import('../semantic/api-contracts/consumers/axios.js')).axiosConsumerAdapter,
+  },
+  {
+    id: 'angular-http-client',
+    order: 130,
+    load: async () => (await import('../semantic/api-contracts/consumers/angular-http.js')).angularHttpConsumerAdapter,
+  },
 ] as const;
 
 export function listFrameworkAdapterRegistrations(): readonly FrameworkAdapterRegistration[] {

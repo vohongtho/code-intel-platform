@@ -10,6 +10,7 @@ import { shouldRebuildEmbeddings as shouldRebuildEmbeddingsFromMetadata } from '
 import { FACT_SCHEMA_VERSION } from '../semantic/fact-bundle.js';
 import { RESOLVER_VERSION } from '../resolution/contracts.js';
 import { EVIDENCE_SCHEMA_VERSION } from '../evidence/store.js';
+import { API_CONTRACT_SCHEMA_VERSION } from '../semantic/api-contracts/types.js';
 import type { SemanticDelta } from '../incremental/semantic-delta.js';
 import { isDependencyAwareIncrementalEnabled, isEligibleForIncrementalPublication } from '../incremental/rollout-gate.js';
 
@@ -120,6 +121,7 @@ function hasSemanticFingerprintMismatch(metadata: IndexMetadata): boolean {
     evidenceSchemaVersion: EVIDENCE_SCHEMA_VERSION,
     resolverVersion: RESOLVER_VERSION,
   });
+  const currentApiContractFingerprint = sha256({ apiContractSchemaVersion: API_CONTRACT_SCHEMA_VERSION });
   return Boolean(
     (metadata.factSchemaVersion && metadata.factSchemaVersion !== FACT_SCHEMA_VERSION)
     || (metadata.factSchemaFingerprint && metadata.factSchemaFingerprint !== currentFactSchemaFingerprint)
@@ -128,6 +130,8 @@ function hasSemanticFingerprintMismatch(metadata: IndexMetadata): boolean {
     || (metadata.resolverFingerprint && metadata.resolverFingerprint !== currentResolverFingerprint)
     || (metadata.evidenceSchemaVersion !== undefined && metadata.evidenceSchemaVersion !== EVIDENCE_SCHEMA_VERSION)
     || (metadata.evidenceSchemaFingerprint && metadata.evidenceSchemaFingerprint !== currentEvidenceFingerprint)
+    || (metadata.apiContractSchemaVersion && metadata.apiContractSchemaVersion !== API_CONTRACT_SCHEMA_VERSION)
+    || (metadata.apiContractFingerprint && metadata.apiContractFingerprint !== currentApiContractFingerprint)
   );
 }
 

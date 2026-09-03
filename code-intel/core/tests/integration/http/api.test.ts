@@ -641,6 +641,9 @@ describe('HTTP API — protected routes require auth', () => {
     { method: 'GET', path: '/api/v1/clusters' },
     { method: 'GET', path: '/api/v1/groups' },
     { method: 'POST', path: '/api/v1/blast-radius', body: { target: 'foo' } },
+    { method: 'GET', path: '/api/v1/api-contract' },
+    { method: 'GET', path: '/api/v1/api-impact' },
+    { method: 'GET', path: '/api/v1/api-drift?base_repo_id=some-repo' },
   ];
 
   for (const route of protectedRoutes) {

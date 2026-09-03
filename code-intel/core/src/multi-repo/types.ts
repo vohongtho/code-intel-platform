@@ -38,6 +38,13 @@ export interface Contract {
   parameters?: Array<{ name: string; type?: string }>;
   returnType?: string;
   exported?: boolean;
+  /** HTTP method, present only for `kind: 'route'` contracts backed by an HttpRouteFact
+   * (semantic/api-contracts) — additive evidence used for method+normalized-path matching
+   * instead of route-name equality/substring. */
+  method?: string;
+  /** Normalized route path (parameter segments collapsed to `{}`), present only for
+   * `kind: 'route'` contracts backed by an HttpRouteFact. */
+  normalizedPath?: string;
 }
 
 export type LinkKind = 'name-match' | 'route-match' | 'import-match';

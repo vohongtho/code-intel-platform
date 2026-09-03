@@ -330,6 +330,55 @@ export const openApiSpec = {
         },
       },
     },
+    '/api-contract': {
+      get: {
+        tags: ['API Contracts'],
+        summary: 'Full contract for one or more HTTP routes: method, path, request/response shape, and known consumers with match certainty',
+        parameters: [
+          { name: 'repoId', in: 'query', schema: { type: 'string' } },
+          { name: 'method', in: 'query', description: 'HTTP method, e.g. GET, POST (omit to match any method)', schema: { type: 'string' } },
+          { name: 'path', in: 'query', description: 'Normalized route path, e.g. /users/{}', schema: { type: 'string' } },
+          { name: 'route_fact_id', in: 'query', description: 'Exact route fact id from a prior api-contract/api-impact result', schema: { type: 'string' } },
+          { name: 'route_node_id', in: 'query', description: 'The route\'s graph node id (as returned by /graph/{repoId} or /nodes/{id})', schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': { description: 'Matching route contract(s)', content: { 'application/json': { schema: { type: 'array' } } } },
+          '404': { description: 'Repo not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
+    '/api-impact': {
+      get: {
+        tags: ['API Contracts'],
+        summary: 'Blast radius for one or more HTTP routes: matching route(s) plus every statically resolved consumer',
+        parameters: [
+          { name: 'repoId', in: 'query', schema: { type: 'string' } },
+          { name: 'method', in: 'query', description: 'HTTP method, e.g. GET, POST (omit to match any method)', schema: { type: 'string' } },
+          { name: 'path', in: 'query', description: 'Normalized route path, e.g. /users/{}', schema: { type: 'string' } },
+          { name: 'route_fact_id', in: 'query', description: 'Exact route fact id from a prior api-contract/api-impact result', schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': { description: 'Routes and consumers affected', content: { 'application/json': { schema: { type: 'object' } } } },
+          '404': { description: 'Repo not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
+    '/api-drift': {
+      get: {
+        tags: ['API Contracts'],
+        summary: 'Compares API contracts between two separately indexed repositories (base vs head) and reports compatibility findings',
+        parameters: [
+          { name: 'repoId', in: 'query', description: 'Repo used to resolve the head state when head_repo_id is omitted', schema: { type: 'string' } },
+          { name: 'base_repo_id', in: 'query', required: true, description: 'Repo id to use as the base (before) state', schema: { type: 'string' } },
+          { name: 'head_repo_id', in: 'query', description: 'Repo id to use as the head (after) state (defaults to repoId/the active repo)', schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': { description: 'Compatibility findings with certainty/coverage', content: { 'application/json': { schema: { type: 'object' } } } },
+          '400': { description: 'base_repo_id missing', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '404': { description: 'Repo not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
     '/groups': {
       get: {
         tags: ['Groups'],

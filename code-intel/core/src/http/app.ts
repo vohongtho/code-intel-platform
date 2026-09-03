@@ -72,6 +72,7 @@ import {
 import { withSpan, isTracingEnabled } from '../observability/tracing.js';
 import { openApiSpec } from './openapi.js';
 import { computeBlastRadiusWithTrust } from '../mcp-server/blast-radius-trust.js';
+import { getApiContract, getApiDrift, getApiImpact, type RouteSelector } from '../semantic/api-contracts/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -1404,6 +1405,65 @@ export function createApp(
       if (node.kind === 'cluster') clusters.push({ id: node.id, name: node.name, memberCount: (node.metadata?.memberCount as number) ?? 0 });
     }
       res.json({ clusters });
+    } catch (err) {
+      if (err instanceof AppError) {
+        res.status(err.statusCode).json({ error: { code: err.code, message: err.message, hint: err.hint, requestId: req.requestId, timestamp: new Date().toISOString() } });
+        return;
+      }
+      throw err;
+    }
+  });
+
+  // ── API contracts ───────────────────────────────────────────────────────────
+  app.get('/api/v1/api-contract', async (req, res) => {
+    try {
+      const g = await getGraphForRepoIdOrThrow(req.query['repoId'] as string | undefined);
+      const selector: RouteSelector = {
+        method: req.query['method'] as string | undefined,
+        normalizedPath: req.query['path'] as string | undefined,
+        routeFactId: req.query['route_fact_id'] as string | undefined,
+        routeNodeId: req.query['route_node_id'] as string | undefined,
+      };
+      res.json(getApiContract(g, selector));
+    } catch (err) {
+      if (err instanceof AppError) {
+        res.status(err.statusCode).json({ error: { code: err.code, message: err.message, hint: err.hint, requestId: req.requestId, timestamp: new Date().toISOString() } });
+        return;
+      }
+      throw err;
+    }
+  });
+
+  app.get('/api/v1/api-impact', async (req, res) => {
+    try {
+      const g = await getGraphForRepoIdOrThrow(req.query['repoId'] as string | undefined);
+      const selector: RouteSelector = {
+        method: req.query['method'] as string | undefined,
+        normalizedPath: req.query['path'] as string | undefined,
+        routeFactId: req.query['route_fact_id'] as string | undefined,
+        routeNodeId: req.query['route_node_id'] as string | undefined,
+      };
+      res.json(getApiImpact(g, selector));
+    } catch (err) {
+      if (err instanceof AppError) {
+        res.status(err.statusCode).json({ error: { code: err.code, message: err.message, hint: err.hint, requestId: req.requestId, timestamp: new Date().toISOString() } });
+        return;
+      }
+      throw err;
+    }
+  });
+
+  app.get('/api/v1/api-drift', async (req, res) => {
+    try {
+      const baseRepoId = req.query['base_repo_id'] as string | undefined;
+      if (!baseRepoId) {
+        throw new AppError(ErrorCodes.INVALID_REQUEST, 'base_repo_id is required', 'Pass ?base_repo_id=<repoId>&head_repo_id=<repoId>', 400);
+      }
+      const headRepoId = req.query['head_repo_id'] as string | undefined;
+      const repoId = req.query['repoId'] as string | undefined;
+      const baseGraph = await getGraphForRepoIdOrThrow(baseRepoId);
+      const headGraph = await getGraphForRepoIdOrThrow(headRepoId ?? repoId);
+      res.json(getApiDrift(baseGraph, headGraph));
     } catch (err) {
       if (err instanceof AppError) {
         res.status(err.statusCode).json({ error: { code: err.code, message: err.message, hint: err.hint, requestId: req.requestId, timestamp: new Date().toISOString() } });

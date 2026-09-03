@@ -23,6 +23,12 @@ import type {
   RouteFact,
   SemanticFact,
 } from '../semantic/facts.js';
+import type {
+  HttpConsumerFact,
+  HttpRequestShapeFact,
+  HttpResponseShapeFact,
+  HttpRouteFact,
+} from '../semantic/api-contracts/types.js';
 import { FACT_SCHEMA_VERSION } from '../semantic/fact-bundle.js';
 import { RESOLVER_VERSION } from '../resolution/contracts.js';
 import { EVIDENCE_SCHEMA_VERSION } from '../evidence/store.js';
@@ -42,7 +48,11 @@ export type SemanticFactKind =
   | 'registration'
   | 'dependency-binding'
   | 'route'
-  | 'embedded-region';
+  | 'embedded-region'
+  | 'http-route'
+  | 'http-request-shape'
+  | 'http-response-shape'
+  | 'http-consumer';
 
 /** Fact kinds whose identity, when changed, can only affect resolution local to their own file. */
 export const LOCAL_ONLY_FACT_KINDS: ReadonlySet<SemanticFactKind> = new Set([
@@ -51,7 +61,10 @@ export const LOCAL_ONLY_FACT_KINDS: ReadonlySet<SemanticFactKind> = new Set([
   'reference',
 ]);
 
-/** Fact kinds that can be consumed by facts in other files (module/type/heritage/call-site/registration/route domains). */
+/** Fact kinds that can be consumed by facts in other files (module/type/heritage/call-site/registration/route domains).
+ * The four http-* kinds are the exact cross-file relationship this proposal adds: a producer's
+ * HttpRouteFact/shape facts are what a consumer elsewhere (matcher.ts) resolves against, so a
+ * change to any of them must be visible the same way a route/registration change already is. */
 export const RELATIONSHIP_FACT_KINDS: ReadonlySet<SemanticFactKind> = new Set([
   'import',
   'call-site',
@@ -60,6 +73,10 @@ export const RELATIONSHIP_FACT_KINDS: ReadonlySet<SemanticFactKind> = new Set([
   'registration',
   'dependency-binding',
   'route',
+  'http-route',
+  'http-request-shape',
+  'http-response-shape',
+  'http-consumer',
 ]);
 
 export function classifySemanticFact(fact: SemanticFact): SemanticFactKind {
@@ -67,6 +84,9 @@ export function classifySemanticFact(fact: SemanticFact): SemanticFactKind {
   if ('declarationKind' in fact && 'anchors' in fact) return 'declaration';
   if ('sourceModule' in fact && 'localName' in fact) return 'import';
   if ('moduleRef' in fact && 'publicName' in fact) return 'published-name';
+  if ('routeFactKind' in fact) return 'http-route';
+  if ('shapeFactKind' in fact) return fact.shapeFactKind === 'http-request-shape' ? 'http-request-shape' : 'http-response-shape';
+  if ('consumerFactKind' in fact) return 'http-consumer';
   if ('calleeText' in fact) return 'call-site';
   if ('operation' in fact && 'targetText' in fact) return 'reference';
   if ('heritageKind' in fact && 'target' in fact) return 'heritage';
@@ -132,6 +152,29 @@ function identityPayload(fact: SemanticFact, kind: SemanticFactKind): unknown {
     case 'embedded-region': {
       const f = fact as EmbeddedRegionFact;
       return { embeddedLanguage: f.embeddedLanguage, hostLanguage: f.hostLanguage, extractionKind: f.extractionKind };
+    }
+    case 'http-route': {
+      const f = fact as HttpRouteFact;
+      return {
+        method: f.method, path: f.path, normalizedPath: f.normalizedPath, handlerRef: f.handlerRef,
+        middlewareRefs: f.middlewareRefs, authEvidence: f.authEvidence, requestShapeRef: f.requestShapeRef,
+        responses: f.responses, framework: f.framework, coverage: f.coverage,
+      };
+    }
+    case 'http-request-shape':
+    case 'http-response-shape': {
+      const f = fact as HttpRequestShapeFact | HttpResponseShapeFact;
+      return {
+        shapeFingerprint: f.shapeFingerprint, origin: f.origin, coverage: f.coverage,
+        status: f.shapeFactKind === 'http-response-shape' ? f.status : undefined,
+      };
+    }
+    case 'http-consumer': {
+      const f = fact as HttpConsumerFact;
+      return {
+        clientLibrary: f.clientLibrary, method: f.method, url: f.url, requestShapeRef: f.requestShapeRef,
+        consumedKeys: f.consumedKeys, expectedResponseShapeSymbolRef: f.expectedResponseShapeSymbolRef, coverage: f.coverage,
+      };
     }
   }
 }

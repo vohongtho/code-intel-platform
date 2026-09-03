@@ -23,6 +23,20 @@ All notable changes to this project are documented in this file.
 - Runtime bundle outputs now include per-target `.sha256`, `.sbom.cdx.json`, and `.provenance.json` sidecars. Release workflows now build, verify, attest, and publish these artifacts.
 - Known limitation: self-contained runtime lifecycle commands are intended for bundled installs; npm/developer installs remain supported separately and still use the existing `code-intel update` npm flow.
 
+### 🔗 Graph-Aware API Contracts
+
+- Added normalized HTTP producer/consumer contract facts (`HttpRouteFact`, `HttpRequestShapeFact`, `HttpResponseShapeFact`, `HttpConsumerFact`) additive to existing route discovery, projected onto the existing `route` graph node/`handles` edge plus new `api_shape`/`api_consumer` nodes and `accepts_shape`/`returns_shape`/`consumes_api` edges.
+- Extended the Express, Fastify, NestJS, and ASP.NET Core framework adapters to extract nested router/controller prefix composition, middleware/guard evidence, and statically-knowable request/response shapes (named DTO references or inline object-literal keys), never fabricating a shape that cannot be proven.
+- Added static consumer extraction for `fetch`, Axios (including `axios.create()` base-URL clients), and Angular `HttpClient`, with bounded local data-flow tracking of destructured/member-accessed response keys.
+- Added a producer-consumer matcher (`matcher.ts`) resolving consumers to routes by HTTP method + normalized path only — simple name/substring equality never produces an exact link; ambiguous or dynamic-URL cases report `candidate-set`/`unresolved` certainty with a hard, configurable candidate cap.
+- Added a compatibility engine (`compatibility.ts`) classifying base/head route changes as `compatible`/`potentially-breaking`/`breaking`/`unknown` — route removal, method change, required-request-field addition, request/response type-category change, response-field removal, success-status removal, and additive-optional-field rules, weighted by which consumers are actually known to read the affected field. A change is never reported safe when shape or consumer evidence is incomplete.
+- Added `api_contract`, `api_impact`, and `api_drift` MCP tools; matching `GET /api/v1/api-contract`, `/api-impact`, and `/api-drift` HTTP routes (documented in the OpenAPI spec); and `code-intel api-contract`, `api-impact`, `api-drift` CLI commands (`--verbose` prints matcher performance counters: producer/consumer fact counts, exact/candidate-set/unresolved match counts, candidate-cap hits, comparison count, elapsed time).
+- Extended `pr_impact` with an additive `apiImpact` section (routes + resolved consumers) whenever a changed file contains an API-contract route; existing `pr_impact` fields are unchanged when it does not.
+- Extended `group sync` to resolve cross-repo route↔consumer links using the same method+normalized-path matcher instead of route-name equality/substring matching; two repos that happen to register identically-named-but-unrelated routes no longer produce a false link.
+- Extended Generation V2 metadata with an `apiContractSchemaVersion`/`apiContractFingerprint` pair; a generation with an incompatible API-contract schema forces full reanalysis instead of appearing fresh.
+- Added a "Contract" tab to the Web UI's node detail panel for `route`-kind nodes: method/path/framework/handler, middleware/auth evidence, request/response shape with per-shape coverage, and known consumers with match certainty — visually distinguishing "no known consumer" (unresolved/incomplete matching) from "proven no consumer" (matching complete, none found).
+- Known limitation: producer support covers Express, Fastify, NestJS, and ASP.NET Core; consumer support covers `fetch`, Axios, and Angular `HttpClient`. Other frameworks already detected for route discovery (Spring, FastAPI/Flask/Django, Go HTTP routers, Laravel/Symfony/Rails) do not yet emit API-contract facts and are unaffected by this change. `api_drift` compares two separately-indexed repositories; it does not yet perform git branch/ref diffing.
+
 ## [1.0.10] - 2026-08-03
 
 ### 🗃️ Generation V2

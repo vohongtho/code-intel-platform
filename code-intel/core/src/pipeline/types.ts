@@ -53,6 +53,8 @@ export interface PipelineContext {
   resolverFingerprint?: string;
   evidenceSchemaVersion?: number;
   evidenceSchemaFingerprint?: string;
+  apiContractSchemaVersion?: string;
+  apiContractFingerprint?: string;
   resolutionInstrumentation?: import('../resolution/indexes.js').ResolutionInstrumentation;
   resolutionIndexes?: import('../resolution/indexes.js').ResolutionIndexes;
   /**

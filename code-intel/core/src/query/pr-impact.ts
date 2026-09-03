@@ -1,6 +1,23 @@
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
 import type { AnalysisBoundary, AnalysisCertainty, AnalysisCoverage, CodeEdge } from '../shared/index.js';
 import { riskFromCount, summarizeEdgeTrust } from './trust.js';
+import {
+  buildRouteContractView,
+  collectGraphFacts,
+  matchConsumersToRoutes,
+  type ConsumerMatchView,
+  type RouteContractView,
+} from '../semantic/api-contracts/index.js';
+
+export interface PRApiImpact {
+  /** Routes whose source file is among the changed files. */
+  routes: RouteContractView[];
+  /** Known consumers (exact or candidate) resolved to any of those routes. */
+  consumers: ConsumerMatchView[];
+  /** True only when every consumer match used to build this section was itself complete
+   * (no candidate-cap truncation) — mirrors api_impact's own coverage semantics. */
+  consumerCoverageComplete: boolean;
+}
 
 export interface PRImpactChangedSymbol {
   name: string;
@@ -22,6 +39,16 @@ export interface PRImpactResult {
   certainty?: AnalysisCertainty;
   coverage?: AnalysisCoverage;
   boundaries?: readonly AnalysisBoundary[];
+  /** Additive: present only when at least one changed file contains an API-contract route.
+   * Absent (not an empty object) when there is nothing to report, so existing consumers that
+   * don't know about this field see no change in shape. */
+  apiImpact?: PRApiImpact;
+}
+
+function isChangedFile(filePath: string, changedFiles: readonly string[]): boolean {
+  return changedFiles.some(
+    (changedFile) => filePath === changedFile || filePath.endsWith(changedFile) || changedFile.endsWith(filePath),
+  );
 }
 
 /**
@@ -165,6 +192,31 @@ export function computePRImpact(
 
   const aggregateTrust = summarizeEdgeTrust(allTrustEdges, repoDir);
 
+  const { routes, consumers, shapesByFingerprint } = collectGraphFacts(graph);
+  const changedRoutes = routes.filter((route) => isChangedFile(route.filePath, changedFiles));
+  let apiImpact: PRApiImpact | undefined;
+  if (changedRoutes.length > 0) {
+    const changedRouteIds = new Set(changedRoutes.map((route) => route.factId));
+    const matches = matchConsumersToRoutes(routes, consumers, repoDir ?? 'local');
+    const consumerByFactId = new Map(consumers.map((consumer) => [consumer.factId, consumer]));
+    const relevantMatches = matches.filter((match) => match.candidates.some((candidate) => changedRouteIds.has(candidate.targetId)));
+    apiImpact = {
+      routes: changedRoutes.map((route) => buildRouteContractView(route, shapesByFingerprint)),
+      consumers: relevantMatches.map((match) => {
+        const consumer = consumerByFactId.get(match.referenceId);
+        return {
+          consumerFactId: match.referenceId,
+          filePath: consumer?.filePath ?? 'unknown',
+          startLine: consumer?.sourceRange.startLine,
+          clientLibrary: consumer?.clientLibrary ?? 'fetch',
+          consumedKeys: consumer?.consumedKeys ?? [],
+          match,
+        };
+      }),
+      consumerCoverageComplete: matches.every((match) => match.coverage.complete),
+    };
+  }
+
   return {
     changedSymbols,
     impactedSymbols,
@@ -175,5 +227,6 @@ export function computePRImpact(
     certainty: aggregateTrust.certainty,
     coverage: aggregateTrust.coverage,
     boundaries: aggregateTrust.boundaries,
+    apiImpact,
   };
 }

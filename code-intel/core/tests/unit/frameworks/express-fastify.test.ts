@@ -55,4 +55,22 @@ describe('express and fastify framework adapters', () => {
     assert.ok(bundle.facts.some((fact) => 'routeKind' in fact && fact.path === '/users'));
     assert.ok(bundle.facts.some((fact) => 'registrationKind' in fact && fact.targetText === 'preHandler'));
   });
+
+  it('does not detect a plain Express app (bare app.get, no fastify identifier/import/dependency) as fastify', () => {
+    // Regression test: this exact shape used to score high enough on fastify's old
+    // registration signal (which accepted a bare `app.` receiver) to make plain Express
+    // routes silently get mislabeled as fastify wherever framework facts merge by node id.
+    const source = [
+      "const express = require('express');",
+      'const app = express();',
+      "app.get('/users/:id', getUser);",
+    ].join('\n');
+
+    const detection = fastifyFrameworkAdapter.detect({
+      workspaceRoot: '/repo',
+      filePaths: ['src/app.js'],
+      fileCache: new Map([['src/app.js', source]]),
+    });
+    assert.equal(detection.confidence, 'none');
+  });
 });

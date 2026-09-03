@@ -1,5 +1,11 @@
 import type { Language } from '../shared/languages.js';
 import type { SemanticAnchors, SourceRange } from './anchors.js';
+import type {
+  HttpConsumerFact,
+  HttpRequestShapeFact,
+  HttpResponseShapeFact,
+  HttpRouteFact,
+} from './api-contracts/types.js';
 
 export type FactId = string;
 export type SemanticCapability =
@@ -190,4 +196,8 @@ export type SemanticFact =
   | RegistrationFact
   | DependencyBindingFact
   | RouteFact
-  | EmbeddedRegionFact;
+  | EmbeddedRegionFact
+  | HttpRouteFact
+  | HttpRequestShapeFact
+  | HttpResponseShapeFact
+  | HttpConsumerFact;

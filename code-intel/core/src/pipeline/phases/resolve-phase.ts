@@ -7,6 +7,7 @@ import { materializeSemanticRelationships } from '../../resolution/materialize-r
 import { createEvidenceStore, EVIDENCE_SCHEMA_VERSION } from '../../evidence/store.js';
 import { getSchemaDdlFingerprint } from '../../storage/schema.js';
 import { getAllLanguageModules } from '../../languages/registry.js';
+import { API_CONTRACT_SCHEMA_VERSION } from '../../semantic/api-contracts/types.js';
 
 export const resolvePhase: Phase = {
   name: 'resolve',
@@ -33,6 +34,10 @@ export const resolvePhase: Phase = {
         resolverVersion: RESOLVER_VERSION,
       }))
       .digest('hex');
+    context.apiContractSchemaVersion = API_CONTRACT_SCHEMA_VERSION;
+    context.apiContractFingerprint = crypto.createHash('sha256')
+      .update(JSON.stringify({ apiContractSchemaVersion: API_CONTRACT_SCHEMA_VERSION }))
+      .digest('hex');
     context.compatibilityReceipt = {
       ddlFingerprint: getSchemaDdlFingerprint(),
       analyzerFingerprint: crypto.createHash('sha256')
@@ -51,6 +56,7 @@ export const resolvePhase: Phase = {
       identityFingerprint: context.identityFingerprint ?? 'symbol-identity-v2',
       resolverFingerprint: context.resolverFingerprint,
       evidenceFingerprint: context.evidenceSchemaFingerprint,
+      apiContractFingerprint: context.apiContractFingerprint,
     };
 
     const evidenceStore = createEvidenceStore(context.workspaceRoot);

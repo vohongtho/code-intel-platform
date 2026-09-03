@@ -37,7 +37,9 @@ describe('nest framework adapter', () => {
     });
 
     assert.ok(bundle.facts.some((fact) => 'registrationKind' in fact && fact.registrationKind === 'controller'));
-    assert.ok(bundle.facts.some((fact) => 'routeKind' in fact && fact.path === 'list'));
+    // Path composes the @Controller() prefix with the @Get() path (fixed gap: these used to
+    // project as two disconnected route facts with only the local method path retained).
+    assert.ok(bundle.facts.some((fact) => 'routeKind' in fact && fact.path === 'users/list'));
     assert.ok(bundle.facts.some((fact) => 'bindingKind' in fact && 'tokenText' in fact && fact.tokenText === 'UsersService'));
     assert.ok(bundle.facts.some((fact) => 'registrationKind' in fact && fact.registrationKind === 'provider'));
   });

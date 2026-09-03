@@ -15,6 +15,8 @@ import { createKnowledgeGraph, type KnowledgeGraph } from '../../../src/graph/kn
 import { generateNodeId } from '../../../src/graph/id-generator.js';
 import { detectLanguage } from '../../../src/shared/index.js';
 import { getLanguageFactAdapter } from '../../../src/semantic/adapters/registry.js';
+import { expressFrameworkAdapter } from '../../../src/frameworks/adapters/express.js';
+import { fetchConsumerAdapter } from '../../../src/semantic/api-contracts/consumers/fetch.js';
 import { projectFactBundle } from '../../../src/semantic/graph-projector.js';
 import { buildResolutionIndexes, createResolutionInstrumentation } from '../../../src/resolution/indexes.js';
 import { materializeSemanticRelationships } from '../../../src/resolution/materialize-relationships.js';
@@ -35,12 +37,23 @@ export type WorkspaceFiles = Record<string, string>;
 
 export const HARNESS_COMPATIBILITY = computeSemanticCompatibility();
 
+/**
+ * Also runs the Express producer adapter and fetch consumer adapter per file (in addition to
+ * the per-language declaration/call/import adapter) so API-contract convergence — HttpRouteFact/
+ * HttpConsumerFact/shape facts — is exercised by the same full-vs-incremental machinery as
+ * every other fact kind. Framework/consumer `detect`+`extract` are per-file here for harness
+ * simplicity; both are no-ops (empty facts) for fixtures that don't match their signals, so
+ * this is purely additive for every pre-existing (non-API) convergence test.
+ */
 function extractFacts(relativePath: string, source: string): SemanticFact[] {
   const lang = detectLanguage(relativePath);
-  if (!lang) return [];
-  return [...getLanguageFactAdapter(lang).extract({
-    language: lang, filePath: relativePath, workspaceRoot: '.', source,
-  }).facts];
+  const languageFacts = lang
+    ? getLanguageFactAdapter(lang).extract({ language: lang, filePath: relativePath, workspaceRoot: '.', source }).facts
+    : [];
+  const view = { workspaceRoot: '.', filePaths: [relativePath], fileCache: new Map([[relativePath, source]]) };
+  const routeFacts = expressFrameworkAdapter.extract(view).facts;
+  const consumerFacts = fetchConsumerAdapter.extract(view).facts;
+  return [...languageFacts, ...routeFacts, ...consumerFacts];
 }
 
 function seedFileNode(graph: KnowledgeGraph, relativePath: string): void {

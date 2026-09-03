@@ -241,6 +241,19 @@ describe('resolveAnalysisPlan', () => {
     } finally { fs.rmSync(value.root, { recursive: true, force: true }); }
   });
 
+  it('selects full semantic reanalysis when the API-contract schema fingerprint mismatches', () => {
+    const value = fixture();
+    try {
+      value.metadata.apiContractSchemaVersion = '1.0.10';
+      value.metadata.apiContractFingerprint = 'api-contract-fp-old';
+      const plan = resolveAnalysisPlan({ args: ['analyze'], metadata: value.metadata, snapshot: value.snapshot, source: unchanged });
+      assert.equal(plan.mode, 'publish');
+      if (plan.mode !== 'publish') return;
+      assert.equal(plan.evolution, 'full-reanalysis');
+      assert.equal(plan.graph, 'full');
+    } finally { fs.rmSync(value.root, { recursive: true, force: true }); }
+  });
+
   it('seeds existing artifacts and metadata conservatively when change scope is unknown', () => {
     const value = fixture();
     try {

@@ -107,3 +107,27 @@ Track producer facts, consumer facts, resolved links, ambiguous links, dynamic b
 ## Failure semantics
 
 Adapter failure is bounded to the file/framework unit and recorded diagnostically. Missing response shape does not delete a known route; it reduces shape coverage. Missing consumer resolution does not fabricate a producer target.
+
+## Baseline inventory (task 1.1–1.3)
+
+Actual paths differ from the paths named in `tasks.md`; `code-intel/core/src/shared/types.ts` does not exist. Shared graph types are `shared/graph-types.ts` + `shared/evidence-types.ts`, re-exported (with `identity/contracts.ts` and `semantic/index.ts`) through `shared/index.ts`.
+
+**Authoritative today, extended (not replaced):**
+- `NodeKind` `'route'` and `EdgeKind` `'handles'` (`shared/graph-types.ts`) — the route node/handler-edge shape stays; new HTTP fields are additive.
+- `RouteFact` (`semantic/facts.ts`) — the existing route fact from the framework-adapter pipeline (`frameworks/adapters/{express,nest,aspnet-core}.ts` → `semantic/graph-projector.ts#projectFactBundle`). API-contract producer facts extend this pipeline rather than forking a second route scanner.
+- `resolution/contracts.ts` (`ResolutionCertainty`, `ResolutionCandidate`, `ResolutionCoverage`, `ResolutionOutcome`) and `shared/evidence-types.ts` (`RelationshipCertainty`, `AnalysisBoundary`) — the matcher and compatibility engine reuse this certainty/evidence vocabulary instead of inventing a parallel one.
+- `evidence/store.ts` (`SqliteResolutionEvidenceStore`, `evidence.db`) — API-contract match/compatibility evidence is recorded here, keyed by the same `referenceId`/`resolverVersion` pattern.
+- `incremental/artifact-delta-plan.ts` + `pipeline/analysis-plan.ts`'s fingerprint-mismatch check — API-contract invalidation routes through this, not a separate ad-hoc path.
+- `CodeNode.metadata` / `CodeEdge.metadata` (untyped JSON bag, already persisted end-to-end through `storage/graph-loader.ts` and reloaded by `multi-repo/graph-from-db.ts`) — first home for new API-contract fields; promote to a typed DB column only if query performance requires it.
+
+**Additive (new):**
+- `HttpRouteFact`, `HttpRequestShapeFact`, `HttpResponseShapeFact`, `HttpConsumerFact` (`semantic/api-contracts/types.ts`), added to the `SemanticFact` union in `semantic/facts.ts` so they flow through the existing `FactBundle`/`createFactBundle`/`projectFactBundle` plumbing.
+- New edge kinds for consumer→route and route→shape relationships (`shared/graph-types.ts` `EdgeKind`).
+- `apiContractFingerprint`/`apiContractSchemaVersion` in `storage/index-generation.ts` (`IndexGenerationManifestV2`) and `storage/metadata.ts` (`IndexMetadata`), checked in `analysis-plan.ts#hasSemanticFingerprintMismatch`.
+- `api_contract`/`api_impact`/`api_drift` MCP tools, HTTP routes, and (optionally) CLI surface — wholly new, no existing equivalent.
+
+**Known extraction gaps (framework adapters, pre-existing):**
+- `frameworks/adapters/{express,nest,aspnet-core}.ts` extract method + path + handler only — no middleware list as structured data, no request/response shape, no guards/DTOs. This is exactly the gap tasks 3.1–3.5 close.
+- Nest's `@Controller()` prefix is emitted as a separate `RegistrationFact` that produces its own disconnected `route` node (`graph-projector.ts` registration-fact branch), not composed into the `@Get()` route's path — today a single Nest endpoint can produce two unlinked `route` nodes. Task 3.3 must compose the controller prefix directly into the route fact's `path` instead of relying on the registration-fact node.
+- `multi-repo/group-sync.ts#matchContracts` matches routes by **exact `name` string equality or substring/camelCase containment** (`name-match`/`route-match`, confidence 0.4 on substring) — this is the weak "URL substring matching" the proposal (task 5.1, 8.6) replaces with method+normalized-path evidence.
+- No consumer-side (fetch/Axios/Angular) extraction exists anywhere in the codebase; no request/response shape extraction exists anywhere. Both are wholly new (sections 2–4).

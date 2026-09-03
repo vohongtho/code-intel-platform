@@ -60,6 +60,7 @@ import { LANGUAGE_FACT_ADAPTERS } from '../semantic/adapters/registry.js';
 import { RESOLUTION_LANGUAGE_STRATEGIES } from '../resolution/languages.js';
 import { RESOLVER_VERSION } from '../resolution/contracts.js';
 import { EVIDENCE_SCHEMA_VERSION } from '../evidence/store.js';
+import { API_CONTRACT_SCHEMA_VERSION } from '../semantic/api-contracts/types.js';
 import { resolveIndexSnapshot } from '../storage/index-snapshot.js';
 import { writeContextFiles } from './context-writer.js';
 import { AGENT_OPTIONS, isValidRepoRelativeTargetPath, resolveBuiltinTarget } from './agent-targets.js';
@@ -458,6 +459,7 @@ function buildAnalyzerCompatibilityReceipt(args: {
     resolverFingerprint: args.resolverFingerprint ?? sha256({ resolverVersion: RESOLVER_VERSION, factSchemaVersion: args.factSchemaVersion ?? FACT_SCHEMA_VERSION, identityFingerprint: args.identityFingerprint }),
     evidenceFingerprint: sha256({ evidenceSchemaVersion: EVIDENCE_SCHEMA_VERSION, resolverVersion: RESOLVER_VERSION }),
     embeddingFingerprint: args.embeddingMetadata ? sha256(args.embeddingMetadata) : undefined,
+    apiContractFingerprint: sha256({ apiContractSchemaVersion: API_CONTRACT_SCHEMA_VERSION }),
   };
 }
 
@@ -1022,6 +1024,8 @@ async function analyzeWorkspace(targetPath: string, options?: {
       resolverFingerprint: compatibilityReceipt.resolverFingerprint,
       evidenceSchemaVersion: context.evidenceSchemaVersion,
       evidenceSchemaFingerprint: compatibilityReceipt.evidenceFingerprint,
+      apiContractSchemaVersion: API_CONTRACT_SCHEMA_VERSION,
+      apiContractFingerprint: compatibilityReceipt.apiContractFingerprint,
       graphVerification: context.graphVerification,
       bm25Verification: {
         status: 'verified',
@@ -4556,6 +4560,142 @@ program
     } else if (failOn === 'MEDIUM' && (result.riskSummary.HIGH > 0 || result.riskSummary.MEDIUM > 0)) {
       process.exit(1);
     }
+  });
+
+// ─── api-contract / api-impact / api-drift ────────────────────────────────────
+// Unique output vs `impact`/`pr-impact`: HTTP method/normalized-path/request-response
+// shape and statically-resolved fetch/Axios/Angular consumer matches with certainty —
+// none of which the symbol/call-graph-oriented `impact`/`pr-impact` commands expose.
+
+function formatApiCoverage(coverage: { complete: boolean; boundaryReasons: readonly string[] }): string {
+  return coverage.complete ? 'complete' : `partial (${coverage.boundaryReasons.join(', ') || 'unspecified'})`;
+}
+
+function printApiMatchInstrumentation(instrumentation: {
+  producerFactCount: number;
+  consumerFactCount: number;
+  exactMatchCount: number;
+  candidateSetMatchCount: number;
+  unresolvedMatchCount: number;
+  candidateCapHitCount: number;
+  comparisonCount: number;
+  elapsedMs: number;
+}): void {
+  console.log('  ── matcher performance ──');
+  console.log(`  producer facts:     ${instrumentation.producerFactCount}`);
+  console.log(`  consumer facts:     ${instrumentation.consumerFactCount}`);
+  console.log(`  exact matches:      ${instrumentation.exactMatchCount}`);
+  console.log(`  candidate-set:      ${instrumentation.candidateSetMatchCount}`);
+  console.log(`  unresolved:         ${instrumentation.unresolvedMatchCount}`);
+  console.log(`  candidate-cap hits: ${instrumentation.candidateCapHitCount}`);
+  console.log(`  comparisons:        ${instrumentation.comparisonCount}`);
+  console.log(`  elapsed:            ${instrumentation.elapsedMs}ms\n`);
+}
+
+program
+  .command('api-contract')
+  .description('Show the full contract (request/response shape + known consumers) for HTTP route(s)')
+  .option('--method <method>', 'HTTP method, e.g. GET, POST (omit to match any method)')
+  .option('--route-path <path>', 'Normalized route path, e.g. /users/{}')
+  .option('--route-fact-id <id>', 'Exact route fact id from a prior api-contract/api-impact result')
+  .option('--dir <path>', 'Repo path (default: current dir)')
+  .option('--format <fmt>', 'Output format: text|json (default: text)', 'text')
+  .option('--verbose', 'Print matcher performance counters (producer/consumer fact counts, match certainty breakdown, elapsed time)')
+  .action(async (opts: { method?: string; routePath?: string; routeFactId?: string; dir?: string; format?: string; verbose?: boolean }) => {
+    const repoPath = path.resolve(opts.dir ?? '.');
+    const { graph } = await loadOrAnalyzeWorkspace(repoPath);
+    const { getApiContract, createApiMatchInstrumentation } = await import('../semantic/api-contracts/index.js');
+    const instrumentation = createApiMatchInstrumentation();
+    const result = getApiContract(graph, { method: opts.method, normalizedPath: opts.routePath, routeFactId: opts.routeFactId }, 'local', instrumentation);
+
+    if ((opts.format ?? 'text').toLowerCase() === 'json') {
+      console.log(JSON.stringify(opts.verbose ? { result, instrumentation } : result, null, 2));
+      return;
+    }
+    if (result.length === 0) {
+      console.log('\n  No matching route contract found.\n');
+      return;
+    }
+    console.log('\n  ◈  API Contract\n');
+    for (const entry of result) {
+      console.log(`  ${entry.route.method} ${entry.route.path}  (${entry.route.framework})`);
+      console.log(`    normalized:  ${entry.route.normalizedPath}`);
+      console.log(`    coverage:    ${formatApiCoverage(entry.route.coverage)}`);
+      console.log(`    consumers:   ${entry.consumers.length}`);
+      for (const consumer of entry.consumers) {
+        console.log(`      - ${consumer.filePath}:${consumer.startLine ?? '?'} (${consumer.clientLibrary}, ${consumer.match.certainty})`);
+      }
+      console.log('');
+    }
+    if (opts.verbose) printApiMatchInstrumentation(instrumentation);
+  });
+
+program
+  .command('api-impact')
+  .description('Blast radius for HTTP route(s): matching route(s) plus every statically resolved consumer')
+  .option('--method <method>', 'HTTP method, e.g. GET, POST (omit to match any method)')
+  .option('--route-path <path>', 'Normalized route path, e.g. /users/{}')
+  .option('--route-fact-id <id>', 'Exact route fact id from a prior api-contract/api-impact result')
+  .option('--dir <path>', 'Repo path (default: current dir)')
+  .option('--format <fmt>', 'Output format: text|json (default: text)', 'text')
+  .option('--verbose', 'Print matcher performance counters (producer/consumer fact counts, match certainty breakdown, elapsed time)')
+  .action(async (opts: { method?: string; routePath?: string; routeFactId?: string; dir?: string; format?: string; verbose?: boolean }) => {
+    const repoPath = path.resolve(opts.dir ?? '.');
+    const { graph } = await loadOrAnalyzeWorkspace(repoPath);
+    const { getApiImpact, createApiMatchInstrumentation } = await import('../semantic/api-contracts/index.js');
+    const instrumentation = createApiMatchInstrumentation();
+    const result = getApiImpact(graph, { method: opts.method, normalizedPath: opts.routePath, routeFactId: opts.routeFactId }, 'local', instrumentation);
+
+    if ((opts.format ?? 'text').toLowerCase() === 'json') {
+      console.log(JSON.stringify(opts.verbose ? { result, instrumentation } : result, null, 2));
+      return;
+    }
+    console.log('\n  ◈  API Impact\n');
+    console.log(`  Routes matched: ${result.routes.length}`);
+    for (const route of result.routes) {
+      console.log(`    ${route.method} ${route.path}  coverage: ${formatApiCoverage(route.coverage)}`);
+    }
+    console.log(`\n  Known consumers: ${result.consumers.length}`);
+    for (const consumer of result.consumers) {
+      console.log(`    - ${consumer.filePath}:${consumer.startLine ?? '?'} (${consumer.clientLibrary}, ${consumer.match.certainty})`);
+    }
+    console.log('');
+    if (opts.verbose) printApiMatchInstrumentation(instrumentation);
+  });
+
+program
+  .command('api-drift')
+  .description('Compare API contracts between two separately indexed repo checkouts (base vs head)')
+  .requiredOption('--base-dir <path>', 'Repo path for the base (before) state')
+  .option('--head-dir <path>', 'Repo path for the head (after) state (default: current dir)')
+  .option('--format <fmt>', 'Output format: text|json (default: text)', 'text')
+  .option('--verbose', 'Print matcher performance counters (producer/consumer fact counts, match certainty breakdown, elapsed time)')
+  .action(async (opts: { baseDir: string; headDir?: string; format?: string; verbose?: boolean }) => {
+    const { graph: baseGraph } = await loadOrAnalyzeWorkspace(path.resolve(opts.baseDir));
+    const { graph: headGraph } = await loadOrAnalyzeWorkspace(path.resolve(opts.headDir ?? '.'));
+    const { getApiDrift, createApiMatchInstrumentation } = await import('../semantic/api-contracts/index.js');
+    const instrumentation = createApiMatchInstrumentation();
+    const result = getApiDrift(baseGraph, headGraph, 'local', instrumentation);
+
+    if ((opts.format ?? 'text').toLowerCase() === 'json') {
+      console.log(JSON.stringify(opts.verbose ? { result, instrumentation } : result, null, 2));
+      return;
+    }
+    console.log('\n  ◈  API Drift\n');
+    console.log(`  Base routes: ${result.coverage.baseRoutes}  Head routes: ${result.coverage.headRoutes}  Consumer coverage: ${result.coverage.consumerCoverageComplete ? 'complete' : 'partial'}\n`);
+    if (result.findings.length === 0) {
+      console.log('  No compatibility findings.\n');
+    } else {
+      for (const finding of result.findings) {
+        console.log(`  [${finding.verdict.toUpperCase()}] ${finding.rule}${finding.fieldKey ? ` (${finding.fieldKey})` : ''}`);
+        console.log(`    ${finding.reason}`);
+        if (finding.affectedConsumerFactIds.length > 0) {
+          console.log(`    affected consumers: ${finding.affectedConsumerFactIds.length}`);
+        }
+      }
+      console.log('');
+    }
+    if (opts.verbose) printApiMatchInstrumentation(instrumentation);
   });
 
 // ─── complexity ───────────────────────────────────────────────────────────────

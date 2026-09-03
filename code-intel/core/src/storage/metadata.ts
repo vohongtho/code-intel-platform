@@ -56,6 +56,8 @@ export interface IndexMetadata {
   resolverFingerprint?: string;
   evidenceSchemaVersion?: number;
   evidenceSchemaFingerprint?: string;
+  apiContractSchemaVersion?: string;
+  apiContractFingerprint?: string;
   frameworkFingerprint?: string;
   frameworkDetections?: string[];
   factDiagnostics?: Array<{

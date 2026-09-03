@@ -102,4 +102,63 @@ describe('graph projector', () => {
     assert.equal(projected.edges.some((edge) => edge.kind === 'handles' && edge.label?.includes('express | 0.1.0')), true);
     assert.equal(projected.edges.some((edge) => edge.kind === 'implements' && edge.label?.includes('nest | 0.1.0')), true);
   });
+
+  it('merges an HttpRouteFact onto the same route node as its RouteFact and links inline shapes', () => {
+    const sourceRange = { filePath: 'src/app.ts', startLine: 2, startColumn: 0, endLine: 2, endColumn: 20 };
+    const bundle = createFactBundle({
+      schema: { version: FACT_SCHEMA_VERSION, language: Language.TypeScript, adapterId: 'framework:express', frameworkDetections: ['express'] },
+      facts: [
+        {
+          factId: 'route',
+          language: Language.TypeScript,
+          filePath: 'src/app.ts',
+          sourceRange,
+          routeKind: 'http',
+          path: '/users',
+          method: 'get',
+          framework: 'express',
+          frameworkEvidence: { frameworkId: 'express', adapterVersion: '0.2.0', registrationText: 'app.get', exact: true },
+        },
+        {
+          factId: 'http-route',
+          language: Language.TypeScript,
+          filePath: 'src/app.ts',
+          sourceRange,
+          routeFactKind: 'http-route',
+          method: 'GET',
+          path: '/users',
+          normalizedPath: '/users',
+          middlewareRefs: [],
+          responses: [{ status: 200, responseShapeRef: 'fp1', evidence: 'exact' }],
+          framework: 'express',
+          coverage: { complete: true, boundaryReasons: [] },
+        },
+        {
+          factId: 'response-shape',
+          language: Language.TypeScript,
+          filePath: 'src/app.ts',
+          sourceRange,
+          shapeFactKind: 'http-response-shape',
+          status: 200,
+          shapeFingerprint: 'fp1',
+          origin: { kind: 'inline', fields: [{ key: 'id', required: true }] },
+          coverage: { complete: true, boundaryReasons: [] },
+        },
+      ],
+      diagnostics: [],
+    });
+
+    const projected = projectFactBundle(bundle);
+    const routeNodes = projected.nodes.filter((node) => node.kind === 'route' && node.name === 'GET /users');
+    assert.equal(routeNodes.length, 1, 'HttpRouteFact must merge onto the single existing route node, not duplicate it');
+    const routeNode = routeNodes[0]!;
+    assert.equal((routeNode.metadata as { apiContract?: { normalizedPath?: string } }).apiContract?.normalizedPath, '/users');
+
+    const shapeNode = projected.nodes.find((node) => node.kind === 'api_shape');
+    assert.ok(shapeNode);
+    assert.equal(
+      projected.edges.some((edge) => edge.kind === 'returns_shape' && edge.source === routeNode.id && edge.target === shapeNode.id),
+      true,
+    );
+  });
 });

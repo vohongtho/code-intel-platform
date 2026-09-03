@@ -18,7 +18,9 @@ export type NodeKind =
   | 'route'
   | 'cluster'
   | 'flow'
-  | 'vulnerability';
+  | 'vulnerability'
+  | 'api_shape'
+  | 'api_consumer';
 
 export type EdgeKind =
   | 'contains'
@@ -34,7 +36,10 @@ export type EdgeKind =
   | 'handles'
   | 'has_vulnerability'
  | 'deprecated_use'
- | 'tested_by';
+ | 'tested_by'
+ | 'accepts_shape'
+ | 'returns_shape'
+ | 'consumes_api';
 
 export type SecuritySignalType =
   | 'SQL_INJECTION'

@@ -5,3 +5,4 @@ export * from './fact-bundle.js';
 export * from './graph-projector.js';
 export * from './adapters/adapter.js';
 export * from './adapters/registry.js';
+export * from './api-contracts/index.js';

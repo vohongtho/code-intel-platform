@@ -43,6 +43,7 @@ import { loadGraphFromDB } from '../multi-repo/graph-from-db.js';
 import { createKnowledgeGraph } from '../graph/knowledge-graph.js';
 import { CURRENT_SCHEMA_VERSION } from '../migrations/migration-runner.js';
 import { resolveSymbolTarget } from '../cli/symbol-target.js';
+import { getApiContract, getApiDrift, getApiImpact, type RouteSelector } from '../semantic/api-contracts/index.js';
 import { computeBlastRadiusWithTrust } from './blast-radius-trust.js';
 
 /** Strip null/undefined fields and serialize compactly — saves ~10–15% tokens on sparse graph nodes */
@@ -110,6 +111,7 @@ export function createMcpServer(
     'overview', 'search', 'context', 'blast_radius', 'file_symbols', 'find_path', 'list_exports', 'routes', 'clusters', 'flows',
     'detect_changes', 'query', 'raw_query', 'explain_relationship', 'pr_impact', 'similar_symbols', 'health_report',
     'suggest_tests', 'cluster_summary', 'deprecated_usage', 'complexity_hotspots', 'coverage_gaps', 'secrets', 'vulnerability_scan',
+    'api_contract', 'api_impact', 'api_drift',
   ]);
   const withRepoSelector = <T extends { name: string; inputSchema?: { type?: string; properties?: Record<string, unknown> } }>(tool: T): T => (
     REPO_SELECTABLE_TOOL_NAMES.has(tool.name) && tool.inputSchema?.type === 'object'
@@ -470,6 +472,47 @@ export function createMcpServer(
             },
             ..._tokenProp,
           },
+        },
+      },
+      {
+        name: 'api_contract',
+        description: 'Full contract for one or more HTTP routes: method, normalized path, request/response shape (fields, requiredness, coverage), and known consumers with match certainty. Additive to `routes` — richer evidence for routes whose framework adapter emits API-contract facts (Express, Fastify, NestJS, ASP.NET Core).',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            method: { type: 'string', description: 'HTTP method, e.g. GET, POST (omit to match any method)' },
+            path: { type: 'string', description: 'Normalized route path, e.g. /users/{} (parameter segments normalized to {})' },
+            route_fact_id: { type: 'string', description: 'Exact route fact id from a prior api_contract/api_impact result' },
+            route_node_id: { type: 'string', description: "The route's graph node id (as returned by inspect/routes/query)" },
+            ..._tokenProp,
+          },
+        },
+      },
+      {
+        name: 'api_impact',
+        description: 'Blast radius for one or more HTTP routes: the route(s) matching the selector plus every statically resolved consumer (fetch/Axios/Angular HttpClient), each with match strategy and certainty. Use before changing a route\'s request/response shape.',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            method: { type: 'string', description: 'HTTP method, e.g. GET, POST (omit to match any method)' },
+            path: { type: 'string', description: 'Normalized route path, e.g. /users/{} (parameter segments normalized to {})' },
+            route_fact_id: { type: 'string', description: 'Exact route fact id from a prior api_contract/api_impact result' },
+            route_node_id: { type: 'string', description: "The route's graph node id (as returned by inspect/routes/query)" },
+            ..._tokenProp,
+          },
+        },
+      },
+      {
+        name: 'api_drift',
+        description: 'Compares API contracts between two separately indexed repositories (base vs head) and reports compatibility findings (compatible/potentially-breaking/breaking/unknown) with consumer evidence and coverage. Both sides must already be indexed and registered (see the `repos` tool) — this does not perform git branch/ref diffing.',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            base_repo_id: { type: 'string', description: 'Repo id to use as the base (before) state' },
+            head_repo_id: { type: 'string', description: 'Repo id to use as the head (after) state (defaults to the active/selected repo)' },
+            ..._tokenProp,
+          },
+          required: ['base_repo_id'],
         },
       },
       {
@@ -859,6 +902,7 @@ const GRAPH_BACKED_TOOLS = new Set([
   'overview', 'inspect', 'context', 'blast_radius', 'file_symbols', 'find_path', 'list_exports', 'routes', 'clusters', 'flows',
   'detect_changes', 'query', 'raw_query', 'explain_relationship', 'pr_impact', 'similar_symbols', 'health_report',
   'suggest_tests', 'cluster_summary', 'deprecated_usage', 'complexity_hotspots', 'coverage_gaps', 'secrets', 'vulnerability_scan',
+  'api_contract', 'api_impact', 'api_drift',
 ]);
 
 export async function dispatchTool(
@@ -1783,6 +1827,56 @@ export async function dispatchTool(
 
         const result = computePRImpact(graph, changedFiles, maxHops, activeWorkspaceRoot);
         return { content: [{ type: 'text', text: compact(result) }] };
+      }
+
+      // ── api_contract ───────────────────────────────────────────────────────
+      case 'api_contract': {
+        const selector: RouteSelector = {
+          method: a.method as string | undefined,
+          normalizedPath: a.path as string | undefined,
+          routeFactId: a.route_fact_id as string | undefined,
+          routeNodeId: a.route_node_id as string | undefined,
+        };
+        const result = getApiContract(graph, selector, activeRepoName);
+        return { content: [{ type: 'text', text: compact(result) }] };
+      }
+
+      // ── api_impact ─────────────────────────────────────────────────────────
+      case 'api_impact': {
+        const selector: RouteSelector = {
+          method: a.method as string | undefined,
+          normalizedPath: a.path as string | undefined,
+          routeFactId: a.route_fact_id as string | undefined,
+          routeNodeId: a.route_node_id as string | undefined,
+        };
+        const result = getApiImpact(graph, selector, activeRepoName);
+        return { content: [{ type: 'text', text: compact(result) }] };
+      }
+
+      // ── api_drift ──────────────────────────────────────────────────────────
+      case 'api_drift': {
+        const baseRepoId = a.base_repo_id as string | undefined;
+        if (!baseRepoId) {
+          return { content: [{ type: 'text', text: compact({ error: 'base_repo_id is required.' }) }], isError: true };
+        }
+        try {
+          const baseCtx = await ensureRepoLoaded(baseRepoId, undefined, activeRepoName, activeWorkspaceRoot, graph);
+          if (baseCtx.missingIndex) return missingIndexResult(baseCtx);
+
+          const headRepoId = a.head_repo_id as string | undefined;
+          const headCtx = headRepoId
+            ? await ensureRepoLoaded(headRepoId, undefined, activeRepoName, activeWorkspaceRoot, graph)
+            : (activeContext ?? { graph, missingIndex: false } as LoadedRepoGraph);
+          if (headCtx.missingIndex) return missingIndexResult(headCtx);
+
+          const result = getApiDrift(baseCtx.graph, headCtx.graph, activeRepoName);
+          return { content: [{ type: 'text', text: compact(result) }] };
+        } catch (err) {
+          return {
+            content: [{ type: 'text', text: compact({ error: err instanceof Error ? err.message : String(err) }) }],
+            isError: true,
+          };
+        }
       }
 
       // ── similar_symbols ────────────────────────────────────────────────────

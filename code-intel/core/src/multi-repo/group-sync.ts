@@ -16,6 +16,8 @@ import { parseOpenAPIContracts } from './schema-parsers/openapi-parser.js';
 import { parseGraphQLContracts } from './schema-parsers/graphql-parser.js';
 import { parseProtoContracts } from './schema-parsers/proto-parser.js';
 import { computeContractSimilarity } from './type-similarity.js';
+import { collectGraphFacts, matchApiContracts, routeFactFromNode, type ScopedFact } from '../semantic/api-contracts/index.js';
+import type { HttpConsumerFact, HttpRouteFact } from '../semantic/api-contracts/types.js';
 
 // ─── Extract contracts from a single repo's graph ────────────────────────────
 
@@ -47,8 +49,11 @@ function extractContracts(
       });
     }
 
-    // route nodes → 'route' contracts
+    // route nodes → 'route' contracts. When the route carries API-contract evidence
+    // (HttpRouteFact via graph-projector.ts), attach method/normalizedPath so matching can use
+    // real evidence instead of name equality/substring — see matchRouteConsumersViaFacts.
     if (node.kind === 'route') {
+      const routeFact = routeFactFromNode(node);
       contracts.push({
         repoName,
         repoPath,
@@ -58,6 +63,8 @@ function extractContracts(
         nodeKind: node.kind,
         filePath: node.filePath,
         signature: node.content?.split('\n')[0]?.trim(),
+        method: routeFact?.method,
+        normalizedPath: routeFact?.normalizedPath,
       });
     }
 
@@ -93,12 +100,57 @@ function extractContracts(
 
 // ─── Match contracts across repos ────────────────────────────────────────────
 
+/**
+ * Resolves cross-repo route → consumer links using the same evidence-based matcher as
+ * `api_impact`/`api_drift` (method + normalized-path equality, never name/substring) instead
+ * of a second, name-based route parser. Only routes/consumers that carry API-contract facts
+ * (Express/Fastify/NestJS/ASP.NET Core producers; fetch/Axios/Angular consumers) participate —
+ * other frameworks' route contracts still appear in `contracts` for listing, just without a
+ * cross-repo link, which is a strictly more honest result than a name-based guess.
+ */
+function matchRouteConsumersViaFacts(memberGraphs: ReadonlyArray<{ repoId: string; graph: KnowledgeGraph }>): ContractLink[] {
+  const routes: ScopedFact<HttpRouteFact>[] = [];
+  const consumers: ScopedFact<HttpConsumerFact>[] = [];
+  for (const { repoId, graph } of memberGraphs) {
+    const facts = collectGraphFacts(graph);
+    for (const fact of facts.routes) routes.push({ repoId, fact });
+    for (const fact of facts.consumers) consumers.push({ repoId, fact });
+  }
+  if (routes.length === 0 || consumers.length === 0) return [];
+
+  const matches = matchApiContracts(routes, consumers);
+  const routesByFactId = new Map(routes.map((route) => [route.fact.factId, route]));
+  const consumersByFactId = new Map(consumers.map((consumer) => [consumer.fact.factId, consumer]));
+
+  const links: ContractLink[] = [];
+  for (const match of matches) {
+    if (match.certainty === 'unresolved') continue;
+    const consumer = consumersByFactId.get(match.referenceId);
+    if (!consumer) continue;
+    for (const candidate of match.candidates) {
+      const route = routesByFactId.get(candidate.targetId);
+      if (!route || route.repoId === consumer.repoId) continue; // cross-repo links only, matching matchContracts' i!==j scope
+      links.push({
+        providerRepo: route.repoId,
+        providerContract: `${route.fact.method} ${route.fact.normalizedPath}`,
+        consumerRepo: consumer.repoId,
+        consumerContract: `${consumer.fact.filePath}:${consumer.fact.sourceRange.startLine}`,
+        matchKind: 'route-match',
+        confidence: candidate.confidence,
+      });
+    }
+  }
+  return links;
+}
+
 function matchContracts(allContracts: Contract[]): ContractLink[] {
   const links: ContractLink[] = [];
 
-  // Group contracts by repo
+  // Group contracts by repo. Route contracts are excluded here — they're matched separately
+  // by matchRouteConsumersViaFacts using real method/path/consumer evidence, not name equality.
+  const nonRouteContracts = allContracts.filter((c) => c.kind !== 'route');
   const byRepo = new Map<string, Contract[]>();
-  for (const c of allContracts) {
+  for (const c of nonRouteContracts) {
     const arr = byRepo.get(c.repoName) ?? [];
     arr.push(c);
     byRepo.set(c.repoName, arr);
@@ -128,7 +180,7 @@ function matchContracts(allContracts: Contract[]): ContractLink[] {
             providerContract: provider.name,
             consumerRepo: consumer.repoName,
             consumerContract: consumer.name,
-            matchKind: provider.kind === 'route' ? 'route-match' : 'name-match',
+            matchKind: 'name-match', // route-kind contracts are excluded above; see matchRouteConsumersViaFacts
             confidence: Math.min(1.0, confidence),
           });
         } else {
@@ -171,6 +223,7 @@ function matchContracts(allContracts: Contract[]): ContractLink[] {
 export async function syncGroup(group: RepoGroup): Promise<GroupSyncResult> {
   const registry = loadRegistry();
   const allContracts: Contract[] = [];
+  const memberGraphs: Array<{ repoId: string; graph: KnowledgeGraph }> = [];
 
   for (const member of group.members) {
     // Resolve the actual repo path from the registry
@@ -198,6 +251,7 @@ export async function syncGroup(group: RepoGroup): Promise<GroupSyncResult> {
       continue;
     }
 
+    memberGraphs.push({ repoId: regEntry.name, graph });
     const contracts = extractContracts(graph, regEntry.name, regEntry.path);
 
     // Schema-file contracts (OpenAPI, GraphQL, Protobuf)
@@ -245,7 +299,7 @@ export async function syncGroup(group: RepoGroup): Promise<GroupSyncResult> {
     allContracts.push(...contracts);
   }
 
-  const links = matchContracts(allContracts);
+  const links = [...matchContracts(allContracts), ...matchRouteConsumersViaFacts(memberGraphs)];
 
   return {
     groupName: group.name,

@@ -26,6 +26,7 @@ export interface AnalyzerCompatibilityReceipt {
   resolverFingerprint: string;
   evidenceFingerprint?: string;
   embeddingFingerprint?: string;
+  apiContractFingerprint?: string;
 }
 
 export type ArtifactStatus =
@@ -80,6 +81,8 @@ export interface IndexGenerationManifestV2 {
   resolverFingerprint?: string;
   evidenceSchemaVersion?: number;
   evidenceSchemaFingerprint?: string;
+  apiContractSchemaVersion?: string;
+  apiContractFingerprint?: string;
   artifacts: IndexArtifactName[];
   artifactDetails?: Partial<Record<IndexArtifactName, IndexArtifactDetails>>;
 }
@@ -164,7 +167,7 @@ export function normalizeIndexGenerationManifest(value: unknown): IndexGeneratio
     for (const key of ['ddlFingerprint', 'analyzerFingerprint', 'languageRegistryFingerprint', 'factSchemaFingerprint', 'identityFingerprint', 'resolverFingerprint'] as const) {
       if (typeof record[key] !== 'string') return null;
     }
-    for (const key of ['evidenceFingerprint', 'embeddingFingerprint'] as const) {
+    for (const key of ['evidenceFingerprint', 'embeddingFingerprint', 'apiContractFingerprint'] as const) {
       if (record[key] !== undefined && typeof record[key] !== 'string') return null;
     }
   }
@@ -190,6 +193,8 @@ export function normalizeIndexGenerationManifest(value: unknown): IndexGeneratio
   if (candidate.resolverFingerprint !== undefined && typeof candidate.resolverFingerprint !== 'string') return null;
   if (candidate.evidenceSchemaVersion !== undefined && !Number.isInteger(candidate.evidenceSchemaVersion)) return null;
   if (candidate.evidenceSchemaFingerprint !== undefined && typeof candidate.evidenceSchemaFingerprint !== 'string') return null;
+  if (candidate.apiContractSchemaVersion !== undefined && typeof candidate.apiContractSchemaVersion !== 'string') return null;
+  if (candidate.apiContractFingerprint !== undefined && typeof candidate.apiContractFingerprint !== 'string') return null;
 
   return {
     version: 2,
@@ -211,6 +216,8 @@ export function normalizeIndexGenerationManifest(value: unknown): IndexGeneratio
     resolverFingerprint: candidate.resolverFingerprint as string | undefined,
     evidenceSchemaVersion: candidate.evidenceSchemaVersion as number | undefined,
     evidenceSchemaFingerprint: candidate.evidenceSchemaFingerprint as string | undefined,
+    apiContractSchemaVersion: candidate.apiContractSchemaVersion as string | undefined,
+    apiContractFingerprint: candidate.apiContractFingerprint as string | undefined,
     artifacts: [...new Set(candidate.artifacts as IndexArtifactName[])],
     artifactDetails: candidate.artifactDetails as IndexGenerationManifestV2['artifactDetails'],
   };
@@ -405,6 +412,8 @@ export function publishIndexGeneration(
         resolverFingerprint?: string;
         evidenceSchemaVersion?: number;
         evidenceSchemaFingerprint?: string;
+        apiContractSchemaVersion?: string;
+        apiContractFingerprint?: string;
       }
     : undefined;
   if (metadataRecord?.compatibilityReceipt && !metadataRecord.factSchemaFingerprint) {
@@ -418,6 +427,9 @@ export function publishIndexGeneration(
   }
   if (metadataRecord?.compatibilityReceipt?.evidenceFingerprint && !metadataRecord.evidenceSchemaFingerprint) {
     metadataRecord.evidenceSchemaFingerprint = metadataRecord.compatibilityReceipt.evidenceFingerprint;
+  }
+  if (metadataRecord?.compatibilityReceipt?.apiContractFingerprint && !metadataRecord.apiContractFingerprint) {
+    metadataRecord.apiContractFingerprint = metadataRecord.compatibilityReceipt.apiContractFingerprint;
   }
   verifyProducedPersisted(metadataRecord?.graphVerification, 'graph.db');
   verifyProducedPersisted(metadataRecord?.bm25Verification, 'bm25.db');
@@ -461,6 +473,8 @@ export function publishIndexGeneration(
     resolverFingerprint: metadataRecord?.resolverFingerprint,
     evidenceSchemaVersion: metadataRecord?.evidenceSchemaVersion,
     evidenceSchemaFingerprint: metadataRecord?.evidenceSchemaFingerprint,
+    apiContractSchemaVersion: metadataRecord?.apiContractSchemaVersion,
+    apiContractFingerprint: metadataRecord?.apiContractFingerprint,
     artifacts,
     artifactDetails,
   };

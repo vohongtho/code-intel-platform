@@ -22,6 +22,8 @@ export const NODE_TABLE_MAP: Record<NodeKind, string> = {
   cluster: 'cluster_nodes',
   flow: 'flow_nodes',
   vulnerability: 'vuln_nodes',
+  api_shape: 'api_shape_nodes',
+  api_consumer: 'api_consumer_nodes',
 };
 
 export const ALL_NODE_TABLES = [...new Set(Object.values(NODE_TABLE_MAP))];
