@@ -28,6 +28,7 @@ import {
 import { syncGroup } from '../multi-repo/group-sync.js';
 import { queryGroup } from '../multi-repo/group-query.js';
 import { getGroupContractDrift } from '../multi-repo/contract-drift/service.js';
+import type { Contract } from '../multi-repo/types.js';
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -424,6 +425,8 @@ export function createMcpServer(
             head_ref: { type: 'string', description: 'Head Git ref (branch/tag/commit)' },
             base_snapshot_ids: { type: 'object', additionalProperties: { type: 'string' }, description: 'Optional per-repo base snapshot ids keyed by repoId' },
             head_snapshot_ids: { type: 'object', additionalProperties: { type: 'string' }, description: 'Optional per-repo head snapshot ids keyed by repoId' },
+            kind: { type: 'string', enum: ['export', 'route', 'schema', 'event', 'graphql', 'grpc'], description: 'Restrict analysis to one contract kind (optional)' },
+            repository_id: { type: 'string', description: 'Restrict analysis to contracts produced by one member repo, by stable repo ID (optional)' },
             limit: { type: 'number', description: 'Presentation limit for returned findings; analysis still computes total findings' },
             allow_cache: { type: 'boolean', description: 'Reuse snapshot cache when available (default: true)' },
             ..._tokenProp,
@@ -1798,6 +1801,8 @@ export async function dispatchTool(
             headRef,
             baseSnapshotIds,
             headSnapshotIds,
+            kind: a.kind as Contract['kind'] | undefined,
+            repositoryId: a.repository_id as string | undefined,
             limit: a.limit as number | undefined,
             allowCache: (a.allow_cache as boolean | undefined) ?? true,
           });

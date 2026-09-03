@@ -643,6 +643,8 @@ export const openApiSpec = {
           { name: 'name', in: 'path', required: true, schema: { type: 'string' } },
           { name: 'base_ref', in: 'query', required: true, schema: { type: 'string' } },
           { name: 'head_ref', in: 'query', required: true, schema: { type: 'string' } },
+          { name: 'kind', in: 'query', description: 'Restrict analysis to one contract kind', schema: { type: 'string', enum: ['export', 'route', 'schema', 'event', 'graphql', 'grpc'] } },
+          { name: 'repository_id', in: 'query', description: 'Restrict analysis to contracts produced by one member repo (stable repo ID)', schema: { type: 'string' } },
           { name: 'limit', in: 'query', schema: { type: 'integer' } },
           { name: 'allow_cache', in: 'query', schema: { type: 'boolean' } },
         ],

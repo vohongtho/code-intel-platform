@@ -22,6 +22,7 @@ import { listGroups, loadGroup, saveGroup, deleteGroup, groupExists, addMember, 
 import { syncGroup } from '../multi-repo/group-sync.js';
 import { queryGroup } from '../multi-repo/group-query.js';
 import { getGroupContractDrift } from '../multi-repo/contract-drift/service.js';
+import type { Contract } from '../multi-repo/types.js';
 import { createKnowledgeGraph } from '../graph/knowledge-graph.js';
 import { loadGraphFromDB } from '../multi-repo/graph-from-db.js';
 import { loadRegistry, findRepoByName } from '../storage/repo-registry.js';
@@ -1617,11 +1618,15 @@ export function createApp(
       res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: 'base_ref and head_ref are required' } });
       return;
     }
+    const kind = Array.isArray(req.query['kind']) ? req.query['kind'][0] : req.query['kind'];
+    const repositoryId = Array.isArray(req.query['repository_id']) ? req.query['repository_id'][0] : req.query['repository_id'];
     try {
       const result = await getGroupContractDrift({
         groupName: req.params.name,
         baseRef: String(baseRef),
         headRef: String(headRef),
+        kind: kind ? (String(kind) as Contract['kind']) : undefined,
+        repositoryId: repositoryId ? String(repositoryId) : undefined,
         limit: req.query['limit'] ? Number(req.query['limit']) : undefined,
         allowCache: req.query['allow_cache'] === undefined ? true : String(req.query['allow_cache']) !== 'false',
       });

@@ -386,4 +386,99 @@ describe('getGroupContractDrift', () => {
     fs.rmSync(backendPath, { recursive: true, force: true });
     fs.rmSync(sharedPath, { recursive: true, force: true });
   });
+
+  it('narrows analysis with kind/repositoryId filters while still loading every member repo', async () => {
+    const backendPath = mkRepo('drift-backend-filter');
+    const sharedPath = mkRepo('drift-shared-filter');
+    await writeSnapshotGraph(backendPath, 'base-backend', routeGraph(['id', 'ssn']));
+    await writeSnapshotGraph(backendPath, 'head-backend', routeGraph(['id']));
+    await writeSnapshotGraph(sharedPath, 'base-shared', schemaGraph('export interface UserDto {\n  id: string;\n  email?: string;\n}'));
+    await writeSnapshotGraph(sharedPath, 'head-shared', schemaGraph('export interface UserDto {\n  id: string;\n}'));
+
+    saveRegistry([
+      { id: 'filter-backend', name: 'filter-backend', path: backendPath, indexedAt: new Date().toISOString(), stats: { nodes: 2, edges: 0, files: 1 } },
+      { id: 'filter-shared', name: 'filter-shared', path: sharedPath, indexedAt: new Date().toISOString(), stats: { nodes: 1, edges: 0, files: 1 } },
+    ]);
+    saveGroup({
+      name: 'drift-filter-group',
+      createdAt: new Date().toISOString(),
+      members: [
+        { groupPath: 'backend', repoId: 'filter-backend', registryName: 'filter-backend' },
+        { groupPath: 'shared', repoId: 'filter-shared', registryName: 'filter-shared' },
+      ],
+    });
+    saveSyncResult({
+      groupName: 'drift-filter-group',
+      syncedAt: new Date().toISOString(),
+      memberCount: 2,
+      contracts: [],
+      links: [],
+      consumerIndex: { byContractId: {}, bySemanticFingerprint: {} },
+    });
+
+    const baseSnapshotIds = { 'filter-backend': 'base-backend', 'filter-shared': 'base-shared' };
+    const headSnapshotIds = { 'filter-backend': 'head-backend', 'filter-shared': 'head-shared' };
+
+    const schemaOnly = await getGroupContractDrift({ groupName: 'drift-filter-group', baseSnapshotIds, headSnapshotIds, kind: 'schema' });
+    assert.equal(schemaOnly.findings.length > 0, true);
+    assert.equal(schemaOnly.findings.every((finding) => finding.kind === 'schema'), true);
+    assert.equal(schemaOnly.findings.some((finding) => finding.changeKind === 'response-field-removed'), false);
+
+    const backendRepoOnly = await getGroupContractDrift({ groupName: 'drift-filter-group', baseSnapshotIds, headSnapshotIds, repositoryId: 'filter-backend' });
+    assert.equal(backendRepoOnly.findings.length > 0, true);
+    assert.equal(backendRepoOnly.findings.every((finding) => finding.repositoryId === 'filter-backend'), true);
+    assert.equal(backendRepoOnly.findings.some((finding) => finding.changeKind === 'schema-property-removed'), false);
+
+    // metrics.contractsLoaded reflects the filtered set, not the group's raw total.
+    const unfiltered = await getGroupContractDrift({ groupName: 'drift-filter-group', baseSnapshotIds, headSnapshotIds });
+    assert.equal(schemaOnly.metrics.contractsLoaded < unfiltered.metrics.contractsLoaded, true);
+
+    fs.rmSync(backendPath, { recursive: true, force: true });
+    fs.rmSync(sharedPath, { recursive: true, force: true });
+  });
+
+  it('truncates presented findings under a limit while totalFindings still reflects the full analysis (spec: presentation limits must not alter analysis truth)', async () => {
+    const backendPath = mkRepo('drift-backend-truncate');
+    const sharedPath = mkRepo('drift-shared-truncate');
+    await writeSnapshotGraph(backendPath, 'base-backend', routeGraph(['id', 'ssn']));
+    await writeSnapshotGraph(backendPath, 'head-backend', routeGraph(['id']));
+    await writeSnapshotGraph(sharedPath, 'base-shared', schemaGraph('export interface UserDto {\n  id: string;\n  email?: string;\n}'));
+    await writeSnapshotGraph(sharedPath, 'head-shared', schemaGraph('export interface UserDto {\n  id: string;\n}'));
+
+    saveRegistry([
+      { id: 'trunc-backend', name: 'trunc-backend', path: backendPath, indexedAt: new Date().toISOString(), stats: { nodes: 2, edges: 0, files: 1 } },
+      { id: 'trunc-shared', name: 'trunc-shared', path: sharedPath, indexedAt: new Date().toISOString(), stats: { nodes: 1, edges: 0, files: 1 } },
+    ]);
+    saveGroup({
+      name: 'drift-truncate-group',
+      createdAt: new Date().toISOString(),
+      members: [
+        { groupPath: 'backend', repoId: 'trunc-backend', registryName: 'trunc-backend' },
+        { groupPath: 'shared', repoId: 'trunc-shared', registryName: 'trunc-shared' },
+      ],
+    });
+    saveSyncResult({
+      groupName: 'drift-truncate-group',
+      syncedAt: new Date().toISOString(),
+      memberCount: 2,
+      contracts: [],
+      links: [],
+      consumerIndex: { byContractId: {}, bySemanticFingerprint: {} },
+    });
+
+    const baseSnapshotIds = { 'trunc-backend': 'base-backend', 'trunc-shared': 'base-shared' };
+    const headSnapshotIds = { 'trunc-backend': 'head-backend', 'trunc-shared': 'head-shared' };
+
+    const full = await getGroupContractDrift({ groupName: 'drift-truncate-group', baseSnapshotIds, headSnapshotIds });
+    assert.equal(full.totalFindings >= 2, true, 'fixture must produce at least 2 findings for truncation to be meaningful');
+
+    const truncated = await getGroupContractDrift({ groupName: 'drift-truncate-group', baseSnapshotIds, headSnapshotIds, limit: 1 });
+    assert.equal(truncated.findings.length, 1);
+    assert.equal(truncated.totalFindings, full.totalFindings, 'totalFindings must reflect the full analysis, not the presented page');
+    assert.equal(truncated.summary.totalFindings, full.totalFindings, 'the summary itself must also reflect full analysis truth');
+    assert.equal(truncated.summary.coverage.incompleteReasons.includes('output-truncated:1'), true);
+
+    fs.rmSync(backendPath, { recursive: true, force: true });
+    fs.rmSync(sharedPath, { recursive: true, force: true });
+  });
 });

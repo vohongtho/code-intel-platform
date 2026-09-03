@@ -21,6 +21,12 @@ export interface GroupContractDriftRequest {
   allowCache?: boolean;
   cachePolicy?: SnapshotCachePolicy;
   limit?: number;
+  /** Restrict analysis to one contract kind. Filters which contracts are compared — every
+   * member repo's state is still loaded, since other repos may still be relevant consumers. */
+  kind?: Contract['kind'];
+  /** Restrict analysis to contracts produced by one member repository (by stable repo ID, not
+   * the mutable registry name). */
+  repositoryId?: string;
 }
 
 /** Observability counters for one `getGroupContractDrift` call (task 10.1). Every count is
@@ -309,7 +315,18 @@ export async function getGroupContractDrift(request: GroupContractDriftRequest):
   const consumerIndexByFingerprint = sync.consumerIndex?.bySemanticFingerprint ?? {};
   const contractMap = new Map(sync.contracts.filter((contract) => contract.contractId).map((contract) => [contract.contractId!, contract]));
   const syncContractBySourceId = new Map(sync.contracts.filter((contract) => contract.sourceCanonicalId).map((contract) => [contract.sourceCanonicalId!, contract]));
-  const allIds = [...new Set([...baseContracts.keys(), ...headContracts.keys()])].sort();
+  let allIds = [...new Set([...baseContracts.keys(), ...headContracts.keys()])].sort();
+  if (request.kind || request.repositoryId) {
+    allIds = allIds.filter((contractId) => {
+      const baseEntry = baseContracts.get(contractId);
+      const headEntry = headContracts.get(contractId);
+      const kind = headEntry?.contract.kind ?? baseEntry?.contract.kind;
+      const repositoryId = headEntry?.version.repositoryId ?? baseEntry?.version.repositoryId;
+      if (request.kind && kind !== request.kind) return false;
+      if (request.repositoryId && repositoryId !== request.repositoryId) return false;
+      return true;
+    });
+  }
   const findings: ContractDriftFinding[] = [];
   let comparisonsExecuted = 0;
   let fingerprintsUnchangedSkipped = 0;
