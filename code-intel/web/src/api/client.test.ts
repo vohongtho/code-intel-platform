@@ -67,3 +67,50 @@ describe('ApiClient.queryGQL', () => {
     await expect(client.queryGQL('COUNT function')).rejects.toThrow(InvalidGQLResultError);
   });
 });
+
+describe('ApiClient.graphDiff', () => {
+  beforeEach(() => {
+    fetchMock.mockReset();
+  });
+
+  it('posts base_ref/head_ref and returns an ok outcome on 200', async () => {
+    const diff = { base: {}, head: {}, coverage: { complete: true, examinedCount: 0, incompleteReasons: [] }, flows: { supported: false, reason: 'x' }, clusters: { supported: false, reason: 'x' }, nodes: [], nodesTotal: 0, nodesOffset: 0, nodesLimit: 200, nodesHasMore: false, relationships: [], relationshipsTotal: 0, relationshipsOffset: 0, relationshipsLimit: 200, relationshipsHasMore: false, baseSnapshot: { status: 'built', boundaries: [] }, headSnapshot: { status: 'built', boundaries: [] } };
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ csrfToken: 'csrf-1' }) })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => diff });
+
+    const client = new ApiClient('http://localhost:4747');
+    const result = await client.graphDiff({ base_ref: 'main', head_ref: 'feature' });
+
+    expect(result).toEqual({ status: 'ok', diff });
+    expect(fetchMock).toHaveBeenNthCalledWith(2, 'http://localhost:4747/api/v1/graph/diff', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ base_ref: 'main', head_ref: 'feature' }),
+    }));
+  });
+
+  it('returns an unavailable outcome (not a rejection) on 422', async () => {
+    const detail = {
+      error: { code: 'ANALYSIS_FAILED', message: 'Semantic graph diff unavailable for one or both refs' },
+      baseSnapshot: { status: 'built', boundaries: [] },
+      headSnapshot: { status: 'failed', boundaries: [], error: 'analysis crashed' },
+    };
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ csrfToken: 'csrf-1' }) })
+      .mockResolvedValueOnce({ ok: false, status: 422, json: async () => detail });
+
+    const client = new ApiClient('http://localhost:4747');
+    const result = await client.graphDiff({ base_ref: 'main', head_ref: 'broken' });
+
+    expect(result).toEqual({ status: 'unavailable', detail });
+  });
+
+  it('throws for other error statuses (e.g. 403 role-gated)', async () => {
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ csrfToken: 'csrf-1' }) })
+      .mockResolvedValueOnce({ ok: false, status: 403, statusText: 'Forbidden', json: async () => ({ error: { message: 'Requires analyst role' } }) });
+
+    const client = new ApiClient('http://localhost:4747');
+    await expect(client.graphDiff({ base_ref: 'main', head_ref: 'feature' })).rejects.toThrow('Requires analyst role');
+  });
+});

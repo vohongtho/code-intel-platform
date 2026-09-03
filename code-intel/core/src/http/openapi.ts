@@ -310,6 +310,41 @@ export const openApiSpec = {
         },
       },
     },
+    '/graph/diff': {
+      post: {
+        tags: ['Graph'],
+        summary: 'Compare the semantic graph between two Git refs (branches, tags, or commits)',
+        description: 'Independently analyzes base_ref and head_ref in isolated temporary checkouts — never touching the working tree, HEAD, or the currently published index — and compares the resulting semantic graphs: added/removed/changed/moved/renamed symbols, relationship and certainty changes, and (unless include_contracts is false) API-contract deltas. Snapshots are cached per (ref, analyzer version). Requires the analyst role.',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  base_ref: { type: 'string', description: 'Base Git ref (branch/tag/commit)' },
+                  head_ref: { type: 'string', description: 'Head Git ref (branch/tag/commit)' },
+                  repoId: { type: 'string' },
+                  include_contracts: { type: 'boolean', default: true },
+                  allow_cache: { type: 'boolean', default: true, description: 'Reuse a cached snapshot when available; set false to force a full rebuild of both sides' },
+                  nodes_offset: { type: 'integer', default: 0 },
+                  nodes_limit: { type: 'integer', default: 200, maximum: 2000 },
+                  relationships_offset: { type: 'integer', default: 0 },
+                  relationships_limit: { type: 'integer', default: 200, maximum: 2000 },
+                },
+                required: ['base_ref', 'head_ref'],
+              },
+            },
+          },
+        },
+        responses: {
+          '200': { description: 'Semantic graph diff, paginated node/relationship delta lists, and coverage', content: { 'application/json': { schema: { type: 'object' } } } },
+          '400': { description: 'Missing base_ref/head_ref', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '404': { description: 'Repository not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '422': { description: 'One or both refs could not be built into a trustworthy snapshot', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
     '/flows': {
       get: {
         tags: ['Graph'],

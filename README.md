@@ -37,6 +37,10 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
   - Producer support: Express, Fastify, NestJS, ASP.NET Core. Consumer support: `fetch`, Axios, Angular `HttpClient`. Other route-discovery frameworks are unaffected and do not yet emit contract facts.
   - Never fabricates a link or a "safe" verdict — ambiguous matches, dynamic URLs, and unresolved shapes surface as `candidate-set`/`unresolved` certainty and incomplete coverage instead of guessing.
   - `group sync` uses the same matcher to resolve cross-repo route↔consumer links instead of name/substring equality.
+- **Branch-Aware Semantic Graph Diff** _(v1.0.11)_ — compares the semantic graph between two Git refs (branches, tags, or commits) instead of only mapping textual hunks onto one graph state: added/removed/changed/moved/renamed symbols, relationship and call-site certainty changes, and API-contract deltas. Each ref is analyzed independently in an isolated temporary `git worktree` checkout — never touching your working tree, HEAD, or the currently published index — and cached per (ref, analyzer version) under `.code-intel/snapshots/`. `code-intel graph diff --base <ref> --head <ref>`, a `graph_diff` MCP tool, `POST /api/v1/graph/diff` HTTP route, and an optional `analysisMode: "semantic-snapshot"` on `pr_impact` that adds the semantic diff alongside (never in place of) its existing textual-hunk blast radius.
+  - Rename/move detection is conservative: a symbol is only reported as `renamed`/`moved` when its declaration content is byte-identical across an unambiguous one-to-one pairing (optionally corroborated by Git's own rename detection); a shared display name alone is never treated as proof. Ambiguous candidates (e.g. identical-body overloads) are left as separate added/removed deltas annotated with candidate correlation metadata, never merged.
+  - Coverage is always reported: a failed or unsupported ref never silently degrades to "no semantic impact" — `coverage.complete` and `coverage.incompleteReasons` (or, for `pr_impact`, `baseSnapshot`/`headSnapshot` boundaries) say why when a diff can't be produced or is partial.
+  - Flow and cluster deltas are not yet supported — their current node identity is a per-analysis-run enumeration index rather than a content fingerprint, so it isn't guaranteed stable across independent runs; the diff reports this explicitly (`flows`/`clusters: { supported: false, reason }`) instead of fabricating deltas.
 - **Correctness-First Incremental Analysis** _(v1.0.8)_ — detects committed, staged, unstaged, untracked, mtime-changed, and deleted files. Zero-change runs keep the fast path; any non-empty change set performs a clean full graph rebuild so cross-file `calls`, `imports`, `extends`, `implements`, clusters, and flows cannot be lost.
 - **Parallel Analysis** — `--parallel` flag runs parse + resolve phases on worker threads for large repos
 - **Selection-aware AI Context Files** — the first interactive `code-intel analyze` stores the selected agents in `.code-intel/agent-targets.json`; later analyses update only those selected repository instruction files, such as `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `.cursor/rules/code-intel.mdc`, `.kiro/steering/code-intel.md`, `.clinerules`, `.windsurfrules`, `.kilocode/rules/code-intel-rules.md`, or `.agents/rules/code-intel-rules.md`
@@ -668,6 +672,17 @@ npm run build && node tests/perf/search-relevance-bench.mjs
 
 The benchmark uses 10,003 symbols. Budgets: cold search `<250ms`; warm cached search `<25ms`.
 
+### Semantic graph diff
+
+```bash
+code-intel graph diff --base <ref> --head <ref>       # Compare the semantic graph between two Git refs
+code-intel graph diff --base main --head HEAD --json  # Full machine-readable diff
+code-intel graph diff --base v1.2.0 --head v1.3.0 --no-contracts  # Skip API-contract delta computation
+code-intel graph diff --base main --head HEAD --no-cache          # Force a full rebuild of both snapshots
+```
+
+Each ref is analyzed independently in an isolated temporary `git worktree` — your working tree, index, HEAD, and this repository's currently published index are never touched, on success or failure. Results are cached under `.code-intel/snapshots/`, keyed by (ref, analyzer version); a repeated diff against an unchanged ref is served from cache. See the Features section above for what is and isn't diffed (flow/cluster deltas are not yet supported).
+
 ### Groups (multi-repo / monorepo service tracking)
 
 ```bash
@@ -711,6 +726,7 @@ code-intel group status <name>                                             # Aud
 | `POST` | `/api/v1/grep` | Regex search in file content |
 | `GET`  | `/api/v1/flows` | List detected flows; accepts optional `repoId` |
 | `GET`  | `/api/v1/clusters` | List clusters; accepts optional `repoId` |
+| `POST` | `/api/v1/graph/diff` | Semantic graph diff between two Git refs (`base_ref`, `head_ref`, optional `repoId`); paginated `nodes`/`relationships`. Requires the `analyst` role. |
 
 Migration note: internal/UI-owned repo selectors now use `repoId`. Legacy flat `repo` inputs remain only as bounded compatibility adapters on selected surfaces during migration.
 
@@ -745,7 +761,8 @@ All tools are available to any MCP-capable editor (Claude Desktop, Claude Code, 
 | Tool | Input | Description |
 |------|-------|-------------|
 | `explain_relationship` | `from` (string), `to` (string) | Explain how two symbols are connected: directed paths, shared imports, and heritage (extends/implements). Returns up to 10 paths with at most 5 hops each plus additive trust fields such as `certainty`, `coverage`, path `strategy`, and evidence-backed `boundaries`. |
-| `pr_impact` | `changedFiles` (string[]), `diff` (string, optional), `maxHops` (number, default 2) | Given changed files or a unified diff, compute full blast radius with risk scores (`HIGH` / `MEDIUM` / `LOW` / `UNKNOWN`), test coverage gaps, top files to review, and additive trust summaries when impact coverage is incomplete. |
+| `pr_impact` | `changedFiles` (string[]), `diff` (string, optional), `maxHops` (number, default 2), `analysisMode` (`current-graph`\|`semantic-snapshot`, default `current-graph`), `base_ref`/`head_ref` (string, required when `analysisMode` is `semantic-snapshot`) | Given changed files or a unified diff, compute full blast radius with risk scores (`HIGH` / `MEDIUM` / `LOW` / `UNKNOWN`), test coverage gaps, top files to review, and additive trust summaries when impact coverage is incomplete. `analysisMode: "semantic-snapshot"` additionally builds isolated snapshots of `base_ref`/`head_ref` and adds a full semantic graph diff alongside (never replacing) the textual-hunk blast radius. |
+| `graph_diff` | `base_ref` (string), `head_ref` (string), `include_contracts` (boolean, default true), `allow_cache` (boolean, default true), `nodes_offset`/`nodes_limit`/`relationships_offset`/`relationships_limit` (number, paginated) | Compares the semantic graph between two Git refs of the active repository: added/removed/changed/moved/renamed symbols, relationship and certainty changes, and API-contract deltas. Each side is analyzed independently in an isolated temporary checkout and cached by (ref, analyzer version). Unlike `api_drift` (two already-indexed, already-registered repositories), this resolves and analyzes the refs itself. |
 | `similar_symbols` | `symbol` (string), `limit` (number, default 10) | Find symbols with similar names or structure using Levenshtein distance and kind matching. Useful for finding related functions, classes, or interfaces. |
 | `health_report` | `scope` (string, optional) | Code health signals for a scope: dead code, cycles, god nodes, orphan files, complexity hotspots. |
 | `suggest_tests` | `symbol` (string) | Suggest test cases for a symbol: call paths, suggested cases, existing tests, untested callers, plus additive trust fields when recommendations are derived from bounded or uncertain evidence. |

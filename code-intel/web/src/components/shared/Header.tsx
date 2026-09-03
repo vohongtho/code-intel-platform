@@ -272,6 +272,16 @@ export function Header({ onToggleAI, aiOpen }: Props) {
                 <button
                   onClick={() => {
                     setUserMenuOpen(false);
+                    navigate('/diff');
+                  }}
+                  className="w-full text-left px-4 py-2 text-sm text-text-secondary hover:bg-hover hover:text-text-primary transition flex items-center gap-2"
+                >
+                  <span className="text-text-muted">⇄</span>
+                  Graph Diff
+                </button>
+                <button
+                  onClick={() => {
+                    setUserMenuOpen(false);
                     dispatch({ type: 'SET_VIEW', view: 'settings' });
                     navigate(getSettingsPath());
                   }}

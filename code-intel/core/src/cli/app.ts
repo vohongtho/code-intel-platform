@@ -53,14 +53,9 @@ import { resolveEmbeddingUpdatePlan } from '../search/embedding-update-plan.js';
 import { EMBEDDING_MODELS, getDefaultEmbeddingModel, getEmbeddingModel, normalizeEmbeddingModelId } from '../search/embedding-model-registry.js';
 import type { PipelineContext } from '../pipeline/types.js';
 import { saveMetadata, loadMetadata, getDbPath, getVectorDbPath, loadAgentTargets, saveAgentTargets, computeIndexVersion, resolveEmbeddingMode, shouldRebuildEmbeddings, resolveAnalyzeMode, resolveParserForMetadata, type AgentTargetConfig, type AgentTargetSelection, type AgentTargetFormat, type EmbeddingMetadata } from '../storage/metadata.js';
-import { getSchemaDdlFingerprint } from '../storage/schema.js';
-import { getAllLanguageModules } from '../languages/registry.js';
-import { FACT_SCHEMA_VERSION } from '../semantic/fact-bundle.js';
-import { LANGUAGE_FACT_ADAPTERS } from '../semantic/adapters/registry.js';
-import { RESOLUTION_LANGUAGE_STRATEGIES } from '../resolution/languages.js';
-import { RESOLVER_VERSION } from '../resolution/contracts.js';
-import { EVIDENCE_SCHEMA_VERSION } from '../evidence/store.js';
 import { API_CONTRACT_SCHEMA_VERSION } from '../semantic/api-contracts/types.js';
+import { buildAnalyzerCompatibilityReceipt, CURRENT_IDENTITY_FINGERPRINT } from '../pipeline/compatibility-receipt.js';
+import { computeSemanticGraphDiff } from '../snapshots/service.js';
 import { resolveIndexSnapshot } from '../storage/index-snapshot.js';
 import { writeContextFiles } from './context-writer.js';
 import { AGENT_OPTIONS, isValidRepoRelativeTargetPath, resolveBuiltinTarget } from './agent-targets.js';
@@ -427,42 +422,6 @@ function sha256(value: unknown): string {
   return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
 
-function buildAnalyzerCompatibilityReceipt(args: {
-  parser: 'tree-sitter' | 'regex';
-  factSchemaVersion?: string;
-  identityFingerprint: string;
-  resolverFingerprint?: string;
-  embeddingMetadata?: Pick<EmbeddingMetadata, 'provider' | 'model' | 'dimension'>;
-}) {
-  const languageRegistryFingerprint = sha256(
-    getAllLanguageModules().map((mod) => ({
-      language: mod.lang,
-      query: mod.queries,
-      extensions: [...mod.fileExtensions].sort(),
-    })),
-  );
-  const analyzerFingerprint = sha256({
-    parser: args.parser,
-    factSchemaVersion: args.factSchemaVersion ?? FACT_SCHEMA_VERSION,
-    languageRegistryFingerprint,
-    languageFactAdapters: Object.entries(LANGUAGE_FACT_ADAPTERS)
-      .map(([language, adapter]) => ({ language, adapterId: adapter.adapterId }))
-      .sort((a, b) => a.language.localeCompare(b.language)),
-    resolutionLanguages: Object.keys(RESOLUTION_LANGUAGE_STRATEGIES).sort(),
-  });
-  return {
-    ddlFingerprint: getSchemaDdlFingerprint(),
-    analyzerFingerprint,
-    languageRegistryFingerprint,
-    factSchemaFingerprint: sha256({ version: args.factSchemaVersion ?? FACT_SCHEMA_VERSION, parser: args.parser }),
-    identityFingerprint: args.identityFingerprint,
-    resolverFingerprint: args.resolverFingerprint ?? sha256({ resolverVersion: RESOLVER_VERSION, factSchemaVersion: args.factSchemaVersion ?? FACT_SCHEMA_VERSION, identityFingerprint: args.identityFingerprint }),
-    evidenceFingerprint: sha256({ evidenceSchemaVersion: EVIDENCE_SCHEMA_VERSION, resolverVersion: RESOLVER_VERSION }),
-    embeddingFingerprint: args.embeddingMetadata ? sha256(args.embeddingMetadata) : undefined,
-    apiContractFingerprint: sha256({ apiContractSchemaVersion: API_CONTRACT_SCHEMA_VERSION }),
-  };
-}
-
 async function analyzeWorkspace(targetPath: string, options?: {
   silent?: boolean;
   force?: boolean;
@@ -636,7 +595,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
   let scannedFilePaths: string[] = [];
   let zeroChangeIncremental = false;
   let fullIndexGraph: KnowledgeGraph | null = null;
-  const currentIdentityFingerprint = 'symbol-identity-v2';
+  const currentIdentityFingerprint = CURRENT_IDENTITY_FINGERPRINT;
   const analyzeMode = resolveAnalyzeMode({
     explicitIncremental: options?.incremental,
     force: options?.force,
@@ -809,17 +768,31 @@ async function analyzeWorkspace(targetPath: string, options?: {
   const indexedGraph = fullIndexGraph ?? activeGraph;
   const indexedFileCount = isIncremental ? snapshotSourcePaths.length : context.filePaths.length;
 
-  const savedRepo = upsertRepo({
-    id: existingByPath?.id,
-    name: repoName,
-    path: workspaceRoot,
-    indexedAt: new Date().toISOString(),
-    stats: {
-      nodes: indexedGraph.size.nodes,
-      edges: indexedGraph.size.edges,
-      files: indexedFileCount,
-    },
-  });
+  // Semantic snapshot builds (see src/snapshots/) analyze throwaway Git-worktree
+  // checkouts that are deleted moments later. Registering them here would leave
+  // dangling registry entries pointing at removed directories, so this internal
+  // coordination flag (set only by the snapshot builder's spawned child, the same
+  // pattern as CODE_INTEL_ATOMIC_CHILD/CODE_INTEL_INDEX_STAGING_DIR) skips it.
+  const isSnapshotBuild = process.env['CODE_INTEL_SNAPSHOT_BUILD'] === '1';
+  const savedRepo = isSnapshotBuild
+    ? {
+        id: existingByPath?.id ?? crypto.randomUUID(),
+        name: repoName,
+        path: workspaceRoot,
+        indexedAt: new Date().toISOString(),
+        stats: { nodes: indexedGraph.size.nodes, edges: indexedGraph.size.edges, files: indexedFileCount },
+      }
+    : upsertRepo({
+        id: existingByPath?.id,
+        name: repoName,
+        path: workspaceRoot,
+        indexedAt: new Date().toISOString(),
+        stats: {
+          nodes: indexedGraph.size.nodes,
+          edges: indexedGraph.size.edges,
+          files: indexedFileCount,
+        },
+      });
 
   // Persist graph to LadybugDB — atomic swap: write to graph.db.new then rename
   let graphPersisted = false;
@@ -2987,6 +2960,93 @@ program
         console.log('');
       }
     }
+  });
+
+// ─── graph ───────────────────────────────────────────────────────────────────
+const graphCmd = program
+  .command('graph')
+  .description('Semantic graph snapshot and comparison commands');
+
+graphCmd
+  .command('diff')
+  .description('Compare the semantic graph between two Git refs (branches, tags, or commits)')
+  .requiredOption('--base <ref>', 'Base ref to compare from')
+  .requiredOption('--head <ref>', 'Head ref to compare to')
+  .option('-p, --path <path>', 'Path to the repository (default: current directory)', '.')
+  .option('--json', 'Output raw JSON instead of a human-readable summary')
+  .option('--no-contracts', 'Skip API-contract delta computation')
+  .option('--no-cache', 'Force a full rebuild of both snapshots, ignoring any cached entry')
+  .addHelpText('after', `
+  Independently analyzes two Git refs in isolated temporary checkouts — never
+  touching your working tree, index, or HEAD, and never publishing to this
+  repository's current index — then compares the resulting semantic graphs:
+  added/removed/changed/moved/renamed symbols, relationship and certainty
+  changes, and (unless --no-contracts) API-contract deltas.
+
+  Snapshots are cached per (ref, analyzer version) under
+  .code-intel/snapshots/ so repeated diffs against an unchanged ref are fast.
+
+  Examples:
+    $ code-intel graph diff --base main --head feature/my-branch
+    $ code-intel graph diff --base v1.2.0 --head v1.3.0 --json
+    $ code-intel graph diff --base main --head HEAD --no-contracts
+`)
+  .action(async (options: { base: string; head: string; path: string; json?: boolean; contracts?: boolean; cache?: boolean }) => {
+    const repoDir = path.resolve(options.path);
+    const { diff, base, head } = await computeSemanticGraphDiff({
+      repoDir,
+      base: options.base,
+      head: options.head,
+      includeContracts: options.contracts !== false,
+      allowCache: options.cache !== false,
+    });
+
+    if (options.json) {
+      console.log(JSON.stringify({ diff, base, head }, null, 2));
+      if (!diff) process.exitCode = 1;
+      return;
+    }
+
+    if (!diff) {
+      console.error('\n  ✗ Semantic graph diff unavailable\n');
+      for (const boundary of [...base.boundaries, ...head.boundaries]) {
+        console.error(`    ${boundary.kind}: ${boundary.message}`);
+      }
+      if (base.error) console.error(`    base: ${base.error}`);
+      if (head.error) console.error(`    head: ${head.error}`);
+      console.error('');
+      process.exitCode = 1;
+      return;
+    }
+
+    const nodeCounts = { added: 0, removed: 0, changed: 0, moved: 0 };
+    for (const node of diff.nodes) {
+      if (node.kind === 'moved' || node.kind === 'renamed') nodeCounts.moved += 1;
+      else if (node.kind === 'added') nodeCounts.added += 1;
+      else if (node.kind === 'removed') nodeCounts.removed += 1;
+      else if (node.kind === 'changed') nodeCounts.changed += 1;
+    }
+    const edgeCounts = { added: 0, removed: 0, changed: 0 };
+    for (const edge of diff.relationships) {
+      if (edge.kind === 'added') edgeCounts.added += 1;
+      else if (edge.kind === 'removed') edgeCounts.removed += 1;
+      else if (edge.kind === 'changed') edgeCounts.changed += 1;
+    }
+
+    console.log(`\n  ◈  Semantic graph diff: ${options.base} → ${options.head}\n`);
+    console.log(`     Base     : ${base.descriptor?.commit ?? options.base}${base.fromCache ? ' (cached)' : ''}`);
+    console.log(`     Head     : ${head.descriptor?.commit ?? options.head}${head.fromCache ? ' (cached)' : ''}`);
+    console.log(`     Coverage : ${diff.coverage.complete ? 'complete' : 'PARTIAL'}`);
+    console.log(`     Nodes    : +${nodeCounts.added} -${nodeCounts.removed} ~${nodeCounts.changed} ↔${nodeCounts.moved} (${diff.nodes.length} total)`);
+    console.log(`     Edges    : +${edgeCounts.added} -${edgeCounts.removed} ~${edgeCounts.changed} (${diff.relationships.length} total)`);
+    if (diff.contracts) {
+      console.log(`     API      : ${diff.contracts.findings.length} finding(s)`);
+    }
+    if (!diff.coverage.complete) {
+      console.log('\n  ⚠  Partial coverage — some deltas may be missing:');
+      for (const reason of diff.coverage.incompleteReasons) console.log(`     - ${reason}`);
+    }
+    console.log(`\n  Run with --json for the full machine-readable diff.\n`);
   });
 
 // ─── 11. group ───────────────────────────────────────────────────────────────

@@ -44,6 +44,7 @@ import { createKnowledgeGraph } from '../graph/knowledge-graph.js';
 import { CURRENT_SCHEMA_VERSION } from '../migrations/migration-runner.js';
 import { resolveSymbolTarget } from '../cli/symbol-target.js';
 import { getApiContract, getApiDrift, getApiImpact, type RouteSelector } from '../semantic/api-contracts/index.js';
+import { computeSemanticGraphDiff } from '../snapshots/service.js';
 import { computeBlastRadiusWithTrust } from './blast-radius-trust.js';
 
 /** Strip null/undefined fields and serialize compactly — saves ~10–15% tokens on sparse graph nodes */
@@ -111,7 +112,7 @@ export function createMcpServer(
     'overview', 'search', 'context', 'blast_radius', 'file_symbols', 'find_path', 'list_exports', 'routes', 'clusters', 'flows',
     'detect_changes', 'query', 'raw_query', 'explain_relationship', 'pr_impact', 'similar_symbols', 'health_report',
     'suggest_tests', 'cluster_summary', 'deprecated_usage', 'complexity_hotspots', 'coverage_gaps', 'secrets', 'vulnerability_scan',
-    'api_contract', 'api_impact', 'api_drift',
+    'api_contract', 'api_impact', 'api_drift', 'graph_diff',
   ]);
   const withRepoSelector = <T extends { name: string; inputSchema?: { type?: string; properties?: Record<string, unknown> } }>(tool: T): T => (
     REPO_SELECTABLE_TOOL_NAMES.has(tool.name) && tool.inputSchema?.type === 'object'
@@ -453,7 +454,7 @@ export function createMcpServer(
       },
       {
         name: 'pr_impact',
-        description: 'Given changed files or a unified diff, compute full blast radius with risk scores (HIGH/MEDIUM/LOW), test coverage gaps, and top files to review.',
+        description: 'Given changed files or a unified diff, compute full blast radius with risk scores (HIGH/MEDIUM/LOW), test coverage gaps, and top files to review. Set analysisMode to "semantic-snapshot" (with base_ref/head_ref) to additionally compare the independently-analyzed semantic graphs of two Git refs — the textual-hunk blast radius is retained as evidence, never replaced.',
         inputSchema: {
           type: 'object' as const,
           properties: {
@@ -470,6 +471,13 @@ export function createMcpServer(
               type: 'number',
               description: 'Maximum BFS depth for blast radius (default: 2, max: 10)',
             },
+            analysisMode: {
+              type: 'string',
+              enum: ['current-graph', 'semantic-snapshot'],
+              description: 'Default "current-graph" (textual-hunk blast radius over the currently published index, unchanged behavior). "semantic-snapshot" additionally builds isolated snapshots of base_ref/head_ref and adds a full semantic graph diff.',
+            },
+            base_ref: { type: 'string', description: 'Base Git ref (branch/tag/commit); required when analysisMode is "semantic-snapshot"' },
+            head_ref: { type: 'string', description: 'Head Git ref (branch/tag/commit); required when analysisMode is "semantic-snapshot"' },
             ..._tokenProp,
           },
         },
@@ -513,6 +521,25 @@ export function createMcpServer(
             ..._tokenProp,
           },
           required: ['base_repo_id'],
+        },
+      },
+      {
+        name: 'graph_diff',
+        description: 'Compares the semantic graph between two Git refs (branches, tags, or commits) of the active repository: added/removed/changed/moved/renamed symbols, relationship and certainty changes, and API-contract deltas. Each side is analyzed independently in an isolated temporary checkout — never touching the working tree, HEAD, or this repository\'s currently published index — and cached by (ref, analyzer version). Unlike api_drift (which compares two already-indexed, already-registered repositories), this performs the Git ref resolution and analysis itself.',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            base_ref: { type: 'string', description: 'Base Git ref (branch/tag/commit)' },
+            head_ref: { type: 'string', description: 'Head Git ref (branch/tag/commit)' },
+            include_contracts: { type: 'boolean', description: 'Include API-contract deltas (default: true)' },
+            allow_cache: { type: 'boolean', description: 'Reuse a cached snapshot when available (default: true); set false to force a full rebuild of both sides' },
+            nodes_offset: { type: 'number', description: 'Pagination offset into the node delta list (default: 0)' },
+            nodes_limit: { type: 'number', description: 'Max node deltas to return (default: 200, max: 2000)' },
+            relationships_offset: { type: 'number', description: 'Pagination offset into the relationship delta list (default: 0)' },
+            relationships_limit: { type: 'number', description: 'Max relationship deltas to return (default: 200, max: 2000)' },
+            ..._tokenProp,
+          },
+          required: ['base_ref', 'head_ref'],
         },
       },
       {
@@ -902,7 +929,7 @@ const GRAPH_BACKED_TOOLS = new Set([
   'overview', 'inspect', 'context', 'blast_radius', 'file_symbols', 'find_path', 'list_exports', 'routes', 'clusters', 'flows',
   'detect_changes', 'query', 'raw_query', 'explain_relationship', 'pr_impact', 'similar_symbols', 'health_report',
   'suggest_tests', 'cluster_summary', 'deprecated_usage', 'complexity_hotspots', 'coverage_gaps', 'secrets', 'vulnerability_scan',
-  'api_contract', 'api_impact', 'api_drift',
+  'api_contract', 'api_impact', 'api_drift', 'graph_diff',
 ]);
 
 export async function dispatchTool(
@@ -1816,7 +1843,12 @@ export async function dispatchTool(
           changedFiles = [...new Set([...changedFiles, ...diffFiles])];
         }
 
-        if (changedFiles.length === 0) {
+        const analysisMode = (a.analysisMode as string | undefined) ?? 'current-graph';
+        if (analysisMode !== 'current-graph' && analysisMode !== 'semantic-snapshot') {
+          return { content: [{ type: 'text', text: compact({ error: 'analysisMode must be "current-graph" or "semantic-snapshot".' }) }], isError: true };
+        }
+
+        if (changedFiles.length === 0 && analysisMode === 'current-graph') {
           return {
             content: [{
               type: 'text',
@@ -1825,8 +1857,41 @@ export async function dispatchTool(
           };
         }
 
-        const result = computePRImpact(graph, changedFiles, maxHops, activeWorkspaceRoot);
-        return { content: [{ type: 'text', text: compact(result) }] };
+        // Textual-hunk blast radius — computed whenever changed files are known,
+        // in both modes. semantic-snapshot mode adds to this; it never replaces it.
+        const textualImpact = changedFiles.length > 0
+          ? computePRImpact(graph, changedFiles, maxHops, activeWorkspaceRoot)
+          : null;
+
+        if (analysisMode === 'current-graph') {
+          return { content: [{ type: 'text', text: compact(textualImpact) }] };
+        }
+
+        const baseRef = a.base_ref as string | undefined;
+        const headRef = a.head_ref as string | undefined;
+        if (!baseRef || !headRef) {
+          return { content: [{ type: 'text', text: compact({ error: 'analysisMode "semantic-snapshot" requires both base_ref and head_ref.' }) }], isError: true };
+        }
+        if (!activeWorkspaceRoot) {
+          return { content: [{ type: 'text', text: compact({ error: 'No repository workspace root available for semantic-snapshot analysis. Select a repo with repoId/repo.' }) }], isError: true };
+        }
+        try {
+          const { diff, base, head } = await computeSemanticGraphDiff({ repoDir: activeWorkspaceRoot, base: baseRef, head: headRef });
+          return {
+            content: [{
+              type: 'text',
+              text: compact({
+                analysisMode: 'semantic-snapshot',
+                textualImpact,
+                semanticDiff: diff,
+                baseSnapshot: { status: base.status, fromCache: base.fromCache, boundaries: base.boundaries },
+                headSnapshot: { status: head.status, fromCache: head.fromCache, boundaries: head.boundaries },
+              }),
+            }],
+          };
+        } catch (err) {
+          return { content: [{ type: 'text', text: compact({ error: err instanceof Error ? err.message : String(err) }) }], isError: true };
+        }
       }
 
       // ── api_contract ───────────────────────────────────────────────────────
@@ -1876,6 +1941,74 @@ export async function dispatchTool(
             content: [{ type: 'text', text: compact({ error: err instanceof Error ? err.message : String(err) }) }],
             isError: true,
           };
+        }
+      }
+
+      // ── graph_diff ─────────────────────────────────────────────────────────
+      case 'graph_diff': {
+        const baseRef = a.base_ref as string | undefined;
+        const headRef = a.head_ref as string | undefined;
+        if (!baseRef || !headRef) {
+          return { content: [{ type: 'text', text: compact({ error: 'base_ref and head_ref are required.' }) }], isError: true };
+        }
+        if (!activeWorkspaceRoot) {
+          return { content: [{ type: 'text', text: compact({ error: 'No repository workspace root available. Select a repo with repoId/repo.' }) }], isError: true };
+        }
+        try {
+          const { diff, base, head } = await computeSemanticGraphDiff({
+            repoDir: activeWorkspaceRoot,
+            base: baseRef,
+            head: headRef,
+            includeContracts: (a.include_contracts as boolean | undefined) ?? true,
+            allowCache: (a.allow_cache as boolean | undefined) ?? true,
+          });
+
+          if (!diff) {
+            return {
+              content: [{
+                type: 'text',
+                text: compact({
+                  error: 'Semantic graph diff unavailable for one or both refs.',
+                  baseSnapshot: { status: base.status, boundaries: base.boundaries, error: base.error },
+                  headSnapshot: { status: head.status, boundaries: head.boundaries, error: head.error },
+                }),
+              }],
+              isError: true,
+            };
+          }
+
+          const nodesOffset = (a.nodes_offset as number) ?? 0;
+          const nodesLimit = Math.min((a.nodes_limit as number) ?? 200, 2000);
+          const relationshipsOffset = (a.relationships_offset as number) ?? 0;
+          const relationshipsLimit = Math.min((a.relationships_limit as number) ?? 200, 2000);
+
+          return {
+            content: [{
+              type: 'text',
+              text: compact({
+                base: diff.base,
+                head: diff.head,
+                coverage: diff.coverage,
+                contracts: diff.contracts,
+                flows: diff.flows,
+                clusters: diff.clusters,
+                nodes: diff.nodes.slice(nodesOffset, nodesOffset + nodesLimit),
+                nodesTotal: diff.nodes.length,
+                nodesOffset,
+                nodesLimit,
+                nodesHasMore: nodesOffset + nodesLimit < diff.nodes.length,
+                relationships: diff.relationships.slice(relationshipsOffset, relationshipsOffset + relationshipsLimit),
+                relationshipsTotal: diff.relationships.length,
+                relationshipsOffset,
+                relationshipsLimit,
+                relationshipsHasMore: relationshipsOffset + relationshipsLimit < diff.relationships.length,
+                baseSnapshot: { status: base.status, fromCache: base.fromCache, boundaries: base.boundaries },
+                headSnapshot: { status: head.status, fromCache: head.fromCache, boundaries: head.boundaries },
+              }),
+            }],
+          };
+        } catch (err) {
+          return { content: [{ type: 'text', text: compact({ error: err instanceof Error ? err.message : String(err) }) }], isError: true };
         }
       }
 

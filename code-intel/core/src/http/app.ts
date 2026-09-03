@@ -24,6 +24,7 @@ import { queryGroup } from '../multi-repo/group-query.js';
 import { createKnowledgeGraph } from '../graph/knowledge-graph.js';
 import { loadGraphFromDB } from '../multi-repo/graph-from-db.js';
 import { loadRegistry, findRepoByName } from '../storage/repo-registry.js';
+import { computeSemanticGraphDiff } from '../snapshots/service.js';
 import Logger from '../shared/logger.js';
 import { AppError, ErrorCodes } from '../errors/codes.js';
 import type { CountGroup, GQLResult, GQLResultKind, QueryScope, ResolvedQueryScope } from 'code-intel-shared';
@@ -1368,6 +1369,81 @@ export function createApp(
         coverage: result.trust.coverage,
         boundaries: result.trust.boundaries,
         affected: result.affected.filter((a) => a.depth > 0),
+      });
+    } catch (err) {
+      if (err instanceof AppError) {
+        res.status(err.statusCode).json({ error: { code: err.code, message: err.message, hint: err.hint, requestId: req.requestId, timestamp: new Date().toISOString() } });
+        return;
+      }
+      throw err;
+    }
+  });
+
+  // ── Semantic graph diff ─────────────────────────────────────────────────────
+  app.post('/api/v1/graph/diff', requireAuth, requireRole('analyst'), async (req, res) => {
+    try {
+      const {
+        base_ref, head_ref, repoId, include_contracts, allow_cache,
+        nodes_offset, nodes_limit, relationships_offset, relationships_limit,
+      } = req.body as {
+        base_ref?: string; head_ref?: string; repoId?: string;
+        include_contracts?: boolean; allow_cache?: boolean;
+        nodes_offset?: number; nodes_limit?: number; relationships_offset?: number; relationships_limit?: number;
+      };
+      if (!base_ref || !head_ref) {
+        res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: 'base_ref and head_ref are required', requestId: req.requestId } });
+        return;
+      }
+      const registry = loadRegistry();
+      const repoDir = repoId
+        ? registry.find((entry) => entry.id === repoId)?.path
+        : workspaceRoot;
+      if (!repoDir) {
+        res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: repoId ? `Repository "${repoId}" not found` : 'No active repository', requestId: req.requestId } });
+        return;
+      }
+
+      const { diff, base, head } = await computeSemanticGraphDiff({
+        repoDir,
+        base: base_ref,
+        head: head_ref,
+        includeContracts: include_contracts ?? true,
+        allowCache: allow_cache ?? true,
+      });
+
+      if (!diff) {
+        res.status(422).json({
+          error: { code: ErrorCodes.ANALYSIS_FAILED, message: 'Semantic graph diff unavailable for one or both refs', requestId: req.requestId },
+          baseSnapshot: { status: base.status, boundaries: base.boundaries, error: base.error },
+          headSnapshot: { status: head.status, boundaries: head.boundaries, error: head.error },
+        });
+        return;
+      }
+
+      const nOffset = nodes_offset ?? 0;
+      const nLimit = Math.min(nodes_limit ?? 200, 2000);
+      const rOffset = relationships_offset ?? 0;
+      const rLimit = Math.min(relationships_limit ?? 200, 2000);
+
+      res.json({
+        base: diff.base,
+        head: diff.head,
+        coverage: diff.coverage,
+        contracts: diff.contracts,
+        flows: diff.flows,
+        clusters: diff.clusters,
+        nodes: diff.nodes.slice(nOffset, nOffset + nLimit),
+        nodesTotal: diff.nodes.length,
+        nodesOffset: nOffset,
+        nodesLimit: nLimit,
+        nodesHasMore: nOffset + nLimit < diff.nodes.length,
+        relationships: diff.relationships.slice(rOffset, rOffset + rLimit),
+        relationshipsTotal: diff.relationships.length,
+        relationshipsOffset: rOffset,
+        relationshipsLimit: rLimit,
+        relationshipsHasMore: rOffset + rLimit < diff.relationships.length,
+        baseSnapshot: { status: base.status, fromCache: base.fromCache, boundaries: base.boundaries },
+        headSnapshot: { status: head.status, fromCache: head.fromCache, boundaries: head.boundaries },
       });
     } catch (err) {
       if (err instanceof AppError) {

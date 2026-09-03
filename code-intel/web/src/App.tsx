@@ -7,6 +7,7 @@ import { ConnectPage } from './pages/ConnectPage';
 import { LoadingPage } from './pages/LoadingPage';
 import { ExplorerPage } from './pages/ExplorerPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { GraphDiffPage } from './pages/GraphDiffPage';
 import { getSettingsSectionFromPath } from './routing';
 
 function RouteSync() {
@@ -167,6 +168,7 @@ function AppContent() {
         <Route path="/loading" element={authed ? <LoadingPage /> : <Navigate to="/login" replace />} />
         <Route path="/explore" element={authed ? <ExplorerPage /> : <Navigate to="/login" replace />} />
         <Route path="/settings/:section?" element={authed ? <SettingsPage /> : <Navigate to="/login" replace />} />
+        <Route path="/diff" element={authed ? <GraphDiffPage /> : <Navigate to="/login" replace />} />
         <Route path="*" element={<Navigate to={authed ? '/connect' : '/login'} replace />} />
       </Routes>
     </>

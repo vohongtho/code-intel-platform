@@ -1,5 +1,6 @@
 import type { CodeNode, CodeEdge, CountGroup, GQLResult, GQLResultKind, QueryScope, ResolvedQueryScope } from 'code-intel-shared';
 import type { SearchResult, CurrentUser, AppConfig, SearchMode, SearchScope, EmbeddingModelCatalog } from '../state/types';
+import type { GraphDiffRequest, GraphDiffOutcome, GraphDiffResponse, GraphDiffUnavailableResponse } from './graph-diff-types';
 
 export class InvalidGQLResultError extends Error {
   constructor(message: string) {
@@ -454,6 +455,33 @@ export class ApiClient {
       throw new Error(body?.error?.message ?? `Api impact failed: ${res.statusText}`);
     }
     return res.json() as Promise<ApiImpactResult>;
+  }
+
+  // ── Semantic graph diff (Branch-Aware Semantic Graph Diff) ─────────────────
+
+  /**
+   * Compare the semantic graph between two Git refs. A 422 response ("one or
+   * both refs could not be built into a trustworthy snapshot") is a legitimate
+   * outcome, not an exception — it comes back as `{ status: 'unavailable' }`
+   * rather than a thrown Error so callers render it as a clear failure state.
+   */
+  async graphDiff(request: GraphDiffRequest): Promise<GraphDiffOutcome> {
+    const csrfToken = await this.getCsrfToken();
+    const res = await fetch(`${this.baseUrl}/api/v1/graph/diff`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      credentials: 'include',
+      body: JSON.stringify(request),
+    });
+    const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+    if (res.status === 422) {
+      return { status: 'unavailable', detail: body as unknown as GraphDiffUnavailableResponse };
+    }
+    if (!res.ok) {
+      const error = body?.error as { message?: string } | undefined;
+      throw new Error(error?.message ?? `Graph diff failed: ${res.statusText}`);
+    }
+    return { status: 'ok', diff: body as unknown as GraphDiffResponse };
   }
 
   async grep(pattern: string): Promise<{ results: GrepHit[] }> {
