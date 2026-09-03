@@ -82,6 +82,8 @@ import {
 } from '../multi-repo/group-registry.js';
 import { syncGroup } from '../multi-repo/group-sync.js';
 import { queryGroup } from '../multi-repo/group-query.js';
+import { getGroupContractDrift } from '../multi-repo/contract-drift/service.js';
+import type { Contract } from '../multi-repo/types.js';
 import { detectWorkspace } from '../multi-repo/workspace-detector.js';
 import { getOrCreateUsersDB } from '../auth/users-db.js';
 import type { Role } from '../auth/users-db.js';
@@ -257,6 +259,7 @@ program
   │    code-intel group contracts <name>        Inspect extracted contracts and confidence-ranked cross-links         │
   │    code-intel group query <name> <q>        Run a merged RRF search across every repository in a group           │
   │    code-intel group status <name>           Audit index freshness and sync staleness for all group members        │
+  │    code-intel group drift <name>            Compare synchronized group contracts across Git refs for findings     │
   │                                                                                                                    │
   └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 
@@ -3068,12 +3071,15 @@ const groupCmd = program
     contracts <name>                     View extracted contracts and links
     query <name> <q>                     Search across all repos in the group
     status <name>                        Check index freshness of group members
+    drift <name> --base <ref> --head <ref>
+                                          Compare group contracts across Git refs
 
   Examples:
     $ code-intel group create my-platform
     $ code-intel group add my-platform services/auth auth-service
     $ code-intel group sync my-platform
     $ code-intel group contracts my-platform --kind route
+    $ code-intel group drift my-platform --base main --head HEAD
 `);
 
 // group create <name>
@@ -3399,6 +3405,86 @@ groupCmd
         console.log(`  ✗  ${m.groupPath.padEnd(35)} [${m.registryName}]  — NOT INDEXED`);
         console.log(`       run: code-intel analyze ${regEntry.path}\n`);
       }
+    }
+  });
+
+// group drift <name>
+groupCmd
+  .command('drift <name>')
+  .description('Compare synchronized group contracts across Git refs for compatibility findings')
+  .requiredOption('--base <ref>', 'Base Git ref (branch/tag/commit)')
+  .requiredOption('--head <ref>', 'Head Git ref (branch/tag/commit)')
+  .option('--kind <kind>', 'Restrict analysis to one contract kind: export | route | schema | event | graphql | grpc')
+  .option('--repo <repo>', 'Restrict analysis to one member repo, by registry name')
+  .option('-l, --limit <n>', 'Presentation limit for returned findings; analysis still computes total findings')
+  .option('--no-cache', 'Force a full rebuild of both snapshots, ignoring any cached entry')
+  .option('--json', 'Output raw JSON instead of a human-readable summary')
+  .addHelpText('after', `
+  Compares each member repo's contracts (HTTP routes, shared schemas, events)
+  between two Git refs using the same immutable per-repo snapshots as
+  \`graph diff\`, then classifies findings compatible / potentially-breaking /
+  breaking / unknown with certainty, coverage, and known-consumer scope.
+
+  Examples:
+    $ code-intel group drift my-platform --base main --head HEAD
+    $ code-intel group drift my-platform --base main --head HEAD --kind schema
+    $ code-intel group drift my-platform --base main --head HEAD --repo auth-service --json
+`)
+  .action(async (name: string, opts: { base: string; head: string; kind?: string; repo?: string; limit?: string; cache?: boolean; json?: boolean }) => {
+    if (!loadGroup(name)) {
+      console.error(`\n  ✗  Group "${name}" not found.\n`);
+      process.exit(1);
+    }
+
+    let repositoryId: string | undefined;
+    if (opts.repo) {
+      const regEntry = loadRegistry().find((r) => r.name === opts.repo);
+      if (!regEntry) {
+        console.error(`\n  ✗  Registry entry "${opts.repo}" not found.\n`);
+        process.exit(1);
+      }
+      repositoryId = regEntry.id;
+    }
+
+    try {
+      const result = await getGroupContractDrift({
+        groupName: name,
+        baseRef: opts.base,
+        headRef: opts.head,
+        kind: opts.kind as Contract['kind'] | undefined,
+        repositoryId,
+        limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+        allowCache: opts.cache !== false,
+      });
+
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      console.log(`\n  ◈  Contract drift: ${name} (${opts.base} → ${opts.head})\n`);
+      console.log(`     Findings : ${result.totalFindings} (breaking ${result.summary.byCompatibility.breaking}, potentially-breaking ${result.summary.byCompatibility['potentially-breaking']}, unknown ${result.summary.byCompatibility.unknown}, compatible ${result.summary.byCompatibility.compatible})`);
+      console.log(`     Coverage : ${result.summary.coverage.complete ? 'complete' : 'PARTIAL'}`);
+      if (!result.summary.coverage.complete) {
+        for (const reason of result.summary.coverage.incompleteReasons) console.log(`       ⚠  ${reason}`);
+      }
+      if (result.findings.length === 0) {
+        console.log('\n  No findings.\n');
+        return;
+      }
+      console.log(`\n  Findings shown (${result.findings.length}):\n`);
+      for (const finding of result.findings) {
+        const marker = finding.compatibility === 'breaking' ? '✗' : finding.compatibility === 'potentially-breaking' ? '⚠' : finding.compatibility === 'unknown' ? '?' : '✓';
+        console.log(`  ${marker}  [${finding.compatibility}]  ${finding.repositoryId} ∷ ${finding.kind} — ${finding.changeKind}`);
+        console.log(`       ${finding.summary}`);
+        if (finding.affectedConsumers.length > 0) {
+          console.log(`       consumers: ${finding.affectedConsumers.map((c) => `${c.repositoryId}:${c.consumerId}`).join(', ')}`);
+        }
+      }
+      console.log('');
+    } catch (err) {
+      console.error(`\n  ✗  ${err instanceof Error ? err.message : err}\n`);
+      process.exit(1);
     }
   });
 

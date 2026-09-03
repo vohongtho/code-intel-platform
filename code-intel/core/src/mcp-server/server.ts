@@ -1948,6 +1948,19 @@ export async function dispatchTool(
                   coverage: { complete: false, examinedCount: 0, incompleteReasons: [error instanceof Error ? error.message : String(error)] },
                   knownConsumerCoverage: { complete: false, inScope: 'partial-group-sync', certainty: 'unavailable', examinedConsumerCount: 0, incompleteReasons: [error instanceof Error ? error.message : String(error)] },
                 },
+                base: {},
+                head: {},
+                metrics: {
+                  contractsLoaded: 0,
+                  fingerprintsChanged: 0,
+                  fingerprintsUnchangedSkipped: 0,
+                  consumersExpanded: 0,
+                  comparisonsExecuted: 0,
+                  fullFallbackCount: 0,
+                  capHits: 0,
+                  partialRepositories: 0,
+                  elapsedMs: 0,
+                },
               };
             }
           }
