@@ -58,6 +58,7 @@ import { buildAnalyzerCompatibilityReceipt, CURRENT_IDENTITY_FINGERPRINT } from 
 import { computeSemanticGraphDiff } from '../snapshots/service.js';
 import { resolveIndexSnapshot } from '../storage/index-snapshot.js';
 import { writeContextFiles } from './context-writer.js';
+import { installWorkflows, planWorkflowInstall } from '../agents/workflows/installer.js';
 import { AGENT_OPTIONS, isValidRepoRelativeTargetPath, resolveBuiltinTarget } from './agent-targets.js';
 import { resolveSetupPlan, type SetupPlan } from './setup-plan.js';
 import { upsertRepo, loadRegistry, findRepoByName, findRepoByPath, renameRepo, relinkRepo, removeRepo } from '../storage/repo-registry.js';
@@ -1054,6 +1055,20 @@ async function analyzeWorkspace(targetPath: string, options?: {
       if (!options?.silent) {
         console.log(`  ✓ Context: ${agentTargets.length} selected target(s) updated`);
       }
+
+      const workflowStates = installWorkflows(workspaceRoot, agentTargets.map((t) => t.agentId));
+      const workflowWritten = workflowStates.filter((s) => s.action === 'create' || s.action === 'update').length;
+      const workflowConflicts = workflowStates.filter((s) => s.action === 'conflict');
+      Logger.info(`Workflow skills: ${workflowWritten} written, ${workflowConflicts.length} conflict(s)`);
+      if (!options?.silent && workflowWritten > 0) {
+        console.log(`  ✓ Workflows: ${workflowWritten} skill file(s) written`);
+      }
+      for (const conflict of workflowConflicts) {
+        Logger.warn(`Workflow skill '${conflict.workflowId}' for '${conflict.agentId}' not updated: ${conflict.reason} (${conflict.relativePath})`);
+        if (!options?.silent) {
+          console.log(`  ⚠ Workflows: ${conflict.relativePath} was modified — left untouched (${conflict.reason})`);
+        }
+      }
     } catch (err) {
       stopSpinner();
       Logger.warn(`Context file write failed: ${err instanceof Error ? err.message : err}`);
@@ -2001,6 +2016,16 @@ program
       const estimatedStr = estimatedMs >= 1000 ? `~${(estimatedMs / 1000).toFixed(1)}s` : `~${estimatedMs}ms`;
       console.log(`\n  ◈  Dry run — ${workspaceRoot}\n`);
       console.log(`  Would analyze ${fileCount.toLocaleString()} files (${estimatedStr} estimated).`);
+      if (!opts.skipAgentsMd) {
+        const agentTargets = await getOrCreateAgentTargets(workspaceRoot, true);
+        const workflowStates = planWorkflowInstall(workspaceRoot, agentTargets.map((t) => t.agentId));
+        const byAction = { create: 0, update: 0, skip: 0, conflict: 0, 'not-supported': 0 };
+        for (const state of workflowStates) byAction[state.action]++;
+        console.log(`  Workflow skills: ${byAction.create} create, ${byAction.update} update, ${byAction.skip} unchanged, ${byAction.conflict} conflict, ${byAction['not-supported']} not-supported`);
+        for (const state of workflowStates.filter((s) => s.action === 'conflict')) {
+          console.log(`    ⚠ ${state.relativePath} (${state.agentId}/${state.workflowId}): ${state.reason}`);
+        }
+      }
       console.log('  Pass without --dry-run to execute.\n');
       process.exit(0);
     }

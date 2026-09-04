@@ -90,4 +90,18 @@ export default defineConfig([
     treeshake: true,
     splitting: false,
   },
+  // Workflow validation entry — dist/agents/workflows/validate-cli.js (tiny binary,
+  // run at build time by scripts in package.json's `build` script). Same minimal
+  // self-contained bundling pattern as cli/hook: no OTel, no DB, no graph.
+  {
+    entry: { 'agents/workflows/validate-cli': 'src/agents/workflows/validate-cli.ts' },
+    format: ['esm'],
+    outDir: 'dist',
+    dts: false,
+    sourcemap: true,
+    clean: false,
+    external: [/^node:/],
+    treeshake: true,
+    splitting: false,
+  },
 ]);

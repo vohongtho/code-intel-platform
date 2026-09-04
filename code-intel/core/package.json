@@ -38,16 +38,16 @@
     "node": ">=22.0.0"
   },
   "scripts": {
-    "build": "npm --prefix ../shared run build && tsup --config tsup.config.ts && node scripts/add-shebang.mjs && node scripts/copy-grammars.mjs && node ../../scripts/distribution/runtime-manifest.mjs --validate",
+    "build": "npm --prefix ../shared run build && tsup --config tsup.config.ts && node scripts/add-shebang.mjs && node scripts/copy-grammars.mjs && node scripts/copy-workflow-assets.mjs && node dist/agents/workflows/validate-cli.js && node ../../scripts/distribution/runtime-manifest.mjs --validate",
     "validate:dist": "rm -f vohongtho.infotech-code-intel-*.tgz && npm pack --silent >/dev/null && rm -f vohongtho.infotech-code-intel-*.tgz",
     "typecheck": "tsc -b --noEmit",
     "prepublishOnly": "npm run build",
     "clean": "rm -rf dist dist-tests *.tsbuildinfo",
-    "test": "npm --prefix ../web run build && npm run build && tsc -b tsconfig.test.json && NODE_ENV=test node --test --test-concurrency=1 dist-tests/tests/**/*.test.js",
-    "test:e2e": "npm --prefix ../web run build && tsc -b tsconfig.test.json && NODE_ENV=production node --test dist-tests/tests/e2e/**/*.test.js",
+    "test": "npm --prefix ../web run build && npm run build && tsc -b tsconfig.test.json && node scripts/copy-workflow-assets.mjs dist-tests/src && NODE_ENV=test node --test --test-concurrency=1 dist-tests/tests/**/*.test.js",
+    "test:e2e": "npm --prefix ../web run build && tsc -b tsconfig.test.json && node scripts/copy-workflow-assets.mjs dist-tests/src && NODE_ENV=production node --test dist-tests/tests/e2e/**/*.test.js",
     "test:all": "npm run test && npm run test:e2e",
-    "test:e2e:watch": "npm --prefix ../web run build && tsc -b tsconfig.test.json && NODE_ENV=production node --test --watch dist-tests/tests/e2e/**/*.test.js",
-    "test:coverage": "npm --prefix ../web run build && tsc -b tsconfig.test.json && NODE_ENV=test npx c8 --all --include='dist-tests/src/**/*.js' --exclude='dist-tests/src/cli/main.js' --exclude='dist-tests/src/mcp-server/**' --reporter=text --reporter=lcov --reporter=json-summary node --test --test-concurrency=1 dist-tests/tests/**/*.test.js"
+    "test:e2e:watch": "npm --prefix ../web run build && tsc -b tsconfig.test.json && node scripts/copy-workflow-assets.mjs dist-tests/src && NODE_ENV=production node --test --watch dist-tests/tests/e2e/**/*.test.js",
+    "test:coverage": "npm --prefix ../web run build && tsc -b tsconfig.test.json && node scripts/copy-workflow-assets.mjs dist-tests/src && NODE_ENV=test npx c8 --all --include='dist-tests/src/**/*.js' --exclude='dist-tests/src/cli/main.js' --exclude='dist-tests/src/mcp-server/**' --reporter=text --reporter=lcov --reporter=json-summary node --test --test-concurrency=1 dist-tests/tests/**/*.test.js"
   },
   "dependencies": {
     "@inquirer/core": "^10.3.2",

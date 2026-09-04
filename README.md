@@ -427,6 +427,27 @@ When the selection file is missing or invalid, agent integration installation fa
 
 > The `code-intel-hook` binary can rewrite supported shell lookups such as `grep MyClass src/` into structured Code Intel searches. Installers remain idempotent and preserve existing user configuration.
 
+### Graph-backed agent workflows
+
+`code-intel analyze` also installs task-specific workflow skills for agent targets that support a reusable skill/rule file mechanism — today that's **Claude Code** (`.claude/skills/code-intel-workflows/<id>/SKILL.md`) and **Cursor** (`.cursor/rules/code-intel-workflow-<id>.mdc`). Other selected agents keep their MCP setup and generated instruction file as before; workflow installation reports `not-supported` for them rather than failing.
+
+Eight bundled workflows cover the recurring engineering tasks the MCP tools are meant to support:
+
+| Workflow | Use it for |
+|---|---|
+| `explore` | Understanding how a part of the codebase works before changing it |
+| `debug` | Root-cause investigation, ranked hypotheses with a falsification step |
+| `impact` | Blast-radius analysis for a diff — exact vs. candidate impact, never "small result = low risk" |
+| `plan` | Implementation planning grounded in canonical symbols, consumers, and tests |
+| `review` | Code review scoped to what actually changed, severity tied to demonstrated impact |
+| `api-review` | HTTP route/contract review — method/path/shape/consumer changes, cross-repo drift |
+| `test-coverage` | Evidence-backed test selection — direct vs. transitive, never "no tests needed" |
+| `security-investigation` | Distinguishing a heuristic scanner finding from a proven source-to-sink flow |
+
+Every workflow is graph-first but evidence-aware: each one requires canonical symbol identity before conclusions, propagates the coverage/certainty signals the MCP tools already report, and explicitly downgrades to "candidate"/"needs verification" language instead of stating an unproven result as fact. A workflow's *required* tools must exist on the connected server; its *optional* tools each declare an explicit fallback and a named reduced guarantee for when they're unavailable (e.g. `api-review` uses `api_contract`/`api_impact`/`api_drift` when registered, and falls back to `routes` + `pr_impact` + source reading — while stating plainly that response-shape compatibility wasn't proven).
+
+Installed workflow files are managed like `AGENTS.md`/`CLAUDE.md`: each carries a content fingerprint, and `code-intel analyze` only ever creates or updates a file that still matches its last-installed fingerprint. If you've edited an installed workflow file yourself, the next `analyze` leaves it untouched and reports a conflict instead of overwriting your changes. `code-intel analyze --dry-run` previews exactly which workflow files would be created, updated, skipped (unchanged), or left as a conflict, without writing anything.
+
 ---
 
 ## 🖥️ Web UI

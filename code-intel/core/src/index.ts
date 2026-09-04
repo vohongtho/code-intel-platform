@@ -44,7 +44,35 @@ export { EVIDENCE_SCHEMA_VERSION, EVIDENCE_DB_FILE, SqliteResolutionEvidenceStor
 export { Bm25Index, getBm25DbPath } from './search/index.js';
 
 export { createMcpServer, startMcpStdio } from './mcp-server/index.js';
+export { MCP_TOOL_DEFINITIONS } from './mcp-server/index.js';
 export { createApp, startHttpServer } from './http/index.js';
+
+export {
+  WORKFLOW_REGISTRY,
+  WORKFLOW_IDS,
+  WORKFLOW_MANIFEST_SCHEMA_VERSION,
+  getWorkflowManifest,
+  listWorkflowManifests,
+  resolveRuntimeCapabilities,
+  resolveWorkflowCapabilities,
+  planWorkflowInstall,
+  installWorkflows,
+  validateWorkflowRegistry,
+} from './agents/workflows/index.js';
+export type {
+  WorkflowId,
+  WorkflowManifest,
+  WorkflowCapabilityRequirement,
+  WorkflowOptionalCapability,
+  WorkflowTarget,
+  ManagedWorkflowAsset,
+  RuntimeCapabilities,
+  WorkflowCapabilityResolution,
+  WorkflowFileState,
+  WorkflowInstallAction,
+  WorkflowValidationIssue,
+  WorkflowValidationReport,
+} from './agents/workflows/index.js';
 
 export { DbManager, loadGraphToDB, upsertRepo, loadRegistry, removeRepo, saveMetadata, loadMetadata, getDbPath } from './storage/index.js';
 export type { RepoEntry, IndexMetadata } from './storage/index.js';

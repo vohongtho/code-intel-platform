@@ -110,6 +110,10 @@ code-intel serve                     # HTTP API + web UI on :4747
 \`\`\`
 
 Also available: \`complexity\`, \`coverage\`, \`secrets\`, \`scan\`, \`deprecated\`, \`status\`, \`clean\`.
+
+## Task workflows
+
+For Claude Code and Cursor, \`code-intel analyze\` also installs graph-backed task workflows (explore, debug, impact, plan, review, api-review, test-coverage, security-investigation) under \`.claude/skills/code-intel-workflows/\` or \`.cursor/rules/\` — reach for the one matching your current task instead of improvising a tool sequence.
 ${BLOCK_END}`;
 }
 
