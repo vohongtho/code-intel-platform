@@ -18,8 +18,8 @@ RUN npm ci
 # ── Build stage ───────────────────────────────────────────────────────────────
 FROM deps AS builder
 COPY . .
-RUN npm run build --workspace=code-intel/core
 RUN npm run build --workspace=code-intel/web
+RUN npm run build --workspace=code-intel/core
 
 # ── Production stage ──────────────────────────────────────────────────────────
 FROM node:22-alpine AS production
