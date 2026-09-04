@@ -74,7 +74,14 @@ jobs:
         run: npm run verify:runtime-distribution
 
       - name: npm audit — 0 high/critical CVEs (production deps only)
-        run: npm audit --audit-level=high --omit=dev
+        run: |
+          for attempt in 1 2 3; do
+            npm audit --audit-level=high --omit=dev && exit 0
+            status=$?
+            if [ "$attempt" -eq 3 ]; then exit "$status"; fi
+            echo "npm audit failed (attempt ${attempt}/3), likely a registry timeout — retrying in $((attempt * 10))s…"
+            sleep $((attempt * 10))
+          done
 
       - name: License audit — no GPL-incompatible deps
         run: |
