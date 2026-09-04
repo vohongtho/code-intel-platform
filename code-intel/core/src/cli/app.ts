@@ -63,6 +63,8 @@ import { AGENT_OPTIONS, isValidRepoRelativeTargetPath, resolveBuiltinTarget } fr
 import { resolveSetupPlan, type SetupPlan } from './setup-plan.js';
 import { upsertRepo, loadRegistry, findRepoByName, findRepoByPath, renameRepo, relinkRepo, removeRepo } from '../storage/repo-registry.js';
 import { DbManager, loadGraphToDB, removeNodesForFile } from '../storage/index.js';
+import { detectLanguage, type CodeNode } from '../shared/index.js';
+import { RESOLVER_VERSION } from '../resolution/contracts.js';
 import {
   getCurrentCommitHash,
   decideIncremental,
@@ -2795,6 +2797,59 @@ program
     console.log('');
   });
 
+// ─── inspect: optional program-analysis evidence ─────────────────────────────
+// Best-effort only: a function/method target gets a lazily-computed summary
+// (parameter-to-return influence, called functions) appended to its normal
+// caller/callee output. Any failure — unsupported language, no lowering
+// table, a parse miss — degrades to `null`, which the caller renders as
+// simply omitting the section; it never changes existing inspect behavior
+// or output for a target this doesn't apply to. `program-analysis/pipeline.js`
+// is imported dynamically so it stays out of any static import closure.
+interface InspectProgramAnalysis {
+  truncated: boolean;
+  parameters: Array<{ name: string; influencesReturn: boolean }>;
+  calledFunctions: string[];
+  localVariableCount: number;
+}
+
+async function tryInspectProgramAnalysis(node: CodeNode, repoPath: string): Promise<InspectProgramAnalysis | null> {
+  if (node.kind !== 'function' && node.kind !== 'method') return null;
+  if (!node.startLine) return null;
+  try {
+    const language = detectLanguage(node.filePath);
+    if (!language) return null;
+    const { analyzeFunction } = await import('../program-analysis/pipeline.js');
+    const workspaceRoot = path.resolve(repoPath);
+    const absoluteFilePath = path.isAbsolute(node.filePath) ? node.filePath : path.join(workspaceRoot, node.filePath);
+    const rawParameters = Array.isArray(node.metadata?.parameters) ? (node.metadata.parameters as Array<{ name?: unknown }>) : [];
+    const parameterNames = rawParameters
+      .map((p) => (typeof p?.name === 'string' ? p.name : undefined))
+      .filter((n): n is string => !!n);
+
+    const result = await analyzeFunction({
+      language,
+      filePath: absoluteFilePath,
+      startLine: node.startLine,
+      canonicalFunctionId: node.identityId ?? node.id,
+      parameterNames,
+      resolverVersion: RESOLVER_VERSION,
+    });
+    if (result.capability !== 'supported' || !result.summary) return null;
+
+    return {
+      truncated: result.summary.truncated,
+      parameters: result.summary.parameterInfluence.map((p) => ({
+        name: p.parameterName,
+        influencesReturn: p.influencesReturnAtStatementIds.length > 0,
+      })),
+      calledFunctions: result.summary.calledCallees.map((c) => c.calleeText),
+      localVariableCount: result.summary.localAccesses.length,
+    };
+  } catch {
+    return null;
+  }
+}
+
 // ─── 9. inspect ──────────────────────────────────────────────────────────────
 program
   .command('inspect')
@@ -2846,6 +2901,7 @@ program
     const outgoing = [...graph.findEdgesFrom(node.id)];
     const callers = incoming.filter((e) => e.kind === 'calls');
     const callees = outgoing.filter((e) => e.kind === 'calls');
+    const programAnalysis = await tryInspectProgramAnalysis(node, options.path);
     if (options.json) {
       console.log(JSON.stringify({
         status: 'found', symbol: {
@@ -2854,6 +2910,7 @@ program
         },
         callers: callers.map((edge) => graph.getNode(edge.source)).filter(Boolean),
         callees: callees.map((edge) => graph.getNode(edge.target)).filter(Boolean),
+        ...(programAnalysis ? { programAnalysis } : {}),
       }, null, 2));
       return;
     }
@@ -2876,6 +2933,16 @@ program
         console.log(`       →  ${n?.name ?? c.target}  (${n?.filePath})`);
       }
       if (callees.length > 10) console.log(`       … and ${callees.length - 10} more`);
+    }
+    if (programAnalysis) {
+      console.log(`\n     Program analysis${programAnalysis.truncated ? ' (partial)' : ''}:`);
+      if (programAnalysis.parameters.length > 0) {
+        const flagged = programAnalysis.parameters.filter((p) => p.influencesReturn).map((p) => p.name);
+        console.log(`       Parameters influencing return: ${flagged.length > 0 ? flagged.join(', ') : 'none detected'}`);
+      }
+      if (programAnalysis.calledFunctions.length > 0) {
+        console.log(`       Calls: ${programAnalysis.calledFunctions.slice(0, 10).join(', ')}${programAnalysis.calledFunctions.length > 10 ? ', …' : ''}`);
+      }
     }
     console.log('');
   });
