@@ -74,6 +74,12 @@ jobs:
         run: npm run verify:runtime-distribution
 
       - name: npm audit — 0 high/critical CVEs (production deps only)
+        env:
+          # Default fetch-timeout (30s) is too short for the bulk advisory
+          # endpoint on this dependency tree; give it real headroom before
+          # falling back to the outer retry loop below.
+          npm_config_fetch_timeout: '300000'
+          npm_config_fetch_retries: '4'
         run: |
           for attempt in 1 2 3; do
             npm audit --audit-level=high --omit=dev && exit 0
