@@ -142,7 +142,7 @@ export class Bm25Index {
    * Build the inverted index from a KnowledgeGraph and persist to SQLite.
    * Called once at analysis time after the main pipeline completes.
    */
-  build(graph: KnowledgeGraph): void {
+  build(graph: KnowledgeGraph): { docCount: number } {
     this.searchCache.clear();
 
     const nodeTermFreqs = new Map<string, Map<string, number>>();
@@ -214,6 +214,7 @@ export class Bm25Index {
 
     db.close();
     Logger.info(`  [bm25] Index built: ${invertedIndex.size} terms, ${docCount} documents`);
+    return { docCount };
   }
 
   // ── Load into memory ────────────────────────────────────────────────────────

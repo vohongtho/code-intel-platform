@@ -851,13 +851,14 @@ async function analyzeWorkspace(targetPath: string, options?: {
   }
 
   // BM25 pre-built inverted index
+  let bm25DocCount = previousMetadata?.bm25Verification?.persistedCount ?? 0;
   const shouldPersistBm25 = !isIncremental || incrementalChangedFiles.length > 0 || incrementalDeletedFiles.length > 0;
   if (shouldPersistBm25) {
     startSpinner('Building BM25 inverted index');
     try {
       const { Bm25Index, getBm25DbPath } = await import('../search/bm25-index.js');
       const bm25 = new Bm25Index(getBm25DbPath(workspaceRoot));
-      bm25.build(indexedGraph);
+      bm25DocCount = bm25.build(indexedGraph).docCount;
       stopSpinner();
       if (!options?.silent) console.log(`  ✓ BM25 index built`);
     } catch (err) {
@@ -1006,9 +1007,9 @@ async function analyzeWorkspace(targetPath: string, options?: {
       graphVerification: context.graphVerification,
       bm25Verification: {
         status: 'verified',
-        producedCount: indexedGraph.size.nodes,
-        persistedCount: indexedGraph.size.nodes,
-        contentFingerprint: sha256({ docCount: indexedGraph.size.nodes }),
+        producedCount: bm25DocCount,
+        persistedCount: bm25DocCount,
+        contentFingerprint: sha256({ docCount: bm25DocCount }),
       },
       vectorVerification: embeddingMetadataForSave?.enabled
         ? {
