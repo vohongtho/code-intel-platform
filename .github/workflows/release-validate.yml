@@ -37,6 +37,23 @@ jobs:
       - name: Build core dist
         run: npm run build --workspace=code-intel/core
 
+      - name: Install cross-platform native packages for runtime bundling
+        run: |
+          set -euo pipefail
+          LADYBUG_VERSION=$(node -p "require('./node_modules/@ladybugdb/core/package.json').version")
+          # @ladybugdb/core-<platform>-<arch> are optionalDependencies gated by os/cpu,
+          # so `npm ci` only installs the variant matching the runner (linux-x64).
+          # `npm install --os --cpu` reconciles the whole tree to one platform and prunes
+          # the others, so fetch each remaining variant's tarball directly instead.
+          for variant in linux-arm64 darwin-x64 darwin-arm64; do
+            workdir=$(mktemp -d)
+            tarball=$(npm pack "@ladybugdb/core-${variant}@${LADYBUG_VERSION}" --pack-destination "$workdir" 2>/dev/null)
+            tar -xzf "$workdir/$tarball" -C "$workdir"
+            mkdir -p "node_modules/@ladybugdb/core-${variant}"
+            cp -r "$workdir/package/." "node_modules/@ladybugdb/core-${variant}/"
+            rm -rf "$workdir"
+          done
+
       - name: Build self-contained runtime artifacts
         run: |
           node scripts/distribution/build-runtime-bundle.mjs --target linux-x64 --out-dir dist/runtime-bundles
