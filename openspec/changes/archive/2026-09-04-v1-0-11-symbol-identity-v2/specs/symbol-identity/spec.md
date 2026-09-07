@@ -4,6 +4,8 @@
 
 ### Requirement: Distinct semantic declarations MUST receive distinct canonical identities
 
+The system MUST assign distinct canonical identities to declarations that are semantically distinct, even when they share a simple name.
+
 #### Scenario: Overloads share owner and simple name
 
 - **GIVEN** two declarations with the same owner/name but distinct supported signatures
@@ -13,6 +15,8 @@
 
 ### Requirement: Body-only edits MUST preserve canonical symbol identity
 
+The system MUST preserve canonical symbol identity when only implementation bodies change and declaration identity facts do not change.
+
 #### Scenario: Function implementation changes without declaration change
 
 - **WHEN** the repository is reanalyzed
@@ -20,6 +24,8 @@
 - **AND** its body-derived content MAY change independently.
 
 ### Requirement: Partial and merged declarations MUST retain all source fragments
+
+The system MUST retain every declaration fragment that contributes to one canonical symbol and MUST keep those fragments addressable as evidence.
 
 #### Scenario: One canonical symbol has multiple valid declaration fragments
 
@@ -30,6 +36,8 @@
 
 ### Requirement: Multiple call sites MUST remain independently identifiable
 
+The system MUST preserve independent identity for each supported call site, even when caller and target are the same.
+
 #### Scenario: Same caller invokes same target twice
 
 - **GIVEN** two supported call sites at different source ranges
@@ -37,6 +45,8 @@
 - **THEN** both call sites MUST remain independently identifiable.
 
 ### Requirement: Ambiguous legacy selectors MUST NOT silently become exact
+
+The system MUST return ambiguity for legacy or simple selectors that map to multiple canonical symbols unless contextual disambiguation makes the target exact.
 
 #### Scenario: Old/simple selector maps to multiple v2 symbols
 

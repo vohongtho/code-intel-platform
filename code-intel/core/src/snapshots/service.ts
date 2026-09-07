@@ -6,7 +6,14 @@ import { DEFAULT_SNAPSHOT_CACHE_POLICY, getOrBuildSnapshot, type SnapshotCachePo
 import { diffEntitiesWithContinuity, diffRelationships } from './graph-diff.js';
 import { normalizeGraphForDiff } from './normalizer.js';
 import { readContentFingerprints } from './content-fingerprints.js';
-import type { SemanticGraphDiff, SnapshotBoundary, SnapshotBuildRequest, SnapshotBuildResult } from './types.js';
+import type { PhaseMetric, SemanticGraphDiff, SnapshotBoundary, SnapshotBuildRequest, SnapshotBuildResult } from './types.js';
+
+/** Wall-clock time/memory spent computing the diff itself, once both snapshots are usable — see `PhaseMetric`. */
+export interface GraphDiffPhaseDurations {
+  normalize: PhaseMetric;
+  diff: PhaseMetric;
+  contracts: PhaseMetric;
+}
 
 export interface GraphDiffRequest {
   repoDir: string;
@@ -29,6 +36,12 @@ export interface GraphDiffResponse {
   diff: SemanticGraphDiff | null;
   base: SnapshotBuildResult;
   head: SnapshotBuildResult;
+  /** Only present when a diff was actually computed (both sides usable). */
+  phases?: GraphDiffPhaseDurations;
+}
+
+function phaseMetric(startedAt: number, startRss: number): PhaseMetric {
+  return { durationMs: Date.now() - startedAt, rssDeltaBytes: process.memoryUsage().rss - startRss };
 }
 
 async function loadSnapshotGraph(artifactsDir: string): Promise<KnowledgeGraph> {
@@ -74,8 +87,12 @@ export async function computeSemanticGraphDiff(request: GraphDiffRequest): Promi
 
   const baseGraph = await loadSnapshotGraph(base.artifactsDir);
   const headGraph = await loadSnapshotGraph(head.artifactsDir);
+
+  const normalizeStarted = Date.now();
+  const normalizeStartRss = process.memoryUsage().rss;
   const baseNormalized = normalizeGraphForDiff(baseGraph, readContentFingerprints(base.artifactsDir));
   const headNormalized = normalizeGraphForDiff(headGraph, readContentFingerprints(head.artifactsDir));
+  const normalizePhase = phaseMetric(normalizeStarted, normalizeStartRss);
 
   let renamedFiles: Map<string, string> | undefined;
   if (base.descriptor.commit && head.descriptor.commit) {
@@ -86,9 +103,14 @@ export async function computeSemanticGraphDiff(request: GraphDiffRequest): Promi
     }
   }
 
+  const diffStarted = Date.now();
+  const diffStartRss = process.memoryUsage().rss;
   const nodes = diffEntitiesWithContinuity(baseNormalized, headNormalized, renamedFiles);
   const relationships = diffRelationships(baseNormalized, headNormalized);
+  const diffPhase = phaseMetric(diffStarted, diffStartRss);
 
+  const contractsStarted = Date.now();
+  const contractsStartRss = process.memoryUsage().rss;
   let contracts: SemanticGraphDiff['contracts'];
   if (request.includeContracts !== false) {
     try {
@@ -101,6 +123,7 @@ export async function computeSemanticGraphDiff(request: GraphDiffRequest): Promi
       incompleteReasons.push(`api-contract diff failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
+  const contractsPhase = phaseMetric(contractsStarted, contractsStartRss);
 
   const diff: SemanticGraphDiff = {
     base: base.descriptor,
@@ -117,5 +140,10 @@ export async function computeSemanticGraphDiff(request: GraphDiffRequest): Promi
     },
   };
 
-  return { diff, base, head };
+  return {
+    diff,
+    base,
+    head,
+    phases: { normalize: normalizePhase, diff: diffPhase, contracts: contractsPhase },
+  };
 }

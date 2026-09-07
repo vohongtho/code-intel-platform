@@ -1,8 +1,14 @@
-# Semantic Resolution Specification
+# Semantic Resolution
 
-## ADDED Requirements
+## Purpose
+
+Define how the resolver binds call/reference sites to targets using semantic evidence rather than simple-name uniqueness, so that ambiguity, dispatch fan-out, generic structure, and public-surface/import evidence are preserved and hot-path resolution stays index-driven rather than per-reference full-workspace scans.
+
+## Requirements
 
 ### Requirement: Target resolution MUST use semantic evidence instead of simple-name uniqueness alone
+
+The resolver MUST use semantic evidence instead of simple-name uniqueness alone.
 
 #### Scenario: Multiple same-named methods exist
 
@@ -13,6 +19,8 @@
 
 ### Requirement: Global simple-name fallback MUST NOT produce exact certainty by itself
 
+Global simple-name fallback MUST NOT produce exact certainty by itself.
+
 #### Scenario: Only a same-name global declaration is known
 
 - **WHEN** no stronger scope/import/type/owner evidence proves the binding
@@ -20,6 +28,8 @@
 - **AND** MUST NOT be labeled exact.
 
 ### Requirement: Language-defined public surfaces MUST participate in import resolution
+
+Language-defined public surfaces MUST participate in import resolution.
 
 #### Scenario: Caller imports a name through a package/module re-export
 
@@ -29,6 +39,8 @@
 
 ### Requirement: Ambiguous publication MUST remain ambiguous
 
+Ambiguous publication MUST remain ambiguous.
+
 #### Scenario: Multiple distinct definitions may publish one name
 
 - **WHEN** static evidence cannot prove which definition is active
@@ -36,6 +48,8 @@
 - **AND** MUST NOT choose based only on source/iteration order.
 
 ### Requirement: Generic/type-application structure MUST survive to language-specific resolution
+
+Generic/type-application structure MUST survive to language-specific resolution.
 
 #### Scenario: Receiver has type `Repo<User>` and other generic/specialized declarations exist
 
@@ -45,6 +59,8 @@
 
 ### Requirement: Candidate truncation MUST make coverage incomplete
 
+Candidate truncation MUST make coverage incomplete.
+
 #### Scenario: Interface dispatch exceeds fan-out limit
 
 - **WHEN** only a bounded subset is emitted
@@ -52,6 +68,8 @@
 - **AND** total/emitted candidate coverage MUST be observable.
 
 ### Requirement: Resolution hot paths MUST use prepared indexes
+
+Resolution hot paths MUST use prepared indexes.
 
 #### Scenario: Repository size grows while import/reference count also grows
 

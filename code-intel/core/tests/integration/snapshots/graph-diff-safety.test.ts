@@ -71,13 +71,25 @@ describe('semantic graph diff: Generation V2 isolation', { timeout: 120_000 }, (
       const headCommit = git(['rev-parse', 'HEAD'], repoDir);
 
       const before = captureState(repoDir);
-      const { diff, base, head } = await computeSemanticGraphDiff({ repoDir, base: baseCommit, head: headCommit });
+      const { diff, base, head, phases } = await computeSemanticGraphDiff({ repoDir, base: baseCommit, head: headCommit });
       const after = captureState(repoDir);
 
       assertUnchanged(before, after, 'success case');
       assert.ok(diff, 'diff should be produced for two valid commits');
       assert.equal(base.status, 'built');
       assert.equal(head.status, 'built');
+
+      for (const [label, result] of [['base', base], ['head', head]] as const) {
+        assert.ok(result.phases, `${label}: a fresh build should report per-phase timings`);
+        for (const phase of ['materialization', 'analysis', 'readback', 'fingerprinting'] as const) {
+          assert.ok(result.phases![phase].durationMs >= 0, `${label}.${phase}.durationMs should be a non-negative measurement`);
+        }
+        assert.ok(result.phases!.analysis.durationMs > 0, `${label}: the analysis phase (child \`analyze\` process) should take measurable time`);
+      }
+      assert.ok(phases, 'a computed diff should report normalize/diff/contracts phase timings');
+      for (const phase of ['normalize', 'diff', 'contracts'] as const) {
+        assert.ok(phases![phase].durationMs >= 0, `diff.${phase}.durationMs should be a non-negative measurement`);
+      }
       assert.equal(diff!.coverage.complete, true);
       assert.ok(diff!.nodes.some((n) => n.kind === 'added' && n.headName === 'farewell'), 'the added function should appear as an added node delta');
       assert.ok(diff!.nodes.every((n) => n.baseId !== headCommit && n.headId !== baseCommit), 'delta IDs should be canonical node IDs, never raw ref strings');
@@ -94,6 +106,8 @@ describe('semantic graph diff: Generation V2 isolation', { timeout: 120_000 }, (
       assertUnchanged(beforeCached, afterCached, 'cached re-run');
       assert.equal(cachedResult.base.fromCache, true);
       assert.equal(cachedResult.head.fromCache, true);
+      assert.equal(cachedResult.base.phases, undefined, 'a cache hit ran no build phases this call, so it reports none');
+      assert.equal(cachedResult.head.phases, undefined, 'a cache hit ran no build phases this call, so it reports none');
     } finally {
       fs.rmSync(repoDir, { recursive: true, force: true });
     }

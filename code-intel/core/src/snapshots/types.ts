@@ -66,6 +66,30 @@ export interface SnapshotBoundary {
   message: string;
 }
 
+/**
+ * Wall-clock time spent in each phase of a fresh `buildIsolatedSnapshot` call
+ * (see snapshot-builder.ts). Only present when `status: 'built'` or a build
+ * was attempted and failed partway through — a cache hit (`status: 'cached'`)
+ * ran none of these phases this call, so it carries no `phaseDurationsMs`.
+ * `rssDeltaBytes` is this (parent) process's own RSS growth across each
+ * phase, sampled via `process.memoryUsage()`; the `analysis` phase runs the
+ * real `analyze` pipeline in a child process (see `runAnalyzeChild`), whose
+ * memory is not observable from here, so `analysis.rssDeltaBytes` reflects
+ * only the parent's bookkeeping around the child call, not the child's own
+ * usage.
+ */
+export interface SnapshotPhaseDurations {
+  materialization: PhaseMetric;
+  analysis: PhaseMetric;
+  readback: PhaseMetric;
+  fingerprinting: PhaseMetric;
+}
+
+export interface PhaseMetric {
+  durationMs: number;
+  rssDeltaBytes: number;
+}
+
 export interface SnapshotBuildResult {
   status: SnapshotBuildStatus;
   descriptor: SemanticSnapshotDescriptor | null;
@@ -74,6 +98,8 @@ export interface SnapshotBuildResult {
   fromCache: boolean;
   boundaries: SnapshotBoundary[];
   durationMs: number;
+  /** Per-phase time/memory breakdown of `durationMs`; see `SnapshotPhaseDurations`. */
+  phases?: SnapshotPhaseDurations;
   error?: string;
 }
 

@@ -19,7 +19,13 @@ import {
 import { buildSnapshotDescriptor } from './fingerprint.js';
 import { createWorktreeDir } from './paths.js';
 import { computeContentFingerprints, writeContentFingerprints } from './content-fingerprints.js';
-import type { SnapshotBoundary, SnapshotBuildRequest, SnapshotBuildResult } from './types.js';
+import type { PhaseMetric, SnapshotBoundary, SnapshotBuildRequest, SnapshotBuildResult, SnapshotPhaseDurations } from './types.js';
+
+function phaseMetric(startedAt: number, startRss: number): PhaseMetric {
+  return { durationMs: Date.now() - startedAt, rssDeltaBytes: process.memoryUsage().rss - startRss };
+}
+
+const ZERO_PHASE: PhaseMetric = { durationMs: 0, rssDeltaBytes: 0 };
 
 /**
  * Locates the code-intel package's own bundled `analyze` CLI entry point,
@@ -211,6 +217,12 @@ export async function buildIsolatedSnapshot(
 ): Promise<SnapshotBuildResult> {
   const startedAt = Date.now();
   const boundaries: SnapshotBoundary[] = [];
+  const phases: SnapshotPhaseDurations = {
+    materialization: ZERO_PHASE,
+    analysis: ZERO_PHASE,
+    readback: ZERO_PHASE,
+    fingerprinting: ZERO_PHASE,
+  };
 
   if (request.includeDirtyWorkingTree) {
     return {
@@ -252,10 +264,13 @@ export async function buildIsolatedSnapshot(
 
   const worktreeDir = createWorktreeDir();
   try {
+    const materializationStarted = Date.now();
+    const materializationStartRss = process.memoryUsage().rss;
     try {
       materializeGitRefToWorktree(request.repoDir, resolved.commit, worktreeDir);
     } catch (error) {
       const message = error instanceof GitMaterializationError ? error.message : String(error);
+      phases.materialization = phaseMetric(materializationStarted, materializationStartRss);
       return {
         status: 'failed',
         descriptor,
@@ -263,14 +278,19 @@ export async function buildIsolatedSnapshot(
         fromCache: false,
         boundaries: [{ kind: 'materialization-failed', message }],
         durationMs: Date.now() - startedAt,
+        phases,
         error: message,
       };
     }
+    phases.materialization = phaseMetric(materializationStarted, materializationStartRss);
 
     fs.rmSync(stagingDir, { recursive: true, force: true });
     fs.mkdirSync(stagingDir, { recursive: true });
 
+    const analysisStarted = Date.now();
+    const analysisStartRss = process.memoryUsage().rss;
     const child = runAnalyzeChild(worktreeDir, stagingDir);
+    phases.analysis = phaseMetric(analysisStarted, analysisStartRss);
     if (child.status !== 0) {
       fs.rmSync(stagingDir, { recursive: true, force: true });
       const stderrSuffix = child.stderr ? `: ${child.stderr.trim().slice(-2000)}` : '';
@@ -282,10 +302,13 @@ export async function buildIsolatedSnapshot(
         fromCache: false,
         boundaries: [{ kind: 'analysis-failed', message }],
         durationMs: Date.now() - startedAt,
+        phases,
         error: message,
       };
     }
 
+    const readbackStarted = Date.now();
+    const readbackStartRss = process.memoryUsage().rss;
     const metadataPath = path.join(stagingDir, 'meta.json');
     let metadata: IndexMetadata;
     try {
@@ -293,6 +316,7 @@ export async function buildIsolatedSnapshot(
     } catch (error) {
       fs.rmSync(stagingDir, { recursive: true, force: true });
       const message = `staging metadata missing or unreadable after analyze: ${error instanceof Error ? error.message : String(error)}`;
+      phases.readback = phaseMetric(readbackStarted, readbackStartRss);
       return {
         status: 'failed',
         descriptor,
@@ -300,11 +324,13 @@ export async function buildIsolatedSnapshot(
         fromCache: false,
         boundaries: [{ kind: 'readback-failed', message }],
         durationMs: Date.now() - startedAt,
+        phases,
         error: message,
       };
     }
 
     const verification = await verifySnapshotReadBack(stagingDir, metadata);
+    phases.readback = phaseMetric(readbackStarted, readbackStartRss);
     if (!verification.ok) {
       fs.rmSync(stagingDir, { recursive: true, force: true });
       return {
@@ -314,11 +340,15 @@ export async function buildIsolatedSnapshot(
         fromCache: false,
         boundaries: [{ kind: 'readback-failed', message: verification.reason }],
         durationMs: Date.now() - startedAt,
+        phases,
         error: verification.reason,
       };
     }
 
+    const fingerprintingStarted = Date.now();
+    const fingerprintingStartRss = process.memoryUsage().rss;
     const fingerprintingError = await tryWriteContentFingerprints(worktreeDir, stagingDir);
+    phases.fingerprinting = phaseMetric(fingerprintingStarted, fingerprintingStartRss);
     if (fingerprintingError) {
       // Content fingerprints are an accuracy improvement for body-edit and
       // rename/move detection, not a correctness requirement for the diff to
@@ -333,6 +363,7 @@ export async function buildIsolatedSnapshot(
       descriptor,
       artifactsDir: stagingDir,
       fromCache: false,
+      phases,
       boundaries,
       durationMs: Date.now() - startedAt,
     };
