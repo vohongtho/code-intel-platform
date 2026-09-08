@@ -4,13 +4,7 @@ All notable changes to this project are documented in this file.
 
 ---
 
-## [Unreleased]
-
-<!--
-  This heading MUST stay `Unreleased` until v1.0.11 is actually tagged and
-  published — the real release date is set only immediately before the
-  validated release tag (see openspec/changes/v1-0-11-release-readiness-hardening).
--->
+## [1.0.11] - 2026-09-08
 
 
 ### 🧩 Framework semantic adapters
