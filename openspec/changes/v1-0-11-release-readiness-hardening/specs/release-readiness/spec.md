@@ -193,7 +193,7 @@ Runtime rollback MUST NOT serve a semantically incompatible `1.0.11` index throu
 
 ### Requirement: MCP and HTTP changes MUST preserve promised backward compatibility
 
-New `1.0.11` evidence, certainty, coverage and change-intelligence fields SHOULD be additive unless a breaking change is explicitly documented.
+Modified MCP/HTTP response contracts MUST NOT change the meaning of an existing required field without an explicitly documented breaking change. New `1.0.11` evidence, certainty, coverage and change-intelligence fields SHOULD be additive unless a breaking change is explicitly documented.
 
 #### Scenario: Older client ignores new fields
 
@@ -292,7 +292,7 @@ Passing workspace/source tests MUST NOT be the final release validation step.
 
 ### Requirement: Release blockers MUST fail closed
 
-No release may proceed while a known release-critical correctness, compatibility, packaging, documentation or security gate is unresolved.
+The release process MUST NOT proceed to tagging or publication while a known release-critical correctness, compatibility, packaging, documentation or security gate is unresolved.
 
 #### Scenario: Mandatory gate fails
 

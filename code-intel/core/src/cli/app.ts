@@ -54,7 +54,7 @@ import { EMBEDDING_MODELS, getDefaultEmbeddingModel, getEmbeddingModel, normaliz
 import type { PipelineContext } from '../pipeline/types.js';
 import { saveMetadata, loadMetadata, getDbPath, getVectorDbPath, loadAgentTargets, saveAgentTargets, computeIndexVersion, resolveEmbeddingMode, shouldRebuildEmbeddings, resolveAnalyzeMode, resolveParserForMetadata, type AgentTargetConfig, type AgentTargetSelection, type AgentTargetFormat, type EmbeddingMetadata } from '../storage/metadata.js';
 import { API_CONTRACT_SCHEMA_VERSION } from '../semantic/api-contracts/types.js';
-import { buildAnalyzerCompatibilityReceipt, CURRENT_IDENTITY_FINGERPRINT } from '../pipeline/compatibility-receipt.js';
+import { buildAnalyzerCompatibilityReceipt, buildFrameworkFingerprint, CURRENT_IDENTITY_FINGERPRINT } from '../pipeline/compatibility-receipt.js';
 import { computeSemanticGraphDiff } from '../snapshots/service.js';
 import { resolveIndexSnapshot } from '../storage/index-snapshot.js';
 import { writeContextFiles } from './context-writer.js';
@@ -985,9 +985,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
       embeddingMetadata: embeddingMetadataForSave,
     });
     const frameworkDetections = (context.frameworkDetections ?? []).map((item) => item.frameworkId).sort();
-    const frameworkFingerprint = frameworkDetections.length > 0
-      ? crypto.createHash('sha256').update(JSON.stringify({ frameworks: frameworkDetections, factSchemaVersion })).digest('hex')
-      : undefined;
+    const frameworkFingerprint = buildFrameworkFingerprint(context.frameworkDetections ?? [], factSchemaVersion);
     saveMetadata(workspaceRoot, {
       indexedAt,
       schemaVersion,

@@ -125,4 +125,26 @@ describe('getOrComputeArtifact', () => {
     getOrComputeArtifact(cache, key2, compute);
     assert.equal(computeCalls, 2);
   });
+
+  it('recomputes when programAnalysisVersion changes (task 9.8) — an engine upgrade must not reuse an artifact computed by the old engine', () => {
+    const cache = new MemoryProgramAnalysisCache();
+    let computeCalls = 0;
+    const compute = () => { computeCalls += 1; return { computedAt: computeCalls, truncated: false }; };
+    const key1 = { kind: 'function-summary' as const, canonicalFunctionId: 'sym:v2:function:test', bodyHash: 'hash-1', fingerprint: FINGERPRINT };
+    const key2 = { ...key1, fingerprint: { ...FINGERPRINT, programAnalysisVersion: `${FINGERPRINT.programAnalysisVersion}-hypothetical-next` } };
+    getOrComputeArtifact(cache, key1, compute);
+    getOrComputeArtifact(cache, key2, compute);
+    assert.equal(computeCalls, 2);
+  });
+
+  it('recomputes when languageLoweringVersion changes (task 9.8) — a per-language lowering-table fix must not reuse a stale IR/summary', () => {
+    const cache = new MemoryProgramAnalysisCache();
+    let computeCalls = 0;
+    const compute = () => { computeCalls += 1; return { computedAt: computeCalls, truncated: false }; };
+    const key1 = { kind: 'function-summary' as const, canonicalFunctionId: 'sym:v2:function:test', bodyHash: 'hash-1', fingerprint: FINGERPRINT };
+    const key2 = { ...key1, fingerprint: { ...FINGERPRINT, languageLoweringVersion: 'typescript-lowering-v2' } };
+    getOrComputeArtifact(cache, key1, compute);
+    getOrComputeArtifact(cache, key2, compute);
+    assert.equal(computeCalls, 2);
+  });
 });

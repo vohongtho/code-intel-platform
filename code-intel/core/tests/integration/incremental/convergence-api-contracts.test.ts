@@ -163,6 +163,114 @@ describe('dependency-aware incremental convergence — API contracts', () => {
     });
   });
 
+  it('converges after an HTTP method change on the same path (task 8.10)', () => {
+    withEvidenceStore((dir) => {
+      const initialEvidence = createEvidenceStore(dir);
+      const files: WorkspaceFiles = {
+        'app.js': [
+          "const express = require('express');",
+          'const app = express();',
+          "app.get('/users/:id', getUser);",
+          'function getUser(req, res) {',
+          "  res.status(200).json({ id: req.params.id });",
+          '}',
+        ].join('\n'),
+      };
+      const state = buildInitialState(files, initialEvidence);
+
+      const edited: WorkspaceFiles = {
+        'app.js': [
+          "const express = require('express');",
+          'const app = express();',
+          "app.post('/users/:id', getUser);",
+          'function getUser(req, res) {',
+          "  res.status(200).json({ id: req.params.id });",
+          '}',
+        ].join('\n'),
+      };
+      const { delta, state: nextState } = applyIncrementalEdit(state, initialEvidence, { changedFiles: edited });
+      initialEvidence.close();
+      assert.equal(delta.requiresFullResolution, false);
+
+      assertConverges(dir, edited, nextState);
+    });
+  });
+
+  it('converges after adding a brand-new route to an existing file (task 8.10)', () => {
+    withEvidenceStore((dir) => {
+      const initialEvidence = createEvidenceStore(dir);
+      const files: WorkspaceFiles = {
+        'app.js': [
+          "const express = require('express');",
+          'const app = express();',
+          "app.get('/users/:id', getUser);",
+          'function getUser(req, res) {',
+          "  res.status(200).json({ id: req.params.id });",
+          '}',
+        ].join('\n'),
+      };
+      const state = buildInitialState(files, initialEvidence);
+
+      const edited: WorkspaceFiles = {
+        'app.js': [
+          "const express = require('express');",
+          'const app = express();',
+          "app.get('/users/:id', getUser);",
+          "app.delete('/users/:id', deleteUser);",
+          'function getUser(req, res) {',
+          "  res.status(200).json({ id: req.params.id });",
+          '}',
+          'function deleteUser(req, res) {',
+          '  res.status(204).end();',
+          '}',
+        ].join('\n'),
+      };
+      const { delta, state: nextState } = applyIncrementalEdit(state, initialEvidence, { changedFiles: edited });
+      initialEvidence.close();
+      assert.equal(delta.requiresFullResolution, false);
+      assert.ok(delta.addedFacts.length > 0, 'adding a new route must be observed as at least one added fact');
+
+      assertConverges(dir, edited, nextState);
+    });
+  });
+
+  it('converges after removing a route entirely (no replacement) (task 8.10)', () => {
+    withEvidenceStore((dir) => {
+      const initialEvidence = createEvidenceStore(dir);
+      const files: WorkspaceFiles = {
+        'app.js': [
+          "const express = require('express');",
+          'const app = express();',
+          "app.get('/users/:id', getUser);",
+          "app.delete('/users/:id', deleteUser);",
+          'function getUser(req, res) {',
+          "  res.status(200).json({ id: req.params.id });",
+          '}',
+          'function deleteUser(req, res) {',
+          '  res.status(204).end();',
+          '}',
+        ].join('\n'),
+      };
+      const state = buildInitialState(files, initialEvidence);
+
+      const edited: WorkspaceFiles = {
+        'app.js': [
+          "const express = require('express');",
+          'const app = express();',
+          "app.get('/users/:id', getUser);",
+          'function getUser(req, res) {',
+          "  res.status(200).json({ id: req.params.id });",
+          '}',
+        ].join('\n'),
+      };
+      const { delta, state: nextState } = applyIncrementalEdit(state, initialEvidence, { changedFiles: edited });
+      initialEvidence.close();
+      assert.equal(delta.requiresFullResolution, false);
+
+      assertConverges(dir, edited, nextState);
+    });
+  });
+
   it('converges after deleting a file that contained a route and its consumer', () => {
     withEvidenceStore((dir) => {
       const initialEvidence = createEvidenceStore(dir);

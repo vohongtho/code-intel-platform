@@ -9,6 +9,7 @@ import {
   resolveAnalysisPlan,
   type SourceChangeState,
 } from '../../../src/pipeline/analysis-plan.js';
+import { buildAnalyzerCompatibilityReceipt, CURRENT_IDENTITY_FINGERPRINT } from '../../../src/pipeline/compatibility-receipt.js';
 import type { IndexMetadata } from '../../../src/storage/metadata.js';
 import type { IndexSnapshot } from '../../../src/storage/index-snapshot.js';
 import type { SemanticDelta } from '../../../src/incremental/semantic-delta.js';
@@ -42,10 +43,21 @@ function fixture(vector = true): { root: string; snapshot: IndexSnapshot; metada
     vectorDbPath: path.join(dir, 'vector.db'), metadataPath: path.join(dir, 'meta.json'),
     semanticIndexPath: path.join(dir, 'semantic-index.json'),
   };
+  // A real, current receipt — mirrors exactly what cli/app.ts's saveMetadata
+  // persists after a genuine 1.0.11 analyze, so this fixture represents a
+  // healthy CURRENT index by construction rather than by accident. Individual
+  // tests below mutate specific fields off this baseline to simulate mismatch.
+  const receipt = buildAnalyzerCompatibilityReceipt({ parser: 'tree-sitter', identityFingerprint: CURRENT_IDENTITY_FINGERPRINT });
   const metadata: IndexMetadata = {
     indexedAt: new Date().toISOString(), schemaVersion: 8, indexVersion: 'v', parser: 'tree-sitter',
     embeddings: { enabled: true, status: 'ready', provider: 'test', model: 'test', dimension: 3 },
     stats: { nodes: 1, edges: 0, files: 1, duration: 1 },
+    compatibilityReceipt: receipt,
+    factSchemaFingerprint: receipt.factSchemaFingerprint,
+    identityFingerprint: receipt.identityFingerprint,
+    resolverFingerprint: receipt.resolverFingerprint,
+    evidenceSchemaFingerprint: receipt.evidenceFingerprint,
+    apiContractFingerprint: receipt.apiContractFingerprint,
   };
   return { root, snapshot, metadata };
 }
@@ -251,6 +263,64 @@ describe('resolveAnalysisPlan', () => {
       if (plan.mode !== 'publish') return;
       assert.equal(plan.evolution, 'full-reanalysis');
       assert.equal(plan.graph, 'full');
+    } finally { fs.rmSync(value.root, { recursive: true, force: true }); }
+  });
+
+  it('selects full semantic reanalysis when the persisted language-registry (parser/grammar) fingerprint mismatches (task 9.1)', () => {
+    const value = fixture();
+    try {
+      value.metadata.compatibilityReceipt = {
+        ddlFingerprint: 'ddl-1',
+        analyzerFingerprint: 'analyzer-1',
+        languageRegistryFingerprint: 'stale-grammar-fingerprint',
+        factSchemaFingerprint: 'fact-1',
+        identityFingerprint: 'symbol-identity-v2',
+        resolverFingerprint: 'resolver-1',
+        evidenceFingerprint: 'evidence-1',
+        apiContractFingerprint: 'api-1',
+      };
+      const plan = resolveAnalysisPlan({ args: ['analyze'], metadata: value.metadata, snapshot: value.snapshot, source: unchanged });
+      assert.equal(plan.mode, 'publish');
+      if (plan.mode !== 'publish') return;
+      assert.equal(plan.evolution, 'full-reanalysis', 'a stale parser/grammar fingerprint must not be silently treated as current');
+      assert.equal(plan.graph, 'full');
+      assert.equal(plan.bm25, 'full');
+    } finally { fs.rmSync(value.root, { recursive: true, force: true }); }
+  });
+
+  it('does not force reanalysis when the language-registry fingerprint specifically is absent from an otherwise-current receipt', () => {
+    const value = fixture();
+    try {
+      // A receipt predating just the languageRegistryFingerprint addition
+      // (an early field, not the whole receipt) — must not be misread as a
+      // mismatch just because there's nothing to compare for that one field.
+      delete (value.metadata.compatibilityReceipt as { languageRegistryFingerprint?: string })?.languageRegistryFingerprint;
+      const plan = resolveAnalysisPlan({ args: ['analyze'], metadata: value.metadata, snapshot: value.snapshot, source: unchanged });
+      assert.equal(plan.mode, 'noop');
+    } finally { fs.rmSync(value.root, { recursive: true, force: true }); }
+  });
+
+  it('selects full semantic reanalysis when compatibilityReceipt is entirely absent — the real 1.0.10 -> 1.0.11 case (task 11/12)', () => {
+    const value = fixture();
+    try {
+      // This is exactly what the real published 1.0.10 package persists:
+      // schemaVersion/parser look "current" (no schema migration needed) but
+      // there is no compatibilityReceipt or any fingerprint field at all,
+      // because Symbol Identity V2/Evidence-Based Resolution/API-contract
+      // fingerprinting did not exist yet. Verified against the actual
+      // published 1.0.10 artifact via scripts/verify-upgrade-from-1.0.10.mjs.
+      delete value.metadata.compatibilityReceipt;
+      delete value.metadata.factSchemaFingerprint;
+      delete value.metadata.identityFingerprint;
+      delete value.metadata.resolverFingerprint;
+      delete value.metadata.evidenceSchemaFingerprint;
+      delete value.metadata.apiContractFingerprint;
+      const plan = resolveAnalysisPlan({ args: ['analyze'], metadata: value.metadata, snapshot: value.snapshot, source: unchanged });
+      assert.equal(plan.mode, 'publish');
+      if (plan.mode !== 'publish') return;
+      assert.equal(plan.evolution, 'full-reanalysis', 'a 1.0.10-era index with no compatibility receipt at all must never be silently reused');
+      assert.equal(plan.graph, 'full');
+      assert.equal(plan.bm25, 'full');
     } finally { fs.rmSync(value.root, { recursive: true, force: true }); }
   });
 

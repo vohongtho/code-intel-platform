@@ -8,6 +8,7 @@ import {
   type IndexMetadata,
 } from './metadata.js';
 import { resolveIndexSnapshot } from './index-snapshot.js';
+import { isSemanticProducerIncompatible } from '../pipeline/compatibility-receipt.js';
 
 export type IndexTrustState = 'trusted' | 'stale' | 'corrupt' | 'legacy' | 'missing';
 export type IndexArtifactTrustState = 'verified' | 'partial-recoverable' | 'stale' | 'interrupted' | 'unverified' | 'collapsed' | 'corrupt' | 'unavailable';
@@ -121,6 +122,17 @@ export function verifyIndexTrust(repoDir: string): IndexTrustResult {
     });
     if (expected !== metadata.indexVersion) reasons.push('INDEX_FINGERPRINT_MISMATCH');
   }
+
+  // Semantic producer compatibility (task 11/12): structurally-valid,
+  // non-corrupt metadata can still have been produced by an incompatible
+  // identity/resolver/evidence/API-contract/parser-grammar implementation —
+  // e.g. a real published 1.0.10 index, which has a defined schemaVersion and
+  // a non-regex parser (so it isn't caught by the `legacy` check above) but
+  // predates the whole compatibility-receipt system. Without this check,
+  // `index-status`/`doctor` reported such an index as `trusted: true` even
+  // though `analyze` itself would force a full rebuild — verified against the
+  // actual published 1.0.10 npm package.
+  if (isSemanticProducerIncompatible(metadata)) reasons.push('SEMANTIC_PRODUCER_INCOMPATIBLE');
 
   if (metadata.generationId && snapshot && !snapshot.legacy && metadata.generationId !== snapshot.generationId) {
     reasons.push('GENERATION_ID_MISMATCH');

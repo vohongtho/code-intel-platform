@@ -73,6 +73,11 @@ if (copied === 0) {
 }
 
 // ─── Also copy the web UI dist into dist/web/ ─────────────────────────────────
+// Core packaging MUST NOT silently produce an incomplete package when Web has
+// not been built. The supported release path is the root `build:product`
+// script (shared -> web -> core), which always builds Web first. A bare
+// `npm run build --workspace=code-intel/core` run in isolation is only
+// supported for core-only local iteration and requires an explicit opt-out.
 const webSrc = path.join(__dirname, '..', '..', 'web', 'dist');
 const webDest = path.join(__dirname, '..', 'dist', 'web');
 
@@ -90,6 +95,13 @@ if (fs.existsSync(webSrc)) {
   }
   copyDir(webSrc, webDest);
   console.log('  ✓ web UI copied → dist/web/');
+} else if (process.env.CODE_INTEL_SKIP_WEB_ASSETS === '1') {
+  console.warn('  ⚠ web/dist not found — CODE_INTEL_SKIP_WEB_ASSETS=1 set, producing a core-only dev build without dist/web/');
 } else {
-  console.warn('  ⚠ web/dist not found — run npm run build in code-intel/web first');
+  console.error('  ✗ code-intel/web/dist not found.');
+  console.error('    Core packaging requires the Web UI to be built first.');
+  console.error('    Run `npm run build:product` from the repo root (builds shared -> web -> core),');
+  console.error('    or `npm run build --workspace=code-intel/web` before building core.');
+  console.error('    For a core-only local dev build without the Web UI, set CODE_INTEL_SKIP_WEB_ASSETS=1.');
+  process.exit(1);
 }

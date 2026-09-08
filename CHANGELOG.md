@@ -4,7 +4,14 @@ All notable changes to this project are documented in this file.
 
 ---
 
-## [1.0.11] - 2026-08-18
+## [Unreleased]
+
+<!--
+  This heading MUST stay `Unreleased` until v1.0.11 is actually tagged and
+  published — the real release date is set only immediately before the
+  validated release tag (see openspec/changes/v1-0-11-release-readiness-hardening).
+-->
+
 
 ### 🧩 Framework semantic adapters
 
@@ -48,7 +55,7 @@ All notable changes to this project are documented in this file.
 - Extended `pr_impact` with an optional `analysisMode: "current-graph" | "semantic-snapshot"` (default `current-graph`, existing behavior/contract unchanged) — snapshot mode adds the semantic graph diff between `base_ref`/`head_ref` alongside (never replacing) the existing textual-hunk blast radius. A failed or partial side never collapses into a false "no impact" — coverage and per-side boundaries always propagate.
 - Added `code-intel graph diff --base <ref> --head <ref> [--json] [--no-contracts] [--no-cache]` CLI command, a `graph_diff` MCP tool (paginated `nodes`/`relationships`), and a `POST /api/v1/graph/diff` HTTP route (requires the `analyst` role) — all backed by the same transport-independent `computeSemanticGraphDiff` service; refs are resolved before any expensive analysis, and an unresolvable or unsafe ref never falls back to the ambient/currently-active repository.
 - All Git ref handling passes arguments as argv arrays (`execFileSync`), never shell-interpolated; verified against fixtures for refs containing spaces, `--`, quotes, and shell metacharacters, including refs shaped like command-line flags (argument-injection, not just shell-injection).
-- Known limitations: dirty (uncommitted) working-tree snapshots are not supported — pass only committed refs; an incremental snapshot-seeding path (building a snapshot from a cached parent plus a proven invalidation closure) was deliberately not implemented in this initial pass, since the underlying dependency-aware incremental resolution is not yet proven in production — every snapshot build performs a full temporary analysis; flow/cluster deltas are unsupported (see above); 10k/100k-scale diff benchmarking was not performed as part of this pass.
+- Known limitations: dirty (uncommitted) working-tree snapshots are not supported — pass only committed refs; an incremental snapshot-seeding path (building a snapshot from a cached parent plus a proven invalidation closure) was deliberately not implemented in this initial pass, since the underlying dependency-aware incremental resolution is not yet proven in production — every snapshot build performs a full temporary analysis; flow/cluster deltas are unsupported (see above). The graph-diff stage itself (`diffEntitiesWithContinuity`/`diffRelationships`) is regression-tested against synthetic normalized graphs at 10k/100k-entity scale for correctness and sub-quadratic scaling (`tests/performance/graph-diff-scaling.test.ts`); a true end-to-end 10k/100k-symbol repository snapshot-build benchmark (real parse/analyze of two commits that size) has not been performed.
 - Independently found and fixed, while building this feature's test suite: a pre-existing false-positive in Generation V2's BM25 read-back validation (`bm25Verification.producedCount` is derived from total graph node count, but `cluster`/`flow` synthetic nodes are never BM25-indexed, so a graph containing either can spuriously fail validation as "collapsed" — reproduced independently against plain `code-intel analyze` on a small fixture) and a crash-on-corruption bug in the new snapshot cache (a cache entry missing its `graph.db` threw during read-back instead of failing validation cleanly).
 
 ### 🔀 Cross-Repository Contract Drift
@@ -63,6 +70,19 @@ All notable changes to this project are documented in this file.
 - Added observability counters (contracts loaded, fingerprints changed, consumers expanded, comparisons executed, full-fallback count, cap hits, partial repositories, elapsed time) on every `group_contract_drift` result, and verified near-linear scaling plus bounded (capped) consumer-index output at 10/100/1000-contract benchmarks — no query is ever built with size proportional to the contract/consumer count.
 - Fixed a determinism gap found while adding sort-order tests: a finding's `affectedConsumers` was previously left in whatever order the sync-time consumer index produced them; they are now sorted by repository ID, then consumer ID, then source anchor, matching the existing top-level finding sort (repository ID, contract kind, stable contract ID, change kind, summary).
 - Known limitations: GraphQL and protobuf/gRPC contract drift are not implemented (see above). Schema/event field-level comparison depends on the graph node carrying its declaration's source content; the current TypeScript symbol-identity pipeline does not populate this for real `interface`/`type_alias` nodes (only for `file` and function-like nodes), so schema/event drift is proven correct against hand-constructed snapshot fixtures in this release's test suite but not yet against a real end-to-end `code-intel analyze` of TypeScript interfaces — tracked as a gap in the parser/symbol-identity output, independent of this change's comparator logic. Route/consumer contract drift is unaffected by this gap.
+
+### 🧮 Program Analysis Foundation
+
+- Added a universal intermediate representation (`program-analysis/ir/`) lowered from the real tree-sitter AST, plus the classic analyses built on it: control-flow graph construction, dominator/control-dependence computation, reaching-definitions and def-use dataflow, per-function summaries (parameter-influences-return facts, callee references), a program dependence graph (PDG), and bounded taint analysis.
+- Added a self-validating language capability registry (`program-analysis/languages/capability-registry.ts`) reporting `supported`/`partial`/`not-applicable` per language based on repository-defined evidence (a real tree-sitter parse plus passing IR→CFG→reaching-definitions→def-use→summary tests), not grammar availability alone: **11 languages `supported`** (TypeScript, JavaScript, Python, Java, Go, C, C++, C#, Rust, PHP, Ruby), **3 `partial`** (Kotlin, Swift — blocked by a wasm-path resolution issue in some toolchains; Dart — lowering table exists but its grammar has not been proven to parse in tests), **1 `not-applicable`** (HTML — no function bodies to lower directly). The registry throws at module load if any language row is missing or a `supported`/`partial` row lacks a real lowering table, so registry/implementation drift fails loudly rather than silently.
+- Unsupported or unlowered constructs return an explicit `truncated` IR with a reason string rather than fabricating output.
+- **Known limitation — public integration is partial, not complete.** IR/CFG/dominators/reaching-definitions/def-use/function-summary results are reachable only through the `code-intel inspect` CLI command, which surfaces function-summary fields only (not the CFG or raw dataflow results). **PDG and bounded taint analysis have no production call site at all in this release** — no CLI flag, no MCP tool, no HTTP route invokes them; they exist as implemented, unit-tested library code, exercised only by their own test suites (TypeScript fixtures). Treat this as an internal foundation with initial CLI integration, not a mature public PDG/taint exploration surface.
+
+### ⬆️ Upgrading from 1.0.10
+
+- Existing persisted indexes are not silently trusted as compatible. New Generation V2 fingerprints introduced in this release (`apiContractSchemaVersion`/`apiContractFingerprint`, framework detection fingerprints) follow the existing Generation compatibility model: an index built before these fingerprints existed is treated as incompatible for the affected derived state and is rebuilt on the next analyze rather than reported as fresh.
+- No repository registry, configuration, or repository-group schema change is introduced in this release; upgrading the npm package or self-contained runtime does not require manual registry/config migration.
+- Self-contained runtime installs (see "Self-contained runtime distribution" below) support side-by-side versions, `code-intel upgrade`, `code-intel version pin`, and `code-intel rollback`; npm/developer installs continue to use the existing `code-intel update` flow. Full `1.0.10 -> 1.0.11` upgrade/rollback smoke coverage against a real prior-version installation is tracked as a release-hardening follow-up (see `openspec/changes/v1-0-11-release-readiness-hardening`) and is not yet part of this entry's verified claims.
 
 ### 🧭 Graph-backed agent workflows
 

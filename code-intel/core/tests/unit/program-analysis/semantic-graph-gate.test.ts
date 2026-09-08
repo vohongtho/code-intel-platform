@@ -17,6 +17,7 @@ import { saveMetadata, computeIndexVersionForPaths, getDbPath, getVectorDbPath }
 import { Bm25Index, getBm25DbPath } from '../../../src/search/bm25-index.js';
 import { CURRENT_SCHEMA_VERSION } from '../../../src/migrations/migration-runner.js';
 import { gateInterproceduralAnalysis, boundCertaintyByCallRelationship } from '../../../src/program-analysis/semantic-graph-gate.js';
+import { buildAnalyzerCompatibilityReceipt, CURRENT_IDENTITY_FINGERPRINT } from '../../../src/pipeline/compatibility-receipt.js';
 
 const created: string[] = [];
 
@@ -49,12 +50,23 @@ async function writeTrustedIndex(repoPath: string): Promise<void> {
     vectorDbPath: getVectorDbPath(repoPath),
   });
 
+  // A genuinely trusted index needs a real, current compatibilityReceipt —
+  // its absence is itself an incompatibility signal (verified against the
+  // actual published 1.0.10 package, which predates this receipt system
+  // entirely; see storage/index-trust.ts's isSemanticProducerIncompatible check).
+  const receipt = buildAnalyzerCompatibilityReceipt({ parser: 'tree-sitter', identityFingerprint: CURRENT_IDENTITY_FINGERPRINT });
   saveMetadata(repoPath, {
     indexedAt,
     schemaVersion: CURRENT_SCHEMA_VERSION,
     indexVersion,
     parser: 'tree-sitter',
     stats: { nodes: graph.size.nodes, edges: graph.size.edges, files: 1, duration: 0 },
+    compatibilityReceipt: receipt,
+    factSchemaFingerprint: receipt.factSchemaFingerprint,
+    identityFingerprint: receipt.identityFingerprint,
+    resolverFingerprint: receipt.resolverFingerprint,
+    evidenceSchemaFingerprint: receipt.evidenceFingerprint,
+    apiContractFingerprint: receipt.apiContractFingerprint,
   });
 }
 

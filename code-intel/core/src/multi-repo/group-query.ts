@@ -37,7 +37,7 @@ export async function queryGroup(
   query: string,
   limit = 20,
   options: GroupSearchOptions = {},
-): Promise<{ perRepo: GroupQueryResult[]; merged: SearchResult[]; searchMode: 'bm25' | 'vector' | 'hybrid'; vectorReady: boolean }> {
+): Promise<{ perRepo: GroupQueryResult[]; merged: SearchResult[]; searchMode: 'bm25' | 'vector' | 'hybrid'; vectorReady: boolean; candidatePoolSize: number }> {
   const registry = loadRegistry();
   const perRepo: GroupQueryResult[] = [];
   const allRankings: SearchResult[][] = [];
@@ -134,13 +134,14 @@ export async function queryGroup(
     allRankings.push(taggedResults);
   }
 
-  const merged = reciprocalRankFusion(...allRankings).slice(0, limit);
+  const mergedAll = reciprocalRankFusion(...allRankings);
+  const merged = mergedAll.slice(0, limit);
   const searchMode = requestedMode === 'bm25'
     ? 'bm25'
     : requestedMode === 'vector'
       ? (anyVectorUsed ? 'vector' : 'bm25')
       : (anyVectorUsed ? 'hybrid' : 'bm25');
-  return { perRepo, merged, searchMode, vectorReady: anyVectorReady };
+  return { perRepo, merged, searchMode, vectorReady: anyVectorReady, candidatePoolSize: mergedAll.length };
 }
 
 async function runVectorSearch(

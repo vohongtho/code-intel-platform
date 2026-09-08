@@ -39,7 +39,7 @@
   },
   "scripts": {
     "build": "npm --prefix ../shared run build && tsup --config tsup.config.ts && node scripts/add-shebang.mjs && node scripts/copy-grammars.mjs && node scripts/copy-workflow-assets.mjs && node dist/agents/workflows/validate-cli.js && node ../../scripts/distribution/runtime-manifest.mjs --validate",
-    "validate:dist": "rm -f vohongtho.infotech-code-intel-*.tgz && npm pack --silent >/dev/null && rm -f vohongtho.infotech-code-intel-*.tgz",
+    "validate:dist": "node scripts/validate-dist.mjs",
     "typecheck": "tsc -b --noEmit",
     "prepublishOnly": "npm run build",
     "clean": "rm -rf dist dist-tests *.tsbuildinfo",

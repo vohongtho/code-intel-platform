@@ -1,4 +1,13 @@
-name: Release Readiness
+name: Incremental & No-Op Regression (PR)
+
+# NOTE: despite the historical workflow filename, this is a PR-time
+# regression gate for atomic-analyze/no-op/incremental-vs-full-rebuild
+# semantics — it is NOT the release-candidate gate for tagging a version.
+# The authoritative pre-release gate for `v*.*.*` publication readiness is
+# `.github/workflows/release-validate.yml` (release/** pushes + manual
+# dispatch). Version assertions below are read dynamically from
+# code-intel/core/package.json so this workflow never goes stale across
+# releases the way a hardcoded version check would.
 
 on:
   pull_request:
@@ -30,15 +39,25 @@ jobs:
           const pkg = JSON.parse(fs.readFileSync('code-intel/core/package.json', 'utf8'));
           const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
           const locked = lock.packages?.['code-intel/core']?.version;
-          if (pkg.version !== '1.0.10') throw new Error(`Expected package version 1.0.10, got ${pkg.version}`);
+          // Version is read dynamically (not hardcoded) — this workflow only
+          // proves internal consistency between package.json and the
+          // lockfile, not "what version should this release be".
           if (locked !== pkg.version) throw new Error(`package-lock core version ${locked} != package version ${pkg.version}`);
           NODE
-      - name: Build distributable
+      # This workflow only exercises CLI/incremental-analysis behavior and
+      # intentionally does not build the Web UI, so it opts out of Core's
+      # web-asset requirement (see copy-grammars.mjs). A core-only build is
+      # NOT a release-ready package — full package validation (`validate:dist`,
+      # which now inspects tarball contents including dist/web/) belongs to
+      # release-validate.yml, not this PR-time regression check.
+      - name: Build distributable (core-only, no Web UI)
+        env:
+          CODE_INTEL_SKIP_WEB_ASSETS: '1'
         run: npm run build --workspace=code-intel/core
-      - name: Validate npm package
-        run: npm run validate:dist --workspace=code-intel/core
       - name: CLI version smoke test
-        run: test "$(node code-intel/core/dist/cli/main.js --version)" = "1.0.10"
+        run: |
+          expected_version=$(node -p "require('./code-intel/core/package.json').version")
+          test "$(node code-intel/core/dist/cli/main.js --version)" = "$expected_version"
       - name: Atomic analyze, no-op, setup, and trust smoke test
         shell: bash
         run: |

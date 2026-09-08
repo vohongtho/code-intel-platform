@@ -260,12 +260,16 @@ export function validateRuntimeManifest(manifest = buildRuntimeManifest()) {
 
   const mutableInsideVersionRoot = manifest.persistentData.assertions.filter((entry) => !entry.outsideVersionRoot);
 
+  // CODE_INTEL_SKIP_WEB_ASSETS=1 (see code-intel/core/scripts/copy-grammars.mjs)
+  // is the documented escape hatch for a core-only local dev build — never
+  // set in the real release/CI path, so this does not weaken the release gate.
+  const skippingWebAssets = process.env['CODE_INTEL_SKIP_WEB_ASSETS'] === '1';
   const requiredCoreFiles = [
     'code-intel/core/dist/cli/main.js',
     'code-intel/core/dist/cli/app.js',
     'code-intel/core/dist/cli/hook.js',
     'code-intel/core/dist/index.js',
-    'code-intel/core/dist/web/index.html',
+    ...(skippingWebAssets ? [] : ['code-intel/core/dist/web/index.html']),
     'code-intel/core/dist/wasm/tree-sitter-typescript.wasm',
     'code-intel/core/dist/wasm/tree-sitter-javascript.wasm',
     'code-intel/shared/dist/index.js',

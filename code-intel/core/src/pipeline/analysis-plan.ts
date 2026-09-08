@@ -1,16 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { getChangedFilesSince } from './incremental.js';
 import { detectLanguage } from '../shared/detection.js';
 import type { IndexMetadata } from '../storage/metadata.js';
 import type { EvolutionAction, IndexArtifactName } from '../storage/index-generation.js';
 import type { IndexSnapshot } from '../storage/index-snapshot.js';
 import { shouldRebuildEmbeddings as shouldRebuildEmbeddingsFromMetadata } from '../storage/metadata.js';
-import { FACT_SCHEMA_VERSION } from '../semantic/fact-bundle.js';
-import { RESOLVER_VERSION } from '../resolution/contracts.js';
-import { EVIDENCE_SCHEMA_VERSION } from '../evidence/store.js';
-import { API_CONTRACT_SCHEMA_VERSION } from '../semantic/api-contracts/types.js';
+import { isSemanticProducerIncompatible } from './compatibility-receipt.js';
 import type { SemanticDelta } from '../incremental/semantic-delta.js';
 import { isDependencyAwareIncrementalEnabled, isEligibleForIncrementalPublication } from '../incremental/rollout-gate.js';
 
@@ -104,44 +100,27 @@ function unique<T>(values: T[]): T[] {
   return [...new Set(values)];
 }
 
-function sha256(value: unknown): string {
-  return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
-}
-
-function hasSemanticFingerprintMismatch(metadata: IndexMetadata): boolean {
-  const currentIdentityFingerprint = 'symbol-identity-v2';
-  const parser = metadata.parser ?? 'regex';
-  const currentFactSchemaFingerprint = sha256({ version: FACT_SCHEMA_VERSION, parser });
-  const currentResolverFingerprint = sha256({
-    resolverVersion: RESOLVER_VERSION,
-    factSchemaVersion: FACT_SCHEMA_VERSION,
-    identityFingerprint: currentIdentityFingerprint,
-  });
-  const currentEvidenceFingerprint = sha256({
-    evidenceSchemaVersion: EVIDENCE_SCHEMA_VERSION,
-    resolverVersion: RESOLVER_VERSION,
-  });
-  const currentApiContractFingerprint = sha256({ apiContractSchemaVersion: API_CONTRACT_SCHEMA_VERSION });
-  return Boolean(
-    (metadata.factSchemaVersion && metadata.factSchemaVersion !== FACT_SCHEMA_VERSION)
-    || (metadata.factSchemaFingerprint && metadata.factSchemaFingerprint !== currentFactSchemaFingerprint)
-    || (metadata.identityFingerprint && metadata.identityFingerprint !== currentIdentityFingerprint)
-    || (metadata.resolverVersion && metadata.resolverVersion !== RESOLVER_VERSION)
-    || (metadata.resolverFingerprint && metadata.resolverFingerprint !== currentResolverFingerprint)
-    || (metadata.evidenceSchemaVersion !== undefined && metadata.evidenceSchemaVersion !== EVIDENCE_SCHEMA_VERSION)
-    || (metadata.evidenceSchemaFingerprint && metadata.evidenceSchemaFingerprint !== currentEvidenceFingerprint)
-    || (metadata.apiContractSchemaVersion && metadata.apiContractSchemaVersion !== API_CONTRACT_SCHEMA_VERSION)
-    || (metadata.apiContractFingerprint && metadata.apiContractFingerprint !== currentApiContractFingerprint)
-  );
-}
-
 function determineEvolution(metadata: IndexMetadata | null): EvolutionAction {
   if (!metadata) return 'full-reanalysis';
   if (metadata.graphVerification?.status === 'corrupt' || metadata.graphVerification?.status === 'collapsed') return 'reject-corrupt';
   if (metadata.evidenceVerification?.status === 'corrupt' || metadata.evidenceVerification?.status === 'collapsed') return 'reject-corrupt';
-  if (hasSemanticFingerprintMismatch(metadata)) return 'full-reanalysis';
+  if (isSemanticProducerIncompatible(metadata)) return 'full-reanalysis';
   if (metadata.compatibilityReceipt && metadata.evolutionAction) return metadata.evolutionAction;
   if (metadata.schemaVersion === undefined || metadata.parser === 'regex') return 'metadata-migrate';
+  // `isSemanticProducerIncompatible` (compatibility-receipt.ts) already
+  // returned `full-reanalysis` above for both per-field fingerprint
+  // mismatches and a wholly-absent compatibility receipt — the real-world
+  // case of an index published by 1.0.10 or earlier, before Symbol Identity
+  // V2/Evidence-Based Resolution/API-contract fingerprinting existed at all
+  // (verified against the actual published 1.0.10 package, which has
+  // schemaVersion 3 == today's CURRENT_SCHEMA_VERSION and a non-regex parser,
+  // so it does NOT hit the metadata-migrate legacy-format path above either —
+  // `metadata-migrate` would be the wrong fix regardless, since it PRESERVES
+  // graph/bm25/vector, which is correct for a physical-layout-only migration
+  // but would silently stamp current-looking metadata onto content that was
+  // never actually resolved by the current identity/resolver/evidence
+  // pipeline). Reaching here means the receipt is present and every checked
+  // field matches — genuinely current.
   return 'reuse';
 }
 

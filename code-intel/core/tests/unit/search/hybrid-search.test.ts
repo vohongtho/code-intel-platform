@@ -49,6 +49,20 @@ describe('hybridSearch (Epic 2.2 — Hybrid Search)', () => {
     assert.ok(results.length <= 2, `should return at most 2 results, got ${results.length}`);
   });
 
+  it('candidatePoolSize exceeds limit when more matches exist than were returned — proves limit exhaustion is observable, not silently "0 additional results" (task 14.4)', async () => {
+    const graph = createKnowledgeGraph();
+    for (let i = 0; i < 10; i += 1) {
+      graph.addNode({ id: `n${i}`, kind: 'function', name: `widgetHandler${i}`, filePath: `src/widget${i}.ts`, content: `function widgetHandler${i}() {}` });
+    }
+    const limit = 3;
+    const { results, candidatePoolSize } = await hybridSearch(graph, 'widgetHandler', limit);
+    assert.equal(results.length, limit, 'results are capped at the requested limit');
+    assert.ok(
+      candidatePoolSize > limit,
+      `candidatePoolSize (${candidatePoolSize}) must exceed limit (${limit}) so callers can tell this was NOT an exhaustive result`,
+    );
+  });
+
   it('returns correct shape for each result', async () => {
     const graph = buildTestGraph();
     const { results } = await hybridSearch(graph, 'authenticate', 5);

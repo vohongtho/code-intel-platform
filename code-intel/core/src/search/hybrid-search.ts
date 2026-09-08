@@ -48,6 +48,13 @@ export async function hybridSearch(
   results: HybridSearchResult[];
   searchMode: 'bm25' | 'vector' | 'hybrid';
   vectorStatus: VectorExecutionStatus;
+  /**
+   * Size of the ranked candidate pool before slicing to `limit` — a lower
+   * bound on the true match count (the pool itself is bounded by
+   * `bm25Limit`/`vectorLimit`). Callers use `candidatePoolSize > limit` to
+   * report `hasMore` truthfully instead of hardcoding it.
+   */
+  candidatePoolSize: number;
 }> {
   const {
     vectorDbPath,
@@ -83,6 +90,7 @@ export async function hybridSearch(
       })),
       searchMode: 'bm25',
       vectorStatus: 'unavailable',
+      candidatePoolSize: bm25Results.length,
     };
   }
 
@@ -103,6 +111,7 @@ export async function hybridSearch(
       })),
       searchMode: 'bm25',
       vectorStatus: vectorResult.status,
+      candidatePoolSize: filteredBm25.length,
     };
   }
 
@@ -149,6 +158,7 @@ export async function hybridSearch(
     }),
     searchMode: 'hybrid',
     vectorStatus: 'success',
+    candidatePoolSize: merged.length,
   };
 }
 

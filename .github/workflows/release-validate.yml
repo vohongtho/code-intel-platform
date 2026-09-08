@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - 'release/**'
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -34,8 +35,24 @@ jobs:
       - name: Unit tests
         run: npm test --workspace=code-intel/core
 
-      - name: Build core dist
-        run: npm run build --workspace=code-intel/core
+      # Proves the build-ordering guarantee itself (task 2.7): a clean
+      # Core-only build fails loudly rather than silently succeeding on
+      # unit-tests' side-effect Web output, the documented
+      # CODE_INTEL_SKIP_WEB_ASSETS=1 dev escape hatch still works, and the
+      # authoritative build:product (shared -> web -> core) succeeds from a
+      # clean checkout — leaving the repo built for the steps below, so no
+      # separate "Build product" step is needed after this one.
+      - name: Verify build ordering + build product (shared -> web -> core)
+        run: npm run verify:build-ordering
+
+      - name: Verify release metadata (package.json / lockfile / CLI / runtime manifest agree)
+        run: npm run verify:release-metadata
+
+      - name: OpenSpec validate (this release change)
+        run: npx --yes openspec validate v1-0-11-release-readiness-hardening --strict --type change
+
+      - name: E2E tests
+        run: npm run test:e2e --workspace=code-intel/core
 
       - name: Install cross-platform native packages for runtime bundling
         run: |
@@ -61,14 +78,20 @@ jobs:
           node scripts/distribution/build-runtime-bundle.mjs --target darwin-x64 --out-dir dist/runtime-bundles
           node scripts/distribution/build-runtime-bundle.mjs --target darwin-arm64 --out-dir dist/runtime-bundles
 
-      - name: Verify runtime artifact sidecars
-        run: |
-          test -n "$(ls dist/runtime-bundles/*.sha256)"
-          test -n "$(ls dist/runtime-bundles/*.sbom.cdx.json)"
-          test -n "$(ls dist/runtime-bundles/*.provenance.json)"
+      - name: Verify runtime artifact checksums/SBOM/provenance
+        run: npm run verify:runtime-bundle-integrity -- dist/runtime-bundles
 
-      - name: Validate packaged dist layout
+      - name: Validate packaged dist layout (inspects tarball contents)
         run: npm run validate:dist --workspace=code-intel/core
+
+      - name: Verify npm tarball isolated install (CLI, reopen, search, MCP)
+        run: npm run verify:npm-install
+
+      - name: Verify 1.0.10 -> 1.0.11 upgrade compatibility (real published 1.0.10 package)
+        run: npm run verify:upgrade-from-1.0.10
+
+      - name: Verify packaged CLI/MCP/HTTP smoke matrix
+        run: npm run verify:packaged-smoke-matrix
 
       - name: Verify runtime distribution flow
         run: npm run verify:runtime-distribution
@@ -97,6 +120,46 @@ jobs:
             --failOn "GPL-2.0;GPL-3.0;AGPL-1.0;AGPL-3.0;LGPL-2.0;LGPL-2.1;LGPL-3.0;CPAL-1.0" \
           || (echo "❌ GPL-incompatible license detected — review output above." && exit 1)
 
+      - name: Record release evidence (exact-SHA gate)
+        if: always()
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./code-intel/core/package.json').version")
+          node_version=$(node -v)
+          tarball_dir=$(mktemp -d)
+          tarball_name=$(npm pack --silent --pack-destination "$tarball_dir" --workspace=code-intel/core)
+          tarball_sha256=$(sha256sum "$tarball_dir/$tarball_name" | cut -d' ' -f1)
+          {
+            echo "## Release evidence — code-intel v$version"
+            echo
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Commit SHA | \`${GITHUB_SHA}\` |"
+            echo "| Package version | \`${version}\` |"
+            echo "| Node version | \`${node_version}\` |"
+            echo "| Runner | \`${RUNNER_OS}/${RUNNER_ARCH}\` |"
+            echo "| npm tarball SHA-256 | \`${tarball_sha256}\` |"
+            echo
+            echo "### Runtime bundle checksums"
+            echo
+            for shafile in dist/runtime-bundles/*.sha256; do
+              echo "\`\`\`"
+              cat "$shafile"
+              echo "\`\`\`"
+            done
+          } | tee release-evidence.md >> "$GITHUB_STEP_SUMMARY"
+          rm -rf "$tarball_dir"
+
+      - name: Upload release evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-evidence
+          path: |
+            release-evidence.md
+            dist/runtime-bundles/*.sha256
+          if-no-files-found: warn
+
   build-docker:
     name: Build Docker
     needs: validate
@@ -120,6 +183,27 @@ jobs:
           outputs: type=docker,dest=/tmp/code-intel-release-validate.tar
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Load image and verify version/startup
+        run: |
+          set -euo pipefail
+          expected_version=$(node -p "require('./code-intel/core/package.json').version")
+          docker load --input /tmp/code-intel-release-validate.tar
+          actual_version=$(docker run --rm code-intel:release-validate node /app/code-intel/core/dist/cli/main.js --version)
+          echo "packaged CLI version: $actual_version (expected $expected_version)"
+          test "$actual_version" = "$expected_version"
+
+          container_id=$(docker run -d -p 4747:4747 -v "$(mktemp -d):/data" code-intel:release-validate)
+          trap 'docker logs "$container_id" || true; docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 20); do
+            if curl -fsS http://localhost:4747/health/live >/dev/null 2>&1; then
+              echo "container health check passed"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "container did not become healthy in time" >&2
+          exit 1
 
       - name: Upload Docker image archive
         uses: actions/upload-artifact@v4

@@ -60,14 +60,37 @@ function yamlString(value: string): string {
   return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
+/**
+ * Where the `assets/` directory actually ends up next to this compiled file
+ * depends on which build produced it: the real production build (tsup/
+ * esbuild) bundles everything under `src/` into a handful of `dist/cli/*.js`
+ * files, so `__dirname` at runtime is `dist/cli/` — one level ABOVE
+ * `dist/agents/workflows/assets/`, where `copy-workflow-assets.mjs` copies
+ * the markdown source. The unit-test build (`tsc -b tsconfig.test.json`)
+ * instead preserves the original source layout 1:1 under `dist-tests/src/`,
+ * so there `__dirname` really is `dist-tests/src/agents/workflows/` and the
+ * assets sit directly alongside it, no `..` needed. Assuming only the first
+ * shape (as this code used to) silently produced a wrong path and broke
+ * `installWorkflows` for every real packaged install while still passing
+ * tests built the other way. Try both real, verified shapes and use
+ * whichever actually exists on disk, rather than hardcoding one bundler's
+ * output layout.
+ */
+function resolveWorkflowAssetsRoot(): string {
+  const bundled = path.join(__dirname, '..', 'agents', 'workflows'); // dist/cli/ -> dist/agents/workflows/
+  if (fs.existsSync(path.join(bundled, 'assets'))) return bundled;
+  return __dirname; // tsc -b (dist-tests/, or ts-node against src/ directly): already agents/workflows/
+}
+const WORKFLOW_ASSETS_ROOT = resolveWorkflowAssetsRoot();
+
 function readAssetBody(manifest: WorkflowManifest): string {
-  return fs.readFileSync(path.join(__dirname, manifest.assetPath), 'utf-8').trim();
+  return fs.readFileSync(path.join(WORKFLOW_ASSETS_ROOT, manifest.assetPath), 'utf-8').trim();
 }
 
 let cachedSharedGuide: string | null = null;
 function readSharedGuide(): string {
   if (cachedSharedGuide !== null) return cachedSharedGuide;
-  const raw = fs.readFileSync(path.join(__dirname, 'assets/_shared-evidence-guide.md'), 'utf-8');
+  const raw = fs.readFileSync(path.join(WORKFLOW_ASSETS_ROOT, 'assets/_shared-evidence-guide.md'), 'utf-8');
   cachedSharedGuide = raw
     .replace(/^<!-- code-intel:workflow-shared-fragment -->\n?/, '')
     .replace(/\n?<!-- \/code-intel:workflow-shared-fragment -->\s*$/, '')

@@ -1,6 +1,6 @@
 # Code Intelligence Platform
 
-[![npm version](https://img.shields.io/badge/npm-v1.0.11-blue)](https://www.npmjs.com/package/@vohongtho.infotech/code-intel)
+[![npm version](https://img.shields.io/npm/v/%40vohongtho.infotech%2Fcode-intel)](https://www.npmjs.com/package/@vohongtho.infotech/code-intel)
 
 A static code analysis platform that builds a **Knowledge Graph** from your source code and makes it explorable through a Web UI, HTTP API, CLI, and MCP server.
 
@@ -72,8 +72,8 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 - **Load & Soak Tests** _(v1.0)_ — nightly CI load tests (1k/10k fixture repos), weekly soak tests (memory stability, watcher throughput), regression gate: >20% regression fails CI; `tests/perf/baseline.json` committed to repo
 - **Graceful Degradation** _(v1.0)_ — `X-Stale`/`X-Stale-Since` headers on DB outage; LLM-unavailable summarize skip; MCP tool timeout → `{ truncated: true }`; watcher crash recovery; worker crash retry
   - **Worker note for v1.0.4:** parallel analysis retries worker crashes, but `v1.0.4` does not introduce a new user-facing worker timeout control. Treat long/stalled analysis as runtime investigation, not documented timeout recovery behavior.
-- **Token-Efficient MCP** _(v1.0.1)_ — compact JSON responses (null/undefined stripped); MCP tool defaults tuned for LLM sessions: `search`/`file_symbols`/`list_exports` default 10 results (was 50), `blast_radius`/`pr_impact` default 2 hops (was 5); `suggested_next_tools` opt-in via `CODE_INTEL_SUGGEST_NEXT_TOOLS=true`; ~63% fewer tokens per typical 5-tool session
-- **Context Builder** _(v1.0.1)_ — `src/context/builder.ts` builds structured `[SUMMARY]` / `[LOGIC]` / `[RELATION]` / `[FOCUS CODE]` documents from seed symbols in ≤50% of v1.0.0 token cost; query-intent presets (`code`, `callers`, `architecture`, `auto`); adaptive snippets; cross-block dedup; `code-intel context <symbols...> --show-context`
+- **Token-Efficient MCP** _(v1.0.1)_ — compact JSON responses (null/undefined stripped); MCP tool defaults tuned for LLM sessions: `search`/`file_symbols`/`list_exports` default 10 results (was 50), `blast_radius`/`pr_impact` default 2 hops (was 5); `suggested_next_tools` opt-in via `CODE_INTEL_SUGGEST_NEXT_TOOLS=true`
+- **Context Builder** _(v1.0.1)_ — `src/context/builder.ts` builds structured `[SUMMARY]` / `[LOGIC]` / `[RELATION]` / `[FOCUS CODE]` documents from seed symbols under fixed per-scenario token budgets (see `tests/perf/token-benchmark.test.ts`); query-intent presets (`code`, `callers`, `architecture`, `auto`); adaptive snippets; cross-block dedup; `code-intel context <symbols...> --show-context`
 - **Enforced Tool Policy in AI Context Files** _(v1.0.1)_ — `AGENTS.md`/`CLAUDE.md`/`copilot-instructions.md`/`.cursor/rules`/`.kiro/steering` now include a `TOOL POLICY: ENFORCED` block forbidding raw `grep`/`find`/`cat` in favour of `code-intel search` → `inspect` → `impact`; saves ~3,000 tokens per cold-file lookup
 
 ---
@@ -551,6 +551,48 @@ code-intel-platform/
 └── .codeintelignore               # Optional: directories to exclude (like .gitignore)
 ```
 
+### Semantic Pipeline
+
+Beyond the directory layout above, the major semantic architecture is:
+
+```
+Tree-sitter (AST parse)
+  -> Semantic Facts               (src/semantic/ — language-neutral fact extraction)
+  -> Symbol Identity V2           (src/identity/ — stable canonical symbol IDs, call-site identity)
+  -> Evidence-Based Resolution    (src/resolver/, src/evidence/ — resolved edges carry certainty/strategy/evidence)
+  -> Evidence-Carrying Knowledge Graph
+       -> Search / Context         (src/search/, src/context/)
+       -> API / Contracts          (src/semantic/api-contracts/, src/multi-repo/contract-drift/)
+       -> Change Intelligence      (src/snapshots/ — branch-aware semantic graph diff)
+       -> Program Analysis         (src/program-analysis/ — IR, CFG, dataflow, PDG, bounded taint;
+                                     see "Program Analysis" limitations note below)
+```
+
+Relationships resolved with incomplete evidence are surfaced as `candidate-set`/`unresolved` certainty rather than silently guessed — see **Evidence-Carrying Relationships** above.
+
+### Program Analysis Foundation
+
+`src/program-analysis/` implements a universal intermediate representation and the classic analyses built on top of it, per function:
+
+- **IR** — language-neutral statement/expression lowering from the real tree-sitter AST
+- **CFG** — control-flow graph over the lowered IR
+- **Dominators / control dependence** — standard dominator-tree and control-dependence computation over the CFG
+- **Reaching definitions / def-use chains** — dataflow analysis over the CFG
+- **Function summaries** — per-parameter "influences return" and callee-reference facts derived from the above
+- **PDG** (program dependence graph) and **bounded taint analysis** — built on the same IR/CFG/dataflow foundation
+
+**Language capability matrix** (evidence-based — real tree-sitter parse + passing tests, not grammar availability alone):
+
+| Status | Languages |
+|---|---|
+| `supported` (IR→CFG→reaching-defs→def-use→summary real-parse-tested) | TypeScript, JavaScript, Python, Java, Go, C, C++, C#, Rust, PHP, Ruby |
+| `partial` (lowering table exists but not real-parse-verified in this environment/toolchain) | Kotlin, Swift, Dart |
+| `not-applicable` (no function bodies to lower directly) | HTML |
+
+The registry (`program-analysis/languages/capability-registry.ts`) self-validates at module load — every language has exactly one row, and every `supported`/`partial` row requires a real lowering table to exist. Unsupported/unlowered constructs return an explicit `truncated` result with a reason string rather than fabricating output.
+
+**Public maturity boundary — read this before relying on any of the above:** IR/CFG/dominators/reaching-definitions/def-use/function-summary are reachable **only** through the `code-intel inspect` CLI command, which surfaces function-summary fields (`influencesReturn` per parameter, callee references, local variable count) — not the CFG or dataflow results themselves. **PDG and bounded taint have no production call site at all** — no CLI flag, no MCP tool, no HTTP route invokes them; they exist as implemented, unit-tested (TypeScript fixtures) library code only. Treat any Program Analysis capability claim as scoped to exactly what's described here, not as a guarantee of full MCP/HTTP/UI exploration support.
+
 ### Pipeline Phases
 
 | Phase | Description |
@@ -697,7 +739,7 @@ code-intel impact "method:login@code-intel/web/src/api/client.ts:84"
 npm run build && node tests/perf/search-relevance-bench.mjs
 ```
 
-The benchmark uses 10,003 symbols. Budgets: cold search `<250ms`; warm cached search `<25ms`.
+The benchmark uses 10,004 symbols. Budgets: cold search `<250ms`; warm cached search `<25ms`.
 
 ### Semantic graph diff
 
@@ -967,7 +1009,9 @@ Tools tested: `repos`, `search` (default / `bm25` / `vector`), `context`, `inspe
 |----------|---------|-------|
 | **test.yml** | PRs | `npm ci` + `npm test` |
 | **quality.yml** | PRs | Typecheck shared + core + web |
-| **publish.yml** | `v*.*.*` tags | Typecheck → Test → npm audit → License gate → Build core → Build web → `npm publish --provenance` → Build + push multi-arch Docker (linux/amd64 + linux/arm64) → Trivy CRITICAL CVE gate → cosign keyless sign → GitHub Release with CycloneDX SBOM → Discord notification |
+| **release-readiness.yml** | PRs to `main`, manual dispatch | Core-only CLI regression gate: atomic analyze/no-op/incremental-vs-full-rebuild equivalence. Not the release-candidate gate — see `release-validate.yml`. |
+| **release-validate.yml** | push to `release/**`, manual dispatch | The authoritative pre-release gate for an exact candidate SHA: typecheck → unit tests → product build (shared → web → core) → release-metadata consistency → OpenSpec validate → e2e tests → self-contained runtime bundles (4 targets) + checksum/SBOM/provenance verification → npm tarball content validation → npm audit → license audit → release-evidence summary, plus a separate Docker job that builds the production image, loads it, verifies `--version` and container health, and Trivy-scans it. |
+| **publish.yml** | `v*.*.*` tags | Typecheck → unit tests → product build (shared → web → core) → release-metadata check → runtime bundles → npm pack validation → npm audit → license audit → `npm publish --provenance` → build + push multi-arch Docker (linux/amd64 + linux/arm64) → Trivy CRITICAL CVE gate → cosign keyless sign → runtime artifact attestation → GitHub Release with CycloneDX SBOM → Discord notification |
 
 ### Publishing a New Version
 

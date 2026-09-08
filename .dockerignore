@@ -1,0 +1,65 @@
+# No .dockerignore existed before this release-hardening pass (task 18.3 /
+# Workstream A). Without it, `docker build` (context: .) sends the entire
+# repo checkout to the daemon, including any locally-built `dist/` output —
+# exactly the kind of stale host artifact this release effort is trying to
+# eliminate — plus .git history, node_modules, and anything under
+# .code-intel/ or .env* that must never enter a build context or image layer.
+#
+# Kept deliberately conservative: workflow markdown assets under
+# code-intel/core/src/agents/workflows/**/*.md are real build inputs
+# (scripts/copy-workflow-assets.mjs copies them into dist/ at build time), so
+# this does NOT exclude *.md broadly — only specific non-source directories
+# confirmed (by grep) to be unreferenced by any build/test script.
+#
+# CONFIRMED THE HARD WAY (real `docker build` run, task 6.5): a bare
+# top-level pattern like `node_modules/` or `*.tsbuildinfo` only reliably
+# matches at the build-context ROOT in this Docker version — it does NOT
+# also match nested occurrences like `code-intel/shared/node_modules/` or
+# `code-intel/shared/tsconfig.tsbuildinfo`, even though the same bare-pattern
+# form works for gitignore. A stale, untracked `code-intel/shared/tsconfig.
+# tsbuildinfo` left over from local development leaked straight into the
+# build context this way and made `tsc -b` silently report success with NO
+# emitted `dist/` output (TypeScript trusted the stale incremental cache),
+# which then made `code-intel/web`'s build fail loudly with `Cannot find
+# module 'code-intel-shared'` — the exact class of silent-incomplete-build
+# risk this whole release effort exists to close, just one directory over.
+# Every pattern below that must apply at any depth now has an explicit
+# `**/` form alongside the root-level one — don't remove either half.
+
+.git/
+.github/
+
+node_modules/
+**/node_modules/
+
+# Stale local build output — the image always rebuilds these from source.
+# (also closes: nested per-workspace node_modules/ and *.tsbuildinfo from a
+# developer's local build were leaking into the build context — see above)
+dist/
+dist-tests/
+**/dist/
+**/dist-tests/
+*.tsbuildinfo
+**/*.tsbuildinfo
+
+# Local per-repo analysis state / secrets / env files.
+.code-intel/
+.env
+.env.*
+.npmrc
+
+# Editor/tooling directories not needed inside the image.
+.vscode/
+.idea/
+.claude/
+.pi/
+.amp/
+.playwright-mcp/
+
+# Not referenced by any build/test script — verified via grep before adding.
+openspec/
+docs/
+screenshots/
+eval/
+ref-use/
+coverage/

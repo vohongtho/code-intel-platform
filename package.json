@@ -11,6 +11,14 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces",
+    "build:product": "npm run build --workspace=code-intel/shared && npm run build --workspace=code-intel/web && npm run build --workspace=code-intel/core",
+    "clean:product": "npm run clean --workspace=code-intel/shared --if-present && npm run clean --workspace=code-intel/web --if-present && npm run clean --workspace=code-intel/core --if-present && rm -rf code-intel/core/dist-tests code-intel/shared/tsconfig.tsbuildinfo dist/runtime-bundles",
+    "verify:release-metadata": "node scripts/verify-release-metadata.mjs",
+    "verify:runtime-bundle-integrity": "node scripts/verify-runtime-bundle-integrity.mjs",
+    "verify:npm-install": "node scripts/verify-npm-install.mjs",
+    "verify:upgrade-from-1.0.10": "node scripts/verify-upgrade-from-1.0.10.mjs",
+    "verify:packaged-smoke-matrix": "node scripts/verify-packaged-smoke-matrix.mjs",
+    "verify:build-ordering": "node scripts/verify-build-ordering.mjs",
     "clean": "npm run clean --workspaces --if-present",
     "lint": "eslint code-intel/*/src/**/*.ts",
     "format": "prettier --write \"code-intel/*/src/**/*.ts\"",
@@ -67,5 +75,26 @@
     "tsup": {
       "esbuild": "^0.28.1"
     }
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true,
+    "onnxruntime-node@1.24.3": true,
+    "tree-sitter-c": true,
+    "tree-sitter-cpp@0.23.4": true,
+    "tree-sitter-cli@0.23.2": true,
+    "tree-sitter-javascript@0.23.1": true,
+    "tree-sitter-java@0.23.5": true,
+    "tree-sitter-html@0.23.2": true,
+    "tree-sitter-dart@1.0.0": true,
+    "tree-sitter-ruby@0.23.1": true,
+    "tree-sitter-swift@0.7.1": true,
+    "tree-sitter-typescript@0.23.2": true,
+    "tree-sitter-kotlin@0.3.8": true,
+    "@ladybugdb/core@0.18.3": true,
+    "tree-sitter-c-sharp": true,
+    "tree-sitter-go": true,
+    "tree-sitter-php": true,
+    "tree-sitter-python": true,
+    "tree-sitter-rust": true
   }
 }

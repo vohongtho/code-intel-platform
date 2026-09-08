@@ -11,6 +11,7 @@ import {
 } from '../../../src/storage/metadata.js';
 import { getBm25DbPath } from '../../../src/search/bm25-index.js';
 import { verifyIndexTrust, upgradeLegacyIndexMetadata } from '../../../src/storage/index-trust.js';
+import { buildAnalyzerCompatibilityReceipt, CURRENT_IDENTITY_FINGERPRINT } from '../../../src/pipeline/compatibility-receipt.js';
 
 function tempRepo(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'code-intel-trust-'));
@@ -41,20 +42,56 @@ describe('index trust', () => {
       writeArtifact(getVectorDbPath(root));
       const indexedAt = new Date().toISOString();
       const schemaVersion = 1;
+      const receipt = buildAnalyzerCompatibilityReceipt({ parser: 'tree-sitter', identityFingerprint: CURRENT_IDENTITY_FINGERPRINT });
       saveMetadata(root, {
         indexedAt,
         schemaVersion,
         indexVersion: computeIndexVersion(root, schemaVersion, indexedAt),
+        parser: 'tree-sitter',
         frameworkFingerprint: 'fp1',
         frameworkDetections: ['express'],
         embeddings: { enabled: true, status: 'ready', provider: 'test', model: 'test', dimension: 3 },
         stats: { nodes: 1, edges: 0, files: 1, duration: 1 },
+        compatibilityReceipt: receipt,
+        factSchemaFingerprint: receipt.factSchemaFingerprint,
+        identityFingerprint: receipt.identityFingerprint,
+        resolverFingerprint: receipt.resolverFingerprint,
+        evidenceSchemaFingerprint: receipt.evidenceFingerprint,
+        apiContractFingerprint: receipt.apiContractFingerprint,
       });
       const result = verifyIndexTrust(root);
       assert.equal(result.state, 'trusted');
       assert.equal(result.trusted, true);
       assert.equal(result.artifacts.graph.state, 'unverified');
       assert.equal(result.artifacts.vector.state, 'unverified');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reports stale (not trusted) when compatibilityReceipt is entirely absent — the real 1.0.10 -> 1.0.11 case (task 11/12)', () => {
+    const root = tempRepo();
+    try {
+      writeArtifact(getDbPath(root));
+      writeArtifact(getBm25DbPath(root));
+      writeArtifact(getVectorDbPath(root));
+      const indexedAt = new Date().toISOString();
+      const schemaVersion = 1;
+      // No compatibilityReceipt, no fingerprint fields at all — exactly what
+      // the real published 1.0.10 package persists (verified via
+      // scripts/verify-upgrade-from-1.0.10.mjs).
+      saveMetadata(root, {
+        indexedAt,
+        schemaVersion,
+        indexVersion: computeIndexVersion(root, schemaVersion, indexedAt),
+        parser: 'tree-sitter',
+        embeddings: { enabled: true, status: 'ready', provider: 'test', model: 'test', dimension: 3 },
+        stats: { nodes: 1, edges: 0, files: 1, duration: 1 },
+      });
+      const result = verifyIndexTrust(root);
+      assert.notEqual(result.state, 'trusted', 'an index with no compatibility receipt at all must never be reported trusted');
+      assert.equal(result.trusted, false);
+      assert.ok(result.reasons.includes('SEMANTIC_PRODUCER_INCOMPATIBLE'));
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

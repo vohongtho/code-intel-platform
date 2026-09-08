@@ -44,8 +44,13 @@ jobs:
       - name: Unit tests
         run: npm test --workspace=code-intel/core
 
-      - name: Build core dist
-        run: npm run build --workspace=code-intel/core
+      # Authoritative product build (shared -> web -> core), independent of
+      # whichever build steps the unit-test script ran as a side effect.
+      - name: Build product (shared -> web -> core)
+        run: npm run build:product
+
+      - name: Verify release metadata (package.json / lockfile / CLI / runtime manifest agree)
+        run: npm run verify:release-metadata
 
       - name: Build self-contained runtime artifacts
         run: |
@@ -93,11 +98,8 @@ jobs:
       - name: Install dependencies
         run: npm ci --legacy-peer-deps --ignore-scripts
 
-      - name: Build web
-        run: npm run build --workspace=code-intel/web
-
-      - name: Build core
-        run: npm run build --workspace=code-intel/core
+      - name: Build product (shared -> web -> core)
+        run: npm run build:product
 
       - name: Validate packaged dist layout
         run: npm run validate:dist --workspace=code-intel/core
@@ -234,11 +236,8 @@ jobs:
       - name: Rebuild native modules
         run: npm rebuild @ladybugdb/core better-sqlite3 @huggingface/transformers --legacy-peer-deps
 
-      - name: Build web
-        run: npm run build --workspace=code-intel/web
-
-      - name: Build core
-        run: npm run build --workspace=code-intel/core
+      - name: Build product (shared -> web -> core)
+        run: npm run build:product
 
       - name: Build self-contained runtime artifacts
         run: |
