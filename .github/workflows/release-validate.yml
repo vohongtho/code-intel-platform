@@ -49,7 +49,7 @@ jobs:
         run: npm run verify:release-metadata
 
       - name: OpenSpec validate (this release change)
-        run: npx --yes openspec validate v1-0-11-release-readiness-hardening --strict --type change
+        run: npx --yes @fission-ai/openspec@latest validate v1-0-11-release-readiness-hardening --strict --type change
 
       - name: E2E tests
         run: npm run test:e2e --workspace=code-intel/core
