@@ -20,6 +20,7 @@ import { SEMANTIC_FIRST_LANGUAGES } from '../../languages/semantic-first-languag
 import { detectFrameworks } from '../../frameworks/detection.js';
 import { loadFrameworkAdapters } from '../../frameworks/registry.js';
 import type { Phase, PhaseResult, PipelineContext } from '../types.js';
+import { readAmbientEvolutionAction } from '../analysis-plan.js';
 import { generateNodeId } from '../../graph/id-generator.js';
 import Logger from '../../shared/logger.js';
 import { WorkerPool } from './worker-pool.js';
@@ -213,7 +214,7 @@ export const parsePhaseParallel: Phase = {
       producedCount: context.graph.size.nodes + context.graph.size.edges,
       contentFingerprint: crypto.createHash('sha256').update(JSON.stringify({ nodes: context.graph.size.nodes, edges: context.graph.size.edges, parser: parserUsed })).digest('hex'),
     };
-    context.evolutionAction ??= 'full-reanalysis';
+    context.evolutionAction ??= readAmbientEvolutionAction() ?? 'full-reanalysis';
 
     return {
       status: 'completed',

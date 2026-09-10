@@ -1,4 +1,4 @@
-import { describe, it } from 'node:test';
+import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -6,6 +6,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
   detectSourceChangeState,
+  readAmbientEvolutionAction,
   resolveAnalysisPlan,
   type SourceChangeState,
 } from '../../../src/pipeline/analysis-plan.js';
@@ -333,5 +334,43 @@ describe('resolveAnalysisPlan', () => {
       if (plan.mode !== 'publish') return;
       assert.deepEqual(plan.seedArtifacts, ['graph.db', 'bm25.db', 'vector.db', 'meta.json']);
     } finally { fs.rmSync(value.root, { recursive: true, force: true }); }
+  });
+});
+
+describe('readAmbientEvolutionAction', () => {
+  const ENV_KEY = 'CODE_INTEL_ANALYSIS_PLAN';
+  const previousValue = process.env[ENV_KEY];
+
+  afterEach(() => {
+    if (previousValue === undefined) delete process.env[ENV_KEY];
+    else process.env[ENV_KEY] = previousValue;
+  });
+
+  it('returns the evolution action atomic-analyze computed for this run, so it round-trips into metadata instead of always defaulting to full-reanalysis', () => {
+    process.env[ENV_KEY] = JSON.stringify({
+      mode: 'publish',
+      reason: 'no source or index changes detected',
+      evolution: 'reuse',
+      graph: 'preserve',
+      bm25: 'preserve',
+      vector: 'preserve',
+      seedArtifacts: [],
+    });
+    assert.equal(readAmbientEvolutionAction(), 'reuse');
+  });
+
+  it('returns undefined when not running under the atomic-analyze wrapper, so callers keep defaulting to full-reanalysis', () => {
+    delete process.env[ENV_KEY];
+    assert.equal(readAmbientEvolutionAction(), undefined);
+  });
+
+  it('returns undefined for a noop-mode plan, which has no evolution field', () => {
+    process.env[ENV_KEY] = JSON.stringify({ mode: 'noop', reason: 'no source or index changes detected' });
+    assert.equal(readAmbientEvolutionAction(), undefined);
+  });
+
+  it('returns undefined for malformed JSON instead of throwing', () => {
+    process.env[ENV_KEY] = '{not json';
+    assert.equal(readAmbientEvolutionAction(), undefined);
   });
 });

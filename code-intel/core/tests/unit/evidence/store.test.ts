@@ -124,4 +124,25 @@ describe('evidence store', () => {
       recordedAt: '2025-01-01T00:00:00.000Z',
     });
   });
+
+  it('counts persisted records independently of any specific record id, for genuine read-back verification', () => {
+    const store = createEvidenceStore(repoDir);
+    assert.equal(store.count(), 0);
+    store.put({
+      id: 'ev:a', version: 1, referenceId: 'ref:a', resolverVersion: 'resolver-v1',
+      strategy: 'semantic-call', recordedAt: '2025-01-01T00:00:00.000Z',
+    });
+    store.put({
+      id: 'ev:b', version: 1, referenceId: 'ref:b', resolverVersion: 'resolver-v1',
+      strategy: 'semantic-call', recordedAt: '2025-01-01T00:00:00.000Z',
+    });
+    assert.equal(store.count(), 2);
+
+    // A fresh store instance reopening the same on-disk db must see the same
+    // count — this is what a real staging read-back check relies on.
+    store.close();
+    const reopened = createEvidenceStore(repoDir);
+    assert.equal(reopened.count(), 2);
+    reopened.close();
+  });
 });

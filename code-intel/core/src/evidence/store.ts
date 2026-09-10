@@ -42,6 +42,8 @@ export interface ResolutionEvidenceStore {
   get(id: string): ResolutionEvidenceRecord | null;
   getByReference(referenceId: string): ResolutionEvidenceRecord[];
   getReceipt(id: string): EvidenceReadBackReceipt | null;
+  /** Total persisted record count, read fresh from disk — for verifying a store was actually written to, independent of any specific record id. */
+  count(): number;
   close(): void;
 }
 
@@ -116,6 +118,11 @@ export class SqliteResolutionEvidenceStore implements ResolutionEvidenceStore {
   getReceipt(id: string): EvidenceReadBackReceipt | null {
     const row = this.db.prepare('SELECT id, version, referenceId, resolverVersion, strategy, recordedAt FROM resolution_evidence WHERE id = ?').get(id) as Pick<EvidenceRow, 'id' | 'version' | 'referenceId' | 'resolverVersion' | 'strategy' | 'recordedAt'> | undefined;
     return row ? { ...row } : null;
+  }
+
+  count(): number {
+    const row = this.db.prepare('SELECT COUNT(*) AS cnt FROM resolution_evidence').get() as { cnt: number };
+    return row.cnt;
   }
 
   close(): void {

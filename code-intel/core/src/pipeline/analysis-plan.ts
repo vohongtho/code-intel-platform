@@ -38,6 +38,30 @@ function normalize(value: string): string {
   return value.replace(/\\/g, '/').replace(/^\.\//, '');
 }
 
+/**
+ * The atomic-analyze wrapper computes the real `AtomicAnalysisPlan` up front
+ * and passes it to the analyze child via `CODE_INTEL_ANALYSIS_PLAN` (see
+ * `cli/atomic-analyze.ts`), but nothing previously read that value back — the
+ * child phases defaulted `context.evolutionAction` to `'full-reanalysis'`
+ * unconditionally, which then got persisted into metadata and made every
+ * subsequent run's `determineEvolution` short-circuit back to
+ * `'full-reanalysis'` forever, permanently disabling the `reuse` no-op path.
+ * Reading the plan's own `evolution` here closes that loop. Absent, malformed,
+ * or non-publish plans (e.g. not running under the wrapper, or a `noop` plan
+ * that never reaches a child) return `undefined` so callers keep their
+ * existing `'full-reanalysis'` fallback.
+ */
+export function readAmbientEvolutionAction(): EvolutionAction | undefined {
+  const raw = process.env['CODE_INTEL_ANALYSIS_PLAN']?.trim();
+  if (!raw) return undefined;
+  try {
+    const plan = JSON.parse(raw) as AtomicAnalysisPlan;
+    return plan.mode === 'publish' ? plan.evolution : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function isIndexRelevantPath(
   relativePath: string,
   storedMtimes: Record<string, number>,

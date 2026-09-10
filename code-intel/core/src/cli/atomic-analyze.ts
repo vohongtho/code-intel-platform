@@ -29,7 +29,7 @@ import { DbManager } from '../storage/db-manager.js';
 import { loadGraphFromDB } from '../multi-repo/graph-from-db.js';
 import { Bm25Index } from '../search/bm25-index.js';
 import { VectorIndex } from '../search/vector-index.js';
-import { createEvidenceStore } from '../evidence/store.js';
+import { SqliteResolutionEvidenceStore } from '../evidence/store.js';
 
 const ANALYZE_VALUE_OPTIONS = new Set([
   '--name', '--llm-provider', '--llm-model', '--llm-base-url', '--llm-api-key',
@@ -146,16 +146,15 @@ async function verifyStagingReadBack(generation: IndexGeneration, metadata: Inde
   }
 
   if (fs.existsSync(generation.evidenceDbPath ?? '')) {
-    const evidenceStore = createEvidenceStore(path.dirname(path.dirname(generation.stagingDir)));
+    const evidenceStore = new SqliteResolutionEvidenceStore(generation.evidenceDbPath!);
     try {
       const expected = metadata.evidenceVerification?.producedCount ?? 0;
-      const receiptId = metadata.evidenceVerification?.contentFingerprint;
-      const receipt = receiptId ? evidenceStore.getReceipt(receiptId) : null;
+      const persisted = evidenceStore.count();
       metadata.evidenceVerification = {
         ...(metadata.evidenceVerification ?? { status: 'verified' }),
-        persistedCount: expected,
-        status: receipt || expected === 0 ? 'verified' : 'collapsed',
-        reason: receipt || expected === 0 ? metadata.evidenceVerification?.reason : 'staging evidence read-back failed',
+        persistedCount: persisted,
+        status: persisted < expected ? 'collapsed' : 'verified',
+        reason: persisted < expected ? 'staging evidence read-back smaller than produced count' : metadata.evidenceVerification?.reason,
       };
     } finally {
       evidenceStore.close();

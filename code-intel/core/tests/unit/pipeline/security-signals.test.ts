@@ -1,7 +1,29 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { Language } from '../../../src/shared/languages.js';
-import { extractSecuritySignals } from '../../../src/pipeline/security-signals.js';
+import { attachSecuritySignals, extractSecuritySignals, findEnclosingFunctionFast } from '../../../src/pipeline/security-signals.js';
+import { createKnowledgeGraph } from '../../../src/graph/knowledge-graph.js';
+import type { SecuritySignal } from '../../../src/shared/graph-types.js';
+
+function signal(overrides: Partial<SecuritySignal> = {}): SecuritySignal {
+  return {
+    type: 'SQL_INJECTION',
+    sink: 'db.query',
+    line: 1,
+    expression: 'db.query(x)',
+    source: 'req.body.x',
+    tier: 'fixture-tested',
+    flags: {
+      hasUserInput: true,
+      isDynamic: true,
+      hasStringConcat: false,
+      hasTemplateInterpolation: false,
+      isParameterized: false,
+      hasSanitizer: false,
+    },
+    ...overrides,
+  };
+}
 
 describe('extractSecuritySignals', () => {
   it('extracts supported sink signals from JS source', () => {
@@ -195,5 +217,57 @@ describe('extractSecuritySignals', () => {
       assert.ok(signals.find((s) => s.type === 'COMMAND_INJECTION'), lang);
       assert.ok(signals.find((s) => s.type === 'XSS'), lang);
     }
+  });
+});
+
+describe('findEnclosingFunctionFast', () => {
+  const funcs = [
+    { id: 'fn:a', startLine: 10, endLine: 20 },
+    { id: 'fn:b', startLine: 30, endLine: 40 },
+  ];
+
+  it('returns the function whose range contains the line', () => {
+    assert.equal(findEnclosingFunctionFast(funcs, 15), 'fn:a');
+    assert.equal(findEnclosingFunctionFast(funcs, 35), 'fn:b');
+  });
+
+  it('returns null when the line falls outside every function range', () => {
+    assert.equal(findEnclosingFunctionFast(funcs, 25), null);
+  });
+});
+
+describe('attachSecuritySignals', () => {
+  it('attaches a signal to the enclosing function node, not the file node', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: 'file:a.ts', kind: 'file', name: 'a.ts', filePath: 'a.ts' });
+    graph.addNode({ id: 'fn:handler', kind: 'function', name: 'handler', filePath: 'a.ts', startLine: 10, endLine: 20 });
+
+    attachSecuritySignals(
+      graph,
+      'file:a.ts',
+      [{ id: 'fn:handler', startLine: 10, endLine: 20 }],
+      [signal({ line: 12 })],
+    );
+
+    assert.equal(graph.getNode('fn:handler')?.metadata?.securitySignals?.length, 1);
+    assert.equal(graph.getNode('file:a.ts')?.metadata?.securitySignals, undefined);
+  });
+
+  it('falls back to the file node when no function encloses the signal line', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: 'file:a.ts', kind: 'file', name: 'a.ts', filePath: 'a.ts' });
+
+    attachSecuritySignals(graph, 'file:a.ts', undefined, [signal({ line: 3 })]);
+
+    assert.equal(graph.getNode('file:a.ts')?.metadata?.securitySignals?.length, 1);
+  });
+
+  it('deduplicates a signal already attached to the same node', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: 'file:a.ts', kind: 'file', name: 'a.ts', filePath: 'a.ts' });
+
+    attachSecuritySignals(graph, 'file:a.ts', undefined, [signal({ line: 3 }), signal({ line: 3 })]);
+
+    assert.equal(graph.getNode('file:a.ts')?.metadata?.securitySignals?.length, 1);
   });
 });

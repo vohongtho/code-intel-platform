@@ -5,6 +5,7 @@ import { detectLanguage, Language } from '../../shared/index.js';
 import { getLanguageCapabilityDescriptor, getLanguageQuery } from '../../languages/capability-registry.js';
 import { getLanguageModule } from '../../languages/registry.js';
 import type { Phase, PhaseResult, PipelineContext } from '../types.js';
+import { readAmbientEvolutionAction } from '../analysis-plan.js';
 import { generateNodeId, generateEdgeId } from '../../graph/id-generator.js';
 import type { CodeNode, CodeEdge, NodeKind } from '../../shared/index.js';
 import Logger from '../../shared/logger.js';
@@ -16,6 +17,7 @@ import { SEMANTIC_FIRST_LANGUAGES } from '../../languages/semantic-first-languag
 import { projectFactBundle } from '../../semantic/graph-projector.js';
 import { detectFrameworks } from '../../frameworks/detection.js';
 import { loadFrameworkAdapters } from '../../frameworks/registry.js';
+import { attachSecuritySignals, extractSecuritySignals } from '../security-signals.js';
 import type { Node as TSNode, Language as TSLanguage } from 'web-tree-sitter';
 
 // ─── Capture-name → NodeKind map ─────────────────────────────────────────────
@@ -589,6 +591,11 @@ export const parsePhase: Phase = {
         }
       }
 
+      const securitySignals = extractSecuritySignals(source.split('\n'), lang);
+      if (securitySignals.length > 0) {
+        attachSecuritySignals(context.graph, fileNodeId, context.fileFunctionIndex?.get(relativePath), securitySignals);
+      }
+
       parseDone++;
       context.onPhaseProgress?.('parse', parseDone, filePaths.length);
     }
@@ -606,7 +613,7 @@ export const parsePhase: Phase = {
       producedCount: context.graph.size.nodes + context.graph.size.edges,
       contentFingerprint: crypto.createHash('sha256').update(JSON.stringify({ nodes: context.graph.size.nodes, edges: context.graph.size.edges, parser: context.parserUsed })).digest('hex'),
     };
-    context.evolutionAction ??= 'full-reanalysis';
+    context.evolutionAction ??= readAmbientEvolutionAction() ?? 'full-reanalysis';
 
     return {
       status: 'completed',

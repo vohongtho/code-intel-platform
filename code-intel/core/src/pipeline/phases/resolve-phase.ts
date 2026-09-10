@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import type { Phase, PhaseResult, PipelineContext } from '../types.js';
+import { readAmbientEvolutionAction } from '../analysis-plan.js';
 import { RESOLVER_VERSION } from '../../resolution/contracts.js';
 import { buildResolutionIndexes, createResolutionInstrumentation } from '../../resolution/indexes.js';
 import { RESOLUTION_LANGUAGE_STRATEGIES } from '../../resolution/languages.js';
@@ -68,20 +69,18 @@ export const resolvePhase: Phase = {
       resolverVersion: RESOLVER_VERSION,
     });
     evidenceStore.close();
-    context.evolutionAction ??= 'full-reanalysis';
+    context.evolutionAction ??= readAmbientEvolutionAction() ?? 'full-reanalysis';
     context.evidenceVerification = materialized.evidenceCount > 0
       ? {
           status: 'verified',
           producedCount: materialized.evidenceCount,
           persistedCount: materialized.evidenceCount,
-          contentFingerprint: context.evidenceSchemaFingerprint,
         }
       : {
           status: 'unavailable',
           producedCount: 0,
           persistedCount: 0,
           reason: 'no evidence records materialized',
-          contentFingerprint: context.evidenceSchemaFingerprint,
         };
 
     return {

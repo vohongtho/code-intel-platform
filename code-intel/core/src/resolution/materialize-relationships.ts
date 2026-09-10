@@ -136,6 +136,29 @@ function findEnclosingSourceNodeId(
   return best?.id ?? generateNodeId('file', fact.filePath, fact.filePath);
 }
 
+/**
+ * `imports` edges must stay file-to-file: health/circular-deps.ts,
+ * health/orphan-files.ts, health/dead-code.ts, and query/suggest-tests.ts all
+ * index `kind === 'file'` nodes only and drop any edge whose endpoint isn't
+ * one. The resolver otherwise resolves an import binding all the way down to
+ * the specific declaration it imports (more precise, useful for other
+ * relationship kinds) — for `imports` specifically, redirect that resolved
+ * declaration to its containing file node instead. Returns undefined (no
+ * edge materialized) when the declaration or its file node can't be found,
+ * rather than fabricating a dangling reference.
+ */
+function resolveImportEdgeTargetFileId(
+  graph: KnowledgeGraph,
+  declarationIds: Map<string, string>,
+  targetFactId: string,
+): string | undefined {
+  const declarationNodeId = declarationIds.get(targetFactId);
+  const declarationNode = declarationNodeId ? graph.getNode(declarationNodeId) : undefined;
+  if (!declarationNode) return undefined;
+  const fileNodeId = generateNodeId('file', declarationNode.filePath, declarationNode.filePath);
+  return graph.getNode(fileNodeId) ? fileNodeId : undefined;
+}
+
 function buildCallSiteIdForFact(sourceNodeId: string, fact: RelationshipFact): string {
   const identity: CallSiteIdentityV1 = {
     version: 1,
@@ -245,11 +268,15 @@ export function materializeSemanticRelationships(args: {
     if (normalizedOutcome.certainty === 'truncated') truncatedCount += 1;
 
     const certainty = mapCertainty(normalizedOutcome.certainty);
+    const kind = relationKind(fact);
     for (const candidate of normalizedOutcome.candidates) {
       if (!certainty) continue;
-      const targetNodeId = declarationIds.get(candidate.targetId) ?? candidate.targetId;
+      const targetNodeId = kind === 'imports'
+        ? resolveImportEdgeTargetFileId(graph, declarationIds, candidate.targetId)
+        : (declarationIds.get(candidate.targetId) ?? candidate.targetId);
+      if (!targetNodeId) continue;
       const edge: CodeEdge = {
-        id: generateCallSiteEdgeId(sourceNodeId, targetNodeId, relationKind(fact), {
+        id: generateCallSiteEdgeId(sourceNodeId, targetNodeId, kind, {
           version: 1,
           filePath: fact.filePath,
           callerSymbolId: sourceNodeId.startsWith('file:') ? undefined : sourceNodeId,
@@ -258,7 +285,7 @@ export function materializeSemanticRelationships(args: {
         }),
         source: sourceNodeId,
         target: targetNodeId,
-        kind: relationKind(fact),
+        kind,
         weight: candidate.confidence,
         label: referenceText(fact),
         callSiteId,

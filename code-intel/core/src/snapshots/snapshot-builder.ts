@@ -158,11 +158,10 @@ export async function verifySnapshotReadBack(stagingDir: string, metadata: Index
 
   if (fs.existsSync(evidenceDbPath)) {
     const expected = metadata.evidenceVerification?.producedCount ?? 0;
-    const receiptId = metadata.evidenceVerification?.contentFingerprint;
-    if (expected > 0 && receiptId) {
+    if (expected > 0) {
       const evidenceStore = new SqliteResolutionEvidenceStore(evidenceDbPath);
       try {
-        if (!evidenceStore.getReceipt(receiptId)) return { ok: false, reason: 'evidence read-back failed' };
+        if (evidenceStore.count() < expected) return { ok: false, reason: 'evidence read-back failed' };
       } finally {
         evidenceStore.close();
       }

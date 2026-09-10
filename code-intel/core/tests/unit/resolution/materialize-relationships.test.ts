@@ -185,6 +185,7 @@ describe('materializeSemanticRelationships', () => {
       get() { return null; },
       getByReference() { return []; },
       getReceipt() { return null; },
+      count() { return 0; },
       close() {},
     };
 
@@ -193,5 +194,66 @@ describe('materializeSemanticRelationships', () => {
       /disk full/,
     );
     assert.equal([...graph.allEdges()].filter((item) => item.kind === 'calls').length, 0);
+  });
+
+  it('materializes an import binding as a file-to-file edge, not file-to-declaration, so health/circular-deps and orphan-files (which index file nodes only) still see it', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: 'file:src/a.ts:src/a.ts', kind: 'file', name: 'src/a.ts', filePath: 'src/a.ts' });
+    graph.addNode({ id: 'file:src/b.ts:src/b.ts', kind: 'file', name: 'src/b.ts', filePath: 'src/b.ts' });
+    graph.addNode({
+      id: 'helper-node',
+      kind: 'function',
+      name: 'helper',
+      filePath: 'src/b.ts',
+      metadata: { semantic: { factId: 'decl:helper', anchors: { render: { startLine: 1, endLine: 3 } } } },
+    });
+
+    const facts: SemanticFact[] = [
+      {
+        factId: 'decl:helper',
+        language: Language.TypeScript,
+        filePath: 'src/b.ts',
+        sourceRange: { filePath: 'src/b.ts', startLine: 1, startColumn: 1, endLine: 3, endColumn: 1 },
+        declarationKind: 'function',
+        name: 'helper',
+        anchors: {
+          identity: { filePath: 'src/b.ts', startLine: 1, startColumn: 1, endLine: 1, endColumn: 6 },
+          render: { filePath: 'src/b.ts', startLine: 1, startColumn: 1, endLine: 3, endColumn: 1 },
+        },
+      },
+      {
+        factId: 'pub:helper',
+        language: Language.TypeScript,
+        filePath: 'src/b.ts',
+        sourceRange: { filePath: 'src/b.ts', startLine: 1, startColumn: 1, endLine: 1, endColumn: 1 },
+        moduleRef: 'src/b.ts',
+        publicName: 'helper',
+        sourceRef: 'decl:helper',
+        publicationKind: 'definition',
+      },
+      {
+        factId: 'import:1',
+        language: Language.TypeScript,
+        filePath: 'src/a.ts',
+        sourceRange: { filePath: 'src/a.ts', startLine: 1, startColumn: 1, endLine: 1, endColumn: 30 },
+        sourceModule: 'src/b.ts',
+        importedName: 'helper',
+        localName: 'helper',
+        bindingKind: 'named',
+      },
+    ];
+
+    const indexes = buildResolutionIndexes(facts, createResolutionInstrumentation());
+    const repo = tempRepo();
+    const store = createEvidenceStore(repo);
+    const result = materializeSemanticRelationships({ graph, facts, indexes, evidenceStore: store, resolverVersion: 'evidence-based-v1' });
+    store.close();
+
+    assert.equal(result.edgeCount, 1);
+    const edge = [...graph.allEdges()].find((item) => item.kind === 'imports');
+    assert.ok(edge, 'expected an imports edge to be materialized');
+    assert.equal(edge!.source, 'file:src/a.ts:src/a.ts');
+    assert.equal(edge!.target, 'file:src/b.ts:src/b.ts');
+    fs.rmSync(repo, { recursive: true, force: true });
   });
 });
