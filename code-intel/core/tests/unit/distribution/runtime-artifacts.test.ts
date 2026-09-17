@@ -14,6 +14,13 @@ async function loadBuildRuntimeBundle() {
   return mod.buildRuntimeBundle;
 }
 
+async function loadNativePackagePreparation() {
+  const mod = await import(`${pathToFileURL(path.join(repoRoot, 'scripts/distribution/prepare-runtime-native-packages.mjs')).href}?t=${Date.now()}`) as {
+    listMissingRuntimeNativePackages: (root: string) => string[];
+  };
+  return mod.listMissingRuntimeNativePackages;
+}
+
 function makeFakeNodeRuntime(root: string): string {
   const runtimeDir = path.join(root, 'node-vtest-linux-x64');
   fs.mkdirSync(path.join(runtimeDir, 'bin'), { recursive: true });
@@ -22,6 +29,31 @@ function makeFakeNodeRuntime(root: string): string {
 }
 
 describe('runtime bundle supply-chain artifacts', () => {
+  it('identifies every non-host LadybugDB package required by the release matrix', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-native-packages-'));
+    try {
+      fs.mkdirSync(path.join(tmpDir, 'node_modules/@ladybugdb/core-linux-x64'), { recursive: true });
+      const listMissingRuntimeNativePackages = await loadNativePackagePreparation();
+
+      assert.deepEqual(listMissingRuntimeNativePackages(tmpDir), [
+        '@ladybugdb/core-linux-arm64',
+        '@ladybugdb/core-darwin-x64',
+        '@ladybugdb/core-darwin-arm64',
+      ]);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('prepares cross-platform native packages in every workflow that builds the release matrix', () => {
+    const publishWorkflow = fs.readFileSync(path.join(repoRoot, '.github/workflows/publish.yml'), 'utf8');
+    const validateWorkflow = fs.readFileSync(path.join(repoRoot, '.github/workflows/release-validate.yml'), 'utf8');
+    const command = 'npm run prepare:runtime-native-packages';
+
+    assert.equal(publishWorkflow.split(command).length - 1, 2, 'publish validate and runtime-artifacts jobs must both prepare native packages');
+    assert.equal(validateWorkflow.split(command).length - 1, 1, 'pre-release validation must use the shared preparation command');
+  });
+
   it('writes checksum, sbom, provenance artifacts', async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-artifacts-'));
     try {

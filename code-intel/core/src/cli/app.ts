@@ -56,6 +56,7 @@ import { saveMetadata, loadMetadata, getDbPath, getVectorDbPath, loadAgentTarget
 import { API_CONTRACT_SCHEMA_VERSION } from '../semantic/api-contracts/types.js';
 import { buildAnalyzerCompatibilityReceipt, buildFrameworkFingerprint, CURRENT_IDENTITY_FINGERPRINT } from '../pipeline/compatibility-receipt.js';
 import { computeSemanticGraphDiff } from '../snapshots/service.js';
+import { listChangedFilesBetweenRefs } from '../snapshots/git-materializer.js';
 import { resolveIndexSnapshot } from '../storage/index-snapshot.js';
 import { writeContextFiles } from './context-writer.js';
 import { installWorkflows, planWorkflowInstall } from '../agents/workflows/installer.js';
@@ -4711,18 +4712,13 @@ program
     const repoPath = path.resolve(opts.path ?? '.');
 
     // 1. Get changed files via git diff
-    const { execSync } = await import('node:child_process');
-    let diff: string;
+    let changedFiles: string[];
     try {
-      diff = execSync(`git diff --name-only ${opts.base}..${opts.head}`, {
-        cwd: repoPath,
-        encoding: 'utf-8',
-      });
+      changedFiles = listChangedFilesBetweenRefs(repoPath, opts.base, opts.head);
     } catch (err) {
       console.error(`\n  ✗  git diff failed: ${(err as Error).message}\n`);
       process.exit(1);
     }
-    const changedFiles = diff.trim().split('\n').filter(Boolean);
 
     if (changedFiles.length === 0) {
       if (opts.format === 'json') {

@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import {
   detectRenamedFiles,
   GitMaterializationError,
+  listChangedFilesBetweenRefs,
   materializeGitRefToWorktree,
   removeGitWorktree,
   resolveGitRef,
@@ -70,6 +71,25 @@ describe('git-materializer: unsafe ref fixtures', () => {
 });
 
 describe('git-materializer: valid refs and worktree isolation', () => {
+  it('lists changed files without interpreting shell metacharacters in refs', () => {
+    const repoDir = mkRepo();
+    const marker = path.join(os.tmpdir(), `git-diff-ref-pwned-${process.pid}`);
+    try {
+      fs.writeFileSync(path.join(repoDir, 'a.txt'), 'two\n');
+      git(['commit', '--quiet', '-am', 'second'], repoDir);
+
+      assert.deepEqual(listChangedFilesBetweenRefs(repoDir, 'HEAD~1', 'HEAD'), ['a.txt']);
+      assert.throws(
+        () => listChangedFilesBetweenRefs(repoDir, `HEAD; touch ${marker}; #`, 'HEAD'),
+        GitMaterializationError,
+      );
+      assert.equal(fs.existsSync(marker), false);
+    } finally {
+      fs.rmSync(repoDir, { recursive: true, force: true });
+      fs.rmSync(marker, { force: true });
+    }
+  });
+
   it('resolves a branch name containing a slash to a stable commit/tree pair', () => {
     const repoDir = mkRepo();
     try {

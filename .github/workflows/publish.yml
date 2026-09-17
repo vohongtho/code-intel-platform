@@ -52,6 +52,9 @@ jobs:
       - name: Verify release metadata (package.json / lockfile / CLI / runtime manifest agree)
         run: npm run verify:release-metadata
 
+      - name: Install cross-platform native packages for runtime bundling
+        run: npm run prepare:runtime-native-packages
+
       - name: Build self-contained runtime artifacts
         run: |
           node scripts/distribution/build-runtime-bundle.mjs --target linux-x64 --out-dir dist/runtime-bundles
@@ -238,6 +241,9 @@ jobs:
 
       - name: Build product (shared -> web -> core)
         run: npm run build:product
+
+      - name: Install cross-platform native packages for runtime bundling
+        run: npm run prepare:runtime-native-packages
 
       - name: Build self-contained runtime artifacts
         run: |

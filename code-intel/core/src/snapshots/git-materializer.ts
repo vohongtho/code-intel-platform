@@ -95,6 +95,13 @@ export function resolveGitRef(repoDir: string, ref: string): ResolvedGitRef {
   return { ref, commit, tree };
 }
 
+export function listChangedFilesBetweenRefs(repoDir: string, baseRef: string, headRef: string): string[] {
+  const base = resolveGitRef(repoDir, baseRef);
+  const head = resolveGitRef(repoDir, headRef);
+  const output = execGit(['diff', '--name-only', `${base.commit}..${head.commit}`, '--'], repoDir);
+  return output ? output.split('\n').filter(Boolean) : [];
+}
+
 /**
  * Materializes a resolved commit's tree into `targetDir` as a real, isolated
  * filesystem checkout via `git worktree add --detach`, without touching the

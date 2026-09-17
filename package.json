@@ -19,6 +19,7 @@
     "verify:upgrade-from-1.0.10": "node scripts/verify-upgrade-from-1.0.10.mjs",
     "verify:packaged-smoke-matrix": "node scripts/verify-packaged-smoke-matrix.mjs",
     "verify:build-ordering": "node scripts/verify-build-ordering.mjs",
+    "prepare:runtime-native-packages": "node scripts/distribution/prepare-runtime-native-packages.mjs",
     "clean": "npm run clean --workspaces --if-present",
     "lint": "eslint code-intel/*/src/**/*.ts",
     "format": "prettier --write \"code-intel/*/src/**/*.ts\"",
@@ -52,7 +53,7 @@
     "@vohongtho.infotech/code-intel": "^1.0.10"
   },
   "overrides": {
-    "sharp": "^0.35.0",
+    "sharp": "0.35.4",
     "adm-zip": "^0.6.0",
     "node-domexception": "^2.0.2",
     "qs": "^6.15.3",
