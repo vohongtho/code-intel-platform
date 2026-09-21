@@ -1,69 +1,71 @@
-# OpenSpec Implementation Instructions for v1.0.11
+# OpenSpec Implementation Instructions for v1.0.12
 
 ## Scope
 
-These changes are implementation plans for branch `release/1.0.11`, based on the exact published v1.0.10 source at `52dfda4c1dd78b7667cc8a10606ade65a7807d90`. Treat the repository as brownfield code. Preserve v1.0.10 behavior unless a v1.0.11 requirement explicitly changes it.
+These changes are implementation plans for branch `release/1.0.12`, created from `main` at `20e46e8a251eaf52772388a5ef67b4fa290f934f`. The baseline already contains the released v1.0.11 semantic-core, API-contract, branch-snapshot, cross-repository drift, workflow, program-analysis, and self-contained-runtime work. Treat the repository as brownfield code and extend those capabilities instead of re-creating them.
 
 ## Mandatory workflow
 
-1. Read the selected `proposal.md`, all delta specs, `design.md`, and `tasks.md`.
+1. Read `openspec/changes/v1-0-12-release-program/proposal.md` first, then the selected change's `proposal.md`, delta specs, `design.md`, and `tasks.md`.
 2. Inspect every source file named by the next task before editing it.
-3. Verify that the capability is not already present under another name before creating a new abstraction.
-4. Implement tasks in dependency order and check them off only after stated tests pass.
-5. Update proposal/design/specs when implementation discovery changes a source assumption.
-6. Run focused tests after each task group and the full release gate at the end.
-7. Keep commits scoped to one coherent task group.
+3. Verify that a requested capability is not already present under another name before creating a new abstraction.
+4. Reuse the v1.0.11 semantic graph, Generation V2, semantic snapshots, contract engine, program-analysis IR, workflow registry, context builder, and runtime lifecycle wherever applicable.
+5. Implement tasks in dependency order and check them off only after the stated tests pass.
+6. Update proposal/design/specs when implementation discovery invalidates a source assumption.
+7. Run focused tests after each task group and the full release gate at the end.
+8. Keep implementation commits scoped to one coherent task group.
 
-## Zero-workflow-change rule
+## No-duplicate rule
 
-Core-intelligence improvements SHALL be internal by default. Do not add a mandatory user command, required config flag, replacement MCP tool, or alternate HTTP workflow merely to enable a more accurate engine. Existing `init`, `analyze`, `setup`, `serve`, MCP, HTTP, and Web workflows must automatically benefit after upgrade.
+v1.0.12 SHALL NOT create a second implementation of capabilities already present in v1.0.11. In particular:
 
-## Correctness rules
+- branch-aware semantic comparison MUST extend `src/snapshots/*`, not create another checkout/snapshot engine;
+- API shape and consumer intelligence MUST extend `src/semantic/api-contracts/*`;
+- PDG/taint work MUST extend `src/program-analysis/*`;
+- repository-group intelligence MUST extend `src/multi-repo/*`;
+- agent workflows MUST extend `src/agents/workflows/*`;
+- context optimization MUST extend `src/context/*`;
+- runtime trust/install work MUST extend `src/cli/runtime-*` and `scripts/distribution/*`;
+- graph diff visualization MUST consume the existing semantic graph-diff service.
 
-- Do not shell-interpolate Git refs or file paths.
-- Do not write to the currently published Generation V2 snapshot during analysis.
-- Do not publish metadata for artifacts that did not validate after reopen/read-back.
-- Do not claim an index is fresh by timestamp alone.
-- Do not label candidate/heuristic resolution as exact.
-- Do not treat `0 relationships` as proof of safety when coverage is incomplete.
-- Do not collapse multiple symbol candidates into one because a simple name matches.
-- Do not erase generic/type-application structure before language-specific semantics are evaluated.
-- Do not silently skip a semantic extraction failure that can make cross-file analysis incomplete; emit bounded diagnostics.
-- Do not return a context document above the normalized token budget.
-- Do not duplicate semantic parsing/resolution logic inside MCP/HTTP/CLI handlers.
-- Do not add a fallback that hides an integrity failure; return a structured diagnostic/boundary.
+## Compatibility rules
 
-## 15-language rules
+- Existing CLI commands, HTTP routes, MCP tool names, Web workflows, and agent workflow IDs remain operational unless a delta spec explicitly marks a breaking change.
+- Existing tools may gain optional arguments and additive response fields.
+- Existing current-repository behavior remains the default when a new `ref`, precision, policy, or workflow-session option is omitted.
+- No advanced analysis result may turn incomplete/unsupported/truncated evidence into a claim of safety.
+- Unsupported language capability must fail closed or report `partial`/`unsupported`; it must not fabricate an exact edit, dispatch target, taint path, or API match.
+- New persisted artifacts require schema/fingerprint ownership and Generation/snapshot compatibility rules.
+- Agent-oriented output must be deterministic and stably sorted.
 
-- Shared semantic-engine changes must run the canonical 15-language release matrix.
-- A language row may report `partial` or `not-applicable`; it may not fabricate support merely to pass a feature-count gate.
-- One failing language fails a shared semantic-engine release gate even if aggregate averages pass.
-- Tests must cover production adapter paths, not only isolated helpers.
-- Performance gates must include workspace traversal/index-build counters plus scaling measurements.
+## Program-analysis rules
 
-## Code organization rules
+- Keep symbol/API/flow graph concerns separate from statement-level IR/CFG/PDG storage.
+- Join the two layers through stable symbol/call-site identity.
+- PDG precision is opt-in or automatically selected only when capability and budget gates pass.
+- Resource-limit hits must return explicit truncation/boundary metadata.
+- Cross-procedural certainty may never be stronger than the call relationship used to cross the boundary.
+- Configurable taint models must be fingerprinted and invalidate incompatible cached results.
 
-- Keep `cli/app.ts`, `http/app.ts`, and `mcp-server/server.ts` as transport/wiring layers.
-- Keep Generation V2 as the atomic publication owner.
-- Put semantic facts under a focused semantic layer, resolver behavior under a focused resolution layer, and evidence under a reusable trust/evidence layer.
-- Language-specific semantics may extend a universal contract; do not fork the entire resolver per language.
-- Framework semantics must produce standard facts/evidence rather than mutate graph consumers directly.
-- Export discriminated unions for recoverable states instead of using `null` to erase failure causes.
-- Use stable sorting wherever output is consumed by an agent, fingerprint, or snapshot test.
-- Keep verbose evidence opt-in; compact trust metadata may be additive by default.
+## Git and ref safety
+
+- Never shell-interpolate Git refs, file paths, or user-supplied revision expressions.
+- Use `execFile`/`execFileSync` argument arrays.
+- Never modify the user's working tree, index, HEAD, or active Generation V2 index while materializing another ref.
+- Portable index import must validate repository identity, schema, analyzer fingerprints, checksums, and source-content privacy metadata before activation.
 
 ## License rules
 
-- GitNexus source is noncommercial licensed. Do not copy GitNexus source, tests, prompts, skills, schemas, or implementation expression into this MIT commercial project. Reimplement requirements independently.
-- CodeGraph is MIT. If substantial CodeGraph source is copied, preserve required MIT attribution; prefer original integration with Code Intel abstractions.
+- GitNexus is PolyForm Noncommercial. Do not copy its source, tests, schemas, prompts, skills, or implementation expression into this MIT project. Requirements inspired by GitNexus must be clean-room reimplemented from general concepts and public algorithm literature.
+- CodeGraph is MIT. Prefer original Code Intel integration. If substantial CodeGraph source is reused, preserve the MIT copyright/license notice and audit embedded third-party assets separately.
+- New runtime dependencies require a package/license/security review in the relevant design and task list.
 
 ## Test rules
 
-- Use temporary repositories initialized inside tests.
-- Set local Git identity in each fixture repository.
-- Test spaces and shell metacharacters in paths and refs.
-- Reopen graph, BM25, vector, evidence, and metadata artifacts after publication/failure.
-- Compare normalized node/edge/evidence content, not only counts.
-- Add negative fixtures proving forbidden targets are not emitted.
-- Add ambiguity/truncation fixtures wherever candidate sets are bounded.
-- Avoid fake vector database files when testing a successful vector path; inject a search dependency or create a valid minimal index.
+- Tests must use temporary repositories and set local Git identity explicitly.
+- Add negative fixtures proving false targets/links/edits are not emitted.
+- Add ambiguity and truncation fixtures wherever candidate sets or analysis budgets are bounded.
+- Reopen persisted artifacts in persistence/trust tests; do not assert only in-memory state.
+- Shared semantic-engine changes run the canonical 15-language capability matrix.
+- Performance gates must include structural counters and scaling fixtures, not timing alone.
+- Change-intelligence precision features require baseline-vs-new comparative evaluation.

@@ -2,71 +2,71 @@ schema: spec-driven
 
 context: |
   Project: Code Intelligence Platform
-  Release target: v1.0.11
-  Production source baseline: v1.0.10 / release/1.0.10 @ 52dfda4c1dd78b7667cc8a10606ade65a7807d90
-  Working branch: release/1.0.11
+  Release target: v1.0.12
+  Source baseline: main @ 20e46e8a251eaf52772388a5ef67b4fa290f934f
+  Working branch: release/1.0.12
 
   Runtime and language:
   - Node.js >= 22
-  - TypeScript 5.x
+  - TypeScript 5.x/6.x compatible project configuration
   - ESM modules with explicit .js import suffixes
   - npm workspaces
 
-  Major components:
-  - code-intel/core: CLI, analysis pipeline, graph, search, HTTP API, MCP server
-  - code-intel/web: React web client
-  - code-intel/shared: shared graph types
-  - LadybugDB: persisted knowledge graph
-  - SQLite: BM25 and vector indexes
-  - tree-sitter: source parsing
+  Existing v1.0.11 foundations that MUST be reused:
+  - Generation V2 atomic publication and index trust
+  - canonical symbol/call-site identity and evidence-backed relationship certainty
+  - framework semantic adapters
+  - graph-aware HTTP API contracts and consumer response-key evidence
+  - semantic snapshots and branch-aware graph diff
+  - cross-repository contract drift
+  - graph-backed agent workflow registry/assets
+  - universal program-analysis IR, CFG, dataflow, summaries, PDG and bounded taint
+  - token-budgeted context builder with adaptive snippets and session-aware delivery
+  - BM25/vector hybrid search
+  - self-contained runtime lifecycle with checksum/SBOM/provenance artifacts
 
-  v1.0.11 strategic objective:
-  - Improve semantic correctness and trust without changing the user workflow.
-  - Preserve existing init/analyze/setup/serve/MCP/HTTP/Web workflows.
-  - Do not add a mandatory public command or required configuration for core-intelligence upgrades.
-  - Treat all 15 advertised languages as release-gated capabilities; no supported language may silently regress.
-  - Extend Generation V2 rather than replace its staging, snapshot, locking, cleanup, or rollback model.
+  v1.0.12 strategic objective:
+  - Make existing intelligence more actionable for real change execution and review.
+  - Reduce agent tool-selection and context cost without weakening evidence boundaries.
+  - Turn branch snapshots into queryable/shareable ref-aware indexes.
+  - Connect PDG precision to PR impact and test selection.
+  - Complete GraphQL/gRPC and consumer-shape contract intelligence.
+  - Add safe semantic refactoring and architecture/policy checks.
+  - Make advanced taint/dispatch modeling extensible.
+  - Stitch cross-repository contracts into system/business flows and checkpointed agent workflows.
+  - Strengthen runtime artifact authenticity and offline installation.
 
   Engineering constraints:
-  - Correctness takes precedence over micro-optimizing incremental derived phases.
-  - A successful incremental analysis must be observably equivalent to full analysis.
-  - Do not mutate the currently published graph, BM25, vector, evidence, or metadata generation before all required replacement artifacts validate.
-  - Use execFile/execFileSync argument arrays for Git commands; never interpolate a ref into a shell command.
-  - Preserve backward compatibility for public CLI, HTTP, MCP, web, and generated agent contracts.
-  - Default MCP responses must remain compact; verbose explanation is opt-in or additive.
-  - A new semantic engine may add optional response metadata but must not rename existing tools/routes or require a new workflow.
-  - A zero-edge result is not proof of absence when relevant resolution classes are unresolved, unsupported, stale, or truncated.
-  - Do not use a one-name-one-node map as authoritative symbol identity or resolution when multiple candidates are possible.
-  - Do not infer semantic capability only from a language enum; use tested capability status and persisted artifact status.
-  - Repeated resolution hot paths must use prepared indexes; per-reference full-workspace scans require benchmark evidence.
-  - No new runtime dependency without a documented design decision and package/license audit.
-  - GitNexus-inspired behavior must be clean-room implemented because GitNexus is noncommercial licensed; do not copy its source, tests, prompts, skills, or implementation expression.
-  - CodeGraph is MIT; substantial copied code must preserve attribution/license notices, but prefer adapting ideas to Code Intel architecture.
-  - Tests must be deterministic and may not depend on the developer's global Git configuration.
-  - Every new public field must be documented in MCP schemas, OpenAPI, web types, README, and tests.
-  - Every failure-path test must reopen persisted artifacts rather than asserting only in-memory counters.
-  - Do not modify generated dist or dist-tests output.
+  - Extend existing modules before creating new engines.
+  - Existing current-repo tool behavior is the default; new precision/ref/workflow options are additive.
+  - Never report no impact/no consumer/no test/no taint path as proof of safety when analysis coverage is incomplete.
+  - No persisted format without schema version + producer fingerprint + migration/compatibility behavior.
+  - Keep statement-level program-analysis artifacts separate from the main semantic graph unless a focused projection is required.
+  - Refactoring edits are dry-run by default and exact-certainty only unless explicitly opted into candidates.
+  - Portable index import is untrusted input.
+  - No new runtime dependency without license/security audit.
+  - GitNexus-inspired behavior is clean-room only.
+  - Default MCP responses remain bounded and compact.
+  - All agent-facing outputs use stable ordering and explicit coverage/truncation fields.
 
 rules:
   proposal:
-    - State the source-verified production-baseline gap and user-visible correctness problem.
-    - Explain why the feature belongs in v1.0.11 and what existing v1.0.10 implementation is reused.
-    - Separate scope, non-goals, compatibility, migration, dependencies, release risk, performance impact, and license/IP constraints.
-    - State explicitly whether the user workflow changes; core-intelligence changes should default to zero workflow change.
+    - State the source-verified v1.0.11 baseline and distinguish existing capability from the remaining gap.
+    - Map the change to the feature IDs in the v1.0.12 release program.
+    - Include user workflow, scope, non-goals, compatibility, migration, dependencies, performance, risk, security, and license/IP.
+    - Name the existing implementation that will be reused.
   specs:
     - Use ADDED, MODIFIED, or REMOVED requirement sections.
-    - Every requirement must contain at least one GIVEN/WHEN/THEN scenario.
-    - Describe verifiable behavior rather than only file-level implementation details.
-    - Include error, fallback, migration, compatibility, ambiguity, truncation, and cross-language scenarios where relevant.
+    - Every requirement must include at least one GIVEN/WHEN/THEN scenario.
+    - Include ambiguity, unsupported-language, truncation, stale-index, migration, and failure scenarios where relevant.
+    - Specify observable contracts rather than only implementation details.
   design:
-    - Begin with the observed v1.0.10 production control flow.
-    - Name exact modules, exported types, functions, and ownership boundaries.
-    - Include alternatives considered, failure semantics, migration, observability, performance, licensing, and test strategy.
-    - Define invariants and response contracts precisely.
-    - Prefer extension of existing modules over unnecessary rewrites.
+    - Begin with the observed v1.0.11 control flow and ownership boundaries.
+    - Name exact source modules and intended new modules.
+    - Define invariants, schema/fingerprint ownership, failure semantics, observability, performance budgets, rollout and rollback.
+    - Include alternatives rejected and explain why.
   tasks:
     - Use unchecked Markdown checkboxes.
-    - Name every source and test file that will be created or modified.
-    - Name exact symbols to add, remove, split, or replace.
-    - State test assertions and acceptance evidence for each implementation task.
-    - Keep documentation, migration, package validation, performance gates, and all-15-language gates explicit.
+    - Name source and test files to create/modify.
+    - Name key symbols/contracts to add or change.
+    - Include docs, OpenAPI/MCP schema, migration, packaging, benchmark, 15-language, and release-gate work where applicable.
