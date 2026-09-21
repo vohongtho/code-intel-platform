@@ -43,12 +43,14 @@ AND a stale pointer-only response is forbidden.
 Graph-aware reranking SHALL preserve relationship certainty and candidate boundaries.
 
 #### Scenario: Candidate has only ambiguous graph evidence
+GIVEN a candidate is supported only by ambiguous graph relationships
 WHEN reranking executes
 THEN ambiguous evidence contributes only at bounded certainty
 AND exact path evidence is not claimed.
 
 ### Requirement: Hard token budget is enforced
 #### Scenario: Context exceeds budget
+GIVEN relevant context exceeds the normalized requested token budget
 WHEN allocation completes
 THEN the final context remains within the normalized limit
 AND omitted items include structured reasons.

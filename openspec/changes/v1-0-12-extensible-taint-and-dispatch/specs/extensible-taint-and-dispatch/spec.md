@@ -20,6 +20,7 @@ AND the matcher is not silently ignored.
 
 ### Requirement: Sanitization is path-specific
 #### Scenario: One reaching definition is sanitized and another is not
+GIVEN one reaching definition passes through a sanitizer and another remains unsanitized
 WHEN taint reaches the same sink through both paths
 THEN the unsanitized path remains reportable
 AND sibling sanitizer evidence does not erase it.
@@ -60,6 +61,7 @@ AND absence of additional candidates is not treated as proof.
 
 ### Requirement: Public taint trace is coverage-aware
 #### Scenario: No finding in unsupported language
+GIVEN the selected language or taint model capability is unsupported or partial
 WHEN `taint_trace` runs
 THEN it reports unsupported/partial capability
 AND does not state that the code is safe from taint vulnerabilities.

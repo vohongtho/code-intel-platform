@@ -50,12 +50,14 @@ THEN wire compatibility is breaking.
 
 ### Requirement: gRPC RPC identity includes service and package
 #### Scenario: Same RPC method name exists in two services
+GIVEN two distinct services expose the same RPC method name
 WHEN consumer/provider mapping runs
 THEN method-name equality alone is insufficient
 AND only canonical package/service/RPC evidence may create an exact link.
 
 ### Requirement: Legacy protocol contracts degrade explicitly
 #### Scenario: v1.0.11 flat GraphQL/gRPC contract is compared
+GIVEN a persisted contract uses the v1.0.11 flat protocol schema
 WHEN rich schema fields required by the new comparator are absent
 THEN compatibility remains `unknown` with a legacy-schema boundary
 AND the system does not infer missing structure.

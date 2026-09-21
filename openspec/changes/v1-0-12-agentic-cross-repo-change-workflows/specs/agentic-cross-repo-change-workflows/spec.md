@@ -35,6 +35,7 @@ AND the newer checkpoint is not overwritten.
 
 ### Requirement: Commit plans are suggestions only
 #### Scenario: Workflow generates commit groups
+GIVEN a workflow session has verified changed files and symbols
 WHEN a verified session requests a commit plan
 THEN changed files/symbols may be grouped with suggested messages
 AND Code Intel SHALL NOT stage, commit, rewrite history or push.

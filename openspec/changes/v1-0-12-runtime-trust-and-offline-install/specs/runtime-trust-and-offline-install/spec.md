@@ -41,5 +41,6 @@ AND it SHALL NOT report `verified`.
 
 ### Requirement: Trust status is diagnosable
 #### Scenario: Doctor or verify-install runs
+GIVEN a self-contained runtime is installed
 WHEN the runtime is inspected
 THEN machine-readable output includes version, target, digest state, authenticity state and release identity metadata.
