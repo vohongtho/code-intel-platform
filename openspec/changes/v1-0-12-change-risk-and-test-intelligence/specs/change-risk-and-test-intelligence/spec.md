@@ -20,6 +20,8 @@ AND the boundary/fallback is reported
 AND zero PDG results are not treated as proof of no impact.
 
 ### Requirement: Interprocedural PDG conclusions preserve relationship certainty
+The system SHALL bound every interprocedural PDG projection by the weakest semantic call relationship traversed.
+
 #### Scenario: Slice crosses an ambiguous call
 GIVEN a PDG projection must cross an ambiguous call relationship
 WHEN downstream impact is reported
@@ -27,6 +29,8 @@ THEN its certainty is no stronger than that call relationship
 AND it is not labeled exact.
 
 ### Requirement: Test selection distinguishes evidence categories
+The system SHALL classify discovered test evidence as `direct`, `affected-flow`, `transitive`, `candidate`, or `unknown` and keep generic suggestions separate.
+
 #### Scenario: Test reaches changed flow
 GIVEN an existing test has evidence that it covers a stable affected flow
 WHEN tests are selected
@@ -40,12 +44,16 @@ THEN the result is `unknown`
 AND does not claim that a test is definitively missing or unnecessary.
 
 ### Requirement: Flow identity is deterministic
+The system SHALL derive versioned execution-flow identity from stable semantic entry-point, step, and call-site identities rather than analysis-order counters.
+
 #### Scenario: Identical source analyzed twice
 GIVEN two independent full analyses of the same repository revision
 WHEN execution flows are persisted
 THEN the same logical flow has the same versioned flow identity/fingerprint.
 
 ### Requirement: Stable flows can be diffed conservatively
+The semantic graph diff SHALL classify stable flow additions, removals, path changes, and membership changes without force-pairing ambiguous flows.
+
 #### Scenario: Flow path changes between refs
 GIVEN the same stable entry point has a changed canonical step path
 WHEN semantic graph diff runs
@@ -53,6 +61,8 @@ THEN the flow section reports a path/membership change with evidence
 AND does not fabricate a rename between ambiguous flows.
 
 ### Requirement: PDG impact quality is evaluated against mutations
+Automatic PDG precision SHALL remain disabled until a reproducible mutation benchmark demonstrates the documented recall and precision gates.
+
 #### Scenario: Release enables automatic PDG precision
 GIVEN the v1.0.12 mutation corpus
 WHEN graph and PDG modes are compared

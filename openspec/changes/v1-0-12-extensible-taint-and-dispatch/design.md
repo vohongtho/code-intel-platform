@@ -9,6 +9,8 @@ Interprocedural analysis must call `gateInterproceduralAnalysis`.
 
 The design avoids a second resolver inside taint.
 
+Stage A changes only model registration/matching/cache identity. Stage B adds receiver-type/dispatch rows one language at a time through existing resolution indexes and persistence. Stage C consumes those normal call edges for bounded interprocedural taint. Public cross-function traces remain unavailable until Stage B evidence is persisted and reopened successfully.
+
 ## 2. New/extended modules
 
 Taint:
@@ -91,6 +93,8 @@ Prepared indexes:
 - member lookup by owner/type/name;
 - DI/registration provider index;
 - local type evidence by call-site/receiver anchor.
+
+Existing resolution indexes already provide type-name, heritage and registration maps. Extend/reuse them before introducing any new `type-index.ts`; a new index is justified only by a measured lookup the current owners cannot serve.
 
 `inferReceiverTypeSet(callSite)` combines language-specific signals. It distinguishes static type from possible runtime implementations and reports whether expansion is complete.
 

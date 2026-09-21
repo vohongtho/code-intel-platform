@@ -6,6 +6,8 @@
 
 The design joins these through canonical symbol identity; it does not merge the two graph layers.
 
+Implementation order is stable flow identity/fingerprint/migration first, then diff-to-existing-IR mapping and intraprocedural slicing, then certainty-gated projection/test selection, then mutation evaluation. Flow diff is enabled only after repeated-analysis identity tests pass; `auto` PDG is enabled only after comparative evaluation passes.
+
 ## 2. New modules
 
 Add:
@@ -27,7 +29,7 @@ Modify:
 
 ## 3. Source-range mapping
 
-Introduce a stable `SourceStatementMap` built during/lazily from lowering:
+IR contracts already retain `SourceRange` on statements/expressions. Build a focused diff-range adapter/index over those existing ranges during/lazily from lowering; do not introduce a second source parser or duplicate source-location model:
 ```ts
 interface SourceStatementRef {
   statementId: string;

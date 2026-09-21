@@ -49,6 +49,8 @@ THEN ambiguous evidence contributes only at bounded certainty
 AND exact path evidence is not claimed.
 
 ### Requirement: Hard token budget is enforced
+The system SHALL keep final Explore output within the normalized requested token budget and report evidence omitted to satisfy that limit.
+
 #### Scenario: Context exceeds budget
 GIVEN relevant context exceeds the normalized requested token budget
 WHEN allocation completes

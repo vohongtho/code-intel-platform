@@ -1,7 +1,11 @@
 # Tasks: Change Risk and Test Intelligence
 
+## Delivery dependency
+- [ ] Complete task groups 5 and the identity/migration portion of 6 before task groups 1-4 depend on stable flows.
+- [ ] Keep PDG precision manual/experimental until task group 7 passes its comparative gate.
+
 ## 1. Diff-to-program-analysis mapping
-- [ ] Add `program-analysis/source-map.ts` (or equivalent) to map changed line ranges to owning functions and IR statements.
+- [ ] Add a focused adapter/index over existing IR `SourceRange` data to map changed line ranges to owning functions and IR statements; do not add a duplicate parser/location model.
 - [ ] Add tests for multiline expressions, comments/whitespace-only hunks, nested functions, multiple statements on one line, and no-map boundaries.
 - [ ] Reuse existing IR lowering; do not parse source a second way for this feature.
 

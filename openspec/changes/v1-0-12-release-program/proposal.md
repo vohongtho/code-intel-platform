@@ -25,21 +25,21 @@ The earlier competitive analysis identified 22 candidates, but the current basel
 | F03 | Unified Explore tool | Existing specialized search/context/inspect/impact tools and an agent `explore` workflow asset | Add one optional task-oriented `explore` orchestration tool/command | `v1-0-12-adaptive-agent-exploration` |
 | F04 | Branch-aware semantic index selection | Semantic snapshots + graph diff for refs exist | Make immutable refs selectable by normal read/query tools without replacing current index defaults | `v1-0-12-ref-aware-portable-indexes` |
 | F05 | Graph-backed rename | No first-class semantic rename planner found | Add dry-run semantic rename planning, bounded candidate handling and post-edit verification | `v1-0-12-safe-refactoring-and-architecture-guards` |
-| F06 | Missing-test detection for changed flows | `suggest_tests`, `coverage_gaps`, PR impact exist | Connect change→flow→test evidence and classify uncovered changed behavior | `v1-0-12-change-risk-test-intelligence` |
+| F06 | Missing-test detection for changed flows | `suggest_tests`, `coverage_gaps`, PR impact exist | Connect change→flow→test evidence and classify uncovered changed behavior | `v1-0-12-change-risk-and-test-intelligence` |
 | F07 | Plan→Work→Verify workflow | Eight graph-backed workflow assets exist, including plan/review/impact | Add resumable checkpoint state, expected graph deltas and post-edit validation | `v1-0-12-agentic-cross-repo-change-workflows` |
-| F08 | PDG-backed PR impact | CFG/dataflow/PDG/taint engine exists but is not wired into PR impact | Add bounded statement-level slicing projected to symbols/flows/contracts/tests | `v1-0-12-change-risk-test-intelligence` |
+| F08 | PDG-backed PR impact | CFG/dataflow/PDG/taint engine exists but is not wired into PR impact | Add bounded statement-level slicing projected to symbols/flows/contracts/tests | `v1-0-12-change-risk-and-test-intelligence` |
 | F09 | API response-shape consumer validation | HTTP consumer extraction already tracks response keys for fetch/Axios/Angular and compatibility uses consumer evidence | Add explicit shape-check surface and deeper alias/optional/destructuring coverage; do not recreate existing engine | `v1-0-12-api-protocol-contract-intelligence` |
 | F10 | Portable/shareable immutable indexes | Snapshot cache exists but no portable import/export contract found | Add signed/checksummed portable index package with privacy modes and trust validation | `v1-0-12-ref-aware-portable-indexes` |
 | F11 | Architecture-layer detection | Directory heuristic clusters exist; no enforceable layer model found | Add evidence-scored layers + optional dependency policy | `v1-0-12-safe-refactoring-and-architecture-guards` |
 | F12 | Structural pre-commit checks | SARIF builder exists; no unified structural check command found | Add `check --changed` using graph/API/architecture policies | `v1-0-12-safe-refactoring-and-architecture-guards` |
-| F13 | Program-analysis mutation benchmark | Program-analysis unit fixtures exist; no mutation oracle found | Add mutation/effect oracle for PDG impact precision/recall | `v1-0-12-change-risk-test-intelligence` |
+| F13 | Program-analysis mutation benchmark | Program-analysis unit fixtures exist; no mutation oracle found | Add mutation/effect oracle for PDG impact precision/recall | `v1-0-12-change-risk-and-test-intelligence` |
 | F14 | Configurable taint models | Built-in bounded taint exists; no project model extension point found | Add versioned project/framework taint source/sink/sanitizer models | `v1-0-12-extensible-taint-and-dispatch` |
-| F15 | Historical business-flow evolution | Current flow IDs are not suitable for graph diff; graph-diff reports flow/cluster delta unsupported | Stabilize flow identity/fingerprint and persist diffable flow evolution | `v1-0-12-change-risk-test-intelligence` |
+| F15 | Historical business-flow evolution | Current flow IDs are not suitable for graph diff; graph-diff reports flow/cluster delta unsupported | Stabilize flow identity/fingerprint and persist diffable flow evolution | `v1-0-12-change-risk-and-test-intelligence` |
 | F16 | GraphQL client→resolver mapping | GraphQL contract extraction hooks exist; group drift remains unknown | Add operation/resolver/type-field identity, consumer links and compatibility | `v1-0-12-api-protocol-contract-intelligence` |
 | F17 | gRPC field-level compatibility | protobuf/gRPC extraction hooks exist; group drift remains unknown | Add protobuf service/method/message compatibility and consumer impact | `v1-0-12-api-protocol-contract-intelligence` |
 | F18 | Semantic reranking | BM25/vector RRF exists; no learned/graph-aware second-stage reranker found | Add bounded graph-aware reranking first; keep learned reranker optional/deferred | `v1-0-12-adaptive-agent-exploration` |
 | F19 | Offline installation | Local archive install is possible, but complete trust-bundle/offline lifecycle is not defined | Add offline release bundle manifest, verification and diagnostics | `v1-0-12-runtime-trust-and-offline-install` |
-| F20 | Rich graph-diff visualization | CLI/MCP/HTTP graph diff exists | Add Web diff exploration over the same service; no second diff engine | `v1-0-12-ref-aware-portable-indexes` |
+| F20 | Rich graph-diff visualization | CLI/MCP/HTTP graph diff and a first-class Web `/diff` page already render paginated node/relationship/contract evidence | Extend the existing Web view with stable-flow deltas and selected-index metadata only; no second page or diff engine | `v1-0-12-ref-aware-portable-indexes` |
 | F21 | Deeper type-aware dynamic dispatch | Evidence-aware language resolution exists but complex receiver/dispatch cases remain bounded/heuristic | Add receiver type-set and hierarchy-aware dispatch with explicit candidate certainty | `v1-0-12-extensible-taint-and-dispatch` |
 | F22 | Cross-repo business-flow trace | Contract drift links repositories but does not persist stitched system execution flows | Stitch local flows through exact contract links with bounded candidates | `v1-0-12-agentic-cross-repo-change-workflows` |
 
@@ -85,6 +85,20 @@ PDG change slicing ──> test intelligence
                                │
 runtime trust ─────────────────┘ (independent delivery track)
 ```
+
+## Delivery phases
+
+Implementation proceeds through reviewable capability checkpoints:
+
+1. repair and strict-validate all planning artifacts;
+2. establish stable flow identity, a shared read-index view, snapshot read pins and safe runtime archive extraction;
+3. deliver HTTP shape checking, Explore orchestration/render policy and declarative taint model loading;
+4. connect PDG/test intelligence and portable index import/export;
+5. add GraphQL and protobuf schema compatibility before optional language/framework bindings;
+6. enable rename application, architecture checks, receiver dispatch and interprocedural taint only for proven capability rows;
+7. add persistent workflow sessions, then exact cross-repository system flows after their identity and contract prerequisites pass.
+
+Each checkpoint must be independently testable and retain explicit reduced-guarantee boundaries when a later capability is absent.
 
 ## Release boundary
 

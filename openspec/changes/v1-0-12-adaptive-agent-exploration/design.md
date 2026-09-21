@@ -24,6 +24,8 @@ task
  -> coverage/trust/omission aggregation
 ```
 
+Implement the transport-independent orchestrator against current-index services first. Integrate `ReadIndexView` only after the ref-aware foundation exists, and introduce each skeleton language row only after syntax-preservation fixtures pass. Public transports are last so they expose one proven orchestrator rather than parallel behavior.
+
 Intent expansion reuses existing services rather than duplicating semantics:
 - understand: path/flow/cluster evidence;
 - debug: caller/callee/path evidence plus falsification-relevant source;

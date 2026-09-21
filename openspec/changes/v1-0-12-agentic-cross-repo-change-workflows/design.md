@@ -6,6 +6,8 @@ Today workflow manifests are static instructions validated against `MCP_TOOL_DEF
 
 Multi-repo group sync owns contracts/links/consumer index. Local flow detection owns intra-repo paths. The new workflow layer composes these owners.
 
+Implement and reopen-test the session store/state machine before adding planning orchestration. Complete deterministic single-repo expected-vs-actual verification before group session writes. Build system-flow stitching last, gated by stable local-flow identity and exact contract consumers; until then sessions report flow verification unavailable rather than synthesizing continuity.
+
 ## 2. New modules
 
 Workflow state:

@@ -10,7 +10,7 @@ F04, F10, F20
 P0/P1
 
 ## Summary
-Turn the v1.0.11 semantic-snapshot engine into a first-class read source for normal intelligence queries, add a validated portable index package for team/CI reuse, and add a rich Web graph-diff experience backed by the existing semantic diff service.
+Turn the v1.0.11 semantic-snapshot engine into a first-class read source for normal intelligence queries, add a validated portable index package for team/CI reuse, and extend the existing Web graph-diff experience with stable-flow and selected-index evidence.
 
 ## Source-verified baseline
 `code-intel/core/src/snapshots/*` already safely resolves committed refs, materializes throwaway worktrees, runs the normal analyzer into isolated artifacts, validates graph/BM25/vector/evidence read-back, caches snapshots, and never mutates Generation V2. Snapshot artifacts already include `graph.db`, `bm25.db`, optional `vector.db`, `evidence.db`, metadata and semantic index files.
@@ -18,7 +18,7 @@ Turn the v1.0.11 semantic-snapshot engine into a first-class read source for nor
 `graph_diff` and semantic-snapshot PR impact already compare refs. The remaining gaps are:
 1. normal read tools do not consistently accept a ref;
 2. snapshots are not portable/shareable as a supported artifact;
-3. the Web UI has no first-class semantic graph-diff exploration surface.
+3. the existing Web `/diff` page renders ref descriptors, paginated node/relationship deltas, certainty, contract findings and coverage, but stable flow deltas remain unavailable until flow identity is stabilized and selected-index metadata is not yet shared across normal read tools.
 
 ## Ref-aware read behavior
 Applicable read-only tools gain optional `ref`. Omitted `ref` preserves active-generation semantics. Provided `ref` resolves/builds/reuses the existing semantic snapshot and pins one immutable view for the whole request.
@@ -64,14 +64,10 @@ The export manifest SHALL state the privacy profile and capability consequences.
 Package binds to canonical repository identity plus Git tree/commit. Import into a different repo identity fails by default. Repository adoption/remapping is out of scope for the first release.
 
 ## Web graph diff
-Add a dedicated view consuming the existing semantic graph-diff HTTP service. It renders:
-- base/head descriptor;
-- node add/remove/change/move/rename;
-- continuity evidence/candidates;
-- relationship add/remove/change including certainty/strategy;
-- API contract findings;
-- coverage/boundaries;
-- stable flow deltas when the change-risk program makes them available.
+Extend the existing `GraphDiffPage` and its existing HTTP client/types only where the backend adds:
+- stable flow deltas from `v1-0-12-change-risk-and-test-intelligence`;
+- selected-index/ref identity metadata needed to explain the compared views;
+- regression coverage for paginated, partial and candidate-continuity responses.
 
 The Web must not reimplement diff classification.
 

@@ -70,10 +70,15 @@ Before adding a verifier package, record:
 - security/maintenance history;
 - package size on four runtime targets.
 
+The gate also requires an isolated fixture proving zero-network verification of the exact downloadable bundle format. Until it passes, code may add bounded index parsing and safe extraction, but it must not emit `verified` or enable authenticated `--offline` activation.
+
+## Safe extraction
+The current lifecycle checksum-verifies and then runs `tar -xzf`; it does not inspect members first. Add a preflight that enumerates archive members without extraction, bounds entry count/path length/expanded size where available, and rejects absolute paths, `..` traversal, unsafe symlink/hardlink targets and special device entries. Only a preflight-approved archive may be extracted into a fresh staging directory. This protects filesystem integrity but does not establish publisher authenticity.
+
 ## Failure semantics
 Malformed/oversized index, missing sidecar, wrong target, wrong digest, wrong signer, stale/unsupported scheme, corrupt archive or failed post-extract validation all fail closed.
 
 ## Tests
-Unit: schema limits, identity policy, receipt migration, hashes.
-Integration: offline valid/tampered/wrong identity, atomic preservation, old 1.0.11.
+Unit: schema limits, identity policy, receipt migration, hashes and archive-member policy.
+Integration: archive traversal/link/special-entry rejection before extraction; offline valid/tampered/wrong identity; atomic preservation; old 1.0.11; zero-network verifier proof.
 Distribution: packaged verifier/runtime on all four targets.

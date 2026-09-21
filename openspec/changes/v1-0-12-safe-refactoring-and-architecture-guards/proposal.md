@@ -12,6 +12,8 @@ P1
 ## Summary
 Add identity-based rename planning/application with verification, evidence-scored architecture-layer discovery plus explicit enforceable dependency policy, and one structural check command suitable for local/CI/pre-commit use.
 
+Delivery is capability-gated: advisory architecture discovery and explicit-policy checks are read-only and can land independently; rename planning is available before application; application is enabled per language only after exact-span, transaction and post-analysis verification fixtures pass.
+
 ## Source-verified baseline
 The v1.0.11 graph already stores canonical identity, legacy IDs, relationship certainty/strategy/evidence and cross-file links. API compatibility, test coverage/impact, health analysis and `cli/sarif-builder.ts` can be reused.
 

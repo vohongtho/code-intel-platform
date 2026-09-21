@@ -4,6 +4,7 @@
 - [ ] Create `code-intel/core/src/query/explore.ts` with request/result contracts, intent selection, bounded expansion, and coverage aggregation.
 - [ ] Add `code-intel/core/tests/unit/query/explore.test.ts` for all six intents, empty/partial evidence, deterministic ordering, and hard work limits.
 - [ ] Reuse existing scoped search, path/flow, API-contract, PR/test, security and context services.
+- [ ] Start with the current index; add optional `ReadIndexView` binding only after the ref-aware foundation is available.
 
 ## 2. Graph-aware reranking
 - [ ] Create `search/graph-reranker.ts` with a versioned deterministic scorer.
@@ -17,6 +18,7 @@
 - [ ] Modify `context/builder.ts` to accept an optional render plan while preserving legacy defaults.
 - [ ] Extend `context/session.ts` so references include selected index/snapshot identity.
 - [ ] Add Unicode, overload/polymorphism, unsupported-language, stale-session, and budget tests.
+- [ ] Enable each skeleton capability row only after its syntax-preservation fixtures pass; otherwise retain snippet/signature fallback.
 
 ## 4. Public surfaces
 - [ ] Add `explore` MCP schema/handler.

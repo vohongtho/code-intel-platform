@@ -23,10 +23,10 @@
 - [ ] Add tests proving source-dependent features report a boundary rather than returning stale/hidden content.
 
 ## 5. Web graph diff
-- [ ] Add Web API types/client for semantic graph diff.
-- [ ] Add diff page/components with base/head, entity continuity, relationship trust, contract findings and coverage.
-- [ ] Keep diff rules server-side.
-- [ ] Add large/paginated/partial/candidate-continuity UI tests.
+- [ ] Reuse the existing `GraphDiffPage`, graph-diff API client/types and `/diff` route; do not create duplicate page/components.
+- [ ] Extend existing wire types/rendering with backend-provided stable-flow deltas and selected-index identity only when those fields are available.
+- [ ] Keep all diff classification rules server-side.
+- [ ] Extend existing large/paginated/partial/candidate-continuity UI tests with stable-flow and index-view metadata cases.
 
 ## 6. Performance/release
 - [ ] Benchmark cached ref vs current-generation read overhead.

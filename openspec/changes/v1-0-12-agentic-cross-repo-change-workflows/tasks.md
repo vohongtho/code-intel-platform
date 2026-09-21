@@ -5,6 +5,7 @@
 - [ ] Add `session-store.ts` with bounded schema validation, atomic writes, revision compare-and-swap and retention.
 - [ ] Choose the authoritative storage root for repo vs group sessions using existing repository/group ownership.
 - [ ] Add reopen, corrupt/oversize, stale-revision and retention tests.
+- [ ] Prove single-repository persistence/state transitions before enabling group session writes.
 
 ## 2. Planning service
 - [ ] Add `session-service.ts` to compose existing search/context/impact/API/test/group services into required/candidate/optional/unknown plan steps.
@@ -31,6 +32,7 @@
 - [ ] Add lens capability-boundary and commit-plan determinism tests.
 
 ## 6. Stable cross-repo system flows
+- [ ] Begin only after stable local-flow identity is migrated and validated across independent analyses.
 - [ ] Add `multi-repo/system-flows/types.ts`, `identity.ts`, `stitcher.ts`, `service.ts`.
 - [ ] Require stable local flow identity from `v1-0-12-change-risk-and-test-intelligence` for exact persisted system flows.
 - [ ] Stitch only exact contract consumers as exact continuations; keep candidates separate.

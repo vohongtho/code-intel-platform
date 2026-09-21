@@ -63,7 +63,7 @@ MCP/HTTP may expose `rename_plan` and `structural_check` as read-only. Source wr
 Fixtures for same-name symbols, overloads, alias imports, overrides, generated files, candidate strings, Unicode/CRLF, stale plan, dirty tree, path escape, allowed/forbidden layers, new/pre-existing cycles and incomplete coverage.
 
 ## Rollout
-Enable apply only for language rows whose exact-span + semantic-reference tests pass. Other rows remain preview-only. Expanding a row requires explicit test evidence.
+Land explicit-policy structural checks and advisory discovery without depending on rename apply. Land rename planning next. Enable apply only for language rows whose exact-span + semantic-reference + transaction + post-analysis verification tests pass. Other rows remain preview-only. Expanding a row requires explicit test evidence.
 
 ## Alternatives rejected
 Textual rename; inferred-policy enforcement; direct browser/MCP writes; separate architecture graph engine.

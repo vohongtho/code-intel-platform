@@ -53,6 +53,8 @@ Supported intents: `understand`, `debug`, `change`, `review`, `security`, `api`.
 5. Feed the plan into the existing context builder and preserve its hard final budget, trust, coverage, and omission receipts.
 6. Return ranking/render reasons only when requested; default output stays compact.
 
+Delivery SHALL be capability-gated rather than all-or-nothing: first compose existing services and preserve the current context builder contract; then add render modes per language only where syntax-safe adapters exist; then enable graph reranking features only where their evidence is available. Missing ref-aware views, skeleton support, vector search, or a specialized analyzer degrades explicitly to the current-index/snippet/BM25/available-service path.
+
 ## Skeleton safety
 Skeletonization SHALL use tested syntax-aware language adapters or parser/lowering facts. A generic destructive regex skeletonizer is forbidden. Unsupported languages fall back to snippet/signature and expose a boundary.
 

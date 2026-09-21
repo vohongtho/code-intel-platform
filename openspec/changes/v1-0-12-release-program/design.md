@@ -30,11 +30,13 @@ v1.0.12 is an integration release across existing engines, not a platform rewrit
 | Resolution | `src/resolution/*` | receiver type-set dispatch |
 | Workflows | `src/agents/workflows/*` | checkpoint/session layer |
 | Runtime | `src/cli/runtime-*`, `scripts/distribution/*` | authenticity/offline bundle |
-| Web | `code-intel/web/src/*` | graph-diff/ref/workflow views |
+| Web | `code-intel/web/src/pages/GraphDiffPage.tsx`, `code-intel/web/src/api/graph-diff-types.ts` | additive stable-flow/ref/workflow evidence in the existing graph-diff view |
 
 ## 4. Rollout
 
 Each detailed change may be merged independently if its compatibility contract and release gates pass. Features that depend on another change must detect missing capability and degrade with an explicit boundary rather than silently approximating the stronger result.
+
+The release uses seven ordered checkpoints: planning repair; identity/read-view/archive-safety foundations; small vertical capabilities; PDG/test and portable-index intelligence; protocol schemas and comparators; capability-gated refactoring/dispatch/interprocedural analysis; and workflow/system-flow integration. Schema-level protocol compatibility, declarative taint models and single-repository workflow sessions do not wait for their later optional binding, dispatch or cross-repository layers.
 
 ## 5. Validation
 

@@ -12,6 +12,7 @@
 
 ## 3. Rename planning/application
 - [ ] Implement `rename-plan.ts` with source/index fingerprints and expected semantic delta.
+- [ ] Ship/verify planning independently before enabling any language's apply capability.
 - [ ] Implement `apply.ts` with explicit apply, dirty-tree acknowledgement, root/symlink/generated protections and stale-plan refusal.
 - [ ] Implement `verify.ts` using normal analysis, graph diff, API checks and test suggestions.
 - [ ] Add end-to-end import/alias/override/candidate-string fixtures.
@@ -22,6 +23,7 @@
 - [ ] Add tests proving inferred-only labels cannot create blocking violations.
 
 ## 5. Structural check
+- [ ] Keep structural checks independently usable when rename application is unsupported.
 - [ ] Implement `governance/structural-check.ts`.
 - [ ] Add rules for explicit layer violations, new cycles, breaking API drift and changed risk/test evidence.
 - [ ] Add `code-intel check --changed|--base` with JSON/SARIF.

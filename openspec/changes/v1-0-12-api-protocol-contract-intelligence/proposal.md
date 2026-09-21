@@ -12,6 +12,8 @@ P0/P1
 ## Summary
 Extend the existing HTTP contract engine with explicit consumer-shape validation, and turn the existing GraphQL/protobuf extraction placeholders into evidence-backed producer/consumer compatibility analysis with cross-repository impact.
 
+Delivery is staged: land HTTP shape analysis first, then protocol AST models and schema comparators, and add language/framework bindings only after each binding is source-verified. Schema-level compatibility does not wait on handler/client bindings.
+
 ## 1. Source-verified baseline
 
 ### HTTP
@@ -134,7 +136,7 @@ Extend parser to capture:
 - nested message/enum ownership;
 - source anchors/coverage.
 
-Prefer a proper protobuf parser/library already available in the dependency graph if license/runtime audit and packaged behavior support it; otherwise implement a bounded parser sufficient for this contract subset. Do not continue growing fragile regex once nested scopes/oneofs/reserved sets are required.
+No supported protobuf parser is currently a direct dependency. `protobufjs` appears only as an invalid/transitive installation and SHALL NOT be treated as an available runtime contract. Audit and add a direct parser dependency if license/runtime/package behavior is acceptable; otherwise implement a bounded parser sufficient for this contract subset. Do not continue growing fragile regex once nested scopes/oneofs/reserved sets are required.
 
 ## 7. gRPC compatibility dimensions
 

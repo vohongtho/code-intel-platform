@@ -12,6 +12,8 @@ P1 — advanced program-analysis foundation
 ## Summary
 Make taint modeling configurable and framework-aware, add a bounded interprocedural taint path using trusted call relationships, and strengthen dynamic/interface dispatch by resolving receiver type sets rather than collapsing runtime-polymorphic calls to a single guessed target.
 
+Delivery is decomposed: declarative taint models, fingerprints and cache invalidation land independently first; receiver/dispatch precision rolls out per proven language; interprocedural taint is enabled only after trusted persisted dispatch evidence and summary transfer tests pass. No later stage is required to claim completion of an earlier, narrower capability.
+
 ## 1. Source-verified baseline
 
 ### Taint

@@ -74,7 +74,7 @@ Do not mutate binary DB bytes. Load graph, remove content fields according to a 
 Add optional `ref` to repo-selectable read MCP tools and corresponding HTTP/CLI query contracts. Responses using non-current state include compact `indexView` identity/ref metadata.
 
 ## Web diff
-Add API types/client and a graph-diff route/page. Large results remain paginated/virtualized. The server remains authoritative for continuity/compatibility/coverage.
+Reuse `code-intel/web/src/pages/GraphDiffPage.tsx`, `code-intel/web/src/api/graph-diff-types.ts`, the existing API client and `/diff` route. Add only backend-provided stable-flow deltas and selected-index metadata. Large results remain paginated/virtualized, and the server remains authoritative for continuity, compatibility and coverage.
 
 ## Failure semantics
 Unknown ref -> error/boundary, no current fallback.
@@ -87,4 +87,4 @@ Eviction race -> blocked by active read pin.
 Prefer separate local pin/import metadata so `SNAPSHOT_SCHEMA_VERSION` and content-derived `snapshotId` remain unchanged. Bump schema only if cache entry semantics truly change.
 
 ## Tests
-Add index-view unit tests, ref-aware query integration, portable format/tamper/traversal tests, concurrent eviction/pin tests, deterministic package-manifest tests, and Web graph-diff component/e2e coverage.
+Add index-view unit tests, ref-aware query integration, portable format/tamper/traversal tests, concurrent eviction/pin tests, deterministic package-manifest tests, and regression coverage for the existing Web graph-diff page's stable-flow/index-view additions.

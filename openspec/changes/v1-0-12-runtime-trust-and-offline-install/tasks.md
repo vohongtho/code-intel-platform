@@ -3,6 +3,7 @@
 ## 1. Trust contracts
 - [ ] Add `runtime-trust.ts` and `runtime-bundle-index.ts` with versioned bounded schemas.
 - [ ] Audit the chosen Sigstore/GitHub-attestation verifier license, dependencies, offline behavior, maintenance and bundle-size impact.
+- [ ] Prove the exact verification bundle works with network access disabled; if it does not, return authenticity to design review and do not expose `verified`.
 - [ ] Add malformed, oversized, unknown-scheme and identity-policy tests.
 
 ## 2. Release index and verification material
@@ -11,9 +12,10 @@
 - [ ] Add release assertions that every index entry maps to an uploaded artifact and vice versa.
 
 ## 3. Installer transaction
-- [ ] Extend `runtime-lifecycle.ts` to verify v1.0.12+ official archives before extraction/activation.
+- [ ] Add bounded archive-member preflight to `runtime-lifecycle.ts` before extraction, rejecting absolute/traversal paths, unsafe links and special entries.
+- [ ] Extend `runtime-lifecycle.ts` to verify v1.0.12+ official archive authenticity before extraction/activation only after the verifier audit gate passes.
 - [ ] Preserve checksum-only v1.0.11 compatibility with `legacy-checksum`.
-- [ ] Add wrong signer, archive/index/sidecar tamper, path traversal and atomic-failure tests in runtime lifecycle tests.
+- [ ] Add wrong signer, archive/index/sidecar tamper, path traversal/link/special-entry and atomic-failure tests in runtime lifecycle tests.
 
 ## 4. Offline flow
 - [ ] Add `upgrade --bundle-dir <dir> --offline` to `standalone-commands.ts`.

@@ -19,7 +19,7 @@
 - [ ] Add test proving unchanged source + changed model cannot reuse stale taint findings.
 
 ## 4. Receiver type sets
-- [ ] Create `resolution/receiver-types.ts` and prepared indexes/reuse existing indexes for local types, hierarchy, members and registrations.
+- [ ] Create `resolution/receiver-types.ts` and reuse/extend existing type-name, heritage and registration indexes; add a new prepared index only for a demonstrated missing lookup.
 - [ ] Add `ReceiverTypeSet` with static/runtime candidates, completeness and boundaries.
 - [ ] Add initial language adapters only for source-verified supported strategies.
 - [ ] Add candidate caps and negative fixtures proving invalid dispatch targets are excluded.
@@ -32,6 +32,7 @@
 - [ ] Benchmark/index-counter guard against per-call-site full workspace scans.
 
 ## 6. Interprocedural taint
+- [ ] Begin only after applicable dispatch edges persist/reopen with tested certainty and completeness.
 - [ ] Add versioned parameter-to-return/sink summaries.
 - [ ] Implement bounded cross-call propagation using `gateInterproceduralAnalysis`.
 - [ ] Bound path certainty by call/dispatch certainty at every hop.

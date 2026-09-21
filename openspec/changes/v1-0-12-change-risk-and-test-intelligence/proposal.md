@@ -12,6 +12,8 @@ P0 — strategic change-intelligence differentiator
 ## Summary
 Connect the existing statement-level program-analysis engine to PR impact and test selection, add mutation-based evaluation so higher precision is measurable rather than asserted, and make execution-flow identity stable enough to diff and track across commits.
 
+Delivery has two gates. Stable flow identity and migration land first as a shared foundation. PDG projection/test evidence then remain explicit/manual until the mutation benchmark proves the `auto` selection threshold; failing that threshold does not block stable flows or graph-mode improvements.
+
 ## 1. Source-verified baseline
 
 v1.0.11 already provides:

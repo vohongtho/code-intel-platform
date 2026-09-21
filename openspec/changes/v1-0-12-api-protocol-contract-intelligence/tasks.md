@@ -13,7 +13,7 @@
 - [ ] Add exact/unknown/optional/nested/response-variant tests.
 
 ## 3. GraphQL model/parser
-- [ ] Audit/use a proper GraphQL AST parser; document direct dependency/license/package decision.
+- [ ] Audit a proper GraphQL AST parser as a new direct production dependency; document license/package/runtime decision and never rely on transitive hoisting.
 - [ ] Replace regex-only internals while preserving a migration adapter for existing `parseGraphQLContracts` callers.
 - [ ] Model object/input/interface/union/enum/scalar, fields, args/defaults, list/non-null wrappers, root operations, coverage and anchors.
 - [ ] Add schema-depth/file-size limits and malformed-document tests.
@@ -31,7 +31,7 @@
 - [ ] Extend contract identity/fingerprint/version and legacy fallback tests.
 
 ## 6. Protobuf/gRPC model/parser
-- [ ] Audit `protobufjs` or selected parser license/runtime behavior before adding dependency.
+- [ ] Audit `protobufjs` or another parser as a new direct production dependency; document license/runtime/package behavior and never rely on the current invalid/transitive installation.
 - [ ] Extend proto parsing for package, services/RPCs, streaming, messages, fields/numbers/types/cardinality, map/oneof, enums and reserved sets.
 - [ ] Add nested-scope and malformed/depth/file-size tests.
 - [ ] Version/fingerprint rich gRPC contracts.
@@ -42,6 +42,7 @@
 - [ ] Document rule table against protobuf compatibility semantics.
 
 ## 8. gRPC provider/consumer mapping
+- [ ] Begin only after rich schema parsing/comparison and canonical RPC identities are stable.
 - [ ] Add source-verified language/framework binding adapters for the initial supported set.
 - [ ] Match by canonical service/RPC identity, never simple method name alone.
 - [ ] Publish unsupported capability boundaries for other languages/frameworks.

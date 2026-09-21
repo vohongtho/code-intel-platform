@@ -14,6 +14,8 @@ Evolve the existing static agent workflow assets into resumable graph-verified c
 
 Code Intel remains an intelligence and verification layer. It does not become an autonomous source editor or Git committer.
 
+Delivery is ordered: persistent single-repository sessions and deterministic verification land first using existing graph/contract/test services; group sessions follow after ownership is settled; exact persisted system flows follow only after stable local-flow identity exists. Optional capabilities enrich a session but never become hidden hard dependencies.
+
 ## 1. Source-verified baseline
 
 v1.0.11 already includes eight workflow manifests under `code-intel/core/src/agents/workflows/registry.ts`:

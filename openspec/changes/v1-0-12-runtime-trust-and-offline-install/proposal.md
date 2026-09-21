@@ -13,7 +13,7 @@ P0
 Close the remaining trust gap in the self-contained runtime by making runtime archives authenticity-verifiable by Code Intel itself, and define a complete air-gapped release bundle.
 
 ## Source-verified baseline
-v1.0.11 already ships self-contained archives for Linux/macOS x64/arm64. The release pipeline generates SHA-256, CycloneDX SBOM, provenance sidecars and GitHub artifact attestations. Docker images are keyless-cosign signed. `runtime-lifecycle.ts` provides archive upgrade/rollback/uninstall and `doctor.ts` validates layout.
+v1.0.11 already ships self-contained archives for Linux/macOS x64/arm64. The release pipeline generates SHA-256, CycloneDX SBOM, provenance sidecars and GitHub artifact attestations. Docker images are keyless-cosign signed. `runtime-lifecycle.ts` provides archive upgrade/rollback/uninstall and `doctor.ts` validates layout. It verifies the archive checksum, but currently invokes `tar -xzf` before validating archive member paths; safe pre-extraction entry validation is therefore part of this change rather than an existing protection.
 
 The gap is narrower: local runtime installation validates checksum material but does not establish artifact authenticity from an offline-verifiable signed/attested bundle. A copied archive plus copied/tampered checksum is therefore integrity data without independently established publisher identity.
 
@@ -35,7 +35,7 @@ Preferred approach: reuse the existing GitHub/Sigstore release identity.
 3. It verifies archive/SBOM/provenance hashes from the authenticated release index.
 4. It records a local trust receipt.
 
-A Sigstore verifier dependency is allowed only after license/security/offline/package-size audit. If no suitable offline verifier exists, this change returns to design review; it must not silently present checksum-only validation as authenticity.
+A Sigstore verifier dependency is allowed only after license/security/offline/package-size audit and a fixture proves that verification succeeds with network access disabled. The audit is an implementation gate: safe archive extraction and bounded index parsing may proceed first, but the `verified` state and authenticated offline installation SHALL NOT ship until an acceptable verifier is proven. If no suitable offline verifier exists, authenticity returns to design review; checksum-only validation remains `legacy-checksum` or `unverified`.
 
 ## CLI
 ```bash
@@ -62,7 +62,7 @@ A valid v1.0.11 checksum-only runtime may remain usable but is never relabeled `
 - report optional embedding-model caches separately rather than trying to download them.
 
 ## Security
-Verification precedes extraction/activation where possible. Existing archive traversal protections remain. Release-index JSON and paths are bounded and untrusted. A valid signature for another repo/workflow is rejected. No signing secret is installed.
+Checksum/authenticity verification and archive-member path/type validation precede extraction. Extraction uses a bounded staging directory and SHALL reject absolute paths, traversal, unsafe link targets and unsupported special entries before invoking the extractor. This safe-extraction requirement is independent of publisher authenticity. Release-index JSON and paths are bounded and untrusted. A valid signature for another repo/workflow is rejected. No signing secret is installed.
 
 ## Compatibility
 Old installed versions remain runnable. Trust receipt is additive metadata. Rollback keeps each version's own receipt and cannot borrow trust from another archive.

@@ -41,7 +41,7 @@ A missing producer field is breaking only when producer shape is known enough an
 
 The existing regex parser cannot safely model nested types/arguments/wrappers. Replace its internal implementation with an AST parser while preserving `parseGraphQLContracts` compatibility adapter during migration.
 
-Before adding a new dependency, check whether `graphql` is already available in the workspace/transitive graph and whether it can be a direct production dependency with acceptable license/package impact. Prefer the standard GraphQL AST parser over custom grammar.
+`graphql` is not currently a direct production dependency. Audit whether it can be added directly with acceptable license/package/runtime impact. Do not rely on workspace hoisting or an incidental transitive package. Prefer the standard GraphQL AST parser over custom grammar after that gate passes.
 
 Add modules:
 - `multi-repo/schema-parsers/graphql-model.ts`;
@@ -75,7 +75,9 @@ Create:
 - `contract-drift/grpc-comparator.ts`;
 - optional language-specific `grpc-bindings/*`.
 
-Evaluate existing `protobufjs` (present in repository overrides/dependency graph) or another parser before adding anything. Record licensing and packaged-runtime behavior. Parser output must preserve source-level contract semantics required by compatibility; generated code is not required.
+`protobufjs` is not a usable direct dependency in the verified baseline; its installed appearance is invalid/transitive. Audit it or another parser as a new direct production dependency and record licensing and packaged-runtime behavior. If no dependency passes, use a bounded in-repository parser rather than depending on incidental installation state. Parser output must preserve source-level contract semantics required by compatibility; generated code is not required.
+
+Protocol delivery order is model/parser -> schema comparator -> canonical consumer/provider references -> source-verified language/framework bindings. Each completed stage exposes its narrower capability honestly; missing bindings prevent handler-level impact claims but not schema drift.
 
 Version `GRPC_CONTRACT_SCHEMA_VERSION`.
 
