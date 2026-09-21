@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import type { NodeKind } from '../shared/index.js';
 
 export const NODE_TABLE_MAP: Record<NodeKind, string> = {
@@ -21,6 +22,8 @@ export const NODE_TABLE_MAP: Record<NodeKind, string> = {
   cluster: 'cluster_nodes',
   flow: 'flow_nodes',
   vulnerability: 'vuln_nodes',
+  api_shape: 'api_shape_nodes',
+  api_consumer: 'api_consumer_nodes',
 };
 
 export const ALL_NODE_TABLES = [...new Set(Object.values(NODE_TABLE_MAP))];
@@ -34,6 +37,8 @@ export function getCreateNodeTableDDL(tableName: string): string {
   end_line INT64,
   exported BOOLEAN,
   content STRING,
+  identity_id STRING,
+  legacy_ids STRING,
   metadata STRING,
   PRIMARY KEY (id)
 )`;
@@ -54,8 +59,25 @@ export function getCreateEdgeTableDDL(): string[] {
 
   return [`CREATE REL TABLE GROUP IF NOT EXISTS code_edges (
   ${fromToPairs.join(',\n  ')},
+  id STRING,
   kind STRING,
   weight DOUBLE,
-  label STRING
+  label STRING,
+  callsite_id STRING,
+  confidence DOUBLE,
+  certainty STRING,
+  strategy STRING,
+  resolver_version STRING,
+  evidence_ref STRING,
+  ambiguous BOOLEAN,
+  metadata STRING
 )`];
+}
+
+export function getSchemaDdlFingerprint(): string {
+  const payload = {
+    nodeTables: ALL_NODE_TABLES.map((tableName) => ({ tableName, ddl: getCreateNodeTableDDL(tableName) })),
+    edgeTables: getCreateEdgeTableDDL(),
+  };
+  return crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
 }

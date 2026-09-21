@@ -1,5 +1,7 @@
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
+import type { FrameworkDetection } from '../frameworks/contracts.js';
 import type { LLMConfig } from '../llm/provider.js';
+import type { AnalyzerCompatibilityReceipt, ArtifactVerification, EvolutionAction } from '../storage/index-generation.js';
 
 export type PipelinePhaseStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
 
@@ -31,6 +33,30 @@ export interface PipelineContext {
   skipFiles?: string[];
   /** Set by parse-phase after execution: which parser was used */
   parserUsed?: 'tree-sitter' | 'regex';
+  /** Aggregated semantic fact diagnostics collected during parse. */
+  factDiagnostics?: Array<{ code: string; severity: 'info' | 'warning' | 'error'; language: string; affectedCapability: string; impact: 'local' | 'cross-file' | 'repository-wide'; filePath?: string; message?: string; count?: number }>;
+  /** Fact schema fingerprint/version for generation compatibility. */
+  factSchemaVersion?: string;
+  identityFingerprint?: string;
+  compatibilityReceipt?: AnalyzerCompatibilityReceipt;
+  graphVerification?: ArtifactVerification;
+  bm25Verification?: ArtifactVerification;
+  vectorVerification?: ArtifactVerification;
+  evidenceVerification?: ArtifactVerification;
+  evolutionAction?: EvolutionAction;
+  /** Repository-scoped framework detections reused across phases. */
+  frameworkDetections?: FrameworkDetection[];
+  /** Semantic facts collected during parse for resolver/index consumers. */
+  semanticFacts?: import('../semantic/facts.js').SemanticFact[];
+  /** Resolver instrumentation/version for generation compatibility and guards. */
+  resolverVersion?: string;
+  resolverFingerprint?: string;
+  evidenceSchemaVersion?: number;
+  evidenceSchemaFingerprint?: string;
+  apiContractSchemaVersion?: string;
+  apiContractFingerprint?: string;
+  resolutionInstrumentation?: import('../resolution/indexes.js').ResolutionInstrumentation;
+  resolutionIndexes?: import('../resolution/indexes.js').ResolutionIndexes;
   /**
    * v0.4.0 — opt-in summarize phase.
    * Set to true via `--summarize` flag or `analysis.summarizeOnAnalyze: true` config.

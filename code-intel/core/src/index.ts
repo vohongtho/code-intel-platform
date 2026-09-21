@@ -1,6 +1,6 @@
 export { createKnowledgeGraph } from './graph/index.js';
 export type { KnowledgeGraph } from './graph/index.js';
-export { generateNodeId, generateEdgeId } from './graph/index.js';
+export { generateNodeId, generateLegacyNodeId, generateNodeIdV2, generateEdgeId, generateLegacyEdgeId, generateCallSiteEdgeId } from './graph/index.js';
 
 export { initParser, getParser, getLanguage, parseSource, isTreeSitterAvailable, runQuery, runQueryMatches, AstCache } from './parsing/index.js';
 export type { QueryCapture, QueryMatch } from './parsing/index.js';
@@ -39,10 +39,40 @@ export type { EntryPoint, FlowTrace } from './flow-detection/index.js';
 
 export { textSearch, reciprocalRankFusion } from './search/index.js';
 export type { SearchResult } from './search/index.js';
+export type { ResolutionEvidenceRecord, ResolutionEvidenceStore } from './evidence/index.js';
+export { EVIDENCE_SCHEMA_VERSION, EVIDENCE_DB_FILE, SqliteResolutionEvidenceStore, getEvidenceDbPath, createEvidenceStore } from './evidence/index.js';
 export { Bm25Index, getBm25DbPath } from './search/index.js';
 
 export { createMcpServer, startMcpStdio } from './mcp-server/index.js';
+export { MCP_TOOL_DEFINITIONS } from './mcp-server/index.js';
 export { createApp, startHttpServer } from './http/index.js';
+
+export {
+  WORKFLOW_REGISTRY,
+  WORKFLOW_IDS,
+  WORKFLOW_MANIFEST_SCHEMA_VERSION,
+  getWorkflowManifest,
+  listWorkflowManifests,
+  resolveRuntimeCapabilities,
+  resolveWorkflowCapabilities,
+  planWorkflowInstall,
+  installWorkflows,
+  validateWorkflowRegistry,
+} from './agents/workflows/index.js';
+export type {
+  WorkflowId,
+  WorkflowManifest,
+  WorkflowCapabilityRequirement,
+  WorkflowOptionalCapability,
+  WorkflowTarget,
+  ManagedWorkflowAsset,
+  RuntimeCapabilities,
+  WorkflowCapabilityResolution,
+  WorkflowFileState,
+  WorkflowInstallAction,
+  WorkflowValidationIssue,
+  WorkflowValidationReport,
+} from './agents/workflows/index.js';
 
 export { DbManager, loadGraphToDB, upsertRepo, loadRegistry, removeRepo, saveMetadata, loadMetadata, getDbPath } from './storage/index.js';
 export type { RepoEntry, IndexMetadata } from './storage/index.js';

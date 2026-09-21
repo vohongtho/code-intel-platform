@@ -14,6 +14,7 @@
  */
 
 import { describe, it, before } from 'node:test';
+import type { TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -21,19 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { parseSource, getLanguage, runQueryMatches } from '../../../src/parsing/index.js';
 import { Language } from '../../../src/shared/index.js';
 import type { NodeKind } from '../../../src/shared/index.js';
-import {
-  typescriptQueries,
-  javascriptQueries,
-  pythonQueries,
-  javaQueries,
-  goQueries,
-  cQueries,
-  cppQueries,
-  csharpQueries,
-  rustQueries,
-  phpQueries,
-  rubyQueries,
-} from '../../../src/parsing/queries/index.js';
+import { getLanguageCapabilityDescriptors, getLanguageQuery } from '../../../src/languages/capability-registry.js';
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -87,6 +76,7 @@ const CAPTURE_KIND: Record<string, NodeKind> = {
   'def.namespace':      'namespace',
   'def.module':         'module',
   'def.property':       'property',
+  'def.property.class': 'property',
   'def.var':            'variable',
   'def.constructor':    'constructor',
 };
@@ -99,36 +89,11 @@ function captureKind(name: string): NodeKind | null {
 
 // ── Extension → Language ──────────────────────────────────────────────────────
 
-const EXT_TO_LANG: Record<string, Language> = {
-  '.ts': Language.TypeScript, '.tsx': Language.TypeScript,
-  '.js': Language.JavaScript, '.mjs': Language.JavaScript,
-  '.py': Language.Python,
-  '.go': Language.Go,
-  '.rs': Language.Rust,
-  '.java': Language.Java,
-  '.rb': Language.Ruby,
-  '.php': Language.PHP,
-  '.cs': Language.CSharp,
-  '.swift': Language.Swift,
-  '.dart': Language.Dart,
-  '.c': Language.C,
-  '.cpp': Language.Cpp,
-  '.kt': Language.Kotlin,
-};
-
-const LANG_QUERIES: Partial<Record<Language, string>> = {
-  [Language.TypeScript]: typescriptQueries,
-  [Language.JavaScript]: javascriptQueries,
-  [Language.Python]:     pythonQueries,
-  [Language.Java]:       javaQueries,
-  [Language.Go]:         goQueries,
-  [Language.C]:          cQueries,
-  [Language.Cpp]:        cppQueries,
-  [Language.CSharp]:     csharpQueries,
-  [Language.Rust]:       rustQueries,
-  [Language.PHP]:        phpQueries,
-  [Language.Ruby]:       rubyQueries,
-};
+const EXT_TO_LANG: Record<string, Language> = Object.fromEntries(
+  getLanguageCapabilityDescriptors().flatMap((descriptor) =>
+    descriptor.extensions.map((extension) => [extension, descriptor.language] as const),
+  ),
+) as Record<string, Language>;
 
 // ── Tree-sitter extraction ────────────────────────────────────────────────────
 
@@ -172,7 +137,7 @@ async function extractWithTreeSitter(
   source: string,
   lang: Language,
 ): Promise<ExtractedSymbol[] | null> {
-  const queryStr = LANG_QUERIES[lang];
+  const queryStr = getLanguageQuery(lang);
   if (!queryStr) return null;
 
   const [tree, tsLang] = await Promise.all([
@@ -319,6 +284,10 @@ async function extractSymbols(
 
 // ── Load all golden files ─────────────────────────────────────────────────────
 
+function normalizeLanguageName(input: string): string {
+  return input.trim().toLowerCase();
+}
+
 function loadGoldenFiles(): GoldenFile[] {
   const goldenFiles: GoldenFile[] = [];
   if (!fs.existsSync(GOLDEN_DIR)) return goldenFiles;
@@ -327,12 +296,24 @@ function loadGoldenFiles(): GoldenFile[] {
     const raw = fs.readFileSync(path.join(GOLDEN_DIR, file), 'utf-8');
     goldenFiles.push(JSON.parse(raw) as GoldenFile);
   }
-  return goldenFiles;
+
+  const order = new Map(
+    getLanguageCapabilityDescriptors().map((descriptor, index) => [descriptor.language, index]),
+  );
+
+  return goldenFiles.sort((a, b) => {
+    const aOrder = order.get(normalizeLanguageName(a.language) as Language) ?? Number.MAX_SAFE_INTEGER;
+    const bOrder = order.get(normalizeLanguageName(b.language) as Language) ?? Number.MAX_SAFE_INTEGER;
+    return aOrder - bOrder || a.fixture.localeCompare(b.fixture);
+  });
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 const goldenFiles = loadGoldenFiles();
+const goldenByLanguage = new Map(
+  goldenFiles.map((golden) => [normalizeLanguageName(golden.language), golden] as const),
+);
 
 describe('Parser Corpus — infrastructure', () => {
   it('golden files directory exists', () => {
@@ -345,6 +326,27 @@ describe('Parser Corpus — infrastructure', () => {
 
   it('at least one golden file exists', () => {
     assert.ok(goldenFiles.length > 0, 'No golden files found in parser-corpus/golden/');
+  });
+
+  it('enumerates canonical registry order and reports parser backend per language fixture', async (t: TestContext) => {
+    const lines: string[] = [];
+
+    for (const descriptor of getLanguageCapabilityDescriptors()) {
+      const golden = goldenByLanguage.get(descriptor.language);
+      if (!golden) {
+        lines.push(`${descriptor.language}: missing-fixture`);
+        continue;
+      }
+
+      const fixturePath = path.join(FIXTURES_DIR, golden.fixture);
+      assert.ok(fs.existsSync(fixturePath), `Fixture file not found: ${fixturePath}`);
+      const source = fs.readFileSync(fixturePath, 'utf-8');
+      const result = await extractSymbols(source, descriptor.language);
+      lines.push(`${descriptor.language}: ${result.parser}`);
+    }
+
+    t.diagnostic(lines.join('\n'));
+    assert.equal(lines.length, getLanguageCapabilityDescriptors().length);
   });
 });
 

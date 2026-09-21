@@ -41,7 +41,7 @@ const CAPTURE_KIND: Record<string, NodeKind> = {
   'def.impl': 'class', 'def.interface': 'interface', 'def.enum': 'enum',
   'def.struct': 'struct', 'def.trait': 'trait', 'def.type_alias': 'type_alias',
   'def.constant': 'constant', 'def.namespace': 'namespace', 'def.module': 'module',
-  'def.property': 'property', 'def.var': 'variable', 'def.constructor': 'constructor',
+  'def.property': 'property', 'def.property.class': 'property', 'def.var': 'variable', 'def.constructor': 'constructor',
 };
 
 function captureKind(name: string): NodeKind | null {
@@ -85,34 +85,46 @@ async function extractTreeSitter(
     const kind = captureKind(defCapture.name);
     if (!kind) continue;
 
-    const name = nameCapture.text.trim();
-    if (!name) continue;
-
-    const dedupeKey = `${kind}:${name}`;
-    if (seen.has(dedupeKey)) continue;
-    seen.add(dedupeKey);
+    const names = extractCaptureNames(defCapture.name, nameCapture.text);
+    if (names.length === 0) continue;
 
     const defNode = defCapture.node as unknown as TSNode;
     const startLine = defNode.startPosition.row + 1;
     const endLine = defNode.endPosition.row + 1;
     if (startLine > endLine) continue;
 
-    const nodeId = generateNodeId(kind, relativePath, name);
-    nodes.push({
-      id: nodeId, kind, name, filePath: relativePath,
-      startLine, endLine,
-      content: sourceLines.slice(startLine - 1, Math.min(startLine + 19, endLine)).join('\n'),
-    });
-    edges.push({
-      id: generateEdgeId(fileNodeId, nodeId, 'contains'),
-      source: fileNodeId, target: nodeId, kind: 'contains', weight: 1.0,
-    });
+    for (const name of names) {
+      const dedupeKey = `${kind}:${name}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+
+      const nodeId = generateNodeId(kind, relativePath, name);
+      nodes.push({
+        id: nodeId, kind, name, filePath: relativePath,
+        startLine, endLine,
+        content: sourceLines.slice(startLine - 1, Math.min(startLine + 19, endLine)).join('\n'),
+        metadata: lang === Language.HTML && defCapture.name === 'def.var' ? { embedded: true } : undefined,
+      });
+      edges.push({
+        id: generateEdgeId(fileNodeId, nodeId, 'contains'),
+        source: fileNodeId, target: nodeId, kind: 'contains', weight: 1.0,
+      });
+    }
   }
 
   return { nodes, edges };
 }
 
 // ─── Regex fallback (lightweight, no metadata) ────────────────────────────────
+
+function extractCaptureNames(captureName: string, rawName: string): string[] {
+  const text = rawName.trim();
+  if (!text) return [];
+  if (captureName === 'def.property.class') {
+    return text.split(/\s+/).map((part) => part.trim()).filter(Boolean);
+  }
+  return [text];
+}
 
 function extractRegex(
   source: string,

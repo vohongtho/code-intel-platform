@@ -9,6 +9,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import Logger from '../shared/logger.js';
+import type { SemanticDelta } from '../incremental/semantic-delta.js';
+import { isEligibleForIncrementalPublication } from '../incremental/rollout-gate.js';
 
 function normalizeRelativePath(value: string): string {
   return value.trim().replace(/\\/g, '/').replace(/^\.\//, '');
@@ -98,6 +100,23 @@ export interface IncrementalDecision {
   totalFiles?: number;
   changedFiles?: string[];
   fallbackReason?: string;
+  /** Present whenever a dependency-aware candidate was computed, published or not — for shadow comparison and diagnostics. */
+  dependencyAwareCandidate?: SemanticDelta;
+}
+
+export interface DecideIncrementalOptions {
+  /**
+   * A dependency-aware invalidation-closure result, pre-computed by the
+   * caller from a persisted semantic snapshot + reverse dependency index.
+   * Absent by default (matches current behavior exactly).
+   */
+  dependencyAwareDelta?: SemanticDelta;
+  /**
+   * Governed by rollout-gate.ts's `isDependencyAwareIncrementalEnabled()`.
+   * When false (the default), a non-empty change set always falls back to a
+   * full rebuild regardless of how complete `dependencyAwareDelta` is.
+   */
+  incrementalSemanticEnabled?: boolean;
 }
 
 export function decideIncremental(
@@ -105,6 +124,7 @@ export function decideIncremental(
   allFilePaths: string[],
   prevCommitHash: string | undefined,
   storedMtimes: Record<string, number> | undefined,
+  options: DecideIncrementalOptions = {},
 ): IncrementalDecision {
   const total = allFilePaths.length;
   const currentRelPaths = allFilePaths.map((p) => normalizeRelativePath(path.relative(workspaceRoot, p)));
@@ -121,14 +141,34 @@ export function decideIncremental(
     const changedWork = deduplicated.length + deletedFiles.length;
 
     // v1.0.8 correctness gate: removing changed/deleted nodes cascades incoming
-    // cross-file relationships. Until dependency-closure re-resolution is available,
-    // any non-empty change set must use a clean full rebuild. This preserves calls,
-    // imports, heritage edges, clusters and flows. The zero-change fast path remains.
+    // cross-file relationships. Any non-empty change set falls back to a clean
+    // full rebuild UNLESS a dependency-aware candidate has already proven the
+    // invalidation closure complete (options.dependencyAwareDelta) AND the
+    // rollout gate is enabled — see rollout-gate.ts. Neither is true in
+    // production today, so this preserves the original v1.0.8 behavior exactly.
     if (changedWork > 0) {
+      const delta = options.dependencyAwareDelta;
+      if (
+        options.incrementalSemanticEnabled
+        && delta
+        && !delta.requiresFullResolution
+        && isEligibleForIncrementalPublication([...deduplicated, ...deletedFiles])
+      ) {
+        Logger.info(`[incremental] ${source}: dependency-aware closure proven complete for ${deduplicated.length} changed and ${deletedFiles.length} deleted file(s); publishing incrementally`);
+        return {
+          incremental: true,
+          changedExistingFiles: deduplicated,
+          deletedFiles,
+          changedFiles: deduplicated,
+          totalFiles: total,
+          dependencyAwareCandidate: delta,
+        };
+      }
       return {
         incremental: false,
         fallbackReason: `${source}: correctness-first full rebuild required for ${deduplicated.length} changed and ${deletedFiles.length} deleted file(s)`,
         totalFiles: total,
+        dependencyAwareCandidate: delta,
       };
     }
 

@@ -1,0 +1,27 @@
+{
+  "language": "kotlin",
+  "fixtures": {
+    "main": "main.kt",
+    "grouped": "grouped.kt"
+  },
+  "expected": {
+    "definitions": [
+      "UserService",
+      "UserRepository",
+      "UserRole",
+      "Helpers"
+    ],
+    "forbidden": []
+  },
+  "groupedExpected": [
+    "PairOne",
+    "PairTwo",
+    "first",
+    "second"
+  ],
+  "notes": [
+    "Main fixture captures baseline semantic observations.",
+    "Grouped fixture captures multi-declaration or wrapper-contained entities.",
+    "Function-level Kotlin method extraction remains partial in the current truthful baseline."
+  ]
+}

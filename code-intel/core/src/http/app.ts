@@ -18,12 +18,15 @@ import { resolveIndexSnapshot, type IndexSnapshot } from '../storage/index-snaps
 import { VectorIndex } from '../search/vector-index.js';
 // VectorIndex uses the shared SQLite wrapper directly.
 import fs from 'node:fs';
-import { listGroups, loadGroup, saveGroup, deleteGroup, groupExists, addMember, removeMember, loadSyncResult, saveSyncResult } from '../multi-repo/group-registry.js';
+import { listGroups, loadGroup, saveGroup, deleteGroup, groupExists, addMember, removeMember, loadSyncResult, saveSyncResult, verifySyncResultReadBack } from '../multi-repo/group-registry.js';
 import { syncGroup } from '../multi-repo/group-sync.js';
 import { queryGroup } from '../multi-repo/group-query.js';
+import { getGroupContractDrift } from '../multi-repo/contract-drift/service.js';
+import type { Contract } from '../multi-repo/types.js';
 import { createKnowledgeGraph } from '../graph/knowledge-graph.js';
 import { loadGraphFromDB } from '../multi-repo/graph-from-db.js';
 import { loadRegistry, findRepoByName } from '../storage/repo-registry.js';
+import { computeSemanticGraphDiff } from '../snapshots/service.js';
 import Logger from '../shared/logger.js';
 import { AppError, ErrorCodes } from '../errors/codes.js';
 import type { CountGroup, GQLResult, GQLResultKind, QueryScope, ResolvedQueryScope } from 'code-intel-shared';
@@ -71,6 +74,8 @@ import {
 } from '../observability/metrics.js';
 import { withSpan, isTracingEnabled } from '../observability/tracing.js';
 import { openApiSpec } from './openapi.js';
+import { computeBlastRadiusWithTrust } from '../mcp-server/blast-radius-trust.js';
+import { getApiContract, getApiDrift, getApiImpact, type RouteSelector } from '../semantic/api-contracts/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -80,6 +85,8 @@ function resolveWebDist(): string | null {
     path.resolve(__dirname, '..', 'web'),
     path.resolve(__dirname, '..', '..', 'web'),
     path.resolve(__dirname, 'web'),
+    path.resolve(__dirname, '..', '..', 'app', 'code-intel', 'core', 'dist', 'web'),
+    path.resolve(__dirname, '..', '..', '..', 'app', 'code-intel', 'core', 'dist', 'web'),
     // Monorepo dev/test layouts
     path.resolve(__dirname, '..', '..', '..', 'dist', 'web'),
     path.resolve(__dirname, '..', '..', '..', 'web', 'dist'),
@@ -1344,30 +1351,101 @@ export function createApp(
       res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: `Symbol "${target}" not found`, requestId: req.requestId } });
       return;
     }
-    const affected = new Map<string, { name: string; kind: string; depth: number }>();
-    const queue: { id: string; depth: number }[] = [{ id: targetNode.id, depth: 0 }];
-    const visited = new Set<string>();
-    while (queue.length > 0) {
-      const { id, depth } = queue.shift()!;
-      if (visited.has(id) || depth > max_hops) continue;
-      visited.add(id);
-      const node = g.getNode(id);
-      if (node) affected.set(id, { name: node.name, kind: node.kind, depth });
-      if (direction === 'callers' || direction === 'both') {
-        for (const edge of g.findEdgesTo(id)) {
-          if (edge.kind === 'calls' || edge.kind === 'imports') queue.push({ id: edge.source, depth: depth + 1 });
-        }
-      }
-      if (direction === 'callees' || direction === 'both') {
-        for (const edge of g.findEdgesFrom(id)) {
-          if (edge.kind === 'calls' || edge.kind === 'imports') queue.push({ id: edge.target, depth: depth + 1 });
-        }
-      }
-    }
+    const registry = loadRegistry();
+    const repoDir = repoId
+      ? registry.find((entry) => entry.id === repoId)?.path
+      : workspaceRoot;
+    const result = computeBlastRadiusWithTrust({
+      graph: g,
+      targetId: targetNode.id,
+      targetName: targetNode.name,
+      direction: direction as 'callers' | 'callees' | 'both',
+      maxHops: max_hops,
+      repoDir,
+    });
       res.json({
-        target: targetNode.name,
-        affectedCount: [...affected.values()].filter((a) => a.depth > 0).length,
-        affected: [...affected.entries()].map(([id, info]) => ({ id, ...info })).filter((a) => a.depth > 0),
+        target: result.target,
+        affectedCount: Math.max(0, result.affectedCount - 1),
+        riskLevel: result.riskLevel,
+        certainty: result.trust.certainty,
+        coverage: result.trust.coverage,
+        boundaries: result.trust.boundaries,
+        affected: result.affected.filter((a) => a.depth > 0),
+      });
+    } catch (err) {
+      if (err instanceof AppError) {
+        res.status(err.statusCode).json({ error: { code: err.code, message: err.message, hint: err.hint, requestId: req.requestId, timestamp: new Date().toISOString() } });
+        return;
+      }
+      throw err;
+    }
+  });
+
+  // ── Semantic graph diff ─────────────────────────────────────────────────────
+  app.post('/api/v1/graph/diff', requireAuth, requireRole('analyst'), async (req, res) => {
+    try {
+      const {
+        base_ref, head_ref, repoId, include_contracts, allow_cache,
+        nodes_offset, nodes_limit, relationships_offset, relationships_limit,
+      } = req.body as {
+        base_ref?: string; head_ref?: string; repoId?: string;
+        include_contracts?: boolean; allow_cache?: boolean;
+        nodes_offset?: number; nodes_limit?: number; relationships_offset?: number; relationships_limit?: number;
+      };
+      if (!base_ref || !head_ref) {
+        res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: 'base_ref and head_ref are required', requestId: req.requestId } });
+        return;
+      }
+      const registry = loadRegistry();
+      const repoDir = repoId
+        ? registry.find((entry) => entry.id === repoId)?.path
+        : workspaceRoot;
+      if (!repoDir) {
+        res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: repoId ? `Repository "${repoId}" not found` : 'No active repository', requestId: req.requestId } });
+        return;
+      }
+
+      const { diff, base, head } = await computeSemanticGraphDiff({
+        repoDir,
+        base: base_ref,
+        head: head_ref,
+        includeContracts: include_contracts ?? true,
+        allowCache: allow_cache ?? true,
+      });
+
+      if (!diff) {
+        res.status(422).json({
+          error: { code: ErrorCodes.ANALYSIS_FAILED, message: 'Semantic graph diff unavailable for one or both refs', requestId: req.requestId },
+          baseSnapshot: { status: base.status, boundaries: base.boundaries, error: base.error },
+          headSnapshot: { status: head.status, boundaries: head.boundaries, error: head.error },
+        });
+        return;
+      }
+
+      const nOffset = nodes_offset ?? 0;
+      const nLimit = Math.min(nodes_limit ?? 200, 2000);
+      const rOffset = relationships_offset ?? 0;
+      const rLimit = Math.min(relationships_limit ?? 200, 2000);
+
+      res.json({
+        base: diff.base,
+        head: diff.head,
+        coverage: diff.coverage,
+        contracts: diff.contracts,
+        flows: diff.flows,
+        clusters: diff.clusters,
+        nodes: diff.nodes.slice(nOffset, nOffset + nLimit),
+        nodesTotal: diff.nodes.length,
+        nodesOffset: nOffset,
+        nodesLimit: nLimit,
+        nodesHasMore: nOffset + nLimit < diff.nodes.length,
+        relationships: diff.relationships.slice(rOffset, rOffset + rLimit),
+        relationshipsTotal: diff.relationships.length,
+        relationshipsOffset: rOffset,
+        relationshipsLimit: rLimit,
+        relationshipsHasMore: rOffset + rLimit < diff.relationships.length,
+        baseSnapshot: { status: base.status, fromCache: base.fromCache, boundaries: base.boundaries },
+        headSnapshot: { status: head.status, fromCache: head.fromCache, boundaries: head.boundaries },
       });
     } catch (err) {
       if (err instanceof AppError) {
@@ -1405,6 +1483,65 @@ export function createApp(
       if (node.kind === 'cluster') clusters.push({ id: node.id, name: node.name, memberCount: (node.metadata?.memberCount as number) ?? 0 });
     }
       res.json({ clusters });
+    } catch (err) {
+      if (err instanceof AppError) {
+        res.status(err.statusCode).json({ error: { code: err.code, message: err.message, hint: err.hint, requestId: req.requestId, timestamp: new Date().toISOString() } });
+        return;
+      }
+      throw err;
+    }
+  });
+
+  // ── API contracts ───────────────────────────────────────────────────────────
+  app.get('/api/v1/api-contract', async (req, res) => {
+    try {
+      const g = await getGraphForRepoIdOrThrow(req.query['repoId'] as string | undefined);
+      const selector: RouteSelector = {
+        method: req.query['method'] as string | undefined,
+        normalizedPath: req.query['path'] as string | undefined,
+        routeFactId: req.query['route_fact_id'] as string | undefined,
+        routeNodeId: req.query['route_node_id'] as string | undefined,
+      };
+      res.json(getApiContract(g, selector));
+    } catch (err) {
+      if (err instanceof AppError) {
+        res.status(err.statusCode).json({ error: { code: err.code, message: err.message, hint: err.hint, requestId: req.requestId, timestamp: new Date().toISOString() } });
+        return;
+      }
+      throw err;
+    }
+  });
+
+  app.get('/api/v1/api-impact', async (req, res) => {
+    try {
+      const g = await getGraphForRepoIdOrThrow(req.query['repoId'] as string | undefined);
+      const selector: RouteSelector = {
+        method: req.query['method'] as string | undefined,
+        normalizedPath: req.query['path'] as string | undefined,
+        routeFactId: req.query['route_fact_id'] as string | undefined,
+        routeNodeId: req.query['route_node_id'] as string | undefined,
+      };
+      res.json(getApiImpact(g, selector));
+    } catch (err) {
+      if (err instanceof AppError) {
+        res.status(err.statusCode).json({ error: { code: err.code, message: err.message, hint: err.hint, requestId: req.requestId, timestamp: new Date().toISOString() } });
+        return;
+      }
+      throw err;
+    }
+  });
+
+  app.get('/api/v1/api-drift', async (req, res) => {
+    try {
+      const baseRepoId = req.query['base_repo_id'] as string | undefined;
+      if (!baseRepoId) {
+        throw new AppError(ErrorCodes.INVALID_REQUEST, 'base_repo_id is required', 'Pass ?base_repo_id=<repoId>&head_repo_id=<repoId>', 400);
+      }
+      const headRepoId = req.query['head_repo_id'] as string | undefined;
+      const repoId = req.query['repoId'] as string | undefined;
+      const baseGraph = await getGraphForRepoIdOrThrow(baseRepoId);
+      const headGraph = await getGraphForRepoIdOrThrow(headRepoId ?? repoId);
+      res.json(getApiDrift(baseGraph, headGraph));
     } catch (err) {
       if (err instanceof AppError) {
         res.status(err.statusCode).json({ error: { code: err.code, message: err.message, hint: err.hint, requestId: req.requestId, timestamp: new Date().toISOString() } });
@@ -1472,6 +1609,31 @@ export function createApp(
     const result = loadSyncResult(req.params.name);
     if (!result) { res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: 'No sync result. Run sync first.' } }); return; }
     res.json(result);
+  });
+
+  app.get('/api/v1/groups/:name/drift', async (req, res) => {
+    const baseRef = Array.isArray(req.query['base_ref']) ? req.query['base_ref'][0] : req.query['base_ref'];
+    const headRef = Array.isArray(req.query['head_ref']) ? req.query['head_ref'][0] : req.query['head_ref'];
+    if (!baseRef || !headRef) {
+      res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: 'base_ref and head_ref are required' } });
+      return;
+    }
+    const kind = Array.isArray(req.query['kind']) ? req.query['kind'][0] : req.query['kind'];
+    const repositoryId = Array.isArray(req.query['repository_id']) ? req.query['repository_id'][0] : req.query['repository_id'];
+    try {
+      const result = await getGroupContractDrift({
+        groupName: req.params.name,
+        baseRef: String(baseRef),
+        headRef: String(headRef),
+        kind: kind ? (String(kind) as Contract['kind']) : undefined,
+        repositoryId: repositoryId ? String(repositoryId) : undefined,
+        limit: req.query['limit'] ? Number(req.query['limit']) : undefined,
+        allowCache: req.query['allow_cache'] === undefined ? true : String(req.query['allow_cache']) !== 'false',
+      });
+      res.json(result);
+    } catch (err) {
+      res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: err instanceof Error ? err.message : String(err) } });
+    }
   });
 
   // ── Group CRUD ───────────────────────────────────────────────────────────────
@@ -1575,6 +1737,8 @@ export function createApp(
     try {
       const result = await syncGroup(group);
       saveSyncResult(result);
+      const verified = verifySyncResultReadBack(result);
+      if (!verified.ok) throw new Error(`group sync read-back validation failed: ${verified.reason}`);
       group.lastSync = result.syncedAt;
       saveGroup(group);
       res.json(result);

@@ -1,0 +1,2047 @@
+{
+  "version": "2.1.0",
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "fullName": "Trivy Vulnerability Scanner",
+          "informationUri": "https://github.com/aquasecurity/trivy",
+          "name": "Trivy",
+          "rules": [
+            {
+              "id": "CVE-2026-53613",
+              "name": "OsPackageVulnerability",
+              "shortDescription": {
+                "text": "util-linux: util-linux: TOCTOU in the mount program via ancestor directory swap on target path"
+              },
+              "fullDescription": {
+                "text": "When an /etc/fstab entry is configured with the user or users option, mount(8) validates the target path before performing the mount syscall, creating a Time-of-Check-Time-of-Use (TOCTOU) window. A local unprivileged user with write access to an ancestor directory of the mount target can swap that directory to redirect the mount to an arbitrary root-owned location, potentially escalating privileges to root."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2026-53613",
+              "help": {
+                "text": "Vulnerability CVE-2026-53613\nSeverity: HIGH\nPackage: util-linux-extra\nFixed Version: \nLink: [CVE-2026-53613](https://avd.aquasec.com/nvd/cve-2026-53613)\nWhen an /etc/fstab entry is configured with the user or users option, mount(8) validates the target path before performing the mount syscall, creating a Time-of-Check-Time-of-Use (TOCTOU) window. A local unprivileged user with write access to an ancestor directory of the mount target can swap that directory to redirect the mount to an arbitrary root-owned location, potentially escalating privileges to root.",
+                "markdown": "**Vulnerability CVE-2026-53613**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|HIGH|util-linux-extra||[CVE-2026-53613](https://avd.aquasec.com/nvd/cve-2026-53613)|\n\nWhen an /etc/fstab entry is configured with the user or users option, mount(8) validates the target path before performing the mount syscall, creating a Time-of-Check-Time-of-Use (TOCTOU) window. A local unprivileged user with write access to an ancestor directory of the mount target can swap that directory to redirect the mount to an arbitrary root-owned location, potentially escalating privileges to root."
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "8.0",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "CVE-2026-76642",
+              "name": "OsPackageVulnerability",
+              "shortDescription": {
+                "text": "util-linux: util-linux: failed external mount helper still runs privileged X-mount post-hooks"
+              },
+              "fullDescription": {
+                "text": "util-linux versions through 2.41.5 and 2.42.2 fail to check mount helper exit status before running post-mount hooks, allowing unprivileged users to execute privileged operations on pre-existing filesystems. Attackers can exploit X-mount.idmap or X-mount.owner hooks to clone filesystems with inherited suid bits or modify target inode permissions after a helper fails, achieving privilege escalation."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2026-76642",
+              "help": {
+                "text": "Vulnerability CVE-2026-76642\nSeverity: HIGH\nPackage: util-linux-extra\nFixed Version: \nLink: [CVE-2026-76642](https://avd.aquasec.com/nvd/cve-2026-76642)\nutil-linux versions through 2.41.5 and 2.42.2 fail to check mount helper exit status before running post-mount hooks, allowing unprivileged users to execute privileged operations on pre-existing filesystems. Attackers can exploit X-mount.idmap or X-mount.owner hooks to clone filesystems with inherited suid bits or modify target inode permissions after a helper fails, achieving privilege escalation.",
+                "markdown": "**Vulnerability CVE-2026-76642**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|HIGH|util-linux-extra||[CVE-2026-76642](https://avd.aquasec.com/nvd/cve-2026-76642)|\n\nutil-linux versions through 2.41.5 and 2.42.2 fail to check mount helper exit status before running post-mount hooks, allowing unprivileged users to execute privileged operations on pre-existing filesystems. Attackers can exploit X-mount.idmap or X-mount.owner hooks to clone filesystems with inherited suid bits or modify target inode permissions after a helper fails, achieving privilege escalation."
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "8.0",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "CVE-2026-78408",
+              "name": "OsPackageVulnerability",
+              "shortDescription": {
+                "text": "util-linux: util-linux: nsenter --join-cgroup leaks root cgroup migration authority"
+              },
+              "fullDescription": {
+                "text": "The nsenter --join-cgroup option opens the target cgroup.procs file as root and leaves that file descriptor open across later namespace and credential changes and across execve(). Because the kernel checks later cgroup migrations using the credentials from the original open, a program run in an attacker-controlled target can inherit root's ability to move host processes between cgroups. After a privileged operator uses --join-cgroup against that target, an unprivileged user can migrate and terminate unrelated root processes."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2026-78408",
+              "help": {
+                "text": "Vulnerability CVE-2026-78408\nSeverity: HIGH\nPackage: util-linux-extra\nFixed Version: \nLink: [CVE-2026-78408](https://avd.aquasec.com/nvd/cve-2026-78408)\nThe nsenter --join-cgroup option opens the target cgroup.procs file as root and leaves that file descriptor open across later namespace and credential changes and across execve(). Because the kernel checks later cgroup migrations using the credentials from the original open, a program run in an attacker-controlled target can inherit root's ability to move host processes between cgroups. After a privileged operator uses --join-cgroup against that target, an unprivileged user can migrate and terminate unrelated root processes.",
+                "markdown": "**Vulnerability CVE-2026-78408**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|HIGH|util-linux-extra||[CVE-2026-78408](https://avd.aquasec.com/nvd/cve-2026-78408)|\n\nThe nsenter --join-cgroup option opens the target cgroup.procs file as root and leaves that file descriptor open across later namespace and credential changes and across execve(). Because the kernel checks later cgroup migrations using the credentials from the original open, a program run in an attacker-controlled target can inherit root's ability to move host processes between cgroups. After a privileged operator uses --join-cgroup against that target, an unprivileged user can migrate and terminate unrelated root processes."
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "8.0",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "CVE-2026-78409",
+              "name": "OsPackageVulnerability",
+              "shortDescription": {
+                "text": "util-linux: util-linux: X-mount.subdir detached-tree resolution can escape via intermediate symlinks"
+              },
+              "fullDescription": {
+                "text": "The X-mount.subdir option uses a detached-tree fast path on Linux 6.15 and later and passes the configured subdirectory to open_tree() with AT_SYMLINK_NOFOLLOW. That flag does not stop intermediate symlink traversal or keep resolution inside the newly mounted filesystem. A local unprivileged user with an fstab-authorized X-mount.subdir entry can attach a host path at the intended mountpoint."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2026-78409",
+              "help": {
+                "text": "Vulnerability CVE-2026-78409\nSeverity: HIGH\nPackage: util-linux-extra\nFixed Version: \nLink: [CVE-2026-78409](https://avd.aquasec.com/nvd/cve-2026-78409)\nThe X-mount.subdir option uses a detached-tree fast path on Linux 6.15 and later and passes the configured subdirectory to open_tree() with AT_SYMLINK_NOFOLLOW. That flag does not stop intermediate symlink traversal or keep resolution inside the newly mounted filesystem. A local unprivileged user with an fstab-authorized X-mount.subdir entry can attach a host path at the intended mountpoint.",
+                "markdown": "**Vulnerability CVE-2026-78409**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|HIGH|util-linux-extra||[CVE-2026-78409](https://avd.aquasec.com/nvd/cve-2026-78409)|\n\nThe X-mount.subdir option uses a detached-tree fast path on Linux 6.15 and later and passes the configured subdirectory to open_tree() with AT_SYMLINK_NOFOLLOW. That flag does not stop intermediate symlink traversal or keep resolution inside the newly mounted filesystem. A local unprivileged user with an fstab-authorized X-mount.subdir entry can attach a host path at the intended mountpoint."
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "8.0",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "CVE-2026-78410",
+              "name": "OsPackageVulnerability",
+              "shortDescription": {
+                "text": "util-linux: util-linux: restricted bind mounts do not pin the source, allowing X-mount.owner/group/mode redirection"
+              },
+              "fullDescription": {
+                "text": "A flaw was found in util-linux. Restricted bind mounts take the source path from fstab but do not pin that source before the privileged mount. A local unprivileged user who can replace the authorized source or a writable ancestor can redirect SUID mount(8) to bind another host directory. If the fstab entry also sets X-mount.owner, X-mount.group, or X-mount.mode, root then changes ownership or mode on that redirected inode."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2026-78410",
+              "help": {
+                "text": "Vulnerability CVE-2026-78410\nSeverity: HIGH\nPackage: util-linux-extra\nFixed Version: \nLink: [CVE-2026-78410](https://avd.aquasec.com/nvd/cve-2026-78410)\nA flaw was found in util-linux. Restricted bind mounts take the source path from fstab but do not pin that source before the privileged mount. A local unprivileged user who can replace the authorized source or a writable ancestor can redirect SUID mount(8) to bind another host directory. If the fstab entry also sets X-mount.owner, X-mount.group, or X-mount.mode, root then changes ownership or mode on that redirected inode.",
+                "markdown": "**Vulnerability CVE-2026-78410**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|HIGH|util-linux-extra||[CVE-2026-78410](https://avd.aquasec.com/nvd/cve-2026-78410)|\n\nA flaw was found in util-linux. Restricted bind mounts take the source path from fstab but do not pin that source before the privileged mount. A local unprivileged user who can replace the authorized source or a writable ancestor can redirect SUID mount(8) to bind another host directory. If the fstab entry also sets X-mount.owner, X-mount.group, or X-mount.mode, root then changes ownership or mode on that redirected inode."
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "8.0",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "CVE-2026-41992",
+              "name": "OsPackageVulnerability",
+              "shortDescription": {
+                "text": "gzip: gzip: Information disclosure via global buffer overflow in LZH decompression"
+              },
+              "fullDescription": {
+                "text": "GNU gzip contains a global buffer overflow vulnerability in the LZH decompression logic caused by improper reuse of shared global state between different decompression formats within a single execution. GNU gzip maintains a global array that is shared across the LZ77, LZW, and LZH decompression routines and is not reinitialized between files processed in the same invocation.\nBy decompressing a specially crafted LZW file followed by a specially crafted LZH file in a single gzip -d command, an attacker can poison the shared global state and subsequently trigger an out‑of‑bounds read in the LZH decoder. The LZH decompression logic follows stale values left in the shared array, causing reads past the end of the allocated global buffer.\n\nThis issue has been fixed in commits 63dbf6b3b9e6e781df1a6a64e609b10e23969681 and e7378c2d421be6a286922374425680bbe9ad8b7d."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2026-41992",
+              "help": {
+                "text": "Vulnerability CVE-2026-41992\nSeverity: HIGH\nPackage: gzip\nFixed Version: \nLink: [CVE-2026-41992](https://avd.aquasec.com/nvd/cve-2026-41992)\nGNU gzip contains a global buffer overflow vulnerability in the LZH decompression logic caused by improper reuse of shared global state between different decompression formats within a single execution. GNU gzip maintains a global array that is shared across the LZ77, LZW, and LZH decompression routines and is not reinitialized between files processed in the same invocation.\nBy decompressing a specially crafted LZW file followed by a specially crafted LZH file in a single gzip -d command, an attacker can poison the shared global state and subsequently trigger an out‑of‑bounds read in the LZH decoder. The LZH decompression logic follows stale values left in the shared array, causing reads past the end of the allocated global buffer.\n\nThis issue has been fixed in commits 63dbf6b3b9e6e781df1a6a64e609b10e23969681 and e7378c2d421be6a286922374425680bbe9ad8b7d.",
+                "markdown": "**Vulnerability CVE-2026-41992**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|HIGH|gzip||[CVE-2026-41992](https://avd.aquasec.com/nvd/cve-2026-41992)|\n\nGNU gzip contains a global buffer overflow vulnerability in the LZH decompression logic caused by improper reuse of shared global state between different decompression formats within a single execution. GNU gzip maintains a global array that is shared across the LZ77, LZW, and LZH decompression routines and is not reinitialized between files processed in the same invocation.\nBy decompressing a specially crafted LZW file followed by a specially crafted LZH file in a single gzip -d command, an attacker can poison the shared global state and subsequently trigger an out‑of‑bounds read in the LZH decoder. The LZH decompression logic follows stale values left in the shared array, causing reads past the end of the allocated global buffer.\n\nThis issue has been fixed in commits 63dbf6b3b9e6e781df1a6a64e609b10e23969681 and e7378c2d421be6a286922374425680bbe9ad8b7d."
+              },
+              "properties": {
+                "cvssv3_baseScore": 7.5,
+                "cvssv3_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+                "precision": "very-high",
+                "security-severity": "7.5",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "CVE-2026-54369",
+              "name": "OsPackageVulnerability",
+              "shortDescription": {
+                "text": "acl: Symlink traversal privilege escalation via libacl functions"
+              },
+              "fullDescription": {
+                "text": "acl before version 2.4.0 contains a symlink traversal vulnerability in the libacl pathname-based functions acl_get_file(), acl_set_file(), acl_extended_file(), and acl_delete_def_file() that allows local attackers to escalate privileges by replacing any pathname component with a symbolic link. Attackers who control any component of a pathname processed by a privileged caller can redirect ACL read or write operations to arbitrary files or directories, enabling unauthorized manipulation of access control lists and local privilege escalation."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2026-54369",
+              "help": {
+                "text": "Vulnerability CVE-2026-54369\nSeverity: HIGH\nPackage: libacl1\nFixed Version: \nLink: [CVE-2026-54369](https://avd.aquasec.com/nvd/cve-2026-54369)\nacl before version 2.4.0 contains a symlink traversal vulnerability in the libacl pathname-based functions acl_get_file(), acl_set_file(), acl_extended_file(), and acl_delete_def_file() that allows local attackers to escalate privileges by replacing any pathname component with a symbolic link. Attackers who control any component of a pathname processed by a privileged caller can redirect ACL read or write operations to arbitrary files or directories, enabling unauthorized manipulation of access control lists and local privilege escalation.",
+                "markdown": "**Vulnerability CVE-2026-54369**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|HIGH|libacl1||[CVE-2026-54369](https://avd.aquasec.com/nvd/cve-2026-54369)|\n\nacl before version 2.4.0 contains a symlink traversal vulnerability in the libacl pathname-based functions acl_get_file(), acl_set_file(), acl_extended_file(), and acl_delete_def_file() that allows local attackers to escalate privileges by replacing any pathname component with a symbolic link. Attackers who control any component of a pathname processed by a privileged caller can redirect ACL read or write operations to arbitrary files or directories, enabling unauthorized manipulation of access control lists and local privilege escalation."
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "8.0",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "CVE-2026-16742",
+              "name": "OsPackageVulnerability",
+              "shortDescription": {
+                "text": "systemd: systemd-homed: Local privilege escalation via missing home-record signature verification"
+              },
+              "fullDescription": {
+                "text": "systemd-homed contains a local privilege escalation bug via arbitrary system group addition to a local, logged in, homed-managed user"
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2026-16742",
+              "help": {
+                "text": "Vulnerability CVE-2026-16742\nSeverity: HIGH\nPackage: libudev1\nFixed Version: \nLink: [CVE-2026-16742](https://avd.aquasec.com/nvd/cve-2026-16742)\nsystemd-homed contains a local privilege escalation bug via arbitrary system group addition to a local, logged in, homed-managed user",
+                "markdown": "**Vulnerability CVE-2026-16742**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|HIGH|libudev1||[CVE-2026-16742](https://avd.aquasec.com/nvd/cve-2026-16742)|\n\nsystemd-homed contains a local privilege escalation bug via arbitrary system group addition to a local, logged in, homed-managed user"
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "8.0",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "CVE-2025-69720",
+              "name": "OsPackageVulnerability",
+              "shortDescription": {
+                "text": "ncurses: ncurses: Buffer overflow vulnerability may lead to arbitrary code execution."
+              },
+              "fullDescription": {
+                "text": "The infocmp command-line tool in ncurses before 6.5-20251213 has a stack-based buffer overflow in analyze_string in progs/infocmp.c."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2025-69720",
+              "help": {
+                "text": "Vulnerability CVE-2025-69720\nSeverity: HIGH\nPackage: ncurses-bin\nFixed Version: \nLink: [CVE-2025-69720](https://avd.aquasec.com/nvd/cve-2025-69720)\nThe infocmp command-line tool in ncurses before 6.5-20251213 has a stack-based buffer overflow in analyze_string in progs/infocmp.c.",
+                "markdown": "**Vulnerability CVE-2025-69720**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|HIGH|ncurses-bin||[CVE-2025-69720](https://avd.aquasec.com/nvd/cve-2025-69720)|\n\nThe infocmp command-line tool in ncurses before 6.5-20251213 has a stack-based buffer overflow in analyze_string in progs/infocmp.c."
+              },
+              "properties": {
+                "cvssv3_baseScore": 7.8,
+                "cvssv3_vector": "CVSS:3.1/AV:L/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H",
+                "precision": "very-high",
+                "security-severity": "7.8",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "CVE-2026-13221",
+              "name": "OsPackageVulnerability",
+              "shortDescription": {
+                "text": "perl: Perl: Incorrect regular expression processing via large regular expressions"
+              },
+              "fullDescription": {
+                "text": "Perl versions through 5.43.9 produce silently incorrect regular expression matches when an alternation of more than 65535 fixed string branches is compiled into a trie in Perl_study_chunk.\n\nWhen such branches are combined into a trie, the delta between the first branch and the shared tail is stored in a 16-bit field. A branch count above 65535 overflows the field, and the trie's match decision table is truncated with no warning or error.\n\nA pattern of this shape produces false positive matches (matching strings it should not) and false negative matches (failing to match strings it should). When such a pattern gates an access or filtering decision, the result is wrong."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2026-13221",
+              "help": {
+                "text": "Vulnerability CVE-2026-13221\nSeverity: CRITICAL\nPackage: perl-base\nFixed Version: \nLink: [CVE-2026-13221](https://avd.aquasec.com/nvd/cve-2026-13221)\nPerl versions through 5.43.9 produce silently incorrect regular expression matches when an alternation of more than 65535 fixed string branches is compiled into a trie in Perl_study_chunk.\n\nWhen such branches are combined into a trie, the delta between the first branch and the shared tail is stored in a 16-bit field. A branch count above 65535 overflows the field, and the trie's match decision table is truncated with no warning or error.\n\nA pattern of this shape produces false positive matches (matching strings it should not) and false negative matches (failing to match strings it should). When such a pattern gates an access or filtering decision, the result is wrong.",
+                "markdown": "**Vulnerability CVE-2026-13221**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|CRITICAL|perl-base||[CVE-2026-13221](https://avd.aquasec.com/nvd/cve-2026-13221)|\n\nPerl versions through 5.43.9 produce silently incorrect regular expression matches when an alternation of more than 65535 fixed string branches is compiled into a trie in Perl_study_chunk.\n\nWhen such branches are combined into a trie, the delta between the first branch and the shared tail is stored in a 16-bit field. A branch count above 65535 overflows the field, and the trie's match decision table is truncated with no warning or error.\n\nA pattern of this shape produces false positive matches (matching strings it should not) and false negative matches (failing to match strings it should). When such a pattern gates an access or filtering decision, the result is wrong."
+              },
+              "properties": {
+                "cvssv3_baseScore": 9.1,
+                "cvssv3_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:H",
+                "precision": "very-high",
+                "security-severity": "9.1",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "CRITICAL"
+                ]
+              }
+            },
+            {
+              "id": "CVE-2026-42496",
+              "name": "OsPackageVulnerability",
+              "shortDescription": {
+                "text": "perl-archive-tar: perl-archive-tar: Path traversal via crafted symlinks allows arbitrary file access"
+              },
+              "fullDescription": {
+                "text": "Archive::Tar versions before 3.08 for Perl extract symlinks with attacker controlled targets outside the extraction directory.\n\n_make_special_file() passes the tar header's linkname to symlink() without validating it against absolute paths or .. segments. The secure-extract mode check that guards regular file extraction does not cover the symlink target.\n\nA subsequent open through the extracted name reads or writes the attacker chosen path."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2026-42496",
+              "help": {
+                "text": "Vulnerability CVE-2026-42496\nSeverity: CRITICAL\nPackage: perl-base\nFixed Version: \nLink: [CVE-2026-42496](https://avd.aquasec.com/nvd/cve-2026-42496)\nArchive::Tar versions before 3.08 for Perl extract symlinks with attacker controlled targets outside the extraction directory.\n\n_make_special_file() passes the tar header's linkname to symlink() without validating it against absolute paths or .. segments. The secure-extract mode check that guards regular file extraction does not cover the symlink target.\n\nA subsequent open through the extracted name reads or writes the attacker chosen path.",
+                "markdown": "**Vulnerability CVE-2026-42496**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|CRITICAL|perl-base||[CVE-2026-42496](https://avd.aquasec.com/nvd/cve-2026-42496)|\n\nArchive::Tar versions before 3.08 for Perl extract symlinks with attacker controlled targets outside the extraction directory.\n\n_make_special_file() passes the tar header's linkname to symlink() without validating it against absolute paths or .. segments. The secure-extract mode check that guards regular file extraction does not cover the symlink target.\n\nA subsequent open through the extracted name reads or writes the attacker chosen path."
+              },
+              "properties": {
+                "cvssv3_baseScore": 9.1,
+                "cvssv3_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N",
+                "precision": "very-high",
+                "security-severity": "9.1",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "CRITICAL"
+                ]
+              }
+            },
+            {
+              "id": "CVE-2026-8376",
+              "name": "OsPackageVulnerability",
+              "shortDescription": {
+                "text": "perl: Perl: Heap buffer overflow when compiling regular expressions on 32-bit builds"
+              },
+              "fullDescription": {
+                "text": "Perl versions through 5.43.10 have a heap buffer overflow when compiling regular expressions with a repeated fixed string on 32-bit builds.\n\nPerl_study_chunk in regcomp_study.c checked the size of the joined substring buffer in characters rather than bytes. For a quantified fixed substring with a large minimum count, the byte length mincount * l could overflow SSize_t, producing an undersized SvGROW allocation; the subsequent copy writes past the end of the buffer.\n\nA caller that compiles an attacker-controlled regular expression on a 32-bit perl build triggers a heap buffer overflow at compile time."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2026-8376",
+              "help": {
+                "text": "Vulnerability CVE-2026-8376\nSeverity: CRITICAL\nPackage: perl-base\nFixed Version: \nLink: [CVE-2026-8376](https://avd.aquasec.com/nvd/cve-2026-8376)\nPerl versions through 5.43.10 have a heap buffer overflow when compiling regular expressions with a repeated fixed string on 32-bit builds.\n\nPerl_study_chunk in regcomp_study.c checked the size of the joined substring buffer in characters rather than bytes. For a quantified fixed substring with a large minimum count, the byte length mincount * l could overflow SSize_t, producing an undersized SvGROW allocation; the subsequent copy writes past the end of the buffer.\n\nA caller that compiles an attacker-controlled regular expression on a 32-bit perl build triggers a heap buffer overflow at compile time.",
+                "markdown": "**Vulnerability CVE-2026-8376**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|CRITICAL|perl-base||[CVE-2026-8376](https://avd.aquasec.com/nvd/cve-2026-8376)|\n\nPerl versions through 5.43.10 have a heap buffer overflow when compiling regular expressions with a repeated fixed string on 32-bit builds.\n\nPerl_study_chunk in regcomp_study.c checked the size of the joined substring buffer in characters rather than bytes. For a quantified fixed substring with a large minimum count, the byte length mincount * l could overflow SSize_t, producing an undersized SvGROW allocation; the subsequent copy writes past the end of the buffer.\n\nA caller that compiles an attacker-controlled regular expression on a 32-bit perl build triggers a heap buffer overflow at compile time."
+              },
+              "properties": {
+                "cvssv3_baseScore": 9.8,
+                "cvssv3_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+                "precision": "very-high",
+                "security-severity": "9.8",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "CRITICAL"
+                ]
+              }
+            },
+            {
+              "id": "CVE-2026-42497",
+              "name": "OsPackageVulnerability",
+              "shortDescription": {
+                "text": "perl-Archive-Tar: perl-Archive-Tar: Arbitrary file modification via crafted hardlinks during archive extraction"
+              },
+              "fullDescription": {
+                "text": "Archive::Tar versions before 3.08 for Perl extract hardlinks to attacker controlled paths outside the extraction directory.\n\n_make_special_file() passes the tar header's linkname to link() without validating it against absolute paths or .. segments, creating a hardlink that shares the victim file's inode.\n\nA subsequent write through the extracted name modifies the victim file, and the post-extraction chmod, chown, and utime block in _extract_file() (guarded only against symlinks via -l) applies the tar header's mode, owner, and timestamps to the shared inode during extraction alone."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2026-42497",
+              "help": {
+                "text": "Vulnerability CVE-2026-42497\nSeverity: HIGH\nPackage: perl-base\nFixed Version: \nLink: [CVE-2026-42497](https://avd.aquasec.com/nvd/cve-2026-42497)\nArchive::Tar versions before 3.08 for Perl extract hardlinks to attacker controlled paths outside the extraction directory.\n\n_make_special_file() passes the tar header's linkname to link() without validating it against absolute paths or .. segments, creating a hardlink that shares the victim file's inode.\n\nA subsequent write through the extracted name modifies the victim file, and the post-extraction chmod, chown, and utime block in _extract_file() (guarded only against symlinks via -l) applies the tar header's mode, owner, and timestamps to the shared inode during extraction alone.",
+                "markdown": "**Vulnerability CVE-2026-42497**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|HIGH|perl-base||[CVE-2026-42497](https://avd.aquasec.com/nvd/cve-2026-42497)|\n\nArchive::Tar versions before 3.08 for Perl extract hardlinks to attacker controlled paths outside the extraction directory.\n\n_make_special_file() passes the tar header's linkname to link() without validating it against absolute paths or .. segments, creating a hardlink that shares the victim file's inode.\n\nA subsequent write through the extracted name modifies the victim file, and the post-extraction chmod, chown, and utime block in _extract_file() (guarded only against symlinks via -l) applies the tar header's mode, owner, and timestamps to the shared inode during extraction alone."
+              },
+              "properties": {
+                "cvssv3_baseScore": 7.5,
+                "cvssv3_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N",
+                "precision": "very-high",
+                "security-severity": "7.5",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "CVE-2026-48962",
+              "name": "OsPackageVulnerability",
+              "shortDescription": {
+                "text": "perl-IO-Compress: perl-IO-Compress: Arbitrary code execution via attacker-controlled output glob"
+              },
+              "fullDescription": {
+                "text": "IO::Compress versions before 2.220 for Perl can execute arbitrary code in File::GlobMapper via an attacker-controlled output glob.\n\n_parseOutputGlob() wraps the caller-supplied output glob string in double quotes and stores it in the parser state; _getFiles() then runs the stored expression through eval STRING. A literal double quote in the output glob closes the dquote wrapper, and the characters that follow are evaluated as Perl.\n\nArbitrary Perl in the output glob executes at the calling process's privilege."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2026-48962",
+              "help": {
+                "text": "Vulnerability CVE-2026-48962\nSeverity: HIGH\nPackage: perl-base\nFixed Version: \nLink: [CVE-2026-48962](https://avd.aquasec.com/nvd/cve-2026-48962)\nIO::Compress versions before 2.220 for Perl can execute arbitrary code in File::GlobMapper via an attacker-controlled output glob.\n\n_parseOutputGlob() wraps the caller-supplied output glob string in double quotes and stores it in the parser state; _getFiles() then runs the stored expression through eval STRING. A literal double quote in the output glob closes the dquote wrapper, and the characters that follow are evaluated as Perl.\n\nArbitrary Perl in the output glob executes at the calling process's privilege.",
+                "markdown": "**Vulnerability CVE-2026-48962**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|HIGH|perl-base||[CVE-2026-48962](https://avd.aquasec.com/nvd/cve-2026-48962)|\n\nIO::Compress versions before 2.220 for Perl can execute arbitrary code in File::GlobMapper via an attacker-controlled output glob.\n\n_parseOutputGlob() wraps the caller-supplied output glob string in double quotes and stores it in the parser state; _getFiles() then runs the stored expression through eval STRING. A literal double quote in the output glob closes the dquote wrapper, and the characters that follow are evaluated as Perl.\n\nArbitrary Perl in the output glob executes at the calling process's privilege."
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "8.0",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "CVE-2026-57432",
+              "name": "OsPackageVulnerability",
+              "shortDescription": {
+                "text": "perl: Perl: Information disclosure via integer overflow in pack/unpack operations"
+              },
+              "fullDescription": {
+                "text": "Perl versions through 5.43.10 have an integer overflow in S_measure_struct leading to an out-of-bounds heap read in pack and unpack.\n\nS_measure_struct adds each item's size times its repeat count to a running total with no overflow check, so a large repeat count in a pack or unpack template wraps the signed SSize_t total negative. The @, X, and x position codes then guard their moves with a signed length comparison that passes when the length is negative, advancing the buffer pointer out of bounds.\n\nA template derived from untrusted input can read heap memory past the buffer and return it to the caller."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2026-57432",
+              "help": {
+                "text": "Vulnerability CVE-2026-57432\nSeverity: HIGH\nPackage: perl-base\nFixed Version: \nLink: [CVE-2026-57432](https://avd.aquasec.com/nvd/cve-2026-57432)\nPerl versions through 5.43.10 have an integer overflow in S_measure_struct leading to an out-of-bounds heap read in pack and unpack.\n\nS_measure_struct adds each item's size times its repeat count to a running total with no overflow check, so a large repeat count in a pack or unpack template wraps the signed SSize_t total negative. The @, X, and x position codes then guard their moves with a signed length comparison that passes when the length is negative, advancing the buffer pointer out of bounds.\n\nA template derived from untrusted input can read heap memory past the buffer and return it to the caller.",
+                "markdown": "**Vulnerability CVE-2026-57432**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|HIGH|perl-base||[CVE-2026-57432](https://avd.aquasec.com/nvd/cve-2026-57432)|\n\nPerl versions through 5.43.10 have an integer overflow in S_measure_struct leading to an out-of-bounds heap read in pack and unpack.\n\nS_measure_struct adds each item's size times its repeat count to a running total with no overflow check, so a large repeat count in a pack or unpack template wraps the signed SSize_t total negative. The @, X, and x position codes then guard their moves with a signed length comparison that passes when the length is negative, advancing the buffer pointer out of bounds.\n\nA template derived from untrusted input can read heap memory past the buffer and return it to the caller."
+              },
+              "properties": {
+                "cvssv3_baseScore": 8.4,
+                "cvssv3_vector": "CVSS:3.1/AV:L/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+                "precision": "very-high",
+                "security-severity": "8.4",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "CVE-2026-57433",
+              "name": "OsPackageVulnerability",
+              "shortDescription": {
+                "text": "Storable: Storable: Denial of Service via signed integer overflow in deserialization"
+              },
+              "fullDescription": {
+                "text": "Storable versions before 3.41 for Perl have a signed integer overflow when deserializing a crafted SX_HOOK record.\n\nretrieve_hook_common reads a signed 32-bit item count from an SX_HOOK record and calls av_extend with that count plus one. A count of I32_MAX wraps the addition to a negative value.\n\nA crafted blob passed to thaw or retrieve triggers the overflow; av_extend receives the negative count and dies with a panic, terminating the deserialization."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2026-57433",
+              "help": {
+                "text": "Vulnerability CVE-2026-57433\nSeverity: HIGH\nPackage: perl-base\nFixed Version: \nLink: [CVE-2026-57433](https://avd.aquasec.com/nvd/cve-2026-57433)\nStorable versions before 3.41 for Perl have a signed integer overflow when deserializing a crafted SX_HOOK record.\n\nretrieve_hook_common reads a signed 32-bit item count from an SX_HOOK record and calls av_extend with that count plus one. A count of I32_MAX wraps the addition to a negative value.\n\nA crafted blob passed to thaw or retrieve triggers the overflow; av_extend receives the negative count and dies with a panic, terminating the deserialization.",
+                "markdown": "**Vulnerability CVE-2026-57433**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|HIGH|perl-base||[CVE-2026-57433](https://avd.aquasec.com/nvd/cve-2026-57433)|\n\nStorable versions before 3.41 for Perl have a signed integer overflow when deserializing a crafted SX_HOOK record.\n\nretrieve_hook_common reads a signed 32-bit item count from an SX_HOOK record and calls av_extend with that count plus one. A count of I32_MAX wraps the addition to a negative value.\n\nA crafted blob passed to thaw or retrieve triggers the overflow; av_extend receives the negative count and dies with a panic, terminating the deserialization."
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "8.0",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "CVE-2026-9538",
+              "name": "OsPackageVulnerability",
+              "shortDescription": {
+                "text": "perl-Archive-Tar: perl-Archive-Tar: Denial of Service via crafted tar header with large entry size"
+              },
+              "fullDescription": {
+                "text": "Archive::Tar versions before 3.10 for Perl allow memory exhaustion via attacker controlled entry size field in tar header.\n\n_read_tar() reads each entry's payload with $handle-\u003eread($$data, $block), where $block is derived from the entry's 12-byte size field in the tar header with no upper bound on that value.\n\nA crafted header declaring a multi-gigabyte size causes Perl to allocate a scalar of that size."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2026-9538",
+              "help": {
+                "text": "Vulnerability CVE-2026-9538\nSeverity: HIGH\nPackage: perl-base\nFixed Version: \nLink: [CVE-2026-9538](https://avd.aquasec.com/nvd/cve-2026-9538)\nArchive::Tar versions before 3.10 for Perl allow memory exhaustion via attacker controlled entry size field in tar header.\n\n_read_tar() reads each entry's payload with $handle-\u003eread($$data, $block), where $block is derived from the entry's 12-byte size field in the tar header with no upper bound on that value.\n\nA crafted header declaring a multi-gigabyte size causes Perl to allocate a scalar of that size.",
+                "markdown": "**Vulnerability CVE-2026-9538**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|HIGH|perl-base||[CVE-2026-9538](https://avd.aquasec.com/nvd/cve-2026-9538)|\n\nArchive::Tar versions before 3.10 for Perl allow memory exhaustion via attacker controlled entry size field in tar header.\n\n_read_tar() reads each entry's payload with $handle-\u003eread($$data, $block), where $block is derived from the entry's 12-byte size field in the tar header with no upper bound on that value.\n\nA crafted header declaring a multi-gigabyte size causes Perl to allocate a scalar of that size."
+              },
+              "properties": {
+                "cvssv3_baseScore": 7.5,
+                "cvssv3_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+                "precision": "very-high",
+                "security-severity": "7.5",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "CVE-2023-45853",
+              "name": "OsPackageVulnerability",
+              "shortDescription": {
+                "text": "zlib: integer overflow and resultant heap-based buffer overflow in zipOpenNewFileInZip4_6"
+              },
+              "fullDescription": {
+                "text": "MiniZip in zlib through 1.3 has an integer overflow and resultant heap-based buffer overflow in zipOpenNewFileInZip4_64 via a long filename, comment, or extra field. NOTE: MiniZip is not a supported part of the zlib product. NOTE: pyminizip through 0.2.6 is also vulnerable because it bundles an affected zlib version, and exposes the applicable MiniZip code through its compress API."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2023-45853",
+              "help": {
+                "text": "Vulnerability CVE-2023-45853\nSeverity: CRITICAL\nPackage: zlib1g\nFixed Version: \nLink: [CVE-2023-45853](https://avd.aquasec.com/nvd/cve-2023-45853)\nMiniZip in zlib through 1.3 has an integer overflow and resultant heap-based buffer overflow in zipOpenNewFileInZip4_64 via a long filename, comment, or extra field. NOTE: MiniZip is not a supported part of the zlib product. NOTE: pyminizip through 0.2.6 is also vulnerable because it bundles an affected zlib version, and exposes the applicable MiniZip code through its compress API.",
+                "markdown": "**Vulnerability CVE-2023-45853**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|CRITICAL|zlib1g||[CVE-2023-45853](https://avd.aquasec.com/nvd/cve-2023-45853)|\n\nMiniZip in zlib through 1.3 has an integer overflow and resultant heap-based buffer overflow in zipOpenNewFileInZip4_64 via a long filename, comment, or extra field. NOTE: MiniZip is not a supported part of the zlib product. NOTE: pyminizip through 0.2.6 is also vulnerable because it bundles an affected zlib version, and exposes the applicable MiniZip code through its compress API."
+              },
+              "properties": {
+                "cvssv3_baseScore": 9.8,
+                "cvssv3_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+                "precision": "very-high",
+                "security-severity": "9.8",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "CRITICAL"
+                ]
+              }
+            }
+          ],
+          "version": "0.74.0"
+        }
+      },
+      "results": [
+        {
+          "ruleId": "CVE-2026-53613",
+          "ruleIndex": 0,
+          "level": "error",
+          "message": {
+            "text": "Package: bsdutils\nInstalled Version: 1:2.38.1-5+deb12u3\nVulnerability CVE-2026-53613\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-53613](https://avd.aquasec.com/nvd/cve-2026-53613)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: bsdutils@1:2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-76642",
+          "ruleIndex": 1,
+          "level": "error",
+          "message": {
+            "text": "Package: bsdutils\nInstalled Version: 1:2.38.1-5+deb12u3\nVulnerability CVE-2026-76642\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-76642](https://avd.aquasec.com/nvd/cve-2026-76642)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: bsdutils@1:2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-78408",
+          "ruleIndex": 2,
+          "level": "error",
+          "message": {
+            "text": "Package: bsdutils\nInstalled Version: 1:2.38.1-5+deb12u3\nVulnerability CVE-2026-78408\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-78408](https://avd.aquasec.com/nvd/cve-2026-78408)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: bsdutils@1:2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-78409",
+          "ruleIndex": 3,
+          "level": "error",
+          "message": {
+            "text": "Package: bsdutils\nInstalled Version: 1:2.38.1-5+deb12u3\nVulnerability CVE-2026-78409\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-78409](https://avd.aquasec.com/nvd/cve-2026-78409)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: bsdutils@1:2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-78410",
+          "ruleIndex": 4,
+          "level": "error",
+          "message": {
+            "text": "Package: bsdutils\nInstalled Version: 1:2.38.1-5+deb12u3\nVulnerability CVE-2026-78410\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-78410](https://avd.aquasec.com/nvd/cve-2026-78410)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: bsdutils@1:2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-41992",
+          "ruleIndex": 5,
+          "level": "error",
+          "message": {
+            "text": "Package: gzip\nInstalled Version: 1.12-1\nVulnerability CVE-2026-41992\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-41992](https://avd.aquasec.com/nvd/cve-2026-41992)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: gzip@1.12-1"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-54369",
+          "ruleIndex": 6,
+          "level": "error",
+          "message": {
+            "text": "Package: libacl1\nInstalled Version: 2.3.1-3\nVulnerability CVE-2026-54369\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-54369](https://avd.aquasec.com/nvd/cve-2026-54369)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: libacl1@2.3.1-3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-53613",
+          "ruleIndex": 0,
+          "level": "error",
+          "message": {
+            "text": "Package: libblkid1\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-53613\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-53613](https://avd.aquasec.com/nvd/cve-2026-53613)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: libblkid1@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-76642",
+          "ruleIndex": 1,
+          "level": "error",
+          "message": {
+            "text": "Package: libblkid1\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-76642\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-76642](https://avd.aquasec.com/nvd/cve-2026-76642)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: libblkid1@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-78408",
+          "ruleIndex": 2,
+          "level": "error",
+          "message": {
+            "text": "Package: libblkid1\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-78408\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-78408](https://avd.aquasec.com/nvd/cve-2026-78408)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: libblkid1@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-78409",
+          "ruleIndex": 3,
+          "level": "error",
+          "message": {
+            "text": "Package: libblkid1\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-78409\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-78409](https://avd.aquasec.com/nvd/cve-2026-78409)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: libblkid1@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-78410",
+          "ruleIndex": 4,
+          "level": "error",
+          "message": {
+            "text": "Package: libblkid1\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-78410\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-78410](https://avd.aquasec.com/nvd/cve-2026-78410)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: libblkid1@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-53613",
+          "ruleIndex": 0,
+          "level": "error",
+          "message": {
+            "text": "Package: libmount1\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-53613\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-53613](https://avd.aquasec.com/nvd/cve-2026-53613)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: libmount1@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-76642",
+          "ruleIndex": 1,
+          "level": "error",
+          "message": {
+            "text": "Package: libmount1\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-76642\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-76642](https://avd.aquasec.com/nvd/cve-2026-76642)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: libmount1@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-78408",
+          "ruleIndex": 2,
+          "level": "error",
+          "message": {
+            "text": "Package: libmount1\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-78408\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-78408](https://avd.aquasec.com/nvd/cve-2026-78408)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: libmount1@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-78409",
+          "ruleIndex": 3,
+          "level": "error",
+          "message": {
+            "text": "Package: libmount1\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-78409\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-78409](https://avd.aquasec.com/nvd/cve-2026-78409)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: libmount1@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-78410",
+          "ruleIndex": 4,
+          "level": "error",
+          "message": {
+            "text": "Package: libmount1\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-78410\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-78410](https://avd.aquasec.com/nvd/cve-2026-78410)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: libmount1@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-53613",
+          "ruleIndex": 0,
+          "level": "error",
+          "message": {
+            "text": "Package: libsmartcols1\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-53613\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-53613](https://avd.aquasec.com/nvd/cve-2026-53613)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: libsmartcols1@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-76642",
+          "ruleIndex": 1,
+          "level": "error",
+          "message": {
+            "text": "Package: libsmartcols1\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-76642\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-76642](https://avd.aquasec.com/nvd/cve-2026-76642)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: libsmartcols1@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-78408",
+          "ruleIndex": 2,
+          "level": "error",
+          "message": {
+            "text": "Package: libsmartcols1\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-78408\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-78408](https://avd.aquasec.com/nvd/cve-2026-78408)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: libsmartcols1@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-78409",
+          "ruleIndex": 3,
+          "level": "error",
+          "message": {
+            "text": "Package: libsmartcols1\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-78409\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-78409](https://avd.aquasec.com/nvd/cve-2026-78409)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: libsmartcols1@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-78410",
+          "ruleIndex": 4,
+          "level": "error",
+          "message": {
+            "text": "Package: libsmartcols1\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-78410\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-78410](https://avd.aquasec.com/nvd/cve-2026-78410)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: libsmartcols1@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-16742",
+          "ruleIndex": 7,
+          "level": "error",
+          "message": {
+            "text": "Package: libsystemd0\nInstalled Version: 252.39-1~deb12u2\nVulnerability CVE-2026-16742\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-16742](https://avd.aquasec.com/nvd/cve-2026-16742)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: libsystemd0@252.39-1~deb12u2"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2025-69720",
+          "ruleIndex": 8,
+          "level": "error",
+          "message": {
+            "text": "Package: libtinfo6\nInstalled Version: 6.4-4\nVulnerability CVE-2025-69720\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2025-69720](https://avd.aquasec.com/nvd/cve-2025-69720)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: libtinfo6@6.4-4"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-16742",
+          "ruleIndex": 7,
+          "level": "error",
+          "message": {
+            "text": "Package: libudev1\nInstalled Version: 252.39-1~deb12u2\nVulnerability CVE-2026-16742\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-16742](https://avd.aquasec.com/nvd/cve-2026-16742)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: libudev1@252.39-1~deb12u2"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-53613",
+          "ruleIndex": 0,
+          "level": "error",
+          "message": {
+            "text": "Package: libuuid1\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-53613\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-53613](https://avd.aquasec.com/nvd/cve-2026-53613)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: libuuid1@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-76642",
+          "ruleIndex": 1,
+          "level": "error",
+          "message": {
+            "text": "Package: libuuid1\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-76642\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-76642](https://avd.aquasec.com/nvd/cve-2026-76642)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: libuuid1@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-78408",
+          "ruleIndex": 2,
+          "level": "error",
+          "message": {
+            "text": "Package: libuuid1\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-78408\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-78408](https://avd.aquasec.com/nvd/cve-2026-78408)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: libuuid1@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-78409",
+          "ruleIndex": 3,
+          "level": "error",
+          "message": {
+            "text": "Package: libuuid1\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-78409\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-78409](https://avd.aquasec.com/nvd/cve-2026-78409)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: libuuid1@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-78410",
+          "ruleIndex": 4,
+          "level": "error",
+          "message": {
+            "text": "Package: libuuid1\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-78410\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-78410](https://avd.aquasec.com/nvd/cve-2026-78410)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: libuuid1@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-53613",
+          "ruleIndex": 0,
+          "level": "error",
+          "message": {
+            "text": "Package: mount\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-53613\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-53613](https://avd.aquasec.com/nvd/cve-2026-53613)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: mount@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-76642",
+          "ruleIndex": 1,
+          "level": "error",
+          "message": {
+            "text": "Package: mount\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-76642\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-76642](https://avd.aquasec.com/nvd/cve-2026-76642)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: mount@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-78408",
+          "ruleIndex": 2,
+          "level": "error",
+          "message": {
+            "text": "Package: mount\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-78408\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-78408](https://avd.aquasec.com/nvd/cve-2026-78408)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: mount@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-78409",
+          "ruleIndex": 3,
+          "level": "error",
+          "message": {
+            "text": "Package: mount\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-78409\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-78409](https://avd.aquasec.com/nvd/cve-2026-78409)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: mount@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-78410",
+          "ruleIndex": 4,
+          "level": "error",
+          "message": {
+            "text": "Package: mount\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-78410\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-78410](https://avd.aquasec.com/nvd/cve-2026-78410)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: mount@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2025-69720",
+          "ruleIndex": 8,
+          "level": "error",
+          "message": {
+            "text": "Package: ncurses-base\nInstalled Version: 6.4-4\nVulnerability CVE-2025-69720\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2025-69720](https://avd.aquasec.com/nvd/cve-2025-69720)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: ncurses-base@6.4-4"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2025-69720",
+          "ruleIndex": 8,
+          "level": "error",
+          "message": {
+            "text": "Package: ncurses-bin\nInstalled Version: 6.4-4\nVulnerability CVE-2025-69720\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2025-69720](https://avd.aquasec.com/nvd/cve-2025-69720)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: ncurses-bin@6.4-4"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-13221",
+          "ruleIndex": 9,
+          "level": "error",
+          "message": {
+            "text": "Package: perl-base\nInstalled Version: 5.36.0-7+deb12u3\nVulnerability CVE-2026-13221\nSeverity: CRITICAL\nFixed Version: \nLink: [CVE-2026-13221](https://avd.aquasec.com/nvd/cve-2026-13221)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: perl-base@5.36.0-7+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-42496",
+          "ruleIndex": 10,
+          "level": "error",
+          "message": {
+            "text": "Package: perl-base\nInstalled Version: 5.36.0-7+deb12u3\nVulnerability CVE-2026-42496\nSeverity: CRITICAL\nFixed Version: \nLink: [CVE-2026-42496](https://avd.aquasec.com/nvd/cve-2026-42496)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: perl-base@5.36.0-7+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-8376",
+          "ruleIndex": 11,
+          "level": "error",
+          "message": {
+            "text": "Package: perl-base\nInstalled Version: 5.36.0-7+deb12u3\nVulnerability CVE-2026-8376\nSeverity: CRITICAL\nFixed Version: \nLink: [CVE-2026-8376](https://avd.aquasec.com/nvd/cve-2026-8376)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: perl-base@5.36.0-7+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-42497",
+          "ruleIndex": 12,
+          "level": "error",
+          "message": {
+            "text": "Package: perl-base\nInstalled Version: 5.36.0-7+deb12u3\nVulnerability CVE-2026-42497\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-42497](https://avd.aquasec.com/nvd/cve-2026-42497)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: perl-base@5.36.0-7+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-48962",
+          "ruleIndex": 13,
+          "level": "error",
+          "message": {
+            "text": "Package: perl-base\nInstalled Version: 5.36.0-7+deb12u3\nVulnerability CVE-2026-48962\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-48962](https://avd.aquasec.com/nvd/cve-2026-48962)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: perl-base@5.36.0-7+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-57432",
+          "ruleIndex": 14,
+          "level": "error",
+          "message": {
+            "text": "Package: perl-base\nInstalled Version: 5.36.0-7+deb12u3\nVulnerability CVE-2026-57432\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-57432](https://avd.aquasec.com/nvd/cve-2026-57432)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: perl-base@5.36.0-7+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-57433",
+          "ruleIndex": 15,
+          "level": "error",
+          "message": {
+            "text": "Package: perl-base\nInstalled Version: 5.36.0-7+deb12u3\nVulnerability CVE-2026-57433\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-57433](https://avd.aquasec.com/nvd/cve-2026-57433)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: perl-base@5.36.0-7+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-9538",
+          "ruleIndex": 16,
+          "level": "error",
+          "message": {
+            "text": "Package: perl-base\nInstalled Version: 5.36.0-7+deb12u3\nVulnerability CVE-2026-9538\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-9538](https://avd.aquasec.com/nvd/cve-2026-9538)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: perl-base@5.36.0-7+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-53613",
+          "ruleIndex": 0,
+          "level": "error",
+          "message": {
+            "text": "Package: util-linux\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-53613\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-53613](https://avd.aquasec.com/nvd/cve-2026-53613)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: util-linux@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-76642",
+          "ruleIndex": 1,
+          "level": "error",
+          "message": {
+            "text": "Package: util-linux\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-76642\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-76642](https://avd.aquasec.com/nvd/cve-2026-76642)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: util-linux@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-78408",
+          "ruleIndex": 2,
+          "level": "error",
+          "message": {
+            "text": "Package: util-linux\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-78408\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-78408](https://avd.aquasec.com/nvd/cve-2026-78408)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: util-linux@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-78409",
+          "ruleIndex": 3,
+          "level": "error",
+          "message": {
+            "text": "Package: util-linux\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-78409\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-78409](https://avd.aquasec.com/nvd/cve-2026-78409)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: util-linux@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-78410",
+          "ruleIndex": 4,
+          "level": "error",
+          "message": {
+            "text": "Package: util-linux\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-78410\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-78410](https://avd.aquasec.com/nvd/cve-2026-78410)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: util-linux@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-53613",
+          "ruleIndex": 0,
+          "level": "error",
+          "message": {
+            "text": "Package: util-linux-extra\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-53613\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-53613](https://avd.aquasec.com/nvd/cve-2026-53613)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: util-linux-extra@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-76642",
+          "ruleIndex": 1,
+          "level": "error",
+          "message": {
+            "text": "Package: util-linux-extra\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-76642\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-76642](https://avd.aquasec.com/nvd/cve-2026-76642)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: util-linux-extra@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-78408",
+          "ruleIndex": 2,
+          "level": "error",
+          "message": {
+            "text": "Package: util-linux-extra\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-78408\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-78408](https://avd.aquasec.com/nvd/cve-2026-78408)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: util-linux-extra@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-78409",
+          "ruleIndex": 3,
+          "level": "error",
+          "message": {
+            "text": "Package: util-linux-extra\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-78409\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-78409](https://avd.aquasec.com/nvd/cve-2026-78409)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: util-linux-extra@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-78410",
+          "ruleIndex": 4,
+          "level": "error",
+          "message": {
+            "text": "Package: util-linux-extra\nInstalled Version: 2.38.1-5+deb12u3\nVulnerability CVE-2026-78410\nSeverity: HIGH\nFixed Version: \nLink: [CVE-2026-78410](https://avd.aquasec.com/nvd/cve-2026-78410)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: util-linux-extra@2.38.1-5+deb12u3"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2023-45853",
+          "ruleIndex": 17,
+          "level": "error",
+          "message": {
+            "text": "Package: zlib1g\nInstalled Version: 1:1.2.13.dfsg-1\nVulnerability CVE-2023-45853\nSeverity: CRITICAL\nFixed Version: \nLink: [CVE-2023-45853](https://avd.aquasec.com/nvd/cve-2023-45853)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "library/code-intel-release-check",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "library/code-intel-release-check: zlib1g@1:1.2.13.dfsg-1"
+              }
+            }
+          ]
+        }
+      ],
+      "columnKind": "utf16CodeUnits",
+      "properties": {
+        "imageID": "sha256:a2b5b6ea53dc99e84035c8dd56ee385f1355e453e86d13d32477d5fcf7fc4c63",
+        "imageName": "code-intel-release-check:1.0.11",
+        "repoDigests": [
+          "code-intel-release-check@sha256:a2b5b6ea53dc99e84035c8dd56ee385f1355e453e86d13d32477d5fcf7fc4c63"
+        ],
+        "repoTags": [
+          "code-intel-release-check:1.0.11"
+        ]
+      }
+    }
+  ]
+}

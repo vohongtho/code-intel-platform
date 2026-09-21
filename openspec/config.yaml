@@ -2,8 +2,9 @@ schema: spec-driven
 
 context: |
   Project: Code Intelligence Platform
-  Release target: v1.0.8
-  Source baseline: release/1.0.7
+  Release target: v1.0.11
+  Production source baseline: v1.0.10 / release/1.0.10 @ 52dfda4c1dd78b7667cc8a10606ade65a7807d90
+  Working branch: release/1.0.11
 
   Runtime and language:
   - Node.js >= 22
@@ -19,14 +20,28 @@ context: |
   - SQLite: BM25 and vector indexes
   - tree-sitter: source parsing
 
+  v1.0.11 strategic objective:
+  - Improve semantic correctness and trust without changing the user workflow.
+  - Preserve existing init/analyze/setup/serve/MCP/HTTP/Web workflows.
+  - Do not add a mandatory public command or required configuration for core-intelligence upgrades.
+  - Treat all 15 advertised languages as release-gated capabilities; no supported language may silently regress.
+  - Extend Generation V2 rather than replace its staging, snapshot, locking, cleanup, or rollback model.
+
   Engineering constraints:
   - Correctness takes precedence over micro-optimizing incremental derived phases.
   - A successful incremental analysis must be observably equivalent to full analysis.
-  - Do not mutate the currently published graph, BM25, vector, or metadata generation before all required replacement artifacts validate.
+  - Do not mutate the currently published graph, BM25, vector, evidence, or metadata generation before all required replacement artifacts validate.
   - Use execFile/execFileSync argument arrays for Git commands; never interpolate a ref into a shell command.
-  - Preserve backward compatibility for public CLI, HTTP, MCP, and web contracts.
-  - Default MCP responses must remain compact; verbose explanation is opt-in.
-  - No new runtime dependency without a documented design decision and package audit.
+  - Preserve backward compatibility for public CLI, HTTP, MCP, web, and generated agent contracts.
+  - Default MCP responses must remain compact; verbose explanation is opt-in or additive.
+  - A new semantic engine may add optional response metadata but must not rename existing tools/routes or require a new workflow.
+  - A zero-edge result is not proof of absence when relevant resolution classes are unresolved, unsupported, stale, or truncated.
+  - Do not use a one-name-one-node map as authoritative symbol identity or resolution when multiple candidates are possible.
+  - Do not infer semantic capability only from a language enum; use tested capability status and persisted artifact status.
+  - Repeated resolution hot paths must use prepared indexes; per-reference full-workspace scans require benchmark evidence.
+  - No new runtime dependency without a documented design decision and package/license audit.
+  - GitNexus-inspired behavior must be clean-room implemented because GitNexus is noncommercial licensed; do not copy its source, tests, prompts, skills, or implementation expression.
+  - CodeGraph is MIT; substantial copied code must preserve attribution/license notices, but prefer adapting ideas to Code Intel architecture.
   - Tests must be deterministic and may not depend on the developer's global Git configuration.
   - Every new public field must be documented in MCP schemas, OpenAPI, web types, README, and tests.
   - Every failure-path test must reopen persisted artifacts rather than asserting only in-memory counters.
@@ -34,22 +49,24 @@ context: |
 
 rules:
   proposal:
-    - State the user-visible correctness problem and why v1.0.8 must solve it.
-    - Separate in-scope behavior, explicit non-goals, compatibility, migration, and release risk.
-    - List affected capabilities and dependencies on other v1.0.8 changes.
+    - State the source-verified production-baseline gap and user-visible correctness problem.
+    - Explain why the feature belongs in v1.0.11 and what existing v1.0.10 implementation is reused.
+    - Separate scope, non-goals, compatibility, migration, dependencies, release risk, performance impact, and license/IP constraints.
+    - State explicitly whether the user workflow changes; core-intelligence changes should default to zero workflow change.
   specs:
     - Use ADDED, MODIFIED, or REMOVED requirement sections.
     - Every requirement must contain at least one GIVEN/WHEN/THEN scenario.
-    - Describe verifiable behavior, not file-level implementation details.
-    - Include error, fallback, migration, and compatibility scenarios.
+    - Describe verifiable behavior rather than only file-level implementation details.
+    - Include error, fallback, migration, compatibility, ambiguity, truncation, and cross-language scenarios where relevant.
   design:
-    - Begin with the observed v1.0.7 control flow.
+    - Begin with the observed v1.0.10 production control flow.
     - Name exact modules, exported types, functions, and ownership boundaries.
-    - Include alternatives considered, failure semantics, migration, observability, and test strategy.
+    - Include alternatives considered, failure semantics, migration, observability, performance, licensing, and test strategy.
     - Define invariants and response contracts precisely.
+    - Prefer extension of existing modules over unnecessary rewrites.
   tasks:
     - Use unchecked Markdown checkboxes.
     - Name every source and test file that will be created or modified.
     - Name exact symbols to add, remove, split, or replace.
     - State test assertions and acceptance evidence for each implementation task.
-    - Keep documentation, migration, package validation, and performance gates explicit.
+    - Keep documentation, migration, package validation, performance gates, and all-15-language gates explicit.

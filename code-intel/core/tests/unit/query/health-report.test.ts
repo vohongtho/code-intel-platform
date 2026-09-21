@@ -15,7 +15,7 @@ function buildTestGraph(): KnowledgeGraph {
 
   // src/api/ scope
   graph.addNode({ id: 'apiFn', kind: 'function', name: 'handleRequest', filePath: 'src/api/handler.ts', exported: true });
-  graph.addNode({ id: 'deadApiFn', kind: 'function', name: 'unusedHelper', filePath: 'src/api/utils.ts', exported: false });
+  graph.addNode({ id: 'deadApiFn', kind: 'function', name: 'unusedHelper', filePath: 'src/api/utils.ts', exported: true });
 
   // src/util/ — all nodes are orphans (no edges)
   graph.addNode({ id: 'orphan1', kind: 'function', name: 'orphanFn', filePath: 'src/util/orphan.ts' });
@@ -43,8 +43,10 @@ function buildTestGraph(): KnowledgeGraph {
 function buildCleanGraph(): KnowledgeGraph {
   const graph = createKnowledgeGraph();
   // Fully connected graph, no dead code, no cycles
+  graph.addNode({ id: 'entry', kind: 'function', name: 'main', filePath: 'src/main.ts', exported: true });
   graph.addNode({ id: 'a', kind: 'function', name: 'funcA', filePath: 'src/a.ts', exported: true });
   graph.addNode({ id: 'b', kind: 'function', name: 'funcB', filePath: 'src/b.ts', exported: true });
+  graph.addEdge({ id: 'e-entry-a', source: 'entry', target: 'a', kind: 'calls' });
   graph.addEdge({ id: 'eab', source: 'a', target: 'b', kind: 'calls' });
   return graph;
 }
@@ -62,7 +64,7 @@ describe('computeHealthReport', () => {
       );
     }
     // unusedHelper is dead code in src/api/
-    const hasUnused = result.deadCode.some((dc) => dc.name === 'unusedHelper');
+    const hasUnused = result.deadCode.some((dc) => dc.name === 'unusedHelper' && dc.status === 'not-observed');
     assert.ok(hasUnused, 'unusedHelper should be detected as dead code in src/api/ scope');
   });
 
@@ -82,8 +84,11 @@ describe('computeHealthReport', () => {
     const deadNames = result.deadCode.map((d) => d.name);
     // legacyAuth is unexported and has only incoming from a cycle partner, but
     // deadAuthFn has an incoming imports edge from authFn — so NOT dead.
-    // unusedHelper has no incoming edges and is not exported → dead
+    // unusedHelper has no incoming edges and remains exported but unobserved → dead candidate
     assert.ok(deadNames.includes('unusedHelper'), 'unusedHelper should be dead code');
+    const unusedHelper = result.deadCode.find((d) => d.name === 'unusedHelper');
+    assert.equal(unusedHelper?.status, 'not-observed');
+    assert.equal(unusedHelper?.certainty, 'lower-bound');
     // AuthService has an incoming call from apiFn → not dead
     assert.ok(!deadNames.includes('AuthService'), 'AuthService should not be dead code (has callers)');
   });
@@ -184,11 +189,20 @@ describe('computeHealthReport', () => {
 
   it('dead code list capped at 20', () => {
     const graph = createKnowledgeGraph();
-    // Create 25 unexported functions with no edges
+    // Create 25 exported functions with no edges
     for (let i = 0; i < 25; i++) {
-      graph.addNode({ id: `fn${i}`, kind: 'function', name: `fn${i}`, filePath: `src/dead/fn${i}.ts`, exported: false });
+      graph.addNode({ id: `fn${i}`, kind: 'function', name: `fn${i}`, filePath: `src/dead/fn${i}.ts`, exported: true });
     }
     const result = computeHealthReport(graph, '.') as HealthReportResult;
     assert.ok(result.deadCode.length <= 20, 'dead code list should be capped at 20');
+  });
+
+  it('dead code is absence-only, not proved-unused', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: 'dead1', kind: 'function', name: 'dead1', filePath: 'src/dead1.ts', exported: true });
+    const result = computeHealthReport(graph, '.') as HealthReportResult;
+    assert.equal(result.deadCode[0]?.status, 'not-observed');
+    assert.equal(result.deadCode[0]?.certainty, 'lower-bound');
+    assert.equal(result.deadCode[0]?.coverage?.complete, false);
   });
 });

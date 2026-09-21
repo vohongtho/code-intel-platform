@@ -44,11 +44,23 @@ export interface ChangeContextRequest {
   maxChangedSymbols?: number;
 }
 
+export interface AnalysisCoverage {
+  complete: boolean;
+  examinedCount: number;
+  totalKnownCount?: number;
+  incompleteReasons: readonly string[];
+}
+
+export interface AnalysisBoundary {
+  kind: string;
+  evidenceRefs: readonly string[];
+}
+
 export interface ChangeContextSummary {
   changedSymbolCount: number;
   impactedSymbolCount: number;
   coverageGapCount: number;
-  highestRisk: 'HIGH' | 'MEDIUM' | 'LOW' | 'NONE';
+  highestRisk: 'HIGH' | 'MEDIUM' | 'LOW' | 'UNKNOWN' | 'NONE';
 }
 
 export interface ChangeContextResponse {
@@ -66,6 +78,9 @@ export interface ChangeContextResponse {
   };
   testSuggestions: Array<{ symbol: string; result: unknown }>;
   summary: ChangeContextSummary;
+  certainty?: 'exact' | 'lower-bound' | 'heuristic' | 'truncated' | 'unavailable';
+  coverage?: AnalysisCoverage;
+  boundaries?: readonly AnalysisBoundary[];
 }
 
 export interface IndexTrustResponse {

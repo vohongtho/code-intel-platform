@@ -238,7 +238,7 @@ export async function executeSearchRequest(
       return { error: { status: 404, message: `Group '${scope.name}' not found`, hint: 'Use /api/v1/groups to list available groups' } } as const;
     }
     const groupMode = requestedMode === 'auto' ? 'hybrid' : requestedMode;
-    const { perRepo, merged, searchMode, vectorReady } = await queryGroup(grp, query, limit, { mode: groupMode });
+    const { perRepo, merged, searchMode, vectorReady, candidatePoolSize } = await queryGroup(grp, query, limit, { mode: groupMode });
     const actualMode = searchMode as ActualSearchMode;
     const fallbackReason = requestedMode !== 'bm25' && actualMode === 'bm25'
       ? 'VECTOR_INDEX_UNAVAILABLE' as const
@@ -259,7 +259,10 @@ export async function executeSearchRequest(
         total: merged.length,
         offset: 0,
         limit,
-        hasMore: false,
+        // candidatePoolSize is a lower bound (the ranked pool is itself capped
+        // per-member before merge); this can only under-report hasMore, never
+        // fabricate a false positive.
+        hasMore: candidatePoolSize > limit,
       },
     } as const;
   }
@@ -324,7 +327,8 @@ export async function executeSearchRequest(
     : null;
 
   if (requestedMode === 'bm25') {
-    const compactResults = (bm25Results ?? textSearch(graph, query, limit)).slice(0, limit);
+    const bm25Pool = bm25Results ?? textSearch(graph, query, limit * 3);
+    const compactResults = bm25Pool.slice(0, limit);
     const results = compactResults.map((result, rank) => explain
       ? { ...result, evidence: { lexicalScore: result.score, bm25Rank: rank + 1, finalScore: result.score } }
       : result);
@@ -342,13 +346,15 @@ export async function executeSearchRequest(
         total: results.length,
         offset: 0,
         limit,
-        hasMore: false,
+        // bm25Pool is a lower bound (itself capped at limit*3); can only
+        // under-report hasMore, never fabricate a false positive.
+        hasMore: bm25Pool.length > limit,
       },
     } as const;
   }
 
   // Call hybridSearch with validated descriptor if vector is ready
-  const { results, searchMode, vectorStatus } = await hybridSearch(graph, query, limit, {
+  const { results, searchMode, vectorStatus, candidatePoolSize } = await hybridSearch(graph, query, limit, {
     vectorDbPath: vectorRuntimeState?.ready ? vectorDbPath : undefined,
     descriptor: vectorRuntimeState?.descriptor,
     bm25Results: bm25Results ?? undefined,
@@ -385,7 +391,10 @@ export async function executeSearchRequest(
       total: results.length,
       offset: 0,
       limit,
-      hasMore: false,
+      // candidatePoolSize is a lower bound (bm25Limit/vectorLimit-capped
+      // pool); can only under-report hasMore, never fabricate a false
+      // positive.
+      hasMore: candidatePoolSize > limit,
     },
   } as const;
 }

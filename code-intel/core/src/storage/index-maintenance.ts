@@ -23,6 +23,7 @@ const LEGACY_ARTIFACTS = [
   'graph.db', 'graph.db-wal', 'graph.db-shm',
   'bm25.db', 'bm25.db-wal', 'bm25.db-shm',
   'vector.db', 'vector.db-wal', 'vector.db-shm',
+  'evidence.db', 'evidence.db-wal', 'evidence.db-shm',
   'meta.json',
 ] as const;
 

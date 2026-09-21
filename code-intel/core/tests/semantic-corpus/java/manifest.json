@@ -1,0 +1,29 @@
+{
+  "language": "java",
+  "fixtures": {
+    "main": "main.java",
+    "grouped": "grouped.java"
+  },
+  "expected": {
+    "definitions": [
+      "UserService",
+      "getUser",
+      "saveUser",
+      "UserRepository",
+      "Role"
+    ],
+    "forbidden": [
+      "formatName"
+    ]
+  },
+  "groupedExpected": [
+    "PairOne",
+    "PairTwo",
+    "first",
+    "second"
+  ],
+  "notes": [
+    "Main fixture captures baseline semantic observations.",
+    "Grouped fixture captures multi-declaration or wrapper-contained entities."
+  ]
+}

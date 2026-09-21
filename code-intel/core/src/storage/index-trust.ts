@@ -8,14 +8,18 @@ import {
   type IndexMetadata,
 } from './metadata.js';
 import { resolveIndexSnapshot } from './index-snapshot.js';
+import { isSemanticProducerIncompatible } from '../pipeline/compatibility-receipt.js';
 
 export type IndexTrustState = 'trusted' | 'stale' | 'corrupt' | 'legacy' | 'missing';
+export type IndexArtifactTrustState = 'verified' | 'partial-recoverable' | 'stale' | 'interrupted' | 'unverified' | 'collapsed' | 'corrupt' | 'unavailable';
 
 export interface IndexArtifactState {
   path: string;
   required: boolean;
   exists: boolean;
   size: number;
+  state: IndexArtifactTrustState;
+  reason?: string;
 }
 
 export interface IndexTrustResult {
@@ -30,15 +34,30 @@ export interface IndexTrustResult {
     graph: IndexArtifactState;
     bm25: IndexArtifactState;
     vector: IndexArtifactState;
+    evidence: IndexArtifactState;
   };
 }
 
 function artifactState(filePath: string, required: boolean): IndexArtifactState {
   try {
     const stat = fs.statSync(filePath);
-    return { path: filePath, required, exists: stat.isFile(), size: stat.size };
+    return {
+      path: filePath,
+      required,
+      exists: stat.isFile(),
+      size: stat.size,
+      state: !stat.isFile() ? (required ? 'corrupt' : 'unavailable') : stat.size === 0 ? 'corrupt' : 'unverified',
+      reason: !stat.isFile() ? (required ? 'artifact missing' : 'artifact unavailable') : stat.size === 0 ? 'artifact empty' : undefined,
+    };
   } catch {
-    return { path: filePath, required, exists: false, size: 0 };
+    return {
+      path: filePath,
+      required,
+      exists: false,
+      size: 0,
+      state: required ? 'corrupt' : 'unavailable',
+      reason: required ? 'artifact missing' : 'artifact unavailable',
+    };
   }
 }
 
@@ -70,10 +89,12 @@ export function verifyIndexTrust(repoDir: string): IndexTrustResult {
   };
   const metadata = readMetadata(paths.metadataPath);
   const vectorRequired = Boolean(metadata?.embeddings?.enabled && metadata.embeddings.status === 'ready');
+  const evidenceRequired = Boolean((metadata?.evidenceVerification?.producedCount ?? 0) > 0);
   const artifacts = {
     graph: artifactState(paths.graphDbPath, true),
     bm25: artifactState(paths.bm25DbPath, true),
     vector: artifactState(paths.vectorDbPath, vectorRequired),
+    evidence: artifactState(snapshot?.evidenceDbPath ?? path.join(fallbackDir, 'evidence.db'), evidenceRequired),
   };
   const reasons: string[] = [];
   const anyArtifact = Object.values(artifacts).some((artifact) => artifact.exists);
@@ -102,18 +123,49 @@ export function verifyIndexTrust(repoDir: string): IndexTrustResult {
     if (expected !== metadata.indexVersion) reasons.push('INDEX_FINGERPRINT_MISMATCH');
   }
 
+  // Semantic producer compatibility (task 11/12): structurally-valid,
+  // non-corrupt metadata can still have been produced by an incompatible
+  // identity/resolver/evidence/API-contract/parser-grammar implementation —
+  // e.g. a real published 1.0.10 index, which has a defined schemaVersion and
+  // a non-regex parser (so it isn't caught by the `legacy` check above) but
+  // predates the whole compatibility-receipt system. Without this check,
+  // `index-status`/`doctor` reported such an index as `trusted: true` even
+  // though `analyze` itself would force a full rebuild — verified against the
+  // actual published 1.0.10 npm package.
+  if (isSemanticProducerIncompatible(metadata)) reasons.push('SEMANTIC_PRODUCER_INCOMPATIBLE');
+
   if (metadata.generationId && snapshot && !snapshot.legacy && metadata.generationId !== snapshot.generationId) {
     reasons.push('GENERATION_ID_MISMATCH');
   }
   if (metadata.embeddings?.enabled && metadata.embeddings.status === 'stale') reasons.push('EMBEDDINGS_STALE');
+  if ((metadata.frameworkDetections?.length ?? 0) > 0 && !metadata.frameworkFingerprint) reasons.push('FRAMEWORK_FINGERPRINT_MISSING');
+
+  const verificationByArtifact = {
+    graph: metadata.graphVerification,
+    bm25: metadata.bm25Verification,
+    vector: metadata.vectorVerification,
+    evidence: metadata.evidenceVerification,
+  } as const;
+  for (const [name, verification] of Object.entries(verificationByArtifact)) {
+    if (!verification) continue;
+    const artifact = artifacts[name as keyof typeof artifacts];
+    artifact.state = verification.status;
+    artifact.reason = verification.reason ?? artifact.reason;
+    if (verification.status === 'verified' && artifact.exists && artifact.size > 0) artifact.state = 'verified';
+    if (verification.status === 'collapsed') reasons.push(`${name.toUpperCase()}_ARTIFACT_COLLAPSED`);
+    if (verification.status === 'corrupt') reasons.push(`${name.toUpperCase()}_ARTIFACT_CORRUPT`);
+    if (verification.status === 'stale') reasons.push(`${name.toUpperCase()}_ARTIFACT_STALE`);
+    if (verification.status === 'unavailable' && artifact.required) reasons.push(`${name.toUpperCase()}_ARTIFACT_UNAVAILABLE`);
+  }
 
   const currentCommit = readCurrentCommit(repoDir);
   const fresh = !metadata.commitHash || !currentCommit || metadata.commitHash === currentCommit;
   if (!fresh) reasons.push('SOURCE_COMMIT_CHANGED');
 
   const corrupt = reasons.some((reason) =>
-    reason.endsWith('_MISSING') || reason.endsWith('_EMPTY')
-    || reason === 'INDEX_FINGERPRINT_MISMATCH' || reason === 'GENERATION_ID_MISMATCH',
+    (reason.endsWith('_MISSING') && reason !== 'FRAMEWORK_FINGERPRINT_MISSING') || reason.endsWith('_EMPTY')
+    || reason === 'INDEX_FINGERPRINT_MISMATCH' || reason === 'GENERATION_ID_MISMATCH'
+    || reason.endsWith('_COLLAPSED') || reason.endsWith('_CORRUPT') || reason.endsWith('_UNAVAILABLE'),
   );
   const state: IndexTrustState = corrupt
     ? 'corrupt'

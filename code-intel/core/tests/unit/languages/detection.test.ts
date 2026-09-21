@@ -3,30 +3,42 @@ import assert from 'node:assert/strict';
 import { detectLanguage, getSupportedExtensions } from 'code-intel-shared';
 import { Language } from 'code-intel-shared';
 
+const EXPECTED_EXTENSIONS: Array<[string, Language]> = [
+  ['.ts', Language.TypeScript],
+  ['.tsx', Language.TypeScript],
+  ['.mts', Language.TypeScript],
+  ['.cts', Language.TypeScript],
+  ['.js', Language.JavaScript],
+  ['.jsx', Language.JavaScript],
+  ['.mjs', Language.JavaScript],
+  ['.cjs', Language.JavaScript],
+  ['.py', Language.Python],
+  ['.pyi', Language.Python],
+  ['.java', Language.Java],
+  ['.go', Language.Go],
+  ['.c', Language.C],
+  ['.h', Language.C],
+  ['.cpp', Language.Cpp],
+  ['.cxx', Language.Cpp],
+  ['.cc', Language.Cpp],
+  ['.hpp', Language.Cpp],
+  ['.hxx', Language.Cpp],
+  ['.cs', Language.CSharp],
+  ['.rs', Language.Rust],
+  ['.php', Language.PHP],
+  ['.kt', Language.Kotlin],
+  ['.kts', Language.Kotlin],
+  ['.rb', Language.Ruby],
+  ['.swift', Language.Swift],
+  ['.dart', Language.Dart],
+  ['.html', Language.HTML],
+];
+
 describe('Language Detection', () => {
-  it('should detect TypeScript', () => {
-    assert.equal(detectLanguage('src/app.ts'), Language.TypeScript);
-    assert.equal(detectLanguage('src/app.tsx'), Language.TypeScript);
-  });
-
-  it('should detect Python', () => {
-    assert.equal(detectLanguage('main.py'), Language.Python);
-  });
-
-  it('should detect Go', () => {
-    assert.equal(detectLanguage('main.go'), Language.Go);
-  });
-
-  it('should detect Java', () => {
-    assert.equal(detectLanguage('App.java'), Language.Java);
-  });
-
-  it('should detect Rust', () => {
-    assert.equal(detectLanguage('main.rs'), Language.Rust);
-  });
-
-  it('should detect HTML', () => {
-    assert.equal(detectLanguage('index.html'), Language.HTML);
+  it('should preserve extension parity for every supported extension', () => {
+    for (const [extension, language] of EXPECTED_EXTENSIONS) {
+      assert.equal(detectLanguage(`fixture${extension}`), language, `expected ${extension} -> ${language}`);
+    }
   });
 
   it('should return null for unknown extensions', () => {
@@ -36,10 +48,6 @@ describe('Language Detection', () => {
 
   it('should list supported extensions', () => {
     const exts = getSupportedExtensions();
-    assert.ok(exts.includes('.ts'));
-    assert.ok(exts.includes('.py'));
-    assert.ok(exts.includes('.go'));
-    assert.ok(exts.includes('.html'));
-    assert.ok(exts.length > 10);
+    assert.deepEqual(exts, EXPECTED_EXTENSIONS.map(([extension]) => extension));
   });
 });

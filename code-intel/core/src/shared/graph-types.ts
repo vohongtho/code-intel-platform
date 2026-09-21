@@ -18,7 +18,9 @@ export type NodeKind =
   | 'route'
   | 'cluster'
   | 'flow'
-  | 'vulnerability';
+  | 'vulnerability'
+  | 'api_shape'
+  | 'api_consumer';
 
 export type EdgeKind =
   | 'contains'
@@ -34,7 +36,10 @@ export type EdgeKind =
   | 'handles'
   | 'has_vulnerability'
  | 'deprecated_use'
- | 'tested_by';
+ | 'tested_by'
+ | 'accepts_shape'
+ | 'returns_shape'
+ | 'consumes_api';
 
 export type SecuritySignalType =
   | 'SQL_INJECTION'
@@ -71,10 +76,14 @@ export interface CodeNode {
   endLine?: number;
   exported?: boolean;
   content?: string;
+  identityId?: string;
+  legacyIds?: string[];
   metadata?: Record<string, unknown> & {
     securitySignals?: SecuritySignal[];
   };
 }
+
+import type { RelationshipCertainty } from './evidence-types.js';
 
 export interface CodeEdge {
   id: string;
@@ -83,4 +92,12 @@ export interface CodeEdge {
   kind: EdgeKind;
   weight?: number;
   label?: string;
+  callSiteId?: string;
+  confidence?: number;
+  certainty?: RelationshipCertainty;
+  strategy?: string;
+  resolverVersion?: string;
+  evidenceRef?: string;
+  ambiguous?: boolean;
+  metadata?: Record<string, unknown>;
 }

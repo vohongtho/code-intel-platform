@@ -1,0 +1,27 @@
+{
+  "language": "c",
+  "fixtures": {
+    "main": "main.c",
+    "grouped": "grouped.c"
+  },
+  "expected": {
+    "definitions": [
+      "Point",
+      "server_init",
+      "server_start",
+      "parse_config"
+    ],
+    "forbidden": []
+  },
+  "groupedExpected": [
+    "first",
+    "second",
+    "PairOne",
+    "PairTwo"
+  ],
+  "notes": [
+    "Main fixture captures baseline semantic observations.",
+    "Grouped fixture captures multi-declaration or wrapper-contained entities.",
+    "Static C helper visibility remains partial in the current truthful baseline."
+  ]
+}

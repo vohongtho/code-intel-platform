@@ -1,6 +1,6 @@
 {
   "name": "code-intel-platform",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "private": true,
   "license": "MIT",
   "files": [],
@@ -11,6 +11,15 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces",
+    "build:product": "npm run build --workspace=code-intel/shared && npm run build --workspace=code-intel/web && npm run build --workspace=code-intel/core",
+    "clean:product": "npm run clean --workspace=code-intel/shared --if-present && npm run clean --workspace=code-intel/web --if-present && npm run clean --workspace=code-intel/core --if-present && rm -rf code-intel/core/dist-tests code-intel/shared/tsconfig.tsbuildinfo dist/runtime-bundles",
+    "verify:release-metadata": "node scripts/verify-release-metadata.mjs",
+    "verify:runtime-bundle-integrity": "node scripts/verify-runtime-bundle-integrity.mjs",
+    "verify:npm-install": "node scripts/verify-npm-install.mjs",
+    "verify:upgrade-from-1.0.10": "node scripts/verify-upgrade-from-1.0.10.mjs",
+    "verify:packaged-smoke-matrix": "node scripts/verify-packaged-smoke-matrix.mjs",
+    "verify:build-ordering": "node scripts/verify-build-ordering.mjs",
+    "prepare:runtime-native-packages": "node scripts/distribution/prepare-runtime-native-packages.mjs",
     "clean": "npm run clean --workspaces --if-present",
     "lint": "eslint code-intel/*/src/**/*.ts",
     "format": "prettier --write \"code-intel/*/src/**/*.ts\"",
@@ -24,7 +33,12 @@
     "bench": "node eval/run-agent-bench.mjs --json",
     "bench:mcp": "node eval/run-mcp-bench.mjs --json",
     "verify:clean-install": "node scripts/verify-clean-install.mjs",
-    "verify:docker-publish": "node scripts/verify-docker-publish.mjs"
+    "verify:runtime-distribution": "node scripts/verify-runtime-distribution.mjs",
+    "verify:docker-publish": "node scripts/verify-docker-publish.mjs",
+    "distribution:manifest": "node scripts/distribution/runtime-manifest.mjs --json",
+    "distribution:manifest:validate": "node scripts/distribution/runtime-manifest.mjs --validate",
+    "distribution:bundle": "node scripts/distribution/build-runtime-bundle.mjs",
+    "distribution:install": "node scripts/distribution/install/install-runtime.mjs"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.65.0",
@@ -39,7 +53,7 @@
     "@vohongtho.infotech/code-intel": "^1.0.10"
   },
   "overrides": {
-    "sharp": "^0.35.0",
+    "sharp": "0.35.4",
     "adm-zip": "^0.6.0",
     "node-domexception": "^2.0.2",
     "qs": "^6.15.3",
@@ -51,16 +65,37 @@
     "@grpc/grpc-js": "^1.14.4",
     "@modelcontextprotocol/sdk": {
       "hono": "4.13.0",
-      "fast-uri": "3.1.5",
+      "fast-uri": "3.1.7",
       "ip-address": "10.4.0"
     },
     "@hono/node-server": "2.0.11",
-    "fast-uri": "3.1.5",
+    "fast-uri": "3.1.7",
     "ip-address": "10.4.0",
     "nanoid": "^3.3.17",
     "postcss": "^8.5.23",
     "tsup": {
       "esbuild": "^0.28.1"
     }
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true,
+    "onnxruntime-node@1.24.3": true,
+    "tree-sitter-c": true,
+    "tree-sitter-cpp@0.23.4": true,
+    "tree-sitter-cli@0.23.2": true,
+    "tree-sitter-javascript@0.23.1": true,
+    "tree-sitter-java@0.23.5": true,
+    "tree-sitter-html@0.23.2": true,
+    "tree-sitter-dart@1.0.0": true,
+    "tree-sitter-ruby@0.23.1": true,
+    "tree-sitter-swift@0.7.1": true,
+    "tree-sitter-typescript@0.23.2": true,
+    "tree-sitter-kotlin@0.3.8": true,
+    "@ladybugdb/core@0.18.3": true,
+    "tree-sitter-c-sharp": true,
+    "tree-sitter-go": true,
+    "tree-sitter-php": true,
+    "tree-sitter-python": true,
+    "tree-sitter-rust": true
   }
 }

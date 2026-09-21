@@ -1,0 +1,27 @@
+{
+  "language": "swift",
+  "fixtures": {
+    "main": "main.swift",
+    "grouped": "grouped.swift"
+  },
+  "expected": {
+    "definitions": [
+      "UserService",
+      "Point",
+      "UserRepository",
+      "UserRole"
+    ],
+    "forbidden": []
+  },
+  "groupedExpected": [
+    "PairOne",
+    "PairTwo",
+    "first",
+    "second"
+  ],
+  "notes": [
+    "Main fixture captures baseline semantic observations.",
+    "Grouped fixture captures multi-declaration or wrapper-contained entities.",
+    "Function-level Swift method extraction remains partial in the current truthful baseline."
+  ]
+}

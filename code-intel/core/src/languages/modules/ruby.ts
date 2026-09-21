@@ -15,8 +15,14 @@ export const rubyModule: LanguageModule = {
     return workspace.findByPackage(cleaned + '.rb') ?? workspace.findByPackage(cleaned);
   },
 
-  isExported(_node: Node): boolean {
-    return true; // Ruby: methods are public by default
+  isExported(node: Node): boolean {
+    let prev = node.previousSibling;
+    while (prev) {
+      if (prev.type === 'identifier' && prev.text.trim() === 'private') return false;
+      if (prev.type === 'method' || prev.type === 'singleton_method' || prev.type === 'class' || prev.type === 'module') break;
+      prev = prev.previousSibling;
+    }
+    return true;
   },
 
   extractType(_node: Node): string | null {

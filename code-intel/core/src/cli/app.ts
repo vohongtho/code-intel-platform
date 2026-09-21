@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 // path is imported further below as a default import; use that to avoid
 // importing 'node:path' multiple times.
@@ -49,15 +50,22 @@ import { startHttpServer } from '../http/app.js';
 import { startMcpStdio } from '../mcp-server/server.js';
 import { textSearch } from '../search/text-search.js';
 import { resolveEmbeddingUpdatePlan } from '../search/embedding-update-plan.js';
-import { getDefaultEmbeddingModel, getEmbeddingModel, normalizeEmbeddingModelId } from '../search/embedding-model-registry.js';
+import { EMBEDDING_MODELS, getDefaultEmbeddingModel, getEmbeddingModel, normalizeEmbeddingModelId } from '../search/embedding-model-registry.js';
 import type { PipelineContext } from '../pipeline/types.js';
 import { saveMetadata, loadMetadata, getDbPath, getVectorDbPath, loadAgentTargets, saveAgentTargets, computeIndexVersion, resolveEmbeddingMode, shouldRebuildEmbeddings, resolveAnalyzeMode, resolveParserForMetadata, type AgentTargetConfig, type AgentTargetSelection, type AgentTargetFormat, type EmbeddingMetadata } from '../storage/metadata.js';
+import { API_CONTRACT_SCHEMA_VERSION } from '../semantic/api-contracts/types.js';
+import { buildAnalyzerCompatibilityReceipt, buildFrameworkFingerprint, CURRENT_IDENTITY_FINGERPRINT } from '../pipeline/compatibility-receipt.js';
+import { computeSemanticGraphDiff } from '../snapshots/service.js';
+import { listChangedFilesBetweenRefs } from '../snapshots/git-materializer.js';
 import { resolveIndexSnapshot } from '../storage/index-snapshot.js';
 import { writeContextFiles } from './context-writer.js';
+import { installWorkflows, planWorkflowInstall } from '../agents/workflows/installer.js';
 import { AGENT_OPTIONS, isValidRepoRelativeTargetPath, resolveBuiltinTarget } from './agent-targets.js';
 import { resolveSetupPlan, type SetupPlan } from './setup-plan.js';
 import { upsertRepo, loadRegistry, findRepoByName, findRepoByPath, renameRepo, relinkRepo, removeRepo } from '../storage/repo-registry.js';
 import { DbManager, loadGraphToDB, removeNodesForFile } from '../storage/index.js';
+import { detectLanguage, type CodeNode } from '../shared/index.js';
+import { RESOLVER_VERSION } from '../resolution/contracts.js';
 import {
   getCurrentCommitHash,
   decideIncremental,
@@ -78,6 +86,8 @@ import {
 } from '../multi-repo/group-registry.js';
 import { syncGroup } from '../multi-repo/group-sync.js';
 import { queryGroup } from '../multi-repo/group-query.js';
+import { getGroupContractDrift } from '../multi-repo/contract-drift/service.js';
+import type { Contract } from '../multi-repo/types.js';
 import { detectWorkspace } from '../multi-repo/workspace-detector.js';
 import { getOrCreateUsersDB } from '../auth/users-db.js';
 import type { Role } from '../auth/users-db.js';
@@ -119,6 +129,7 @@ import {
 import { generateCompletion, autoInstallCompletion } from './completion.js';
 import { backgroundVersionCheck, runUpdate } from './update-checker.js';
 import { runRewrite, runClaudeHook } from './hook-rewriter.js';
+import { resolveStableHookCommand, resolveStableMcpConfig } from './runtime-command.js';
 
 // ── Hook mode detection ───────────────────────────────────────────────────────
 // When called as `code-intel hook <agent>`, the process runs on EVERY Bash
@@ -252,6 +263,7 @@ program
   │    code-intel group contracts <name>        Inspect extracted contracts and confidence-ranked cross-links         │
   │    code-intel group query <name> <q>        Run a merged RRF search across every repository in a group           │
   │    code-intel group status <name>           Audit index freshness and sync staleness for all group members        │
+  │    code-intel group drift <name>            Compare synchronized group contracts across Git refs for findings     │
   │                                                                                                                    │
   └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 
@@ -411,6 +423,10 @@ function buildEmbeddingMetadata(status: 'ready' | 'stale', modelId?: string): Em
     model: descriptor.id,
     dimension: descriptor.dimension,
   };
+}
+
+function sha256(value: unknown): string {
+  return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
 
 async function analyzeWorkspace(targetPath: string, options?: {
@@ -586,6 +602,7 @@ async function analyzeWorkspace(targetPath: string, options?: {
   let scannedFilePaths: string[] = [];
   let zeroChangeIncremental = false;
   let fullIndexGraph: KnowledgeGraph | null = null;
+  const currentIdentityFingerprint = CURRENT_IDENTITY_FINGERPRINT;
   const analyzeMode = resolveAnalyzeMode({
     explicitIncremental: options?.incremental,
     force: options?.force,
@@ -593,57 +610,63 @@ async function analyzeWorkspace(targetPath: string, options?: {
   });
   if (analyzeMode.attemptIncremental) {
     const prevMeta = previousMetadata;
-    const scanResult = await runPipeline([scanPhase], context);
-    scannedFilePaths = [...context.filePaths];
-    if (scanResult.success) {
-      const decision = decideIncremental(
-        workspaceRoot,
-        scannedFilePaths,
-        prevMeta?.commitHash,
-        prevMeta?.lastAnalyzedMtimes,
-      );
-      // Preserve the detected change set even when graph analysis deliberately
-      // falls back to a clean full rebuild for cross-file correctness.
-      detectedChangedFiles = decision.changedExistingFiles ?? [];
-      detectedDeletedFiles = decision.deletedFiles ?? [];
-      detectedChangeSetKnown = true;
-      if (decision.incremental) {
-        const dbPath = getDbPath(workspaceRoot);
-        if (fs.existsSync(dbPath)) {
-          fullIndexGraph = activeGraph;
-          const db = new DbManager(dbPath, true);
-          await db.init();
-          await loadGraphFromDB(fullIndexGraph, db);
-          db.close();
-          activeGraph = fullIndexGraph;
-          context.graph = fullIndexGraph;
-          isIncremental = true;
-          incrementalChangedFiles = detectedChangedFiles;
-          incrementalDeletedFiles = detectedDeletedFiles;
-          removeAffectedNodesFromGraph(fullIndexGraph, workspaceRoot, incrementalChangedFiles, incrementalDeletedFiles);
-          if (!options?.silent) {
-            const label = analyzeMode.source === 'auto' ? 'Auto-incremental' : 'Incremental';
-            console.log(`  ◈ ${label}: ${incrementalChangedFiles.length} changed file(s), ${incrementalDeletedFiles.length} deleted file(s) of ${decision.totalFiles ?? scannedFilePaths.length} total`);
+    if (prevMeta?.identityFingerprint && prevMeta.identityFingerprint !== currentIdentityFingerprint) {
+      if (!options?.silent) {
+        console.log(`  ◈ Falling back to full analysis: identity fingerprint changed from ${prevMeta.identityFingerprint} to ${currentIdentityFingerprint}`);
+      }
+      Logger.info(`[incremental] fallback: identity fingerprint changed from ${prevMeta.identityFingerprint} to ${currentIdentityFingerprint}`);
+      context.filePaths = [];
+    } else {
+      const scanResult = await runPipeline([scanPhase], context);
+      scannedFilePaths = [...context.filePaths];
+      if (scanResult.success) {
+        const decision = decideIncremental(
+          workspaceRoot,
+          scannedFilePaths,
+          prevMeta?.commitHash,
+          prevMeta?.lastAnalyzedMtimes,
+        );
+        detectedChangedFiles = decision.changedExistingFiles ?? [];
+        detectedDeletedFiles = decision.deletedFiles ?? [];
+        detectedChangeSetKnown = true;
+        if (decision.incremental) {
+          const dbPath = getDbPath(workspaceRoot);
+          if (fs.existsSync(dbPath)) {
+            fullIndexGraph = activeGraph;
+            const db = new DbManager(dbPath, true);
+            await db.init();
+            await loadGraphFromDB(fullIndexGraph, db);
+            db.close();
+            activeGraph = fullIndexGraph;
+            context.graph = fullIndexGraph;
+            isIncremental = true;
+            incrementalChangedFiles = detectedChangedFiles;
+            incrementalDeletedFiles = detectedDeletedFiles;
+            removeAffectedNodesFromGraph(fullIndexGraph, workspaceRoot, incrementalChangedFiles, incrementalDeletedFiles);
+            if (!options?.silent) {
+              const label = analyzeMode.source === 'auto' ? 'Auto-incremental' : 'Incremental';
+              console.log(`  ◈ ${label}: ${incrementalChangedFiles.length} changed file(s), ${incrementalDeletedFiles.length} deleted file(s) of ${decision.totalFiles ?? scannedFilePaths.length} total`);
+            }
+            Logger.info(`[incremental] re-parsing ${incrementalChangedFiles.length} files; deleting ${incrementalDeletedFiles.length} files`);
+            zeroChangeIncremental = incrementalChangedFiles.length === 0 && incrementalDeletedFiles.length === 0;
+            context.filePaths = incrementalChangedFiles;
+          } else {
+            if (!options?.silent && analyzeMode.source === 'auto') {
+              console.log('  ◈ Auto-incremental unavailable: existing graph.db missing');
+            }
+            Logger.info('[incremental] fallback: existing graph.db missing');
+            context.filePaths = [];
           }
-          Logger.info(`[incremental] re-parsing ${incrementalChangedFiles.length} files; deleting ${incrementalDeletedFiles.length} files`);
-          zeroChangeIncremental = incrementalChangedFiles.length === 0 && incrementalDeletedFiles.length === 0;
-          context.filePaths = incrementalChangedFiles;
         } else {
-          if (!options?.silent && analyzeMode.source === 'auto') {
-            console.log('  ◈ Auto-incremental unavailable: existing graph.db missing');
+          if (!options?.silent) {
+            if (analyzeMode.source === 'auto') {
+              console.log(`  ◈ Auto-incremental unavailable: ${decision.fallbackReason}`);
+            }
+            console.log(`  ◈ Falling back to full analysis: ${decision.fallbackReason}`);
           }
-          Logger.info('[incremental] fallback: existing graph.db missing');
+          Logger.info(`[incremental] fallback: ${decision.fallbackReason}`);
           context.filePaths = [];
         }
-      } else {
-        if (!options?.silent) {
-          if (analyzeMode.source === 'auto') {
-            console.log(`  ◈ Auto-incremental unavailable: ${decision.fallbackReason}`);
-          }
-          console.log(`  ◈ Falling back to full analysis: ${decision.fallbackReason}`);
-        }
-        Logger.info(`[incremental] fallback: ${decision.fallbackReason}`);
-        context.filePaths = [];
       }
     }
   }
@@ -752,17 +775,31 @@ async function analyzeWorkspace(targetPath: string, options?: {
   const indexedGraph = fullIndexGraph ?? activeGraph;
   const indexedFileCount = isIncremental ? snapshotSourcePaths.length : context.filePaths.length;
 
-  const savedRepo = upsertRepo({
-    id: existingByPath?.id,
-    name: repoName,
-    path: workspaceRoot,
-    indexedAt: new Date().toISOString(),
-    stats: {
-      nodes: indexedGraph.size.nodes,
-      edges: indexedGraph.size.edges,
-      files: indexedFileCount,
-    },
-  });
+  // Semantic snapshot builds (see src/snapshots/) analyze throwaway Git-worktree
+  // checkouts that are deleted moments later. Registering them here would leave
+  // dangling registry entries pointing at removed directories, so this internal
+  // coordination flag (set only by the snapshot builder's spawned child, the same
+  // pattern as CODE_INTEL_ATOMIC_CHILD/CODE_INTEL_INDEX_STAGING_DIR) skips it.
+  const isSnapshotBuild = process.env['CODE_INTEL_SNAPSHOT_BUILD'] === '1';
+  const savedRepo = isSnapshotBuild
+    ? {
+        id: existingByPath?.id ?? crypto.randomUUID(),
+        name: repoName,
+        path: workspaceRoot,
+        indexedAt: new Date().toISOString(),
+        stats: { nodes: indexedGraph.size.nodes, edges: indexedGraph.size.edges, files: indexedFileCount },
+      }
+    : upsertRepo({
+        id: existingByPath?.id,
+        name: repoName,
+        path: workspaceRoot,
+        indexedAt: new Date().toISOString(),
+        stats: {
+          nodes: indexedGraph.size.nodes,
+          edges: indexedGraph.size.edges,
+          files: indexedFileCount,
+        },
+      });
 
   // Persist graph to LadybugDB — atomic swap: write to graph.db.new then rename
   let graphPersisted = false;
@@ -817,13 +854,14 @@ async function analyzeWorkspace(targetPath: string, options?: {
   }
 
   // BM25 pre-built inverted index
+  let bm25DocCount = previousMetadata?.bm25Verification?.persistedCount ?? 0;
   const shouldPersistBm25 = !isIncremental || incrementalChangedFiles.length > 0 || incrementalDeletedFiles.length > 0;
   if (shouldPersistBm25) {
     startSpinner('Building BM25 inverted index');
     try {
       const { Bm25Index, getBm25DbPath } = await import('../search/bm25-index.js');
       const bm25 = new Bm25Index(getBm25DbPath(workspaceRoot));
-      bm25.build(indexedGraph);
+      bm25DocCount = bm25.build(indexedGraph).docCount;
       stopSpinner();
       if (!options?.silent) console.log(`  ✓ BM25 index built`);
     } catch (err) {
@@ -936,6 +974,19 @@ async function analyzeWorkspace(targetPath: string, options?: {
   if (graphPersisted) {
     const indexedAt = new Date().toISOString();
     const schemaVersion = CURRENT_SCHEMA_VERSION;
+    const factDiagnostics = context.factDiagnostics ?? [];
+    const factSchemaVersion = context.factSchemaVersion;
+    const parser = resolveParserForMetadata(context.parserUsed, previousMetadata);
+    const identityFingerprint = context.identityFingerprint ?? currentIdentityFingerprint;
+    const compatibilityReceipt = buildAnalyzerCompatibilityReceipt({
+      parser,
+      factSchemaVersion,
+      identityFingerprint,
+      resolverFingerprint: context.resolverFingerprint,
+      embeddingMetadata: embeddingMetadataForSave,
+    });
+    const frameworkDetections = (context.frameworkDetections ?? []).map((item) => item.frameworkId).sort();
+    const frameworkFingerprint = buildFrameworkFingerprint(context.frameworkDetections ?? [], factSchemaVersion);
     saveMetadata(workspaceRoot, {
       indexedAt,
       schemaVersion,
@@ -943,7 +994,43 @@ async function analyzeWorkspace(targetPath: string, options?: {
       repoId: savedRepo.id,
       commitHash: currentCommitHash,
       lastAnalyzedMtimes: mergedMtimes,
-      parser: resolveParserForMetadata(context.parserUsed, previousMetadata),
+      parser,
+      compatibilityReceipt,
+      factSchemaVersion,
+      factSchemaFingerprint: compatibilityReceipt.factSchemaFingerprint,
+      identityFingerprint,
+      resolverVersion: context.resolverVersion,
+      resolverFingerprint: compatibilityReceipt.resolverFingerprint,
+      evidenceSchemaVersion: context.evidenceSchemaVersion,
+      evidenceSchemaFingerprint: compatibilityReceipt.evidenceFingerprint,
+      apiContractSchemaVersion: API_CONTRACT_SCHEMA_VERSION,
+      apiContractFingerprint: compatibilityReceipt.apiContractFingerprint,
+      graphVerification: context.graphVerification,
+      bm25Verification: {
+        status: 'verified',
+        producedCount: bm25DocCount,
+        persistedCount: bm25DocCount,
+        contentFingerprint: sha256({ docCount: bm25DocCount }),
+      },
+      vectorVerification: embeddingMetadataForSave?.enabled
+        ? {
+            status: embeddingMetadataForSave.status === 'ready' ? 'verified' : 'stale',
+            producedCount: indexedGraph.size.nodes,
+            persistedCount: indexedGraph.size.nodes,
+            contentFingerprint: compatibilityReceipt.embeddingFingerprint,
+            reason: embeddingMetadataForSave.status === 'ready' ? undefined : 'embedding metadata marked stale',
+          }
+        : {
+            status: 'unavailable',
+            producedCount: 0,
+            persistedCount: 0,
+            reason: 'embeddings disabled',
+          },
+      evidenceVerification: context.evidenceVerification,
+      evolutionAction: context.evolutionAction,
+      frameworkFingerprint,
+      frameworkDetections: frameworkDetections.length > 0 ? frameworkDetections : undefined,
+      factDiagnostics: factDiagnostics.length > 0 ? factDiagnostics : undefined,
       embeddings: embeddingMetadataForSave ?? (embeddingBuildFailed ? buildEmbeddingMetadata('stale') : undefined),
       stats: {
         nodes: indexedGraph.size.nodes,
@@ -969,6 +1056,20 @@ async function analyzeWorkspace(targetPath: string, options?: {
       Logger.info(`Context files written: ${agentTargets.length} target(s)`);
       if (!options?.silent) {
         console.log(`  ✓ Context: ${agentTargets.length} selected target(s) updated`);
+      }
+
+      const workflowStates = installWorkflows(workspaceRoot, agentTargets.map((t) => t.agentId));
+      const workflowWritten = workflowStates.filter((s) => s.action === 'create' || s.action === 'update').length;
+      const workflowConflicts = workflowStates.filter((s) => s.action === 'conflict');
+      Logger.info(`Workflow skills: ${workflowWritten} written, ${workflowConflicts.length} conflict(s)`);
+      if (!options?.silent && workflowWritten > 0) {
+        console.log(`  ✓ Workflows: ${workflowWritten} skill file(s) written`);
+      }
+      for (const conflict of workflowConflicts) {
+        Logger.warn(`Workflow skill '${conflict.workflowId}' for '${conflict.agentId}' not updated: ${conflict.reason} (${conflict.relativePath})`);
+        if (!options?.silent) {
+          console.log(`  ⚠ Workflows: ${conflict.relativePath} was modified — left untouched (${conflict.reason})`);
+        }
       }
     } catch (err) {
       stopSpinner();
@@ -1000,9 +1101,11 @@ async function analyzeWorkspace(targetPath: string, options?: {
         if (!options?.silent) console.log(`  ⠹ Syncing group '${g.name}'…`);
         try {
           const { syncGroup: doSyncGroup } = await import('../multi-repo/group-sync.js');
-          const { saveSyncResult: doSaveSyncResult } = await import('../multi-repo/group-registry.js');
+          const { saveSyncResult: doSaveSyncResult, verifySyncResultReadBack: doVerifySyncResultReadBack } = await import('../multi-repo/group-registry.js');
           const syncResult = await doSyncGroup(group);
           doSaveSyncResult(syncResult);
+          const verified = doVerifySyncResultReadBack(syncResult);
+          if (!verified.ok) throw new Error(`group sync read-back validation failed: ${verified.reason}`);
           group.lastSync = syncResult.syncedAt;
           const { saveGroup: doSaveGroup } = await import('../multi-repo/group-registry.js');
           doSaveGroup(group);
@@ -1146,7 +1249,9 @@ program
 
 // ─── Claude Code hook installation helpers ────────────────────────────────────
 
-const CODE_INTEL_HOOK_CMD = 'code-intel-hook claude';
+function codeIntelHookCommand(agent: string): string {
+  return resolveStableHookCommand(agent, process.argv[1]);
+}
 const CODE_INTEL_CURSOR_HOOK_CMD = 'code-intel-hook cursor';
 const CODE_INTEL_GEMINI_HOOK_CMD = 'code-intel-hook gemini';
 
@@ -1188,7 +1293,7 @@ function insertHookEntry(root: SettingsJson): SettingsJson {
 
   const newEntry: SettingsPreToolUseEntry = {
     matcher: 'Bash',
-    hooks: [{ type: 'command', command: CODE_INTEL_HOOK_CMD }],
+    hooks: [{ type: 'command', command: codeIntelHookCommand('claude') }],
   };
 
   // PREPEND so code-intel runs before RTK — prevents RTK from rewriting
@@ -1264,7 +1369,7 @@ function installClaudeHook(): HookInstallResult {
 const COPILOT_HOOK_JSON_CONTENT = JSON.stringify({
   hooks: {
     PreToolUse: [
-      { type: 'command', command: CODE_INTEL_HOOK_CMD.replace('claude', 'copilot'), cwd: '.', timeout: 5 },
+      { type: 'command', command: codeIntelHookCommand('copilot'), cwd: '.', timeout: 5 },
     ],
   },
 }, null, 2) + '\n';
@@ -1704,11 +1809,12 @@ program
     console.log('\n  ◈  Code Intelligence — MCP Setup\n');
     printSetupSelection(plan);
 
+    const stableMcp = resolveStableMcpConfig(plan.repositoryRoot, process.argv[1]);
     const mcpConfig = {
       mcpServers: {
         'code-intel': {
-command: 'npx',
-args: ['code-intel', 'mcp', plan.repositoryRoot],
+command: stableMcp.command,
+args: stableMcp.args,
         },
       },
     };
@@ -1912,6 +2018,16 @@ program
       const estimatedStr = estimatedMs >= 1000 ? `~${(estimatedMs / 1000).toFixed(1)}s` : `~${estimatedMs}ms`;
       console.log(`\n  ◈  Dry run — ${workspaceRoot}\n`);
       console.log(`  Would analyze ${fileCount.toLocaleString()} files (${estimatedStr} estimated).`);
+      if (!opts.skipAgentsMd) {
+        const agentTargets = await getOrCreateAgentTargets(workspaceRoot, true);
+        const workflowStates = planWorkflowInstall(workspaceRoot, agentTargets.map((t) => t.agentId));
+        const byAction = { create: 0, update: 0, skip: 0, conflict: 0, 'not-supported': 0 };
+        for (const state of workflowStates) byAction[state.action]++;
+        console.log(`  Workflow skills: ${byAction.create} create, ${byAction.update} update, ${byAction.skip} unchanged, ${byAction.conflict} conflict, ${byAction['not-supported']} not-supported`);
+        for (const state of workflowStates.filter((s) => s.action === 'conflict')) {
+          console.log(`    ⚠ ${state.relativePath} (${state.agentId}/${state.workflowId}): ${state.reason}`);
+        }
+      }
       console.log('  Pass without --dry-run to execute.\n');
       process.exit(0);
     }
@@ -2680,6 +2796,59 @@ program
     console.log('');
   });
 
+// ─── inspect: optional program-analysis evidence ─────────────────────────────
+// Best-effort only: a function/method target gets a lazily-computed summary
+// (parameter-to-return influence, called functions) appended to its normal
+// caller/callee output. Any failure — unsupported language, no lowering
+// table, a parse miss — degrades to `null`, which the caller renders as
+// simply omitting the section; it never changes existing inspect behavior
+// or output for a target this doesn't apply to. `program-analysis/pipeline.js`
+// is imported dynamically so it stays out of any static import closure.
+interface InspectProgramAnalysis {
+  truncated: boolean;
+  parameters: Array<{ name: string; influencesReturn: boolean }>;
+  calledFunctions: string[];
+  localVariableCount: number;
+}
+
+async function tryInspectProgramAnalysis(node: CodeNode, repoPath: string): Promise<InspectProgramAnalysis | null> {
+  if (node.kind !== 'function' && node.kind !== 'method') return null;
+  if (!node.startLine) return null;
+  try {
+    const language = detectLanguage(node.filePath);
+    if (!language) return null;
+    const { analyzeFunction } = await import('../program-analysis/pipeline.js');
+    const workspaceRoot = path.resolve(repoPath);
+    const absoluteFilePath = path.isAbsolute(node.filePath) ? node.filePath : path.join(workspaceRoot, node.filePath);
+    const rawParameters = Array.isArray(node.metadata?.parameters) ? (node.metadata.parameters as Array<{ name?: unknown }>) : [];
+    const parameterNames = rawParameters
+      .map((p) => (typeof p?.name === 'string' ? p.name : undefined))
+      .filter((n): n is string => !!n);
+
+    const result = await analyzeFunction({
+      language,
+      filePath: absoluteFilePath,
+      startLine: node.startLine,
+      canonicalFunctionId: node.identityId ?? node.id,
+      parameterNames,
+      resolverVersion: RESOLVER_VERSION,
+    });
+    if (result.capability !== 'supported' || !result.summary) return null;
+
+    return {
+      truncated: result.summary.truncated,
+      parameters: result.summary.parameterInfluence.map((p) => ({
+        name: p.parameterName,
+        influencesReturn: p.influencesReturnAtStatementIds.length > 0,
+      })),
+      calledFunctions: result.summary.calledCallees.map((c) => c.calleeText),
+      localVariableCount: result.summary.localAccesses.length,
+    };
+  } catch {
+    return null;
+  }
+}
+
 // ─── 9. inspect ──────────────────────────────────────────────────────────────
 program
   .command('inspect')
@@ -2731,6 +2900,7 @@ program
     const outgoing = [...graph.findEdgesFrom(node.id)];
     const callers = incoming.filter((e) => e.kind === 'calls');
     const callees = outgoing.filter((e) => e.kind === 'calls');
+    const programAnalysis = await tryInspectProgramAnalysis(node, options.path);
     if (options.json) {
       console.log(JSON.stringify({
         status: 'found', symbol: {
@@ -2739,6 +2909,7 @@ program
         },
         callers: callers.map((edge) => graph.getNode(edge.source)).filter(Boolean),
         callees: callees.map((edge) => graph.getNode(edge.target)).filter(Boolean),
+        ...(programAnalysis ? { programAnalysis } : {}),
       }, null, 2));
       return;
     }
@@ -2761,6 +2932,16 @@ program
         console.log(`       →  ${n?.name ?? c.target}  (${n?.filePath})`);
       }
       if (callees.length > 10) console.log(`       … and ${callees.length - 10} more`);
+    }
+    if (programAnalysis) {
+      console.log(`\n     Program analysis${programAnalysis.truncated ? ' (partial)' : ''}:`);
+      if (programAnalysis.parameters.length > 0) {
+        const flagged = programAnalysis.parameters.filter((p) => p.influencesReturn).map((p) => p.name);
+        console.log(`       Parameters influencing return: ${flagged.length > 0 ? flagged.join(', ') : 'none detected'}`);
+      }
+      if (programAnalysis.calledFunctions.length > 0) {
+        console.log(`       Calls: ${programAnalysis.calledFunctions.slice(0, 10).join(', ')}${programAnalysis.calledFunctions.length > 10 ? ', …' : ''}`);
+      }
     }
     console.log('');
   });
@@ -2878,6 +3059,93 @@ program
     }
   });
 
+// ─── graph ───────────────────────────────────────────────────────────────────
+const graphCmd = program
+  .command('graph')
+  .description('Semantic graph snapshot and comparison commands');
+
+graphCmd
+  .command('diff')
+  .description('Compare the semantic graph between two Git refs (branches, tags, or commits)')
+  .requiredOption('--base <ref>', 'Base ref to compare from')
+  .requiredOption('--head <ref>', 'Head ref to compare to')
+  .option('-p, --path <path>', 'Path to the repository (default: current directory)', '.')
+  .option('--json', 'Output raw JSON instead of a human-readable summary')
+  .option('--no-contracts', 'Skip API-contract delta computation')
+  .option('--no-cache', 'Force a full rebuild of both snapshots, ignoring any cached entry')
+  .addHelpText('after', `
+  Independently analyzes two Git refs in isolated temporary checkouts — never
+  touching your working tree, index, or HEAD, and never publishing to this
+  repository's current index — then compares the resulting semantic graphs:
+  added/removed/changed/moved/renamed symbols, relationship and certainty
+  changes, and (unless --no-contracts) API-contract deltas.
+
+  Snapshots are cached per (ref, analyzer version) under
+  .code-intel/snapshots/ so repeated diffs against an unchanged ref are fast.
+
+  Examples:
+    $ code-intel graph diff --base main --head feature/my-branch
+    $ code-intel graph diff --base v1.2.0 --head v1.3.0 --json
+    $ code-intel graph diff --base main --head HEAD --no-contracts
+`)
+  .action(async (options: { base: string; head: string; path: string; json?: boolean; contracts?: boolean; cache?: boolean }) => {
+    const repoDir = path.resolve(options.path);
+    const { diff, base, head } = await computeSemanticGraphDiff({
+      repoDir,
+      base: options.base,
+      head: options.head,
+      includeContracts: options.contracts !== false,
+      allowCache: options.cache !== false,
+    });
+
+    if (options.json) {
+      console.log(JSON.stringify({ diff, base, head }, null, 2));
+      if (!diff) process.exitCode = 1;
+      return;
+    }
+
+    if (!diff) {
+      console.error('\n  ✗ Semantic graph diff unavailable\n');
+      for (const boundary of [...base.boundaries, ...head.boundaries]) {
+        console.error(`    ${boundary.kind}: ${boundary.message}`);
+      }
+      if (base.error) console.error(`    base: ${base.error}`);
+      if (head.error) console.error(`    head: ${head.error}`);
+      console.error('');
+      process.exitCode = 1;
+      return;
+    }
+
+    const nodeCounts = { added: 0, removed: 0, changed: 0, moved: 0 };
+    for (const node of diff.nodes) {
+      if (node.kind === 'moved' || node.kind === 'renamed') nodeCounts.moved += 1;
+      else if (node.kind === 'added') nodeCounts.added += 1;
+      else if (node.kind === 'removed') nodeCounts.removed += 1;
+      else if (node.kind === 'changed') nodeCounts.changed += 1;
+    }
+    const edgeCounts = { added: 0, removed: 0, changed: 0 };
+    for (const edge of diff.relationships) {
+      if (edge.kind === 'added') edgeCounts.added += 1;
+      else if (edge.kind === 'removed') edgeCounts.removed += 1;
+      else if (edge.kind === 'changed') edgeCounts.changed += 1;
+    }
+
+    console.log(`\n  ◈  Semantic graph diff: ${options.base} → ${options.head}\n`);
+    console.log(`     Base     : ${base.descriptor?.commit ?? options.base}${base.fromCache ? ' (cached)' : ''}`);
+    console.log(`     Head     : ${head.descriptor?.commit ?? options.head}${head.fromCache ? ' (cached)' : ''}`);
+    console.log(`     Coverage : ${diff.coverage.complete ? 'complete' : 'PARTIAL'}`);
+    console.log(`     Nodes    : +${nodeCounts.added} -${nodeCounts.removed} ~${nodeCounts.changed} ↔${nodeCounts.moved} (${diff.nodes.length} total)`);
+    console.log(`     Edges    : +${edgeCounts.added} -${edgeCounts.removed} ~${edgeCounts.changed} (${diff.relationships.length} total)`);
+    if (diff.contracts) {
+      console.log(`     API      : ${diff.contracts.findings.length} finding(s)`);
+    }
+    if (!diff.coverage.complete) {
+      console.log('\n  ⚠  Partial coverage — some deltas may be missing:');
+      for (const reason of diff.coverage.incompleteReasons) console.log(`     - ${reason}`);
+    }
+    console.log(`\n  Run with --json for the full machine-readable diff.\n`);
+  });
+
 // ─── 11. group ───────────────────────────────────────────────────────────────
 const groupCmd = program
   .command('group')
@@ -2895,12 +3163,15 @@ const groupCmd = program
     contracts <name>                     View extracted contracts and links
     query <name> <q>                     Search across all repos in the group
     status <name>                        Check index freshness of group members
+    drift <name> --base <ref> --head <ref>
+                                          Compare group contracts across Git refs
 
   Examples:
     $ code-intel group create my-platform
     $ code-intel group add my-platform services/auth auth-service
     $ code-intel group sync my-platform
     $ code-intel group contracts my-platform --kind route
+    $ code-intel group drift my-platform --base main --head HEAD
 `);
 
 // group create <name>
@@ -3060,6 +3331,11 @@ groupCmd
     const result = await syncGroup(group);
 
     saveSyncResult(result);
+    {
+      const { verifySyncResultReadBack } = await import('../multi-repo/group-registry.js');
+      const verified = verifySyncResultReadBack(result);
+      if (!verified.ok) throw new Error(`group sync read-back validation failed: ${verified.reason}`);
+    }
     group.lastSync = result.syncedAt;
     saveGroup(group);
 
@@ -3224,6 +3500,86 @@ groupCmd
     }
   });
 
+// group drift <name>
+groupCmd
+  .command('drift <name>')
+  .description('Compare synchronized group contracts across Git refs for compatibility findings')
+  .requiredOption('--base <ref>', 'Base Git ref (branch/tag/commit)')
+  .requiredOption('--head <ref>', 'Head Git ref (branch/tag/commit)')
+  .option('--kind <kind>', 'Restrict analysis to one contract kind: export | route | schema | event | graphql | grpc')
+  .option('--repo <repo>', 'Restrict analysis to one member repo, by registry name')
+  .option('-l, --limit <n>', 'Presentation limit for returned findings; analysis still computes total findings')
+  .option('--no-cache', 'Force a full rebuild of both snapshots, ignoring any cached entry')
+  .option('--json', 'Output raw JSON instead of a human-readable summary')
+  .addHelpText('after', `
+  Compares each member repo's contracts (HTTP routes, shared schemas, events)
+  between two Git refs using the same immutable per-repo snapshots as
+  \`graph diff\`, then classifies findings compatible / potentially-breaking /
+  breaking / unknown with certainty, coverage, and known-consumer scope.
+
+  Examples:
+    $ code-intel group drift my-platform --base main --head HEAD
+    $ code-intel group drift my-platform --base main --head HEAD --kind schema
+    $ code-intel group drift my-platform --base main --head HEAD --repo auth-service --json
+`)
+  .action(async (name: string, opts: { base: string; head: string; kind?: string; repo?: string; limit?: string; cache?: boolean; json?: boolean }) => {
+    if (!loadGroup(name)) {
+      console.error(`\n  ✗  Group "${name}" not found.\n`);
+      process.exit(1);
+    }
+
+    let repositoryId: string | undefined;
+    if (opts.repo) {
+      const regEntry = loadRegistry().find((r) => r.name === opts.repo);
+      if (!regEntry) {
+        console.error(`\n  ✗  Registry entry "${opts.repo}" not found.\n`);
+        process.exit(1);
+      }
+      repositoryId = regEntry.id;
+    }
+
+    try {
+      const result = await getGroupContractDrift({
+        groupName: name,
+        baseRef: opts.base,
+        headRef: opts.head,
+        kind: opts.kind as Contract['kind'] | undefined,
+        repositoryId,
+        limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+        allowCache: opts.cache !== false,
+      });
+
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      console.log(`\n  ◈  Contract drift: ${name} (${opts.base} → ${opts.head})\n`);
+      console.log(`     Findings : ${result.totalFindings} (breaking ${result.summary.byCompatibility.breaking}, potentially-breaking ${result.summary.byCompatibility['potentially-breaking']}, unknown ${result.summary.byCompatibility.unknown}, compatible ${result.summary.byCompatibility.compatible})`);
+      console.log(`     Coverage : ${result.summary.coverage.complete ? 'complete' : 'PARTIAL'}`);
+      if (!result.summary.coverage.complete) {
+        for (const reason of result.summary.coverage.incompleteReasons) console.log(`       ⚠  ${reason}`);
+      }
+      if (result.findings.length === 0) {
+        console.log('\n  No findings.\n');
+        return;
+      }
+      console.log(`\n  Findings shown (${result.findings.length}):\n`);
+      for (const finding of result.findings) {
+        const marker = finding.compatibility === 'breaking' ? '✗' : finding.compatibility === 'potentially-breaking' ? '⚠' : finding.compatibility === 'unknown' ? '?' : '✓';
+        console.log(`  ${marker}  [${finding.compatibility}]  ${finding.repositoryId} ∷ ${finding.kind} — ${finding.changeKind}`);
+        console.log(`       ${finding.summary}`);
+        if (finding.affectedConsumers.length > 0) {
+          console.log(`       consumers: ${finding.affectedConsumers.map((c) => `${c.repositoryId}:${c.consumerId}`).join(', ')}`);
+        }
+      }
+      console.log('');
+    } catch (err) {
+      console.error(`\n  ✗  ${err instanceof Error ? err.message : err}\n`);
+      process.exit(1);
+    }
+  });
+
 // group init-workspace [path]
 groupCmd
   .command('init-workspace [path]')
@@ -3314,6 +3670,11 @@ groupCmd
       const group = loadGroup(groupName)!;
       const syncResult = await syncGroup(group);
       saveSyncResult(syncResult);
+      {
+        const { verifySyncResultReadBack } = await import('../multi-repo/group-registry.js');
+        const verified = verifySyncResultReadBack(syncResult);
+        if (!verified.ok) throw new Error(`group sync read-back validation failed: ${verified.reason}`);
+      }
       group.lastSync = syncResult.syncedAt;
       saveGroup(group);
       console.log(`  ✅  Sync complete — ${syncResult.contracts.length} contracts, ${syncResult.links.length} cross-links`);
@@ -4351,18 +4712,13 @@ program
     const repoPath = path.resolve(opts.path ?? '.');
 
     // 1. Get changed files via git diff
-    const { execSync } = await import('node:child_process');
-    let diff: string;
+    let changedFiles: string[];
     try {
-      diff = execSync(`git diff --name-only ${opts.base}..${opts.head}`, {
-        cwd: repoPath,
-        encoding: 'utf-8',
-      });
+      changedFiles = listChangedFilesBetweenRefs(repoPath, opts.base, opts.head);
     } catch (err) {
       console.error(`\n  ✗  git diff failed: ${(err as Error).message}\n`);
       process.exit(1);
     }
-    const changedFiles = diff.trim().split('\n').filter(Boolean);
 
     if (changedFiles.length === 0) {
       if (opts.format === 'json') {
@@ -4449,6 +4805,142 @@ program
     } else if (failOn === 'MEDIUM' && (result.riskSummary.HIGH > 0 || result.riskSummary.MEDIUM > 0)) {
       process.exit(1);
     }
+  });
+
+// ─── api-contract / api-impact / api-drift ────────────────────────────────────
+// Unique output vs `impact`/`pr-impact`: HTTP method/normalized-path/request-response
+// shape and statically-resolved fetch/Axios/Angular consumer matches with certainty —
+// none of which the symbol/call-graph-oriented `impact`/`pr-impact` commands expose.
+
+function formatApiCoverage(coverage: { complete: boolean; boundaryReasons: readonly string[] }): string {
+  return coverage.complete ? 'complete' : `partial (${coverage.boundaryReasons.join(', ') || 'unspecified'})`;
+}
+
+function printApiMatchInstrumentation(instrumentation: {
+  producerFactCount: number;
+  consumerFactCount: number;
+  exactMatchCount: number;
+  candidateSetMatchCount: number;
+  unresolvedMatchCount: number;
+  candidateCapHitCount: number;
+  comparisonCount: number;
+  elapsedMs: number;
+}): void {
+  console.log('  ── matcher performance ──');
+  console.log(`  producer facts:     ${instrumentation.producerFactCount}`);
+  console.log(`  consumer facts:     ${instrumentation.consumerFactCount}`);
+  console.log(`  exact matches:      ${instrumentation.exactMatchCount}`);
+  console.log(`  candidate-set:      ${instrumentation.candidateSetMatchCount}`);
+  console.log(`  unresolved:         ${instrumentation.unresolvedMatchCount}`);
+  console.log(`  candidate-cap hits: ${instrumentation.candidateCapHitCount}`);
+  console.log(`  comparisons:        ${instrumentation.comparisonCount}`);
+  console.log(`  elapsed:            ${instrumentation.elapsedMs}ms\n`);
+}
+
+program
+  .command('api-contract')
+  .description('Show the full contract (request/response shape + known consumers) for HTTP route(s)')
+  .option('--method <method>', 'HTTP method, e.g. GET, POST (omit to match any method)')
+  .option('--route-path <path>', 'Normalized route path, e.g. /users/{}')
+  .option('--route-fact-id <id>', 'Exact route fact id from a prior api-contract/api-impact result')
+  .option('--dir <path>', 'Repo path (default: current dir)')
+  .option('--format <fmt>', 'Output format: text|json (default: text)', 'text')
+  .option('--verbose', 'Print matcher performance counters (producer/consumer fact counts, match certainty breakdown, elapsed time)')
+  .action(async (opts: { method?: string; routePath?: string; routeFactId?: string; dir?: string; format?: string; verbose?: boolean }) => {
+    const repoPath = path.resolve(opts.dir ?? '.');
+    const { graph } = await loadOrAnalyzeWorkspace(repoPath);
+    const { getApiContract, createApiMatchInstrumentation } = await import('../semantic/api-contracts/index.js');
+    const instrumentation = createApiMatchInstrumentation();
+    const result = getApiContract(graph, { method: opts.method, normalizedPath: opts.routePath, routeFactId: opts.routeFactId }, 'local', instrumentation);
+
+    if ((opts.format ?? 'text').toLowerCase() === 'json') {
+      console.log(JSON.stringify(opts.verbose ? { result, instrumentation } : result, null, 2));
+      return;
+    }
+    if (result.length === 0) {
+      console.log('\n  No matching route contract found.\n');
+      return;
+    }
+    console.log('\n  ◈  API Contract\n');
+    for (const entry of result) {
+      console.log(`  ${entry.route.method} ${entry.route.path}  (${entry.route.framework})`);
+      console.log(`    normalized:  ${entry.route.normalizedPath}`);
+      console.log(`    coverage:    ${formatApiCoverage(entry.route.coverage)}`);
+      console.log(`    consumers:   ${entry.consumers.length}`);
+      for (const consumer of entry.consumers) {
+        console.log(`      - ${consumer.filePath}:${consumer.startLine ?? '?'} (${consumer.clientLibrary}, ${consumer.match.certainty})`);
+      }
+      console.log('');
+    }
+    if (opts.verbose) printApiMatchInstrumentation(instrumentation);
+  });
+
+program
+  .command('api-impact')
+  .description('Blast radius for HTTP route(s): matching route(s) plus every statically resolved consumer')
+  .option('--method <method>', 'HTTP method, e.g. GET, POST (omit to match any method)')
+  .option('--route-path <path>', 'Normalized route path, e.g. /users/{}')
+  .option('--route-fact-id <id>', 'Exact route fact id from a prior api-contract/api-impact result')
+  .option('--dir <path>', 'Repo path (default: current dir)')
+  .option('--format <fmt>', 'Output format: text|json (default: text)', 'text')
+  .option('--verbose', 'Print matcher performance counters (producer/consumer fact counts, match certainty breakdown, elapsed time)')
+  .action(async (opts: { method?: string; routePath?: string; routeFactId?: string; dir?: string; format?: string; verbose?: boolean }) => {
+    const repoPath = path.resolve(opts.dir ?? '.');
+    const { graph } = await loadOrAnalyzeWorkspace(repoPath);
+    const { getApiImpact, createApiMatchInstrumentation } = await import('../semantic/api-contracts/index.js');
+    const instrumentation = createApiMatchInstrumentation();
+    const result = getApiImpact(graph, { method: opts.method, normalizedPath: opts.routePath, routeFactId: opts.routeFactId }, 'local', instrumentation);
+
+    if ((opts.format ?? 'text').toLowerCase() === 'json') {
+      console.log(JSON.stringify(opts.verbose ? { result, instrumentation } : result, null, 2));
+      return;
+    }
+    console.log('\n  ◈  API Impact\n');
+    console.log(`  Routes matched: ${result.routes.length}`);
+    for (const route of result.routes) {
+      console.log(`    ${route.method} ${route.path}  coverage: ${formatApiCoverage(route.coverage)}`);
+    }
+    console.log(`\n  Known consumers: ${result.consumers.length}`);
+    for (const consumer of result.consumers) {
+      console.log(`    - ${consumer.filePath}:${consumer.startLine ?? '?'} (${consumer.clientLibrary}, ${consumer.match.certainty})`);
+    }
+    console.log('');
+    if (opts.verbose) printApiMatchInstrumentation(instrumentation);
+  });
+
+program
+  .command('api-drift')
+  .description('Compare API contracts between two separately indexed repo checkouts (base vs head)')
+  .requiredOption('--base-dir <path>', 'Repo path for the base (before) state')
+  .option('--head-dir <path>', 'Repo path for the head (after) state (default: current dir)')
+  .option('--format <fmt>', 'Output format: text|json (default: text)', 'text')
+  .option('--verbose', 'Print matcher performance counters (producer/consumer fact counts, match certainty breakdown, elapsed time)')
+  .action(async (opts: { baseDir: string; headDir?: string; format?: string; verbose?: boolean }) => {
+    const { graph: baseGraph } = await loadOrAnalyzeWorkspace(path.resolve(opts.baseDir));
+    const { graph: headGraph } = await loadOrAnalyzeWorkspace(path.resolve(opts.headDir ?? '.'));
+    const { getApiDrift, createApiMatchInstrumentation } = await import('../semantic/api-contracts/index.js');
+    const instrumentation = createApiMatchInstrumentation();
+    const result = getApiDrift(baseGraph, headGraph, 'local', instrumentation);
+
+    if ((opts.format ?? 'text').toLowerCase() === 'json') {
+      console.log(JSON.stringify(opts.verbose ? { result, instrumentation } : result, null, 2));
+      return;
+    }
+    console.log('\n  ◈  API Drift\n');
+    console.log(`  Base routes: ${result.coverage.baseRoutes}  Head routes: ${result.coverage.headRoutes}  Consumer coverage: ${result.coverage.consumerCoverageComplete ? 'complete' : 'partial'}\n`);
+    if (result.findings.length === 0) {
+      console.log('  No compatibility findings.\n');
+    } else {
+      for (const finding of result.findings) {
+        console.log(`  [${finding.verdict.toUpperCase()}] ${finding.rule}${finding.fieldKey ? ` (${finding.fieldKey})` : ''}`);
+        console.log(`    ${finding.reason}`);
+        if (finding.affectedConsumerFactIds.length > 0) {
+          console.log(`    affected consumers: ${finding.affectedConsumerFactIds.length}`);
+        }
+      }
+      console.log('');
+    }
+    if (opts.verbose) printApiMatchInstrumentation(instrumentation);
   });
 
 // ─── complexity ───────────────────────────────────────────────────────────────
@@ -4787,7 +5279,7 @@ program
     }
   });
 
-// ─── update ───────────────────────────────────────────────────────────────────
+// ─── update / upgrade / rollback / uninstall ─────────────────────────────────
 program
   .command('update')
   .description('Check for a newer version of code-intel and update if available')
@@ -4809,146 +5301,71 @@ program
     await runUpdate({ yes: opts.yes });
   });
 
-// ─── doctor ───────────────────────────────────────────────────────────────────
+program
+  .command('upgrade')
+  .description('Activate a verified bundled runtime archive side-by-side')
+  .option('--archive <path>', 'Runtime archive produced by scripts/distribution/build-runtime-bundle.mjs')
+  .option('--checksum <sha256>', 'Expected SHA-256 for the archive')
+  .option('--checksum-file <path>', 'Checksum file containing the archive hash')
+  .option('--version <v>', 'Expected product version inside the archive')
+  .option('--install-root <path>', 'Override install root')
+  .option('--temp-root <path>', 'Override temporary extraction root')
+  .option('--skip-path-check', 'Skip PATH conflict detection')
+  .action(() => {
+    // handled by standalone bootstrap before commander runs
+  });
+
+program
+  .command('rollback')
+  .description('Switch current bundled runtime to a previously installed version')
+  .argument('[version]', 'Installed version to activate; default keeps latest rollback-safe previous version')
+  .option('--install-root <path>', 'Override install root')
+  .action(() => {
+    // handled by standalone bootstrap before commander runs
+  });
+
+program
+  .command('uninstall')
+  .description('Remove managed bundled runtime files; preserve user data by default')
+  .option('--purge-data', 'Also remove owned ~/.code-intel data after ownership verification')
+  .option('--data-root <path>', 'Override expected Code Intel data root for purge verification')
+  .option('--dry-run', 'Print uninstall inventory without deleting files')
+  .option('--yes', 'Confirm destructive uninstall when --purge-data is set')
+  .option('--json', 'Emit machine-readable result')
+  .action(() => {
+    // handled by standalone bootstrap before commander runs
+  });
+
+const versionCommand = program
+  .command('version')
+  .description('Bundled runtime version management');
+
+versionCommand
+  .command('list')
+  .description('List installed bundled runtime versions')
+  .option('--json', 'Emit machine-readable output')
+  .option('--install-root <path>', 'Override install root')
+  .action(() => {
+    // handled by standalone bootstrap before commander runs
+  });
+
+versionCommand
+  .command('pin')
+  .description('Pin one installed bundled runtime version')
+  .argument('<version>', 'Installed version to pin')
+  .option('--install-root <path>', 'Override install root')
+  .action(() => {
+    // handled by standalone bootstrap before commander runs
+  });
+
+// doctor handled in standalone bootstrap for bundled/runtime-aware JSON support.
 program
   .command('doctor')
   .description('Run diagnostics — check Node.js, git, config, registry, DB integrity, and network')
-  .addHelpText('after', `
-  Runs all startup checks and repo health checks, then prints a summary.
-  Exit code 0 if all checks pass; 1 if any check fails.
-
-  Examples:
-    $ code-intel doctor
-`)
-  .action(async () => {
-    const { execSync: exec2 } = await import('node:child_process');
-    const { getDbPath, getVectorDbPath } = await import('../storage/index.js');
-    const { loadMetadata: loadMeta2 } = await import('../storage/metadata.js');
-    const { loadRegistry: loadReg } = await import('../storage/repo-registry.js');
-    const { validateConfig } = await import('./config-manager.js');
-    const { loadConfig } = await import('./init-wizard.js');
-
-    let hasError = false;
-    const line = (icon: string, label: string, detail: string) =>
-      console.log(`  ${icon}  ${label.padEnd(38)} ${detail}`);
-
-    console.log('\n  ◈  code-intel doctor\n');
-
-    // ── Node.js version ───────────────────────────────────────────────────
-    const [major] = process.versions.node.split('.').map(Number);
-    if ((major ?? 0) >= 22) {
-      line('✅', `Node.js v${process.versions.node}`, 'required ≥ 22');
-    } else {
-      line('⚠️ ', `Node.js v${process.versions.node}`, 'v22 or higher recommended');
-    }
-
-    // ── git ───────────────────────────────────────────────────────────────
-    try {
-      const gitVer = exec2('git --version', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim().split('\n')[0];
-      line('✅', 'git', gitVer ?? 'found');
-    } catch {
-      line('⚠️ ', 'git', 'not found in PATH — incremental analysis disabled');
-    }
-
-    // ── config.json ───────────────────────────────────────────────────────
-    const cfg = loadConfig();
-    if (!cfg) {
-      line('⚠️ ', '~/.code-intel/config.json', 'not found — run `code-intel init`');
-    } else {
-      const errs = validateConfig(cfg);
-      if (errs.length === 0) {
-        line('✅', '~/.code-intel/config.json', 'valid');
-      } else {
-        hasError = true;
-        line('❌', '~/.code-intel/config.json', `${errs.length} error(s) — run \`code-intel config validate\``);
-        for (const e of errs.slice(0, 3)) {
-          console.log(`       • ${e.path}: ${e.reason}`);
-        }
-      }
-    }
-
-    // ── registry ──────────────────────────────────────────────────────────
-    const registry = loadReg();
-    line('✅', 'Registry', `${registry.length} repo(s) indexed`);
-
-    // ── per-repo health ───────────────────────────────────────────────────
-    const STALE_DAYS = 7;
-    for (const repo of registry) {
-      const meta = loadMeta2(repo.path);
-      if (!meta) {
-        line('⚠️ ', repo.name, 'index metadata missing');
-        continue;
-      }
-      const ageDays = (Date.now() - new Date(meta.indexedAt).getTime()) / 86_400_000;
-
-      // DB integrity check
-      const dbPath = getDbPath(repo.path);
-      let dbOk = false;
-      try {
-        const db = new Database(dbPath, { readonly: true, fileMustExist: true });
-        db.prepare('SELECT COUNT(*) FROM nodes').get();
-        db.close();
-        dbOk = true;
-      } catch {
-        /* corrupted */
-      }
-
-      if (!dbOk) {
-        hasError = true;
-        line('❌', repo.name, 'graph.db corrupted — run `clean && analyze`');
-        continue;
-      }
-
-      // Vector DB (optional)
-      const vdbPath = getVectorDbPath(repo.path);
-      if (fs.existsSync(vdbPath)) {
-        try {
-          const vdb = new Database(vdbPath, { readonly: true, fileMustExist: true });
-          vdb.prepare('SELECT COUNT(*) FROM embed_nodes').get();
-          vdb.close();
-        } catch {
-          hasError = true;
-          line('❌', `${repo.name} / vector.db`, 'corrupted — run `code-intel analyze` to rebuild remembered embeddings');
-        }
-      } else if (meta.embeddings?.enabled) {
-        line('⚠️ ', `${repo.name} / vector.db`, 'missing — next `code-intel analyze` will rebuild remembered embeddings');
-      }
-
-      if (meta.embeddings?.enabled && meta.embeddings.status === 'stale') {
-        line('⚠️ ', `${repo.name} / embeddings`, 'stale — run `code-intel analyze` to refresh vectors');
-      }
-
-      if (ageDays > STALE_DAYS) {
-        line('⚠️ ', repo.name, `index is ${Math.floor(ageDays)} days old (run \`analyze\`)`);
-      } else {
-        const embeddingDetail = meta.embeddings?.enabled
-          ? ` · embeddings:${meta.embeddings.status}`
-          : '';
-        line('✅', repo.name, `${meta.stats.nodes} nodes · ${meta.stats.edges} edges${embeddingDetail} · ${Math.floor(ageDays)}d old`);
-      }
-    }
-
-    // ── network ───────────────────────────────────────────────────────────
-    try {
-      const resp = await fetch('https://registry.npmjs.org/code-intel/latest', {
-        signal: AbortSignal.timeout(5000),
-      });
-      if (resp.ok) {
-        line('✅', 'npm registry', 'reachable');
-      } else {
-        line('⚠️ ', 'npm registry', `unreachable (HTTP ${resp.status})`);
-      }
-    } catch {
-      line('⚠️ ', 'npm registry', 'unreachable — check internet connection');
-    }
-
-    console.log('');
-    if (hasError) {
-      console.log('  ✗  One or more checks failed. Review the ❌ items above.\n');
-      process.exit(1);
-    } else {
-      console.log('  ✅  All checks passed.\n');
-    }
+  .option('--json', 'Emit stable machine-readable checks')
+  .allowUnknownOption()
+  .action(() => {
+    // handled by standalone bootstrap before commander runs
   });
 
 // ─── context (B.7.1 --show-context) ──────────────────────────────────────────
@@ -4958,6 +5375,7 @@ program
   .argument('<symbols...>', 'One or more symbol names to use as seeds')
   .option('-p, --path <path>', 'Path to the repository (default: current directory)', '.')
   .option('-l, --limit <n>', 'Max seeds to resolve (default: 10)', '10')
+  .option('--task <text>', 'Free-text description of what you are trying to do — used for intent auto-detection when --intent is auto/omitted')
   .option('--intent <intent>', 'Query intent: code | callers | architecture | auto (default: auto)', 'auto')
   .option('--max-tokens <n>', 'Max total tokens for output (default: 6000)', '6000')
   .option('--show-context', 'Print per-block token breakdown after output')
@@ -4971,10 +5389,12 @@ program
     $ code-intel context createUser login --intent callers
     $ code-intel context AuthService --show-context
     $ code-intel context handlePayment --max-tokens 3000 --intent code
+    $ code-intel context UserService --task "fix the login bug"
 `)
   .action(async (symbols: string[], opts: {
     path: string;
     limit: string;
+    task?: string;
     intent: string;
     maxTokens: string;
     showContext?: boolean;
@@ -4982,31 +5402,44 @@ program
     const { graph } = await loadOrAnalyzeWorkspace(opts.path);
     const { build, detectQueryIntent } = await import('../context/builder.js');
     const { measureBlocks } = await import('../context/token-counter.js');
+    const { resolveContextSeed } = await import('../context/selection.js');
 
     const maxSeeds = parseInt(opts.limit, 10);
     const maxTokens = parseInt(opts.maxTokens, 10);
+    const task = opts.task?.trim() || undefined;
     const intent = (['code', 'callers', 'architecture', 'auto'].includes(opts.intent)
-      ? opts.intent
+      ? opts.intent === 'auto'
+        ? detectQueryIntent(task ?? symbols.join(' '))
+        : opts.intent
       : detectQueryIntent(opts.intent)) as import('../context/builder.js').QueryIntent;
 
-    // Resolve symbol names to node IDs
+    // Resolve symbol names to node IDs — never silently pick a first match on ambiguity.
     const seeds: import('../context/builder.js').SeedSymbol[] = [];
+    const ambiguous: string[] = [];
+    const missing: string[] = [];
     for (const symbol of symbols.slice(0, maxSeeds)) {
-      for (const node of graph.allNodes()) {
-        if (node.name === symbol) {
-          seeds.push({ nodeId: node.id, refinedScore: 1.0 });
-          break;
+      const resolution = resolveContextSeed(graph, symbol);
+      if (resolution.status === 'exact') {
+        seeds.push({ nodeId: resolution.node.id, refinedScore: 1.0 });
+      } else if (resolution.status === 'ambiguous') {
+        ambiguous.push(symbol);
+        console.log(`\n  "${symbol}" is ambiguous — ${resolution.candidates.length} matches:`);
+        for (const candidate of resolution.candidates) {
+          console.log(`    ${candidate.kind}:${candidate.name} @ ${candidate.filePath}${candidate.startLine ? ':' + candidate.startLine : ''}`);
         }
+      } else {
+        missing.push(symbol);
       }
     }
 
     if (seeds.length === 0) {
-      console.log(`\n  No symbols found for: ${symbols.join(', ')}\n`);
+      if (ambiguous.length === 0 && missing.length === 0) return;
+      if (missing.length > 0) console.log(`\n  No symbols found for: ${missing.join(', ')}\n`);
       console.log('  Try: code-intel search "<name>" to find symbol names.\n');
       return;
     }
 
-    const doc = build(seeds, graph, { maxTokens, queryIntent: intent });
+    const doc = build(seeds, graph, { maxTokens, queryIntent: intent, repoDir: opts.path });
 
     // Print output blocks
     console.log('');

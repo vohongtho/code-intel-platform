@@ -9,35 +9,22 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { detectLanguage, Language } from '../../shared/index.js';
+import { detectLanguage } from '../../shared/index.js';
+import { getLanguageQuery } from '../../languages/capability-registry.js';
+import { FACT_SCHEMA_VERSION } from '../../semantic/fact-bundle.js';
+import { getLanguageFactAdapter } from '../../semantic/adapters/registry.js';
+import { projectFactBundle } from '../../semantic/graph-projector.js';
+import { SEMANTIC_FIRST_LANGUAGES } from '../../languages/semantic-first-languages.js';
+import { detectFrameworks } from '../../frameworks/detection.js';
+import { loadFrameworkAdapters } from '../../frameworks/registry.js';
 import type { Phase, PhaseResult, PipelineContext } from '../types.js';
+import { readAmbientEvolutionAction } from '../analysis-plan.js';
 import { generateNodeId } from '../../graph/id-generator.js';
 import Logger from '../../shared/logger.js';
 import { WorkerPool } from './worker-pool.js';
 import type { ParseTask, ParseResult } from './parse-worker.js';
-import {
-  typescriptQueries, javascriptQueries, pythonQueries, javaQueries, goQueries,
-  cQueries, cppQueries, csharpQueries, rustQueries, phpQueries,
-  kotlinQueries, rubyQueries, swiftQueries, dartQueries,
-} from '../../parsing/queries/index.js';
-
-const LANG_QUERIES: Partial<Record<Language, string>> = {
-  [Language.TypeScript]: typescriptQueries,
-  [Language.JavaScript]: javascriptQueries,
-  [Language.Python]:     pythonQueries,
-  [Language.Java]:       javaQueries,
-  [Language.Go]:         goQueries,
-  [Language.C]:          cQueries,
-  [Language.Cpp]:        cppQueries,
-  [Language.CSharp]:     csharpQueries,
-  [Language.Rust]:       rustQueries,
-  [Language.PHP]:        phpQueries,
-  [Language.Kotlin]:     kotlinQueries,
-  [Language.Ruby]:       rubyQueries,
-  [Language.Swift]:      swiftQueries,
-  [Language.Dart]:       dartQueries,
-};
 
 // Resolve the compiled worker script path (dist/pipeline/workers/parse-worker.js)
 function workerScriptPath(): string {
@@ -54,6 +41,10 @@ export const parsePhaseParallel: Phase = {
 
     if (!context.fileCache) context.fileCache = new Map();
     if (!context.fileFunctionIndex) context.fileFunctionIndex = new Map();
+    if (!context.factDiagnostics) context.factDiagnostics = [];
+    if (!context.semanticFacts) context.semanticFacts = [];
+    context.factSchemaVersion = FACT_SCHEMA_VERSION;
+    context.identityFingerprint = 'symbol-identity-v2';
 
     const filePaths = context.filePaths;
     const workerCount = parseInt(process.env['PARSE_WORKERS'] ?? '', 10) || Math.max(1, os.cpus().length - 1);
@@ -70,6 +61,27 @@ export const parsePhaseParallel: Phase = {
       }));
     }
 
+    const frameworkAdapters = await loadFrameworkAdapters();
+    context.frameworkDetections = await detectFrameworks(
+      {
+        workspaceRoot: context.workspaceRoot,
+        filePaths,
+        fileCache: context.fileCache,
+      },
+      frameworkAdapters,
+    );
+    for (const adapter of frameworkAdapters) {
+      const detection = context.frameworkDetections.find((item) => item.frameworkId === adapter.id);
+      if (!detection || detection.confidence === 'none') continue;
+      const projected = projectFactBundle(adapter.extract({
+        workspaceRoot: context.workspaceRoot,
+        filePaths,
+        fileCache: context.fileCache,
+      }));
+      for (const node of projected.nodes) context.graph.addNode(node);
+      for (const edge of projected.edges) context.graph.addEdge(edge);
+    }
+
     // ── Try to start the worker pool ──────────────────────────────────────────
     const workerScript = workerScriptPath();
     const workerScriptExists = fs.existsSync(workerScript);
@@ -81,6 +93,11 @@ export const parsePhaseParallel: Phase = {
       const { parsePhase } = await import('../phases/parse-phase.js');
       return parsePhase.execute(context, new Map());
     }
+
+    let symbolCount = 0;
+    let treeSitterCount = 0;
+    let regexCount = 0;
+    let parseDone = 0;
 
     // ── Build tasks ───────────────────────────────────────────────────────────
     const tasks: ParseTask[] = [];
@@ -96,6 +113,38 @@ export const parsePhaseParallel: Phase = {
       const fileNode = context.graph.getNode(fileNodeId);
       if (fileNode) fileNode.content = source.slice(0, 2000);
 
+      const factAdapter = getLanguageFactAdapter(lang);
+      const factBundle = factAdapter.extract({
+        language: lang,
+        filePath: relativePath,
+        workspaceRoot: context.workspaceRoot,
+        source,
+      });
+      context.semanticFacts.push(...factBundle.facts);
+      const factValidation = factAdapter.validate(factBundle);
+      context.factDiagnostics.push(...factValidation.diagnostics);
+      if (context.verbose && factValidation.diagnostics.length > 0) {
+        Logger.info(`[parse-parallel] semantic adapter ${factAdapter.adapterId}: ${factValidation.diagnostics.length} diagnostic(s) for ${relativePath}`);
+      }
+
+      const projected = projectFactBundle(factBundle);
+      const semanticFirst = SEMANTIC_FIRST_LANGUAGES.has(lang);
+      if (semanticFirst && (projected.nodes.length > 0 || projected.edges.length > 0)) {
+        for (const node of projected.nodes) context.graph.addNode(node);
+        for (const edge of projected.edges) context.graph.addEdge(edge);
+        symbolCount += projected.nodes.length;
+        treeSitterCount++;
+        parseDone++;
+        context.onPhaseProgress?.('parse', parseDone, filePaths.length);
+
+        const funcs = projected.nodes
+          .filter((n) => n.kind === 'function' || n.kind === 'method')
+          .map((n) => ({ id: n.id, startLine: n.startLine ?? 0, endLine: n.endLine }))
+          .sort((a, b) => a.startLine - b.startLine);
+        if (funcs.length > 0) context.fileFunctionIndex!.set(relativePath, funcs);
+        continue;
+      }
+
       tasks.push({
         taskId: filePath,
         filePath,
@@ -103,7 +152,7 @@ export const parsePhaseParallel: Phase = {
         source,
         lang: lang as string,
         fileNodeId,
-        queryStr: LANG_QUERIES[lang] ?? null,
+        queryStr: getLanguageQuery(lang),
       });
     }
 
@@ -114,11 +163,6 @@ export const parsePhaseParallel: Phase = {
       maxQueueSize: 200,
     });
     await pool.init();
-
-    let symbolCount = 0;
-    let treeSitterCount = 0;
-    let regexCount = 0;
-    let parseDone = 0;
 
     // Backpressure: wait for queue to drain below threshold before submitting more
     const BATCH_SIZE = 100;
@@ -164,6 +208,13 @@ export const parsePhaseParallel: Phase = {
     if (context.verbose) {
       Logger.info(`[parse-parallel] ${workerCount} workers, tree-sitter: ${treeSitterCount}, regex: ${regexCount}`);
     }
+
+    context.graphVerification = {
+      status: 'verified',
+      producedCount: context.graph.size.nodes + context.graph.size.edges,
+      contentFingerprint: crypto.createHash('sha256').update(JSON.stringify({ nodes: context.graph.size.nodes, edges: context.graph.size.edges, parser: parserUsed })).digest('hex'),
+    };
+    context.evolutionAction ??= readAmbientEvolutionAction() ?? 'full-reanalysis';
 
     return {
       status: 'completed',

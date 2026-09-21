@@ -40,4 +40,12 @@ describe('qualified symbol targets', () => {
     assert.equal(resolution.status, 'found');
     if (resolution.status === 'found') assert.equal(resolution.node.id, selected.id);
   });
+
+  it('returns ambiguity for legacy aliases that map to multiple v2 ids', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: 'a', kind: 'function', name: 'login', filePath: 'src/a.ts', metadata: { semantic: { qualifiedName: 'src/a.ts:login', legacyId: 'function:legacy.ts:login' } } });
+    graph.addNode({ id: 'b', kind: 'function', name: 'login', filePath: 'src/b.ts', metadata: { semantic: { qualifiedName: 'src/b.ts:login', legacyId: 'function:legacy.ts:login' } } });
+    const resolution = resolveSymbolTarget(graph, 'function:legacy.ts:login');
+    assert.equal(resolution.status, 'ambiguous');
+  });
 });

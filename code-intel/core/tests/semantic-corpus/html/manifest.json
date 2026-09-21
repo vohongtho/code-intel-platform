@@ -1,0 +1,34 @@
+{
+  "language": "html",
+  "fixtures": {
+    "main": "main.html",
+    "grouped": "grouped.html"
+  },
+  "expected": {
+    "definitions": [
+      "main",
+      "shell",
+      "app",
+      "/app.css",
+      "/app.js",
+      "/docs",
+      "/submit",
+      "const x = 1;"
+    ],
+    "forbidden": [
+      "body",
+      "html"
+    ]
+  },
+  "groupedExpected": [
+    "alpha",
+    "card",
+    "tile",
+    "/one",
+    "/two"
+  ],
+  "notes": [
+    "Main fixture captures baseline semantic observations.",
+    "Grouped fixture captures multi-declaration or wrapper-contained entities."
+  ]
+}

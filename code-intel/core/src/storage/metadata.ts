@@ -1,7 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { resolvePublishedArtifactPath } from './index-generation.js';
+import {
+  resolvePublishedArtifactPath,
+  type AnalyzerCompatibilityReceipt,
+  type ArtifactVerification,
+  type EvolutionAction,
+} from './index-generation.js';
 import type { IndexSnapshot } from './index-snapshot.js';
 
 const META_DIRNAME = '.code-intel';
@@ -38,6 +43,33 @@ export interface IndexMetadata {
   repoId?: string;
   commitHash?: string;
   parser?: 'tree-sitter' | 'regex';
+  compatibilityReceipt?: AnalyzerCompatibilityReceipt;
+  graphVerification?: ArtifactVerification;
+  bm25Verification?: ArtifactVerification;
+  vectorVerification?: ArtifactVerification;
+  evidenceVerification?: ArtifactVerification;
+  evolutionAction?: EvolutionAction;
+  factSchemaVersion?: string;
+  factSchemaFingerprint?: string;
+  identityFingerprint?: string;
+  resolverVersion?: string;
+  resolverFingerprint?: string;
+  evidenceSchemaVersion?: number;
+  evidenceSchemaFingerprint?: string;
+  apiContractSchemaVersion?: string;
+  apiContractFingerprint?: string;
+  frameworkFingerprint?: string;
+  frameworkDetections?: string[];
+  factDiagnostics?: Array<{
+    code: string;
+    severity: 'info' | 'warning' | 'error';
+    language: string;
+    affectedCapability: string;
+    impact: 'local' | 'cross-file' | 'repository-wide';
+    filePath?: string;
+    message?: string;
+    count?: number;
+  }>;
   lastAnalyzedMtimes?: Record<string, number>;
   embeddings?: EmbeddingMetadata;
   stats: {

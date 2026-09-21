@@ -14,9 +14,10 @@ RUN npm install
 # Copy full source
 COPY . .
 
-# Build
-RUN npm run build --workspace=code-intel/core
-RUN npm run build --workspace=code-intel/web
+# Authoritative product build (shared -> web -> core). Previously this built
+# Core before Web, which only "worked" because Core's build silently skips
+# copying dist/web/ when it doesn't exist yet — see copy-grammars.mjs.
+RUN npm run build:product
 
 # Run tests
 RUN npm test --workspace=code-intel/core

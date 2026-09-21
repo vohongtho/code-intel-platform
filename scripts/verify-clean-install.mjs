@@ -12,6 +12,8 @@ const banned = [
   'deprecated boolean@3.2.0',
   'deprecated node-domexception@1.0.0',
   'deprecated glob@10.5.0',
+  'requires a system Node/npm',
+  'Bundled Node runtime not found',
 ];
 
 const found = banned.filter((line) => input.includes(line));

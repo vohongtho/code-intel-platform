@@ -127,6 +127,22 @@ describe('writeContextFiles — concise block', () => {
   });
 });
 
+describe('writeContextFiles — uses writer-private atomic staging', () => {
+  it('does not leave shared fixed temp files behind', () => {
+    const dir = tmpDir();
+    try {
+      writeContextFiles(dir, 'AtomicProject', stats, [
+        { agentId: 'codex', label: 'Codex', path: 'AGENTS.md', format: 'markdown', builtin: true },
+      ]);
+      const entries = fs.readdirSync(dir);
+      assert.equal(entries.some((name) => name.includes('.tmp-')), false);
+      assert.equal(entries.includes('AGENTS.md'), true);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('writeContextFiles — creates agent-specific context files', () => {
   let dir: string;
 

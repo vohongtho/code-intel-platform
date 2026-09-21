@@ -10,6 +10,9 @@ import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
 import { Bm25Index, getBm25DbPath } from '../search/bm25-index.js';
 import { executeSearchRequest, type SearchMode } from '../search/execute-scoped-search.js';
 import { build, detectQueryIntent, type QueryIntent, type SeedSymbol } from '../context/builder.js';
+import { ContextDeliverySession } from '../context/session.js';
+import { resolveContextSeed } from '../context/selection.js';
+import type { ContextOmission } from '../context/receipt.js';
 import { getVectorDbPath } from '../storage/index.js';
 import { loadRegistry } from '../storage/repo-registry.js';
 import { loadMetadata } from '../storage/metadata.js';
@@ -20,9 +23,12 @@ import {
   saveGroup,
   loadSyncResult,
   saveSyncResult,
+  verifySyncResultReadBack,
 } from '../multi-repo/group-registry.js';
 import { syncGroup } from '../multi-repo/group-sync.js';
 import { queryGroup } from '../multi-repo/group-query.js';
+import { getGroupContractDrift } from '../multi-repo/contract-drift/service.js';
+import type { Contract } from '../multi-repo/types.js';
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -34,10 +40,18 @@ import { findSimilarSymbols } from '../query/similar-symbols.js';
 import { computeHealthReport } from '../query/health-report.js';
 import { suggestTests } from '../query/suggest-tests.js';
 import { summarizeCluster } from '../query/cluster-summary.js';
+import { summarizeEdgeTrust } from '../query/trust.js';
 import { DbManager } from '../storage/db-manager.js';
 import { loadGraphFromDB } from '../multi-repo/graph-from-db.js';
 import { createKnowledgeGraph } from '../graph/knowledge-graph.js';
 import { CURRENT_SCHEMA_VERSION } from '../migrations/migration-runner.js';
+import { resolveSymbolTarget } from '../cli/symbol-target.js';
+import { getApiContract, getApiDrift, getApiImpact, type RouteSelector } from '../semantic/api-contracts/index.js';
+import { computeSemanticGraphDiff } from '../snapshots/service.js';
+import { computeBlastRadiusWithTrust } from './blast-radius-trust.js';
+import { MCP_TOOL_DEFINITIONS } from './tool-definitions.js';
+
+export { MCP_TOOL_DEFINITIONS } from './tool-definitions.js';
 
 /** Strip null/undefined fields and serialize compactly — saves ~10–15% tokens on sparse graph nodes */
 function compact(obj: unknown): string {
@@ -59,6 +73,19 @@ export function createMcpServer(
   const startupSnapshot = pinnedSnapshot ?? (workspaceRoot ? resolveIndexSnapshot(workspaceRoot) : null);
   let bm25Index: Bm25Index | null = null;
 
+  // ── Per-connection, workspace-scoped context delivery memory. Lives for the
+  // lifetime of this stdio connection (one createMcpServer() call = one session);
+  // never a module-level/global singleton. ──────────────────────────────────
+  const contextSessionsByWorkspace = new Map<string, ContextDeliverySession>();
+  function getContextSession(workspaceIdentity: string): ContextDeliverySession {
+    let session = contextSessionsByWorkspace.get(workspaceIdentity);
+    if (!session) {
+      session = new ContextDeliverySession(workspaceIdentity);
+      contextSessionsByWorkspace.set(workspaceIdentity, session);
+    }
+    return session;
+  }
+
   function ensureBm25Index(): Bm25Index | null {
     if (bm25Index) return bm25Index;
     if (!workspaceRoot) return null;
@@ -79,491 +106,8 @@ export function createMcpServer(
 
   // ─── Tool Definitions ──────────────────────────────────────────────────────
 
-  // ── Shared _token property injected into every tool schema ─────────────────
-  const _tokenProp = {
-    _token: { type: 'string' as const, description: 'Required if CODE_INTEL_TOKEN is configured' },
-  };
-  const _repoSelectorProps = {
-    repoId: { type: 'string' as const, description: 'Canonical repository identity (preferred)' },
-    repo: { type: 'string' as const, description: 'Legacy repo selector during migration (deprecated)' },
-  };
-  const REPO_SELECTABLE_TOOL_NAMES = new Set([
-    'overview', 'search', 'context', 'blast_radius', 'file_symbols', 'find_path', 'list_exports', 'routes', 'clusters', 'flows',
-    'detect_changes', 'query', 'raw_query', 'explain_relationship', 'pr_impact', 'similar_symbols', 'health_report',
-    'suggest_tests', 'cluster_summary', 'deprecated_usage', 'complexity_hotspots', 'coverage_gaps', 'secrets', 'vulnerability_scan',
-  ]);
-  const withRepoSelector = <T extends { name: string; inputSchema?: { type?: string; properties?: Record<string, unknown> } }>(tool: T): T => (
-    REPO_SELECTABLE_TOOL_NAMES.has(tool.name) && tool.inputSchema?.type === 'object'
-      ? {
-          ...tool,
-          inputSchema: {
-            ...tool.inputSchema,
-            properties: {
-              ..._repoSelectorProps,
-              ...(tool.inputSchema.properties ?? {}),
-            },
-          },
-        } as T
-      : tool
-  );
-
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    const tools = [
-      // ── Core repo tools ──────────────────────────────────────────────────
-      {
-        name: 'repos',
-        description: 'List all indexed repositories with node and edge counts',
-        inputSchema: { type: 'object' as const, properties: { ..._tokenProp } },
-      },
-      {
-        name: 'overview',
-        description: 'Repository summary: total nodes/edges and a full breakdown of node and edge counts by kind. Use this first to understand the shape of the codebase.',
-        inputSchema: { type: 'object' as const, properties: { ..._tokenProp } },
-      },
-
-      // ── Search & inspect ─────────────────────────────────────────────────
-      {
-        name: 'search',
-        description: 'Scoped search across indexed symbols with automatic vector/BM25 selection. Accepts canonical scope or legacy repo/group during migration.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            query: { type: 'string', description: 'Search query (symbol name, keyword, or partial match)' },
-            offset: { type: 'number', description: 'Number of results to skip for pagination (default: 0)' },
-            limit: { type: 'number', description: 'Max results per page (default: 10, max: 500)' },
-            mode: {
-              type: 'string',
-              enum: ['auto', 'bm25', 'vector'],
-              description: 'Search mode: automatic default behavior, BM25-only, or vector-preferred with BM25 fallback',
-            },
-            scope: {
-              type: 'object' as const,
-              description: 'Canonical search scope',
-              properties: {
-                type: { type: 'string', enum: ['repo', 'group'] },
-                repoId: { type: 'string', description: 'Canonical repository identity when type=repo' },
-                name: { type: 'string', description: 'Group name when type=group' },
-              },
-            },
-            repoId: { type: 'string', description: 'Canonical repository identity (preferred)' },
-            repo: { type: 'string', description: 'Legacy repo scope during migration (deprecated)' },
-            group: { type: 'string', description: 'Legacy group scope during migration (deprecated)' },
-            ..._tokenProp,
-          },
-          required: ['query'],
-        },
-      },
-      {
-        name: 'inspect',
-        description: '360° view of a symbol: definition location, callers, callees, heritage (extends/implements), members, cluster, and source preview (first 500 chars)',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            symbol_name: { type: 'string', description: 'Exact symbol name to inspect' },
-            ..._tokenProp,
-          },
-          required: ['symbol_name'],
-        },
-      },
-      {
-        name: 'context',
-        description: 'Token-budgeted deep context for one or more symbols: summary, logic, relations, and focused code snippets built from the shared context builder.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            symbols: {
-              type: 'array',
-              items: { type: 'string' },
-              description: 'One or more symbol names to resolve and include as context seeds',
-            },
-            intent: {
-              type: 'string',
-              enum: ['code', 'callers', 'architecture', 'auto'],
-              description: 'Bias token allocation toward code, callers, architecture, or keep auto-balanced behavior',
-            },
-            max_tokens: {
-              type: 'number',
-              description: 'Max total tokens for the built context document (default: 6000, server max: 6000)',
-            },
-            limit: {
-              type: 'number',
-              description: 'Max seed symbols to resolve from the provided symbol list (default: 10)',
-            },
-            ..._tokenProp,
-          },
-          required: ['symbols'],
-        },
-      },
-      {
-        name: 'blast_radius',
-        description: 'Impact analysis: traverse the call/import graph to find all symbols that depend on or are affected by a given symbol. Returns risk level (LOW / MEDIUM / HIGH).',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            target: { type: 'string', description: 'Target symbol name' },
-            direction: {
-              type: 'string',
-              enum: ['callers', 'callees', 'both'],
-              description: 'Which direction to trace — callers (who depends on it), callees (what it depends on), or both (default: both)',
-            },
-            max_hops: { type: 'number', description: 'Maximum traversal depth (default: 2, max: 10)' },
-            ..._tokenProp,
-          },
-          required: ['target'],
-        },
-      },
-      {
-        name: 'file_symbols',
-        description: 'List all symbols defined in a specific file — useful to understand what a file exports or contains without reading raw source.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            file_path: { type: 'string', description: 'File path (partial match is supported, e.g. "auth/login.ts")' },
-            offset: { type: 'number', description: 'Number of results to skip for pagination (default: 0)' },
-            limit: { type: 'number', description: 'Max results per page (default: 10, max: 500)' },
-            ..._tokenProp,
-          },
-          required: ['file_path'],
-        },
-      },
-      {
-        name: 'find_path',
-        description: 'Find the shortest call/import path between two symbols. Useful for tracing how one module reaches another.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            from: { type: 'string', description: 'Source symbol name' },
-            to: { type: 'string', description: 'Target symbol name' },
-            max_hops: { type: 'number', description: 'Maximum path length to search (default: 8)' },
-            ..._tokenProp,
-          },
-          required: ['from', 'to'],
-        },
-      },
-      {
-        name: 'list_exports',
-        description: 'List all exported symbols in the repository. Helps AI understand the public API surface of the codebase.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            kind: {
-              type: 'string',
-              description: 'Filter by node kind: function | class | interface | method | type_alias | constant | enum (optional)',
-            },
-            offset: { type: 'number', description: 'Number of results to skip for pagination (default: 0)' },
-            limit: { type: 'number', description: 'Max results per page (default: 10, max: 500)' },
-            ..._tokenProp,
-          },
-        },
-      },
-
-      // ── Routes, clusters, flows ──────────────────────────────────────────
-      {
-        name: 'routes',
-        description: 'List all HTTP route handler mappings detected in the codebase (kind=route or route/handler/controller files)',
-        inputSchema: { type: 'object' as const, properties: { ..._tokenProp } },
-      },
-      {
-        name: 'clusters',
-        description: 'List detected code clusters (directory-based communities) with member counts and top 10 symbols each. Useful for understanding code organisation.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            offset: { type: 'number', description: 'Number of results to skip for pagination (default: 0)' },
-            limit: { type: 'number', description: 'Max clusters per page (default: 10, max: 500)' },
-            ..._tokenProp,
-          },
-        },
-      },
-      {
-        name: 'flows',
-        description: 'List all detected execution flows — entry points traced through the call graph. Each flow has a name, entry point, and ordered steps.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            offset: { type: 'number', description: 'Number of results to skip for pagination (default: 0)' },
-            limit: { type: 'number', description: 'Max flows per page (default: 10, max: 500)' },
-            ..._tokenProp,
-          },
-        },
-      },
-
-      // ── Git change impact ─────────────────────────────────────────────────
-      {
-        name: 'detect_changes',
-        description: 'Git-diff impact analysis: detects which source files and line ranges changed (HEAD vs working tree or a custom diff), maps them to graph symbols, and computes the combined blast radius. Ideal for PR review or pre-commit analysis.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            base_ref: {
-              type: 'string',
-              description: 'Git ref to diff against (default: HEAD). Examples: "HEAD~1", "main", a commit SHA.',
-            },
-            diff_text: {
-              type: 'string',
-              description: 'Raw unified diff text. If provided, base_ref is ignored and this diff is parsed directly.',
-            },
-            ..._tokenProp,
-          },
-        },
-      },
-
-      // ── query (GQL) ────────────────────────────────────────────────────────
-      {
-        name: 'query',
-        description: 'Execute a GQL (Graph Query Language) query. Supports FIND, TRAVERSE, PATH, and COUNT. More expressive than raw_query.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            gql: {
-              type: 'string',
-              description: 'GQL query string. Examples: "FIND function WHERE name CONTAINS \\"auth\\"", "TRAVERSE CALLS FROM \\"handleLogin\\" DEPTH 3", "PATH FROM \\"createUser\\" TO \\"sendEmail\\"", "COUNT function GROUP BY cluster"',
-            },
-            limit: { type: 'number', description: 'Override LIMIT in the query (optional)' },
-            repoId: { type: 'string', description: 'Canonical repository identity (preferred)' },
-            repo: { type: 'string', description: 'Legacy repo selector during migration (deprecated)' },
-            ..._tokenProp,
-          },
-          required: ['gql'],
-        },
-      },
-
-      // ── Raw query ─────────────────────────────────────────────────────────
-      {
-        name: 'raw_query',
-        description: 'Execute a simplified Cypher-like graph query. Supports: name=\'X\' (exact name match) or :kind (list nodes of a kind, max 50)',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            cypher: { type: 'string', description: "Query string — e.g. name='runPipeline' or :function" },
-            ..._tokenProp,
-          },
-          required: ['cypher'],
-        },
-      },
-
-      // ── Group / multi-repo tools ──────────────────────────────────────────
-      {
-        name: 'group_list',
-        description: 'List all configured repository groups, or show the full membership of one group. Repository groups track multiple repos as a logical system.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            name: { type: 'string', description: 'Group name to inspect (optional — omit to list all groups)' },
-            ..._tokenProp,
-          },
-        },
-      },
-      {
-        name: 'group_sync',
-        description: 'Extract cross-repo contracts (exports, routes, schemas, events) from every member repo in a group and detect provider→consumer links via name matching and RRF scoring.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            name: { type: 'string', description: 'Group name to sync' },
-            ..._tokenProp,
-          },
-          required: ['name'],
-        },
-      },
-      {
-        name: 'group_contracts',
-        description: 'Inspect extracted contracts and confidence-ranked cross-repo links from the last group sync. Supports filtering by kind, repo, and minimum confidence.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            name: { type: 'string', description: 'Group name' },
-            kind: {
-              type: 'string',
-              enum: ['export', 'route', 'schema', 'event'],
-              description: 'Filter by contract kind (optional)',
-            },
-            repo: { type: 'string', description: 'Filter by registry name (optional)' },
-            min_confidence: { type: 'number', description: 'Minimum link confidence 0–1 (default: 0)' },
-            ..._tokenProp,
-          },
-          required: ['name'],
-        },
-      },
-      {
-        name: 'group_query',
-        description: 'BM25 search across all repos in a group, merged via Reciprocal Rank Fusion (RRF). Returns a unified ranked list plus per-repo breakdown.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            name: { type: 'string', description: 'Group name' },
-            query: { type: 'string', description: 'Search query' },
-            limit: { type: 'number', description: 'Max results per repo (default: 10)' },
-            ..._tokenProp,
-          },
-          required: ['name', 'query'],
-        },
-      },
-      {
-        name: 'group_status',
-        description: 'Check index freshness and sync staleness for all repos in a group. Flags repos that have not been indexed or are stale (>24h).',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            name: { type: 'string', description: 'Group name' },
-            ..._tokenProp,
-          },
-          required: ['name'],
-        },
-      },
-
-      // ── Reasoning / analysis tools ────────────────────────────────────────
-      {
-        name: 'explain_relationship',
-        description: 'Explain how two symbols are connected: directed paths, shared imports, and heritage (extends/implements). Returns up to 10 paths with at most 5 hops each.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            from: { type: 'string', description: 'Source symbol name' },
-            to: { type: 'string', description: 'Target symbol name' },
-            ..._tokenProp,
-          },
-          required: ['from', 'to'],
-        },
-      },
-      {
-        name: 'pr_impact',
-        description: 'Given changed files or a unified diff, compute full blast radius with risk scores (HIGH/MEDIUM/LOW), test coverage gaps, and top files to review.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            changedFiles: {
-              type: 'array',
-              items: { type: 'string' },
-              description: 'List of changed file paths (relative or absolute)',
-            },
-            diff: {
-              type: 'string',
-              description: 'Raw unified diff text. Changed files are extracted automatically.',
-            },
-            maxHops: {
-              type: 'number',
-              description: 'Maximum BFS depth for blast radius (default: 2, max: 10)',
-            },
-            ..._tokenProp,
-          },
-        },
-      },
-      {
-        name: 'similar_symbols',
-        description: 'Find symbols with similar names or structure using Levenshtein distance and kind matching. Useful for finding related functions, classes, or interfaces.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            symbol: { type: 'string', description: 'Symbol name to find similar symbols for' },
-            limit: { type: 'number', description: 'Maximum number of results (default: 10, max: 50)' },
-            ..._tokenProp,
-          },
-          required: ['symbol'],
-        },
-      },
-      {
-        name: 'health_report',
-        description: 'Code health signals for a scope: dead code, cycles, god nodes, orphan files, complexity hotspots',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            scope: { type: 'string', description: "Directory scope, e.g. 'src/api/' or '.' for whole repo" },
-            ..._tokenProp,
-          },
-        },
-      },
-      {
-        name: 'suggest_tests',
-        description: 'Suggest test cases for a symbol: call paths, suggested cases, existing tests, untested callers',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            symbol: { type: 'string', description: 'Symbol name to generate test suggestions for' },
-            ..._tokenProp,
-          },
-          required: ['symbol'],
-        },
-      },
-      {
-        name: 'cluster_summary',
-        description: 'Rich summary of a module/cluster: purpose, key symbols, dependencies, health',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            cluster: { type: 'string', description: "Cluster path e.g. 'src/auth'" },
-            ..._tokenProp,
-          },
-          required: ['cluster'],
-        },
-      },
-      {
-        name: 'deprecated_usage',
-        description: 'Find usages of deprecated APIs in the codebase',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            scope: { type: 'string', description: 'Directory scope filter' },
-            ..._tokenProp,
-          },
-        },
-      },
-      {
-        name: 'complexity_hotspots',
-        description: 'Ranked list of functions/methods by cyclomatic complexity. Useful for identifying refactoring candidates.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            scope: { type: 'string', description: 'Limit to a file path prefix (optional)' },
-            limit: { type: 'number', description: 'Maximum number of results (default: 20)' },
-            ..._tokenProp,
-          },
-        },
-      },
-      {
-        name: 'coverage_gaps',
-        description: 'Find exported symbols with no test coverage, ranked by blast radius. Useful for prioritizing test writing.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            scope: { type: 'string', description: 'Limit to a file path prefix (optional)' },
-            limit: { type: 'number', description: 'Maximum number of untested results to return (default: 20)' },
-            ..._tokenProp,
-          },
-        },
-      },
-      {
-        name: 'secrets',
-        description: 'Scan the knowledge graph for hardcoded secrets: API keys, passwords, tokens, private keys, high-entropy strings',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            scope: { type: 'string', description: 'Limit scan to files under this path prefix' },
-            includeTestFiles: { type: 'boolean', description: 'Include test/spec/fixture files (default: false)' },
-            ..._tokenProp,
-          },
-        },
-      },
-      {
-        name: 'vulnerability_scan',
-        description: 'Scan the knowledge graph for OWASP vulnerabilities: SQL injection, XSS, SSRF, path traversal, command injection',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            scope: { type: 'string', description: 'Limit scan to files under this path prefix' },
-            repo: { type: 'string', description: 'Scope scan to a specific indexed repo name (optional; defaults to current repo)' },
-            types: {
-              type: 'array',
-              items: { type: 'string', enum: ['SQL_INJECTION', 'XSS', 'SSRF', 'PATH_TRAVERSAL', 'COMMAND_INJECTION'] },
-              description: 'Vulnerability types to detect (default: all)',
-            },
-            severity: { type: 'string', description: 'Minimum severity to report: HIGH|MEDIUM|LOW (default: LOW)' },
-            ..._tokenProp,
-          },
-        },
-      },
-    ];
-    return { tools: tools.map(withRepoSelector) };
+    return { tools: MCP_TOOL_DEFINITIONS };
   });
 
   // ─── Tool Handlers ─────────────────────────────────────────────────────────
@@ -586,7 +130,7 @@ export function createMcpServer(
 
     // ── OTel span + Prometheus metrics wrapper ─────────────────────────────
     const startMs = Date.now();
-    const dispatch = () => dispatchTool(name, a, graph, repoName, workspaceRoot, ensureBm25Index);
+    const dispatch = () => dispatchTool(name, a, graph, repoName, workspaceRoot, ensureBm25Index, getContextSession);
 
     // Epic 6: MCP tool timeout — if any tool takes > 30s, return partial result
     const MCP_TIMEOUT_MS = parseInt(process.env['CODE_INTEL_MCP_TIMEOUT_MS'] ?? '30000', 10);
@@ -836,6 +380,7 @@ const GRAPH_BACKED_TOOLS = new Set([
   'overview', 'inspect', 'context', 'blast_radius', 'file_symbols', 'find_path', 'list_exports', 'routes', 'clusters', 'flows',
   'detect_changes', 'query', 'raw_query', 'explain_relationship', 'pr_impact', 'similar_symbols', 'health_report',
   'suggest_tests', 'cluster_summary', 'deprecated_usage', 'complexity_hotspots', 'coverage_gaps', 'secrets', 'vulnerability_scan',
+  'api_contract', 'api_impact', 'api_drift', 'graph_diff',
 ]);
 
 export async function dispatchTool(
@@ -845,6 +390,7 @@ export async function dispatchTool(
   repoName: string,
   workspaceRoot: string | undefined,
   bm25Resolver?: () => Bm25Index | null,
+  contextSessionResolver?: (workspaceIdentity: string) => ContextDeliverySession,
 ): Promise<ToolResult> {
   let activeRepoName = repoName;
   let activeWorkspaceRoot = workspaceRoot;
@@ -1120,41 +666,68 @@ export async function dispatchTool(
           return { content: [{ type: 'text', text: 'Missing symbols. Provide { "symbols": ["..."] }.' }] };
         }
 
+        const task = typeof a.task === 'string' && a.task.trim().length > 0 ? a.task : undefined;
         const seedLimit = Math.max(1, Math.min((a.limit as number) ?? 10, 10));
         const requestedIntent = (a.intent as QueryIntent | undefined) ?? 'auto';
-        const queryIntent = requestedIntent === 'auto' ? detectQueryIntent(symbols.join(' ')) : requestedIntent;
+        const queryIntent = requestedIntent === 'auto' ? detectQueryIntent(task ?? symbols.join(' ')) : requestedIntent;
         const maxTokens = Math.min((a.max_tokens as number) ?? 6000, 6000);
 
         const resolvedSeeds: SeedSymbol[] = [];
         const resolvedNames: string[] = [];
         const unresolvedNames: string[] = [];
+        const ambiguousSeeds: { requested: string; candidates: { id: string; name: string; kind: string; filePath: string; startLine?: number }[] }[] = [];
+        const selectionOmissions: ContextOmission[] = [];
         for (const symbol of symbols.slice(0, seedLimit)) {
-          const node = findNodeByName(graph, symbol);
-          if (!node) {
-            unresolvedNames.push(symbol);
+          const resolution = resolveContextSeed(graph, symbol);
+          if (resolution.status === 'exact') {
+            resolvedSeeds.push({ nodeId: resolution.node.id, refinedScore: 1 });
+            resolvedNames.push(symbol);
             continue;
           }
-          resolvedSeeds.push({ nodeId: node.id, refinedScore: 1 });
-          resolvedNames.push(symbol);
+          if (resolution.status === 'ambiguous') {
+            ambiguousSeeds.push({ requested: symbol, candidates: resolution.candidates });
+            selectionOmissions.push({ artifactId: symbol, name: symbol, reason: 'ambiguous' });
+            continue;
+          }
+          unresolvedNames.push(symbol);
         }
 
         if (resolvedSeeds.length === 0) {
-          return { content: [{ type: 'text', text: `No symbols resolved for: ${symbols.slice(0, seedLimit).join(', ')}. Try search first.` }] };
+          return {
+            content: [{
+              type: 'text',
+              text: compact({
+                error: `No symbols resolved for: ${symbols.slice(0, seedLimit).join(', ')}. Try search first.`,
+                unresolvedSymbols: unresolvedNames,
+                ambiguousSymbols: ambiguousSeeds,
+              }),
+            }],
+          };
         }
 
-        const doc = build(resolvedSeeds, graph, { queryIntent, maxTokens });
+        const contextSession = contextSessionResolver?.(activeWorkspaceRoot ?? activeRepoName);
+        const doc = build(resolvedSeeds, graph, {
+          queryIntent,
+          maxTokens,
+          repoDir: activeWorkspaceRoot,
+          session: contextSession,
+        });
         return {
           content: [{
             type: 'text',
             text: compact({
               symbols: resolvedNames,
               unresolvedSymbols: unresolvedNames,
+              ambiguousSymbols: ambiguousSeeds,
               intent: doc.intent,
               summary: doc.summary,
               logic: doc.logic,
               relation: doc.relation,
               focusCode: doc.focusCode,
               truncated: doc.truncated,
+              coverage: doc.coverage,
+              trust: doc.trust,
+              omitted: [...selectionOmissions, ...(doc.omitted ?? [])],
             }),
           }],
         };
@@ -1168,34 +741,24 @@ export async function dispatchTool(
         const node = findNodeByName(graph, target);
         if (!node) return { content: [{ type: 'text', text: `Symbol "${target}" not found.` }] };
 
-        const affected = new Set<string>();
-        const queue: { id: string; depth: number }[] = [{ id: node.id, depth: 0 }];
-        const visited = new Set<string>();
-
-        while (queue.length > 0) {
-          const { id, depth } = queue.shift()!;
-          if (visited.has(id) || depth > maxHops) continue;
-          visited.add(id);
-          affected.add(id);
-
-          if (direction === 'callers' || direction === 'both') {
-            for (const edge of graph.findEdgesTo(id)) {
-              if (edge.kind === 'calls' || edge.kind === 'imports') queue.push({ id: edge.source, depth: depth + 1 });
-            }
-          }
-          if (direction === 'callees' || direction === 'both') {
-            for (const edge of graph.findEdgesFrom(id)) {
-              if (edge.kind === 'calls' || edge.kind === 'imports') queue.push({ id: edge.target, depth: depth + 1 });
-            }
-          }
-        }
-
-        const affectedDetails = [...affected].map((id) => {
-          const n = graph.getNode(id);
-          return n ? { id, name: n.name, kind: n.kind, filePath: n.filePath } : { id };
+        const result = computeBlastRadiusWithTrust({
+          graph,
+          targetId: node.id,
+          targetName: node.name,
+          direction: direction as 'callers' | 'callees' | 'both',
+          maxHops,
+          repoDir: activeWorkspaceRoot,
         });
 
-        const risk = affected.size > 10 ? 'HIGH' : affected.size > 5 ? 'MEDIUM' : 'LOW';
+        const affectedDetails = result.affected.map((item) => ({
+          id: item.id,
+          name: item.name,
+          kind: item.kind,
+          filePath: item.filePath,
+          depth: item.depth,
+        }));
+
+        const risk = result.riskLevel;
 
         const suggestEnabled = process.env['CODE_INTEL_SUGGEST_NEXT_TOOLS'] === 'true';
         const suggestNextTools: unknown[] = [];
@@ -1213,9 +776,12 @@ export async function dispatchTool(
             type: 'text',
             text: compact({
               target: node.name,
-              affectedCount: affected.size,
+              affectedCount: result.affectedCount,
               riskLevel: risk,
               affected: affectedDetails,
+              certainty: result.trust.certainty,
+              coverage: result.trust.coverage,
+              boundaries: result.trust.boundaries,
               ...(suggestEnabled ? { suggested_next_tools: suggestNextTools } : {}),
             }),
           }],
@@ -1285,6 +851,11 @@ export async function dispatchTool(
           return { content: [{ type: 'text', text: `No path found from "${fromName}" to "${toName}" within ${maxHops} hops.` }] };
         }
 
+        const pathEdges = foundPath.slice(0, -1).map((id, index) => {
+          const nextId = foundPath[index + 1]!;
+          return [...graph.findEdgesFrom(id)].find((edge) => edge.target === nextId && (edge.kind === 'calls' || edge.kind === 'imports'));
+        }).filter((edge): edge is NonNullable<typeof edge> => Boolean(edge));
+        const pathTrust = summarizeEdgeTrust(pathEdges, activeWorkspaceRoot);
         const pathDetails = foundPath.map((id) => {
           const n = graph.getNode(id);
           return n ? { id, name: n.name, kind: n.kind, filePath: n.filePath } : { id };
@@ -1293,7 +864,7 @@ export async function dispatchTool(
         return {
           content: [{
             type: 'text',
-            text: compact({ from: fromName, to: toName, hops: foundPath.length - 1, path: pathDetails }),
+            text: compact({ from: fromName, to: toName, hops: foundPath.length - 1, path: pathDetails, certainty: pathTrust.certainty, coverage: pathTrust.coverage, boundaries: pathTrust.boundaries }),
           }],
         };
       }
@@ -1597,6 +1168,8 @@ export async function dispatchTool(
 
         const result = await syncGroup(group);
         saveSyncResult(result);
+        const verified = verifySyncResultReadBack(result);
+        if (!verified.ok) return { content: [{ type: 'text', text: `Group sync read-back validation failed: ${verified.reason}` }] };
         group.lastSync = result.syncedAt;
         saveGroup(group);
 
@@ -1638,6 +1211,33 @@ export async function dispatchTool(
             text: compact({ syncedAt: result.syncedAt, contracts, links }),
           }],
         };
+      }
+
+      case 'group_contract_drift': {
+        const groupName = a.name as string;
+        const baseRef = a.base_ref as string | undefined;
+        const headRef = a.head_ref as string | undefined;
+        const baseSnapshotIds = a.base_snapshot_ids as Record<string, string> | undefined;
+        const headSnapshotIds = a.head_snapshot_ids as Record<string, string> | undefined;
+        if ((!baseRef || !headRef) && (!baseSnapshotIds || !headSnapshotIds)) {
+          return { content: [{ type: 'text', text: compact({ error: 'Provide base_ref/head_ref or base_snapshot_ids/head_snapshot_ids.' }) }], isError: true };
+        }
+        try {
+          const result = await getGroupContractDrift({
+            groupName,
+            baseRef,
+            headRef,
+            baseSnapshotIds,
+            headSnapshotIds,
+            kind: a.kind as Contract['kind'] | undefined,
+            repositoryId: a.repository_id as string | undefined,
+            limit: a.limit as number | undefined,
+            allowCache: (a.allow_cache as boolean | undefined) ?? true,
+          });
+          return { content: [{ type: 'text', text: compact(result) }] };
+        } catch (err) {
+          return { content: [{ type: 'text', text: compact({ error: err instanceof Error ? err.message : String(err) }) }], isError: true };
+        }
       }
 
       // ── group_query ────────────────────────────────────────────────────────
@@ -1708,7 +1308,7 @@ export async function dispatchTool(
       case 'explain_relationship': {
         const fromName = a.from as string;
         const toName = a.to as string;
-        const result = explainRelationship(graph, fromName, toName);
+        const result = explainRelationship(graph, fromName, toName, activeWorkspaceRoot);
         return { content: [{ type: 'text', text: compact(result) }] };
       }
 
@@ -1723,7 +1323,12 @@ export async function dispatchTool(
           changedFiles = [...new Set([...changedFiles, ...diffFiles])];
         }
 
-        if (changedFiles.length === 0) {
+        const analysisMode = (a.analysisMode as string | undefined) ?? 'current-graph';
+        if (analysisMode !== 'current-graph' && analysisMode !== 'semantic-snapshot') {
+          return { content: [{ type: 'text', text: compact({ error: 'analysisMode must be "current-graph" or "semantic-snapshot".' }) }], isError: true };
+        }
+
+        if (changedFiles.length === 0 && analysisMode === 'current-graph') {
           return {
             content: [{
               type: 'text',
@@ -1732,8 +1337,194 @@ export async function dispatchTool(
           };
         }
 
-        const result = computePRImpact(graph, changedFiles, maxHops);
+        // Textual-hunk blast radius — computed whenever changed files are known,
+        // in both modes. semantic-snapshot mode adds to this; it never replaces it.
+        const textualImpact = changedFiles.length > 0
+          ? computePRImpact(graph, changedFiles, maxHops, activeWorkspaceRoot)
+          : null;
+
+        if (analysisMode === 'current-graph') {
+          return { content: [{ type: 'text', text: compact(textualImpact) }] };
+        }
+
+        const baseRef = a.base_ref as string | undefined;
+        const headRef = a.head_ref as string | undefined;
+        if (!baseRef || !headRef) {
+          return { content: [{ type: 'text', text: compact({ error: 'analysisMode "semantic-snapshot" requires both base_ref and head_ref.' }) }], isError: true };
+        }
+        if (!activeWorkspaceRoot) {
+          return { content: [{ type: 'text', text: compact({ error: 'No repository workspace root available for semantic-snapshot analysis. Select a repo with repoId/repo.' }) }], isError: true };
+        }
+        try {
+          const { diff, base, head } = await computeSemanticGraphDiff({ repoDir: activeWorkspaceRoot, base: baseRef, head: headRef });
+          let crossRepositoryContracts: unknown;
+          const registryEntry = loadRegistry().find((entry) => entry.name === activeRepoName || entry.path === activeWorkspaceRoot);
+          const group = registryEntry
+            ? listGroups().find((candidate) => candidate.members.some((member) => member.repoId === registryEntry.id || member.registryName === registryEntry.name))
+            : undefined;
+          if (group && loadSyncResult(group.name)) {
+            try {
+              crossRepositoryContracts = await getGroupContractDrift({ groupName: group.name, baseRef, headRef, allowCache: true });
+            } catch (error) {
+              crossRepositoryContracts = {
+                groupName: group.name,
+                findings: [],
+                totalFindings: 0,
+                summary: {
+                  totalFindings: 0,
+                  byCompatibility: { compatible: 0, 'potentially-breaking': 0, breaking: 0, unknown: 0 },
+                  coverage: { complete: false, examinedCount: 0, incompleteReasons: [error instanceof Error ? error.message : String(error)] },
+                  knownConsumerCoverage: { complete: false, inScope: 'partial-group-sync', certainty: 'unavailable', examinedConsumerCount: 0, incompleteReasons: [error instanceof Error ? error.message : String(error)] },
+                },
+                base: {},
+                head: {},
+                metrics: {
+                  contractsLoaded: 0,
+                  fingerprintsChanged: 0,
+                  fingerprintsUnchangedSkipped: 0,
+                  consumersExpanded: 0,
+                  comparisonsExecuted: 0,
+                  fullFallbackCount: 0,
+                  capHits: 0,
+                  partialRepositories: 0,
+                  elapsedMs: 0,
+                },
+              };
+            }
+          }
+          return {
+            content: [{
+              type: 'text',
+              text: compact({
+                analysisMode: 'semantic-snapshot',
+                textualImpact: textualImpact ? { ...textualImpact, crossRepositoryContracts } : textualImpact,
+                semanticDiff: diff,
+                baseSnapshot: { status: base.status, fromCache: base.fromCache, boundaries: base.boundaries },
+                headSnapshot: { status: head.status, fromCache: head.fromCache, boundaries: head.boundaries },
+              }),
+            }],
+          };
+        } catch (err) {
+          return { content: [{ type: 'text', text: compact({ error: err instanceof Error ? err.message : String(err) }) }], isError: true };
+        }
+      }
+
+      // ── api_contract ───────────────────────────────────────────────────────
+      case 'api_contract': {
+        const selector: RouteSelector = {
+          method: a.method as string | undefined,
+          normalizedPath: a.path as string | undefined,
+          routeFactId: a.route_fact_id as string | undefined,
+          routeNodeId: a.route_node_id as string | undefined,
+        };
+        const result = getApiContract(graph, selector, activeRepoName);
         return { content: [{ type: 'text', text: compact(result) }] };
+      }
+
+      // ── api_impact ─────────────────────────────────────────────────────────
+      case 'api_impact': {
+        const selector: RouteSelector = {
+          method: a.method as string | undefined,
+          normalizedPath: a.path as string | undefined,
+          routeFactId: a.route_fact_id as string | undefined,
+          routeNodeId: a.route_node_id as string | undefined,
+        };
+        const result = getApiImpact(graph, selector, activeRepoName);
+        return { content: [{ type: 'text', text: compact(result) }] };
+      }
+
+      // ── api_drift ──────────────────────────────────────────────────────────
+      case 'api_drift': {
+        const baseRepoId = a.base_repo_id as string | undefined;
+        if (!baseRepoId) {
+          return { content: [{ type: 'text', text: compact({ error: 'base_repo_id is required.' }) }], isError: true };
+        }
+        try {
+          const baseCtx = await ensureRepoLoaded(baseRepoId, undefined, activeRepoName, activeWorkspaceRoot, graph);
+          if (baseCtx.missingIndex) return missingIndexResult(baseCtx);
+
+          const headRepoId = a.head_repo_id as string | undefined;
+          const headCtx = headRepoId
+            ? await ensureRepoLoaded(headRepoId, undefined, activeRepoName, activeWorkspaceRoot, graph)
+            : (activeContext ?? { graph, missingIndex: false } as LoadedRepoGraph);
+          if (headCtx.missingIndex) return missingIndexResult(headCtx);
+
+          const result = getApiDrift(baseCtx.graph, headCtx.graph, activeRepoName);
+          return { content: [{ type: 'text', text: compact(result) }] };
+        } catch (err) {
+          return {
+            content: [{ type: 'text', text: compact({ error: err instanceof Error ? err.message : String(err) }) }],
+            isError: true,
+          };
+        }
+      }
+
+      // ── graph_diff ─────────────────────────────────────────────────────────
+      case 'graph_diff': {
+        const baseRef = a.base_ref as string | undefined;
+        const headRef = a.head_ref as string | undefined;
+        if (!baseRef || !headRef) {
+          return { content: [{ type: 'text', text: compact({ error: 'base_ref and head_ref are required.' }) }], isError: true };
+        }
+        if (!activeWorkspaceRoot) {
+          return { content: [{ type: 'text', text: compact({ error: 'No repository workspace root available. Select a repo with repoId/repo.' }) }], isError: true };
+        }
+        try {
+          const { diff, base, head } = await computeSemanticGraphDiff({
+            repoDir: activeWorkspaceRoot,
+            base: baseRef,
+            head: headRef,
+            includeContracts: (a.include_contracts as boolean | undefined) ?? true,
+            allowCache: (a.allow_cache as boolean | undefined) ?? true,
+          });
+
+          if (!diff) {
+            return {
+              content: [{
+                type: 'text',
+                text: compact({
+                  error: 'Semantic graph diff unavailable for one or both refs.',
+                  baseSnapshot: { status: base.status, boundaries: base.boundaries, error: base.error },
+                  headSnapshot: { status: head.status, boundaries: head.boundaries, error: head.error },
+                }),
+              }],
+              isError: true,
+            };
+          }
+
+          const nodesOffset = (a.nodes_offset as number) ?? 0;
+          const nodesLimit = Math.min((a.nodes_limit as number) ?? 200, 2000);
+          const relationshipsOffset = (a.relationships_offset as number) ?? 0;
+          const relationshipsLimit = Math.min((a.relationships_limit as number) ?? 200, 2000);
+
+          return {
+            content: [{
+              type: 'text',
+              text: compact({
+                base: diff.base,
+                head: diff.head,
+                coverage: diff.coverage,
+                contracts: diff.contracts,
+                flows: diff.flows,
+                clusters: diff.clusters,
+                nodes: diff.nodes.slice(nodesOffset, nodesOffset + nodesLimit),
+                nodesTotal: diff.nodes.length,
+                nodesOffset,
+                nodesLimit,
+                nodesHasMore: nodesOffset + nodesLimit < diff.nodes.length,
+                relationships: diff.relationships.slice(relationshipsOffset, relationshipsOffset + relationshipsLimit),
+                relationshipsTotal: diff.relationships.length,
+                relationshipsOffset,
+                relationshipsLimit,
+                relationshipsHasMore: relationshipsOffset + relationshipsLimit < diff.relationships.length,
+                baseSnapshot: { status: base.status, fromCache: base.fromCache, boundaries: base.boundaries },
+                headSnapshot: { status: head.status, fromCache: head.fromCache, boundaries: head.boundaries },
+              }),
+            }],
+          };
+        } catch (err) {
+          return { content: [{ type: 'text', text: compact({ error: err instanceof Error ? err.message : String(err) }) }], isError: true };
+        }
       }
 
       // ── similar_symbols ────────────────────────────────────────────────────
@@ -1754,7 +1545,7 @@ export async function dispatchTool(
       // ── suggest_tests ──────────────────────────────────────────────────────
       case 'suggest_tests': {
         const sym = a.symbol as string;
-        const result = suggestTests(graph, sym);
+        const result = suggestTests(graph, sym, activeWorkspaceRoot);
         return { content: [{ type: 'text', text: compact(result) }] };
       }
 
@@ -1897,10 +1688,8 @@ export async function startMcpStdio(
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
 function findNodeByName(graph: KnowledgeGraph, name: string) {
-  for (const node of graph.allNodes()) {
-    if (node.name === name) return node;
-  }
-  return undefined;
+  const resolution = resolveSymbolTarget(graph, name);
+  return resolution.status === 'found' ? resolution.node : undefined;
 }
 
 /**

@@ -1,10 +1,15 @@
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
+import type { AnalysisBoundary, AnalysisCertainty, AnalysisCoverage, CodeEdge } from '../shared/index.js';
+import { emptyTrust, summarizeEdgeTrust } from './trust.js';
 
 export interface SuggestTestsResult {
   callPaths: string[][];
   suggestedCases: string[];
   existingTests: string[];
   untestedCallers: string[];
+  certainty?: AnalysisCertainty;
+  coverage?: AnalysisCoverage;
+  boundaries?: readonly AnalysisBoundary[];
 }
 
 function getSuggestedCases(symbolName: string): string[] {
@@ -48,8 +53,8 @@ function getSuggestedCases(symbolName: string): string[] {
 export function suggestTests(
   graph: KnowledgeGraph,
   symbolName: string,
+  repoDir?: string,
 ): SuggestTestsResult | { error: string } {
-  // Find node by name
   let targetNode = undefined;
   for (const node of graph.allNodes()) {
     if (node.name === symbolName) {
@@ -63,9 +68,9 @@ export function suggestTests(
   }
 
   const targetId = targetNode.id;
-
-  // ── Call paths (BFS backwards up to 3 hops, collect up to 5 paths) ─────────
+  const trustEdges: CodeEdge[] = [];
   const callPaths: string[][] = [];
+  let truncated = false;
 
   type PathEntry = { id: string; path: string[]; depth: number };
   const pathQueue: PathEntry[] = [{ id: targetId, path: [symbolName], depth: 0 }];
@@ -79,10 +84,12 @@ export function suggestTests(
       const callerNode = graph.getNode(edge.source);
       if (!callerNode) continue;
       hasCallers = true;
+      trustEdges.push(edge);
 
       const newPath = [callerNode.name, ...path];
 
       if (depth + 1 >= 3 || callPaths.length >= 5) {
+        truncated = true;
         if (callPaths.length < 5) callPaths.push(newPath);
         continue;
       }
@@ -94,18 +101,20 @@ export function suggestTests(
     }
   }
 
-  // If no call paths discovered via BFS, still check direct callers
   if (callPaths.length === 0) {
     for (const edge of graph.findEdgesTo(targetId)) {
       if (edge.kind !== 'calls') continue;
       const callerNode = graph.getNode(edge.source);
       if (!callerNode) continue;
+      trustEdges.push(edge);
       callPaths.push([callerNode.name, symbolName]);
-      if (callPaths.length >= 5) break;
+      if (callPaths.length >= 5) {
+        truncated = true;
+        break;
+      }
     }
   }
 
-  // ── Existing tests ─────────────────────────────────────────────────────────
   const existingTestFiles = new Set<string>();
   for (const edge of graph.findEdgesTo(targetId)) {
     if (edge.kind !== 'imports') continue;
@@ -120,8 +129,6 @@ export function suggestTests(
   }
   const existingTests = [...existingTestFiles];
 
-  // ── Untested callers ───────────────────────────────────────────────────────
-  // Nodes that call this symbol AND are not in test files AND no test file imports them
   const untestedCallers: string[] = [];
 
   for (const edge of graph.findEdgesTo(targetId)) {
@@ -129,7 +136,6 @@ export function suggestTests(
     const callerNode = graph.getNode(edge.source);
     if (!callerNode) continue;
 
-    // Skip if caller is itself a test file
     if (
       callerNode.filePath.includes('.test.') ||
       callerNode.filePath.includes('.spec.')
@@ -137,7 +143,6 @@ export function suggestTests(
       continue;
     }
 
-    // Check if any test file imports this caller
     let callerHasTest = false;
     for (const callerImportEdge of graph.findEdgesTo(callerNode.id)) {
       if (callerImportEdge.kind !== 'imports') continue;
@@ -157,13 +162,18 @@ export function suggestTests(
     }
   }
 
-  // ── Suggested cases ────────────────────────────────────────────────────────
   const suggestedCases = getSuggestedCases(symbolName);
+  const trust = trustEdges.length > 0
+    ? summarizeEdgeTrust(trustEdges, repoDir, { truncated })
+    : emptyTrust();
 
   return {
     callPaths,
     suggestedCases,
     existingTests,
     untestedCallers,
+    certainty: trust.certainty,
+    coverage: trust.coverage,
+    boundaries: trust.boundaries,
   };
 }

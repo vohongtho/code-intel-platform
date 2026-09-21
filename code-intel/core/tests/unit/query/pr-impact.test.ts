@@ -1,8 +1,16 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { createKnowledgeGraph } from '../../../src/graph/knowledge-graph.js';
 import type { KnowledgeGraph } from '../../../src/graph/knowledge-graph.js';
+import { createEvidenceStore } from '../../../src/evidence/store.js';
 import { computePRImpact, parseDiffFiles } from '../../../src/query/pr-impact.js';
+
+function tempRepo(): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'pr-impact-'));
+}
 
 function buildTestGraph(): KnowledgeGraph {
   const graph = createKnowledgeGraph();
@@ -134,5 +142,83 @@ describe('computePRImpact', () => {
   it('crossRepoImpact is null', () => {
     const result = computePRImpact(graph, ['src/auth/core.ts'], 5);
     assert.equal(result.crossRepoImpact, null);
+  });
+
+  it('marks uncertain impact as UNKNOWN when evidence coverage is incomplete', () => {
+    const repoDir = tempRepo();
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: 'target', kind: 'function', name: 'target', filePath: 'src/target.ts' });
+    graph.addNode({ id: 'caller', kind: 'function', name: 'caller', filePath: 'src/caller.ts' });
+    const store = createEvidenceStore(repoDir);
+    store.put({
+      id: 'ev:impact-1',
+      version: 1,
+      referenceId: 'ref:impact-1',
+      resolverVersion: 'evidence-based-v1',
+      strategy: 'semantic-call',
+      coverage: { complete: false, examinedCount: 1, totalKnownCount: 2, incompleteReasons: ['analysis-limit'] },
+      boundaries: [{ kind: 'analysis-limit', evidenceRefs: ['ev:impact-1'] }],
+      recordedAt: '2025-01-01T00:00:00.000Z',
+    });
+    store.close();
+    graph.addEdge({ id: 'e1', source: 'caller', target: 'target', kind: 'calls', certainty: 'candidate', evidenceRef: 'ev:impact-1' });
+
+    const result = computePRImpact(graph, ['src/target.ts'], 5, repoDir);
+    const sym = result.changedSymbols.find((s) => s.name === 'target');
+    assert.equal(sym?.risk, 'UNKNOWN');
+    assert.equal(sym?.certainty, 'lower-bound');
+    assert.equal(sym?.coverage?.complete, false);
+    assert.deepEqual(sym?.boundaries?.map((item) => item.kind), ['analysis-limit']);
+    assert.equal(result.riskSummary.UNKNOWN, 1);
+    fs.rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  it('omits apiImpact entirely when no changed file touches an API-contract route', () => {
+    const result = computePRImpact(graph, ['src/auth/core.ts'], 5);
+    assert.equal(result.apiImpact, undefined);
+  });
+
+  it('adds an additive apiImpact section when a changed file contains an API-contract route', async () => {
+    const { expressFrameworkAdapter } = await import('../../../src/frameworks/adapters/express.js');
+    const { fetchConsumerAdapter } = await import('../../../src/semantic/api-contracts/consumers/fetch.js');
+    const { projectFactBundle } = await import('../../../src/semantic/graph-projector.js');
+    const { createFactBundle, FACT_SCHEMA_VERSION } = await import('../../../src/semantic/fact-bundle.js');
+    const { Language } = await import('../../../src/shared/languages.js');
+
+    const serverSource = [
+      "const express = require('express');",
+      'const app = express();',
+      "app.get('/users/:id', getUser);",
+      'function getUser(req, res) {',
+      "  res.status(200).json({ id: req.params.id, name: 'x' });",
+      '}',
+    ].join('\n');
+    const clientSource = [
+      'async function loadUser(id) {',
+      "  const response = await fetch(`/users/${id}`);",
+      '  const { id: userId, name } = await response.json();',
+      '  return { userId, name };',
+      '}',
+    ].join('\n');
+
+    const view = { workspaceRoot: '/repo', filePaths: ['src/api/app.js'], fileCache: new Map([['src/api/app.js', serverSource + '\n' + clientSource]]) };
+    const routeBundle = expressFrameworkAdapter.extract(view);
+    const consumerBundle = fetchConsumerAdapter.extract(view);
+    const merged = createFactBundle({
+      schema: { version: FACT_SCHEMA_VERSION, language: Language.JavaScript, adapterId: 'test' },
+      facts: [...routeBundle.facts, ...consumerBundle.facts],
+      diagnostics: [],
+    });
+    const apiGraph = createKnowledgeGraph();
+    const { nodes, edges } = projectFactBundle(merged);
+    for (const node of nodes) apiGraph.addNode(node);
+    for (const edge of edges) apiGraph.addEdge(edge);
+
+    const result = computePRImpact(apiGraph, ['src/api/app.js'], 5);
+    assert.ok(result.apiImpact, 'expected an additive apiImpact section');
+    assert.equal(result.apiImpact!.routes.length, 1);
+    assert.equal(result.apiImpact!.routes[0]!.method, 'GET');
+    assert.equal(result.apiImpact!.consumers.length, 1);
+    assert.deepEqual([...result.apiImpact!.consumers[0]!.consumedKeys].sort(), ['id', 'name']);
   });
 });

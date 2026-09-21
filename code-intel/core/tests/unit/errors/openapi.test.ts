@@ -203,6 +203,9 @@ describe('OpenAPI spec — every /api/v1/ route appears in paths', () => {
     { method: 'post',   path: '/query' },
     { method: 'post',   path: '/query/explain' },
     { method: 'get',    path: '/source' },
+    { method: 'get',    path: '/api-contract' },
+    { method: 'get',    path: '/api-impact' },
+    { method: 'get',    path: '/api-drift' },
   ];
 
   const paths = openApiSpec.paths as Record<string, Record<string, unknown>>;

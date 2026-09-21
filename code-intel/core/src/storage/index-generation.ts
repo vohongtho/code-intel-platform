@@ -9,13 +9,50 @@ export const CURRENT_FILE = 'current.json';
 export const STAGING_OWNER_FILE = 'staging.json';
 export const DEFAULT_STALE_STAGING_MS = 24 * 60 * 60 * 1000;
 
-export type IndexArtifactName = 'graph.db' | 'bm25.db' | 'vector.db' | 'meta.json';
+export type IndexArtifactName = 'graph.db' | 'bm25.db' | 'vector.db' | 'meta.json' | 'evidence.db' | 'semantic-index.json';
 export type ArtifactCloneMode = 'reflink' | 'copy';
 
 export interface IndexArtifactDetails {
   size: number;
   required: boolean;
 }
+
+export interface AnalyzerCompatibilityReceipt {
+  ddlFingerprint: string;
+  analyzerFingerprint: string;
+  languageRegistryFingerprint: string;
+  factSchemaFingerprint: string;
+  identityFingerprint: string;
+  resolverFingerprint: string;
+  evidenceFingerprint?: string;
+  embeddingFingerprint?: string;
+  apiContractFingerprint?: string;
+}
+
+export type ArtifactStatus =
+  | 'verified'
+  | 'partial-recoverable'
+  | 'stale'
+  | 'interrupted'
+  | 'unverified'
+  | 'collapsed'
+  | 'corrupt'
+  | 'unavailable';
+
+export interface ArtifactVerification {
+  status: ArtifactStatus;
+  producedCount?: number;
+  persistedCount?: number;
+  contentFingerprint?: string;
+  reason?: string;
+}
+
+export type EvolutionAction =
+  | 'reuse'
+  | 'metadata-migrate'
+  | 'artifact-rebuild'
+  | 'full-reanalysis'
+  | 'reject-corrupt';
 
 export interface IndexGenerationManifestV1 {
   version?: 1;
@@ -31,6 +68,21 @@ export interface IndexGenerationManifestV2 {
   baseGenerationId?: string;
   schemaVersion?: number;
   parser?: 'tree-sitter' | 'regex';
+  compatibilityReceipt?: AnalyzerCompatibilityReceipt;
+  graphVerification?: ArtifactVerification;
+  bm25Verification?: ArtifactVerification;
+  vectorVerification?: ArtifactVerification;
+  evidenceVerification?: ArtifactVerification;
+  evolutionAction?: EvolutionAction;
+  factSchemaVersion?: string;
+  factSchemaFingerprint?: string;
+  identityFingerprint?: string;
+  resolverVersion?: string;
+  resolverFingerprint?: string;
+  evidenceSchemaVersion?: number;
+  evidenceSchemaFingerprint?: string;
+  apiContractSchemaVersion?: string;
+  apiContractFingerprint?: string;
   artifacts: IndexArtifactName[];
   artifactDetails?: Partial<Record<IndexArtifactName, IndexArtifactDetails>>;
 }
@@ -45,7 +97,9 @@ export interface IndexGeneration {
   graphDbPath: string;
   bm25DbPath: string;
   vectorDbPath: string;
+  evidenceDbPath?: string;
   metadataPath: string;
+  semanticIndexPath: string;
 }
 
 export interface StagingOwner {
@@ -83,7 +137,7 @@ export function safeGenerationId(value: string): boolean {
 
 function isArtifactName(value: unknown): value is IndexArtifactName {
   return typeof value === 'string'
-    && ['graph.db', 'bm25.db', 'vector.db', 'meta.json'].includes(value);
+    && ['graph.db', 'bm25.db', 'vector.db', 'meta.json', 'evidence.db', 'semantic-index.json'].includes(value);
 }
 
 export function normalizeIndexGenerationManifest(value: unknown): IndexGenerationManifest | null {
@@ -106,6 +160,41 @@ export function normalizeIndexGenerationManifest(value: unknown): IndexGeneratio
     && (typeof candidate.baseGenerationId !== 'string' || !safeGenerationId(candidate.baseGenerationId))) return null;
   if (candidate.parser !== undefined && candidate.parser !== 'tree-sitter' && candidate.parser !== 'regex') return null;
   if (candidate.schemaVersion !== undefined && !Number.isInteger(candidate.schemaVersion)) return null;
+  if (candidate.compatibilityReceipt !== undefined) {
+    const receipt = candidate.compatibilityReceipt;
+    if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) return null;
+    const record = receipt as Record<string, unknown>;
+    for (const key of ['ddlFingerprint', 'analyzerFingerprint', 'languageRegistryFingerprint', 'factSchemaFingerprint', 'identityFingerprint', 'resolverFingerprint'] as const) {
+      if (typeof record[key] !== 'string') return null;
+    }
+    for (const key of ['evidenceFingerprint', 'embeddingFingerprint', 'apiContractFingerprint'] as const) {
+      if (record[key] !== undefined && typeof record[key] !== 'string') return null;
+    }
+  }
+  for (const key of ['graphVerification', 'bm25Verification', 'vectorVerification', 'evidenceVerification'] as const) {
+    const verification = candidate[key];
+    if (verification === undefined) continue;
+    if (!verification || typeof verification !== 'object' || Array.isArray(verification)) return null;
+    const record = verification as Record<string, unknown>;
+    if (typeof record.status !== 'string') return null;
+    for (const countKey of ['producedCount', 'persistedCount'] as const) {
+      if (record[countKey] !== undefined && !Number.isInteger(record[countKey])) return null;
+    }
+    for (const textKey of ['contentFingerprint', 'reason'] as const) {
+      if (record[textKey] !== undefined && typeof record[textKey] !== 'string') return null;
+    }
+  }
+  if (candidate.evolutionAction !== undefined
+    && !['reuse', 'metadata-migrate', 'artifact-rebuild', 'full-reanalysis', 'reject-corrupt'].includes(candidate.evolutionAction as string)) return null;
+  if (candidate.factSchemaVersion !== undefined && typeof candidate.factSchemaVersion !== 'string') return null;
+  if (candidate.factSchemaFingerprint !== undefined && typeof candidate.factSchemaFingerprint !== 'string') return null;
+  if (candidate.identityFingerprint !== undefined && typeof candidate.identityFingerprint !== 'string') return null;
+  if (candidate.resolverVersion !== undefined && typeof candidate.resolverVersion !== 'string') return null;
+  if (candidate.resolverFingerprint !== undefined && typeof candidate.resolverFingerprint !== 'string') return null;
+  if (candidate.evidenceSchemaVersion !== undefined && !Number.isInteger(candidate.evidenceSchemaVersion)) return null;
+  if (candidate.evidenceSchemaFingerprint !== undefined && typeof candidate.evidenceSchemaFingerprint !== 'string') return null;
+  if (candidate.apiContractSchemaVersion !== undefined && typeof candidate.apiContractSchemaVersion !== 'string') return null;
+  if (candidate.apiContractFingerprint !== undefined && typeof candidate.apiContractFingerprint !== 'string') return null;
 
   return {
     version: 2,
@@ -114,6 +203,21 @@ export function normalizeIndexGenerationManifest(value: unknown): IndexGeneratio
     baseGenerationId: candidate.baseGenerationId as string | undefined,
     schemaVersion: candidate.schemaVersion as number | undefined,
     parser: candidate.parser as 'tree-sitter' | 'regex' | undefined,
+    compatibilityReceipt: candidate.compatibilityReceipt as AnalyzerCompatibilityReceipt | undefined,
+    graphVerification: candidate.graphVerification as ArtifactVerification | undefined,
+    bm25Verification: candidate.bm25Verification as ArtifactVerification | undefined,
+    vectorVerification: candidate.vectorVerification as ArtifactVerification | undefined,
+    evidenceVerification: candidate.evidenceVerification as ArtifactVerification | undefined,
+    evolutionAction: candidate.evolutionAction as EvolutionAction | undefined,
+    factSchemaVersion: candidate.factSchemaVersion as string | undefined,
+    factSchemaFingerprint: candidate.factSchemaFingerprint as string | undefined,
+    identityFingerprint: candidate.identityFingerprint as string | undefined,
+    resolverVersion: candidate.resolverVersion as string | undefined,
+    resolverFingerprint: candidate.resolverFingerprint as string | undefined,
+    evidenceSchemaVersion: candidate.evidenceSchemaVersion as number | undefined,
+    evidenceSchemaFingerprint: candidate.evidenceSchemaFingerprint as string | undefined,
+    apiContractSchemaVersion: candidate.apiContractSchemaVersion as string | undefined,
+    apiContractFingerprint: candidate.apiContractFingerprint as string | undefined,
     artifacts: [...new Set(candidate.artifacts as IndexArtifactName[])],
     artifactDetails: candidate.artifactDetails as IndexGenerationManifestV2['artifactDetails'],
   };
@@ -184,7 +288,9 @@ export function createIndexGeneration(
     graphDbPath: path.join(stagingDir, 'graph.db'),
     bm25DbPath: path.join(stagingDir, 'bm25.db'),
     vectorDbPath: path.join(stagingDir, 'vector.db'),
+    evidenceDbPath: path.join(stagingDir, 'evidence.db'),
     metadataPath: path.join(stagingDir, 'meta.json'),
+    semanticIndexPath: path.join(stagingDir, 'semantic-index.json'),
   };
   atomicWriteJson(path.join(stagingDir, STAGING_OWNER_FILE), ownerFor(generation));
   return generation;
@@ -233,6 +339,20 @@ function assertArtifact(filePath: string, name: string): void {
   }
 }
 
+function verifyProducedPersisted(receipt: ArtifactVerification | undefined, name: string): void {
+  if (!receipt) return;
+  if (receipt.status === 'collapsed') {
+    throw new Error(`Index generation validation failed: ${name} collapsed`);
+  }
+  if (
+    receipt.producedCount !== undefined
+    && receipt.persistedCount !== undefined
+    && receipt.persistedCount < receipt.producedCount
+  ) {
+    throw new Error(`Index generation validation failed: ${name} persisted count ${receipt.persistedCount} below produced count ${receipt.producedCount}`);
+  }
+}
+
 export function cleanupStaleStaging(
   repoDir: string,
   options: { staleAfterMs?: number; activeGenerationId?: string; nowMs?: number } = {},
@@ -275,6 +395,46 @@ export function publishIndexGeneration(
   const metadataValue = metadata && typeof metadata === 'object'
     ? { ...(metadata as Record<string, unknown>), generationId: generation.generationId }
     : metadata;
+  const metadataRecord = metadataValue && typeof metadataValue === 'object'
+    ? metadataValue as {
+        schemaVersion?: number;
+        parser?: 'tree-sitter' | 'regex';
+        compatibilityReceipt?: AnalyzerCompatibilityReceipt;
+        graphVerification?: ArtifactVerification;
+        bm25Verification?: ArtifactVerification;
+        vectorVerification?: ArtifactVerification;
+        evidenceVerification?: ArtifactVerification;
+        evolutionAction?: EvolutionAction;
+        factSchemaVersion?: string;
+        factSchemaFingerprint?: string;
+        identityFingerprint?: string;
+        resolverVersion?: string;
+        resolverFingerprint?: string;
+        evidenceSchemaVersion?: number;
+        evidenceSchemaFingerprint?: string;
+        apiContractSchemaVersion?: string;
+        apiContractFingerprint?: string;
+      }
+    : undefined;
+  if (metadataRecord?.compatibilityReceipt && !metadataRecord.factSchemaFingerprint) {
+    metadataRecord.factSchemaFingerprint = metadataRecord.compatibilityReceipt.factSchemaFingerprint;
+  }
+  if (metadataRecord?.compatibilityReceipt && !metadataRecord.identityFingerprint) {
+    metadataRecord.identityFingerprint = metadataRecord.compatibilityReceipt.identityFingerprint;
+  }
+  if (metadataRecord?.compatibilityReceipt && !metadataRecord.resolverFingerprint) {
+    metadataRecord.resolverFingerprint = metadataRecord.compatibilityReceipt.resolverFingerprint;
+  }
+  if (metadataRecord?.compatibilityReceipt?.evidenceFingerprint && !metadataRecord.evidenceSchemaFingerprint) {
+    metadataRecord.evidenceSchemaFingerprint = metadataRecord.compatibilityReceipt.evidenceFingerprint;
+  }
+  if (metadataRecord?.compatibilityReceipt?.apiContractFingerprint && !metadataRecord.apiContractFingerprint) {
+    metadataRecord.apiContractFingerprint = metadataRecord.compatibilityReceipt.apiContractFingerprint;
+  }
+  verifyProducedPersisted(metadataRecord?.graphVerification, 'graph.db');
+  verifyProducedPersisted(metadataRecord?.bm25Verification, 'bm25.db');
+  verifyProducedPersisted(metadataRecord?.vectorVerification, 'vector.db');
+  verifyProducedPersisted(metadataRecord?.evidenceVerification, 'evidence.db');
   atomicWriteJson(generation.metadataPath, metadataValue);
   assertArtifact(generation.metadataPath, 'meta.json');
   fs.rmSync(path.join(generation.stagingDir, STAGING_OWNER_FILE), { force: true });
@@ -284,9 +444,8 @@ export function publishIndexGeneration(
 
   const artifacts: IndexArtifactName[] = ['graph.db', 'bm25.db', 'meta.json'];
   if (fs.existsSync(path.join(generation.finalDir, 'vector.db'))) artifacts.push('vector.db');
-  const metadataRecord = metadataValue && typeof metadataValue === 'object'
-    ? metadataValue as { schemaVersion?: number; parser?: 'tree-sitter' | 'regex' }
-    : undefined;
+  if (fs.existsSync(path.join(generation.finalDir, 'evidence.db'))) artifacts.push('evidence.db');
+  if (fs.existsSync(path.join(generation.finalDir, 'semantic-index.json'))) artifacts.push('semantic-index.json');
   const artifactDetails = Object.fromEntries(artifacts.map((artifact) => {
     const artifactPath = path.join(generation.finalDir, artifact);
     return [artifact, {
@@ -301,6 +460,21 @@ export function publishIndexGeneration(
     publishedAt: new Date().toISOString(),
     schemaVersion: metadataRecord?.schemaVersion,
     parser: metadataRecord?.parser,
+    compatibilityReceipt: metadataRecord?.compatibilityReceipt,
+    graphVerification: metadataRecord?.graphVerification,
+    bm25Verification: metadataRecord?.bm25Verification,
+    vectorVerification: metadataRecord?.vectorVerification,
+    evidenceVerification: metadataRecord?.evidenceVerification,
+    evolutionAction: metadataRecord?.evolutionAction,
+    factSchemaVersion: metadataRecord?.factSchemaVersion,
+    factSchemaFingerprint: metadataRecord?.factSchemaFingerprint,
+    identityFingerprint: metadataRecord?.identityFingerprint,
+    resolverVersion: metadataRecord?.resolverVersion,
+    resolverFingerprint: metadataRecord?.resolverFingerprint,
+    evidenceSchemaVersion: metadataRecord?.evidenceSchemaVersion,
+    evidenceSchemaFingerprint: metadataRecord?.evidenceSchemaFingerprint,
+    apiContractSchemaVersion: metadataRecord?.apiContractSchemaVersion,
+    apiContractFingerprint: metadataRecord?.apiContractFingerprint,
     artifacts,
     artifactDetails,
   };
@@ -348,7 +522,7 @@ export function migrateLegacyIndexToGeneration(repoDir: string): IndexGeneration
   const required = ['graph.db', 'bm25.db', 'meta.json'] as const;
   if (!required.every((name) => fs.existsSync(path.join(legacyDir, name)))) return null;
   const generation = createIndexGeneration(repoDir, `legacy-${Date.now()}-${crypto.randomUUID()}`);
-  for (const artifact of ['graph.db', 'bm25.db', 'vector.db'] as const) {
+  for (const artifact of ['graph.db', 'bm25.db', 'vector.db', 'evidence.db'] as const) {
     const source = path.join(legacyDir, artifact);
     if (fs.existsSync(source)) cloneGenerationArtifact(source, path.join(generation.stagingDir, artifact));
   }

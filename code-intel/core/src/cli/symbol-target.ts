@@ -1,6 +1,7 @@
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
 import type { CodeNode } from '../shared/index.js';
 import { classifySearchPath } from '../search/text-search.js';
+import { resolveLegacyAlias } from '../identity/legacy-alias.js';
 
 export const AMBIGUOUS_SYMBOL_EXIT_CODE = 2;
 
@@ -53,13 +54,31 @@ function compareCandidates(a: CodeNode, b: CodeNode): number {
 
 export function resolveSymbolTarget(graph: KnowledgeGraph, value: string): SymbolResolution {
   const qualified = parseSymbolTarget(value);
-  const candidates = [...graph.allNodes()].filter((node) => qualified
+  const allNodes = [...graph.allNodes()];
+  const candidates = allNodes.filter((node) => qualified
     ? node.kind === qualified.kind
       && node.name === qualified.name
       && node.filePath === qualified.filePath
       && (qualified.startLine === undefined || node.startLine === qualified.startLine)
     : node.name === value,
   ).sort(compareCandidates);
+
+  if (!qualified && candidates.length === 0) {
+    const legacy = resolveLegacyAlias(allNodes, value);
+    if (legacy.kind === 'exact') {
+      const node = allNodes.find((candidate) => candidate.id === legacy.id);
+      if (node) return { status: 'found', node };
+    }
+    if (legacy.kind === 'ambiguous') {
+      return {
+        status: 'ambiguous',
+        candidates: legacy.candidates
+          .map((id) => allNodes.find((node) => node.id === id))
+          .filter((node): node is CodeNode => Boolean(node))
+          .sort(compareCandidates),
+      };
+    }
+  }
 
   if (candidates.length === 0) return { status: 'not-found', candidates: [] };
   if (candidates.length === 1 || qualified) return { status: 'found', node: candidates[0] };

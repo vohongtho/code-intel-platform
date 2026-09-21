@@ -35,7 +35,7 @@ type Action =
 
 const initialState: AppState = {
   view: 'login',
-  serverUrl: 'http://localhost:4747',
+  serverUrl: '',
   connected: false,
   graphLoad: null,
   currentUser: null,

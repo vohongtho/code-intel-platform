@@ -5,6 +5,7 @@ import {
   ALL_NODE_TABLES,
   getCreateNodeTableDDL,
   getCreateEdgeTableDDL,
+  getSchemaDdlFingerprint,
 } from '../../../src/storage/schema.js';
 
 describe('NODE_TABLE_MAP', () => {
@@ -91,6 +92,15 @@ describe('getCreateNodeTableDDL', () => {
     assert.ok(ddl.includes('start_line'));
     assert.ok(ddl.includes('end_line'));
     assert.ok(ddl.includes('exported'));
+    assert.ok(ddl.includes('identity_id'));
+    assert.ok(ddl.includes('legacy_ids'));
+  });
+});
+
+describe('getSchemaDdlFingerprint', () => {
+  it('is deterministic for the current schema', () => {
+    assert.equal(getSchemaDdlFingerprint(), getSchemaDdlFingerprint());
+    assert.match(getSchemaDdlFingerprint(), /^[a-f0-9]{64}$/);
   });
 });
 
@@ -111,12 +121,21 @@ describe('getCreateEdgeTableDDL', () => {
     assert.ok(ddls.some((d) => d.includes('code_edges')));
   });
 
-  it('contains kind, weight, label fields', () => {
+  it('contains trust persistence fields', () => {
     const ddls = getCreateEdgeTableDDL();
     const combined = ddls.join('\n');
+    assert.ok(combined.includes('id STRING'));
     assert.ok(combined.includes('kind'));
     assert.ok(combined.includes('weight'));
     assert.ok(combined.includes('label'));
+    assert.ok(combined.includes('callsite_id'));
+    assert.ok(combined.includes('confidence'));
+    assert.ok(combined.includes('certainty'));
+    assert.ok(combined.includes('strategy'));
+    assert.ok(combined.includes('resolver_version'));
+    assert.ok(combined.includes('evidence_ref'));
+    assert.ok(combined.includes('ambiguous'));
+    assert.ok(combined.includes('metadata'));
   });
 
   it('contains FROM ... TO pairs for node tables', () => {

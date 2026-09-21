@@ -239,7 +239,7 @@ export async function runAgent(
       toolCall: {
         ...impactCall,
         status: 'done',
-        resultSummary: `${blast.affectedCount} affected symbols`,
+        resultSummary: `${blast.affectedCount} affected symbols${blast.riskLevel ? `, risk ${blast.riskLevel}` : ''}${blast.certainty ? `, certainty ${blast.certainty}` : ''}`,
       },
     });
     const byDepth = new Map<number, typeof blast.affected>();

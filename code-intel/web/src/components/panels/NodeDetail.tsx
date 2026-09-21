@@ -1,7 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import type { CodeNode, NodeKind } from 'code-intel-shared';
 import { NODE_COLORS } from '../../graph/colors';
-import { ApiClient, type NodeInspectInfo, type BlastRadiusResult } from '../../api/client';
+import {
+  ApiClient,
+  type NodeInspectInfo,
+  type BlastRadiusResult,
+  type ApiContractResult,
+  type ApiCoverage,
+  type ResolvedShapeView,
+} from '../../api/client';
 import { useAppState } from '../../state/app-context';
 
 interface Props {
@@ -9,7 +16,7 @@ interface Props {
   onClose: () => void;
 }
 
-type Tab = 'overview' | 'connections' | 'impact' | 'source';
+type Tab = 'overview' | 'contract' | 'connections' | 'impact' | 'source';
 
 export function NodeDetail({ node, onClose }: Props) {
   const { state, dispatch } = useAppState();
@@ -17,6 +24,10 @@ export function NodeDetail({ node, onClose }: Props) {
   const [impact, setImpact] = useState<BlastRadiusResult | null>(null);
   const [loadingInfo, setLoadingInfo] = useState(false);
   const [loadingImpact, setLoadingImpact] = useState(false);
+  const [contract, setContract] = useState<ApiContractResult | null>(null);
+  const [loadingContract, setLoadingContract] = useState(false);
+  const [contractError, setContractError] = useState<string | null>(null);
+  const [contractLoaded, setContractLoaded] = useState(false);
   const [tab, setTab] = useState<Tab>('overview');
 
   useEffect(() => {
@@ -48,6 +59,26 @@ export function NodeDetail({ node, onClose }: Props) {
     if (tab === 'impact') loadImpact();
   }, [tab]);
 
+  const loadContract = async () => {
+    if (contractLoaded || loadingContract) return;
+    setLoadingContract(true);
+    setContractError(null);
+    try {
+      const client = new ApiClient(state.serverUrl);
+      const results = await client.apiContract({ routeNodeId: node.id }, state.repoId || undefined);
+      setContract(results[0] ?? null);
+    } catch (err) {
+      setContractError(err instanceof Error ? err.message : 'Failed to load API contract');
+    } finally {
+      setContractLoaded(true);
+      setLoadingContract(false);
+    }
+  };
+
+  useEffect(() => {
+    if (tab === 'contract') loadContract();
+  }, [tab]);
+
   const jumpTo = (targetId?: string) => {
     if (!targetId) return;
     const found = state.nodes.find((n) => n.id === targetId);
@@ -74,7 +105,8 @@ export function NodeDetail({ node, onClose }: Props) {
     );
   };
 
-  const tabs: Tab[] = ['overview', 'connections', 'impact', 'source'];
+  const isRoute = node.kind === 'route';
+  const tabs: Tab[] = isRoute ? ['overview', 'contract', 'connections', 'impact', 'source'] : ['overview', 'connections', 'impact', 'source'];
   const connectionCount = info ? info.callers.length + info.callees.length + info.imports.length : 0;
   const impactCount = impact?.affectedCount ?? 0;
 
@@ -140,6 +172,11 @@ export function NodeDetail({ node, onClose }: Props) {
                 {impactCount}
               </span>
             )}
+            {t === 'contract' && contract && contract.consumers.length > 0 && (
+              <span className="ml-1 text-[9px] text-node-function bg-node-function/10 px-1 rounded-full">
+                {contract.consumers.length}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -191,6 +228,95 @@ export function NodeDetail({ node, onClose }: Props) {
                   {String(node.metadata?.signature)}
                 </pre>
               </div>
+            )}
+          </div>
+        )}
+
+        {/* CONTRACT */}
+        {tab === 'contract' && (
+          <div className="space-y-3">
+            {loadingContract && <p className="text-text-muted text-xs animate-pulse">Loading API contract…</p>}
+            {contractError && (
+              <div className="border border-red-700/60 bg-red-900/20 rounded p-2">
+                <p className="text-[10px] uppercase font-semibold text-red-400 mb-0.5">Error</p>
+                <p className="text-xs text-red-300">{contractError}</p>
+              </div>
+            )}
+            {!loadingContract && !contractError && !contract && (
+              <p className="text-text-muted text-xs italic">
+                No statically recoverable API contract for this route (unsupported framework, or dynamic registration).
+              </p>
+            )}
+            {contract && (
+              <>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] font-mono font-bold text-accent bg-accent/10 border border-accent/30 rounded px-1.5 py-0.5">
+                    {contract.route.method}
+                  </span>
+                  <span className="text-xs font-mono text-text-secondary truncate">{contract.route.normalizedPath}</span>
+                  <span className="text-[10px] text-text-muted bg-elevated px-1.5 py-0.5 rounded border border-border-subtle">
+                    {contract.route.framework}
+                  </span>
+                  <CoverageBadge coverage={contract.route.coverage} />
+                </div>
+
+                <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
+                  <Field label="Handler" value={contract.route.handlerName ?? '—'} mono />
+                  <Field label="Raw path" value={contract.route.path} mono />
+                </div>
+
+                {contract.route.middlewareRefs.length > 0 && (
+                  <ShapeFieldPills label="Middleware" values={contract.route.middlewareRefs} />
+                )}
+                {contract.route.authEvidence && contract.route.authEvidence.length > 0 && (
+                  <ShapeFieldPills label="Auth" values={contract.route.authEvidence} />
+                )}
+
+                <ShapeSection label="Request" shape={contract.route.requestShape} />
+
+                <div>
+                  <h4 className="text-[10px] font-bold uppercase tracking-wider text-text-muted mb-1">Responses</h4>
+                  {contract.route.responses.length === 0 && <p className="text-text-muted text-[11px] italic">No response evidence.</p>}
+                  <div className="space-y-2">
+                    {contract.route.responses.map((variant, i) => (
+                      <div key={`${variant.status ?? 'default'}-${i}`} className="border border-border-subtle rounded p-2 bg-elevated/40">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-[10px] font-mono text-text-secondary">{variant.status ?? 'default'}</span>
+                          <EvidenceBadge evidence={variant.evidence} />
+                        </div>
+                        <ShapeSection shape={variant.shape} compact />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex items-baseline gap-2 mb-1.5">
+                    <h4 className="text-[10px] font-bold uppercase tracking-wider text-node-function">Known Consumers</h4>
+                    <span className="text-[10px] text-text-muted bg-elevated px-1 rounded-full">{contract.consumers.length}</span>
+                  </div>
+                  {contract.consumers.length === 0 && (
+                    contract.consumerCoverageComplete ? (
+                      <p className="text-[11px] text-node-function/80 italic">✓ No consumers found (proven — matching was complete).</p>
+                    ) : (
+                      <p className="text-[11px] text-amber-400/90 italic">
+                        ⚠ No known consumer — consumer matching is incomplete, this is not proof nothing calls this route.
+                      </p>
+                    )
+                  )}
+                  <div className="space-y-1.5">
+                    {contract.consumers.map((consumer) => (
+                      <div key={consumer.consumerFactId} className="flex items-center gap-2 text-[11px] border border-border-subtle rounded px-2 py-1 bg-elevated/40">
+                        <span className="text-[9px] uppercase font-bold text-text-muted bg-void px-1 rounded">{consumer.clientLibrary}</span>
+                        <span className="font-mono text-text-secondary truncate flex-1">
+                          {consumer.filePath}{consumer.startLine ? `:${consumer.startLine}` : ''}
+                        </span>
+                        <CertaintyBadge certainty={consumer.match.certainty} />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
             )}
           </div>
         )}
@@ -280,6 +406,100 @@ export function NodeDetail({ node, onClose }: Props) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function CoverageBadge({ coverage }: { coverage: ApiCoverage }) {
+  if (coverage.complete) {
+    return (
+      <span className="text-[9px] text-node-function/80 bg-node-function/10 border border-node-function/30 rounded px-1.5 py-0.5">
+        ✓ complete
+      </span>
+    );
+  }
+  return (
+    <span
+      className="text-[9px] text-amber-400 bg-amber-900/20 border border-amber-800/40 rounded px-1.5 py-0.5"
+      title={coverage.boundaryReasons.join(', ')}
+    >
+      ⚠ partial{coverage.boundaryReasons.length > 0 ? `: ${coverage.boundaryReasons[0]}` : ''}
+    </span>
+  );
+}
+
+function EvidenceBadge({ evidence }: { evidence: string }) {
+  const color = evidence === 'exact' ? 'text-node-function bg-node-function/10 border-node-function/30'
+    : evidence === 'heuristic' ? 'text-amber-400 bg-amber-900/20 border-amber-800/40'
+    : 'text-text-muted bg-elevated border-border-subtle';
+  return <span className={`text-[9px] border rounded px-1 py-0.5 ${color}`}>{evidence}</span>;
+}
+
+function CertaintyBadge({ certainty }: { certainty: string }) {
+  const color = certainty === 'exact' ? 'text-node-function bg-node-function/10 border-node-function/30'
+    : certainty === 'candidate-set' || certainty === 'heuristic' ? 'text-amber-400 bg-amber-900/20 border-amber-800/40'
+    : 'text-text-muted bg-elevated border-border-subtle';
+  return <span className={`text-[9px] border rounded px-1.5 py-0.5 flex-shrink-0 ${color}`}>{certainty}</span>;
+}
+
+function ShapeFieldPills({ label, values }: { label: string; values: readonly string[] }) {
+  return (
+    <div>
+      <p className="text-text-muted text-[10px] uppercase mb-1">{label}</p>
+      <div className="flex flex-wrap gap-1">
+        {values.map((v, i) => (
+          <span key={`${v}-${i}`} className="text-[10px] font-mono text-text-secondary bg-elevated border border-border-subtle rounded px-1.5 py-0.5">
+            {v}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ShapeSection({ label, shape, compact }: { label?: string; shape?: ResolvedShapeView; compact?: boolean }) {
+  if (!shape) {
+    return label ? (
+      <div>
+        <h4 className="text-[10px] font-bold uppercase tracking-wider text-text-muted mb-1">{label}</h4>
+        <p className="text-text-muted text-[11px] italic">No body evidence.</p>
+      </div>
+    ) : (
+      <p className="text-text-muted text-[11px] italic">No shape evidence — unresolved.</p>
+    );
+  }
+  const body = (
+    <>
+      {shape.origin.kind === 'symbol' && (
+        <span className="text-[11px] font-mono text-accent">{shape.origin.symbolName}</span>
+      )}
+      {shape.origin.kind === 'inline' && (
+        <div className="flex flex-wrap gap-1">
+          {shape.origin.fields.map((f, i) => (
+            <span
+              key={`${f.key}-${i}`}
+              className={`text-[10px] font-mono rounded px-1.5 py-0.5 border ${
+                f.required ? 'text-text-secondary bg-elevated border-border-subtle' : 'text-text-muted bg-elevated/50 border-border-subtle/60'
+              }`}
+              title={f.type?.text}
+            >
+              {f.key}{f.required === false ? '?' : ''}
+            </span>
+          ))}
+          {shape.origin.fields.length === 0 && <span className="text-text-muted text-[11px] italic">(empty)</span>}
+        </div>
+      )}
+      {shape.origin.kind === 'unknown' && <span className="text-amber-400/80 text-[11px] italic">unresolved shape</span>}
+    </>
+  );
+  if (compact) return <div className="flex items-center gap-2 flex-wrap">{body}<CoverageBadge coverage={shape.coverage} /></div>;
+  return (
+    <div>
+      <div className="flex items-baseline gap-2 mb-1">
+        {label && <h4 className="text-[10px] font-bold uppercase tracking-wider text-text-muted">{label}</h4>}
+        <CoverageBadge coverage={shape.coverage} />
+      </div>
+      {body}
     </div>
   );
 }

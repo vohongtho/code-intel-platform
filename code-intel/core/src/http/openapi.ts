@@ -159,6 +159,50 @@ export const openApiSpec = {
         },
         required: ['results', 'searchMode'],
       },
+      AnalysisCoverage: {
+        type: 'object',
+        properties: {
+          complete: { type: 'boolean' },
+          examinedCount: { type: 'integer', minimum: 0 },
+          totalKnownCount: { type: 'integer', minimum: 0 },
+          incompleteReasons: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['complete', 'examinedCount', 'incompleteReasons'],
+      },
+      AnalysisBoundary: {
+        type: 'object',
+        properties: {
+          kind: { type: 'string' },
+          evidenceRefs: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['kind', 'evidenceRefs'],
+      },
+      BlastRadiusResponse: {
+        type: 'object',
+        properties: {
+          target: { type: 'string' },
+          affectedCount: { type: 'integer', minimum: 0 },
+          riskLevel: { type: 'string', enum: ['HIGH', 'MEDIUM', 'LOW', 'UNKNOWN'] },
+          certainty: { type: 'string', enum: ['exact', 'lower-bound', 'heuristic', 'truncated', 'unavailable'] },
+          coverage: { '$ref': '#/components/schemas/AnalysisCoverage' },
+          boundaries: { type: 'array', items: { '$ref': '#/components/schemas/AnalysisBoundary' } },
+          affected: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                name: { type: 'string' },
+                kind: { type: 'string' },
+                filePath: { type: 'string' },
+                depth: { type: 'integer', minimum: 1 },
+              },
+              required: ['id', 'name', 'kind', 'depth'],
+            },
+          },
+        },
+        required: ['target', 'affectedCount', 'affected'],
+      },
     },
   },
   security: [{ BearerAuth: [] }, { SessionCookie: [] }],
@@ -261,8 +305,43 @@ export const openApiSpec = {
           },
         },
         responses: {
-          '200': { description: 'Blast radius result', content: { 'application/json': { schema: { type: 'object' } } } },
+          '200': { description: 'Blast radius result with additive trust fields when coverage is incomplete or bounded', content: { 'application/json': { schema: { '$ref': '#/components/schemas/BlastRadiusResponse' } } } },
           '404': { description: 'Symbol not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
+    '/graph/diff': {
+      post: {
+        tags: ['Graph'],
+        summary: 'Compare the semantic graph between two Git refs (branches, tags, or commits)',
+        description: 'Independently analyzes base_ref and head_ref in isolated temporary checkouts — never touching the working tree, HEAD, or the currently published index — and compares the resulting semantic graphs: added/removed/changed/moved/renamed symbols, relationship and certainty changes, and (unless include_contracts is false) API-contract deltas. Snapshots are cached per (ref, analyzer version). Requires the analyst role.',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  base_ref: { type: 'string', description: 'Base Git ref (branch/tag/commit)' },
+                  head_ref: { type: 'string', description: 'Head Git ref (branch/tag/commit)' },
+                  repoId: { type: 'string' },
+                  include_contracts: { type: 'boolean', default: true },
+                  allow_cache: { type: 'boolean', default: true, description: 'Reuse a cached snapshot when available; set false to force a full rebuild of both sides' },
+                  nodes_offset: { type: 'integer', default: 0 },
+                  nodes_limit: { type: 'integer', default: 200, maximum: 2000 },
+                  relationships_offset: { type: 'integer', default: 0 },
+                  relationships_limit: { type: 'integer', default: 200, maximum: 2000 },
+                },
+                required: ['base_ref', 'head_ref'],
+              },
+            },
+          },
+        },
+        responses: {
+          '200': { description: 'Semantic graph diff, paginated node/relationship delta lists, and coverage', content: { 'application/json': { schema: { type: 'object' } } } },
+          '400': { description: 'Missing base_ref/head_ref', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '404': { description: 'Repository not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '422': { description: 'One or both refs could not be built into a trustworthy snapshot', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
         },
       },
     },
@@ -283,6 +362,55 @@ export const openApiSpec = {
         parameters: [{ name: 'repoId', in: 'query', schema: { type: 'string' } }],
         responses: {
           '200': { description: 'List of clusters', content: { 'application/json': { schema: { type: 'object' } } } },
+        },
+      },
+    },
+    '/api-contract': {
+      get: {
+        tags: ['API Contracts'],
+        summary: 'Full contract for one or more HTTP routes: method, path, request/response shape, and known consumers with match certainty',
+        parameters: [
+          { name: 'repoId', in: 'query', schema: { type: 'string' } },
+          { name: 'method', in: 'query', description: 'HTTP method, e.g. GET, POST (omit to match any method)', schema: { type: 'string' } },
+          { name: 'path', in: 'query', description: 'Normalized route path, e.g. /users/{}', schema: { type: 'string' } },
+          { name: 'route_fact_id', in: 'query', description: 'Exact route fact id from a prior api-contract/api-impact result', schema: { type: 'string' } },
+          { name: 'route_node_id', in: 'query', description: 'The route\'s graph node id (as returned by /graph/{repoId} or /nodes/{id})', schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': { description: 'Matching route contract(s)', content: { 'application/json': { schema: { type: 'array' } } } },
+          '404': { description: 'Repo not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
+    '/api-impact': {
+      get: {
+        tags: ['API Contracts'],
+        summary: 'Blast radius for one or more HTTP routes: matching route(s) plus every statically resolved consumer',
+        parameters: [
+          { name: 'repoId', in: 'query', schema: { type: 'string' } },
+          { name: 'method', in: 'query', description: 'HTTP method, e.g. GET, POST (omit to match any method)', schema: { type: 'string' } },
+          { name: 'path', in: 'query', description: 'Normalized route path, e.g. /users/{}', schema: { type: 'string' } },
+          { name: 'route_fact_id', in: 'query', description: 'Exact route fact id from a prior api-contract/api-impact result', schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': { description: 'Routes and consumers affected', content: { 'application/json': { schema: { type: 'object' } } } },
+          '404': { description: 'Repo not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
+    '/api-drift': {
+      get: {
+        tags: ['API Contracts'],
+        summary: 'Compares API contracts between two separately indexed repositories (base vs head) and reports compatibility findings',
+        parameters: [
+          { name: 'repoId', in: 'query', description: 'Repo used to resolve the head state when head_repo_id is omitted', schema: { type: 'string' } },
+          { name: 'base_repo_id', in: 'query', required: true, description: 'Repo id to use as the base (before) state', schema: { type: 'string' } },
+          { name: 'head_repo_id', in: 'query', description: 'Repo id to use as the head (after) state (defaults to repoId/the active repo)', schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': { description: 'Compatibility findings with certainty/coverage', content: { 'application/json': { schema: { type: 'object' } } } },
+          '400': { description: 'base_repo_id missing', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '404': { description: 'Repo not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
         },
       },
     },
@@ -504,6 +632,26 @@ export const openApiSpec = {
         responses: {
           '200': { description: 'Sync result', content: { 'application/json': { schema: { type: 'object' } } } },
           '404': { description: 'Not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
+    '/groups/{name}/drift': {
+      get: {
+        tags: ['Groups'],
+        summary: 'Compare synchronized group contracts across base/head Git refs',
+        parameters: [
+          { name: 'name', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'base_ref', in: 'query', required: true, schema: { type: 'string' } },
+          { name: 'head_ref', in: 'query', required: true, schema: { type: 'string' } },
+          { name: 'kind', in: 'query', description: 'Restrict analysis to one contract kind', schema: { type: 'string', enum: ['export', 'route', 'schema', 'event', 'graphql', 'grpc'] } },
+          { name: 'repository_id', in: 'query', description: 'Restrict analysis to contracts produced by one member repo (stable repo ID)', schema: { type: 'string' } },
+          { name: 'limit', in: 'query', schema: { type: 'integer' } },
+          { name: 'allow_cache', in: 'query', schema: { type: 'boolean' } },
+        ],
+        responses: {
+          '200': { description: 'Group contract drift findings with certainty and coverage', content: { 'application/json': { schema: { type: 'object' } } } },
+          '400': { description: 'Missing base_ref/head_ref', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '404': { description: 'Group or sync result not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
         },
       },
     },

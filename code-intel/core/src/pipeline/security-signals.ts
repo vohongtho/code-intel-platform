@@ -1,5 +1,6 @@
 import { Language } from '../shared/languages.js';
 import type { SecuritySignal, SecuritySignalType } from '../shared/graph-types.js';
+import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
 
 const USER_INPUT_RE = /\b(req|request)\s*\.(query|params|body)\b|\b(query|params|body|input|userInput|user|argv|stdin|env)\b|location\.(hash|search)|document\.(URL|location)|request\.(args|form|json|GET|POST|values)|flask\.request|\$_(GET|POST|REQUEST)|Request\.Query|URLSearchParams|r\.URL\.Query/i;
 const SANITIZER_RE = /DOMPurify\.sanitize|sanitizeHtml|escapeHtml|bleach\.clean|html\.escape/i;
@@ -384,4 +385,52 @@ export function extractSecuritySignals(lines: string[], lang: Language): Securit
   if (isJsLike(lang)) return extractJsSecuritySignals(lines, lang);
   if (lang === Language.Python) return extractPythonSecuritySignals(lines);
   return extractGenericSecuritySignals(lines, lang);
+}
+
+/** Binary search for the innermost function whose [startLine, endLine] contains `line`. */
+export function findEnclosingFunctionFast(
+  funcs: { id: string; startLine: number; endLine: number | undefined }[],
+  line: number,
+): string | null {
+  let lo = 0;
+  let hi = funcs.length - 1;
+  let best: string | null = null;
+
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const fn = funcs[mid]!;
+    if (fn.startLine <= line) {
+      if (fn.endLine === undefined || line <= fn.endLine) {
+        best = fn.id;
+      }
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+
+  return best;
+}
+
+/** Attach each signal's metadata to its enclosing function node, falling back to the file node. */
+export function attachSecuritySignals(
+  graph: KnowledgeGraph,
+  fileNodeId: string,
+  funcs: { id: string; startLine: number; endLine: number | undefined }[] | undefined,
+  signals: SecuritySignal[],
+): void {
+  for (const signal of signals) {
+    const ownerId = funcs ? findEnclosingFunctionFast(funcs, signal.line) : null;
+    const node = graph.getNode(ownerId ?? fileNodeId);
+    if (!node) continue;
+    const metadata = (node.metadata ?? {}) as Record<string, unknown> & { securitySignals?: SecuritySignal[] };
+    const existing = metadata.securitySignals ?? [];
+    const key = `${signal.type}:${signal.sink}:${signal.line}:${signal.source}`;
+    const seen = existing.some((item) => `${item.type}:${item.sink}:${item.line}:${item.source}` === key);
+    if (seen) continue;
+    node.metadata = {
+      ...metadata,
+      securitySignals: [...existing, signal],
+    };
+  }
 }

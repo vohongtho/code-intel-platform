@@ -33,6 +33,11 @@ const SEARCH_CACHE_MAX = 128;
 interface PostingEntry { nodeId: string; tf: number }
 interface NodeMeta { name: string; kind: string; filePath: string; snippet?: string }
 
+export interface Bm25ReadBackReceipt {
+  docCount: number;
+  avgdl: number;
+}
+
 // ── Tokenizer ─────────────────────────────────────────────────────────────────
 
 function tokenize(text: string): string[] {
@@ -137,7 +142,7 @@ export class Bm25Index {
    * Build the inverted index from a KnowledgeGraph and persist to SQLite.
    * Called once at analysis time after the main pipeline completes.
    */
-  build(graph: KnowledgeGraph): void {
+  build(graph: KnowledgeGraph): { docCount: number } {
     this.searchCache.clear();
 
     const nodeTermFreqs = new Map<string, Map<string, number>>();
@@ -209,6 +214,7 @@ export class Bm25Index {
 
     db.close();
     Logger.info(`  [bm25] Index built: ${invertedIndex.size} terms, ${docCount} documents`);
+    return { docCount };
   }
 
   // ── Load into memory ────────────────────────────────────────────────────────
@@ -467,6 +473,11 @@ export class Bm25Index {
         ? [...this.docLengths.values()].reduce((a, b) => a + b, 0) / this.docCount
         : 1;
     }
+  }
+
+  getReadBackReceipt(): Bm25ReadBackReceipt {
+    if (!this._loaded) this.load();
+    return { docCount: this.docCount, avgdl: this.avgdl };
   }
 }
 

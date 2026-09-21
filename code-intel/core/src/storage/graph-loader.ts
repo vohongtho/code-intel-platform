@@ -143,7 +143,7 @@ async function loadEdgeGroupFallback(
     try {
       await dbManager.execute(
         `MATCH (a:${fromTable} {id: '${escCypher(edge.source)}'}), (b:${toTable} {id: '${escCypher(edge.target)}'}) ` +
-        `CREATE (a)-[:code_edges {kind: '${edge.kind}', weight: ${edge.weight ?? 1.0}, label: '${escCypher(edge.label ?? '')}'}]->(b)`,
+        `CREATE (a)-[:code_edges {id: '${escCypher(edge.id)}', kind: '${edge.kind}', weight: ${edge.weight ?? 1.0}, label: '${escCypher(edge.label ?? '')}', callsite_id: '${escCypher(edge.callSiteId ?? '')}', confidence: ${edge.confidence ?? 'NULL'}, certainty: '${escCypher(edge.certainty ?? '')}', strategy: '${escCypher(edge.strategy ?? '')}', resolver_version: '${escCypher(edge.resolverVersion ?? '')}', evidence_ref: '${escCypher(edge.evidenceRef ?? '')}', ambiguous: ${edge.ambiguous == null ? 'NULL' : String(edge.ambiguous)}, metadata: '${escCypher(edge.metadata ? JSON.stringify(edge.metadata) : '')}'}]->(b)`,
       );
       count++;
     } catch { /* skip */ }
@@ -224,6 +224,8 @@ function buildNodeProps(node: CodeNode): string {
   if (node.endLine !== undefined) parts.push(`end_line: ${node.endLine}`);
   if (node.exported !== undefined) parts.push(`exported: ${node.exported}`);
   if (node.content) parts.push(`content: '${escCypher(node.content.slice(0, 500))}'`);
+  if (node.identityId) parts.push(`identity_id: '${escCypher(node.identityId)}'`);
+  if (node.legacyIds) parts.push(`legacy_ids: '${escCypher(JSON.stringify(node.legacyIds))}'`);
   if (node.metadata) parts.push(`metadata: '${escCypher(JSON.stringify(node.metadata))}'`);
   return `{${parts.join(', ')}}`;
 }

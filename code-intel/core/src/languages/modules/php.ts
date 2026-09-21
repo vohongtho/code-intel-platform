@@ -16,7 +16,8 @@ export const phpModule: LanguageModule = {
   },
 
   isExported(node: Node): boolean {
-    return node.text.includes('public') || !node.text.includes('private');
+    const text = node.text;
+    return text.includes('public') && !text.includes('private') && !text.includes('protected');
   },
 
   extractType(node: Node): string | null {

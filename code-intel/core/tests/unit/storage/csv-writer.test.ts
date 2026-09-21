@@ -66,13 +66,14 @@ describe('writeNodeCSVs', () => {
 
   it('CSV contains node data', async () => {
     const graph = createKnowledgeGraph();
-    graph.addNode({ id: 'method-1', kind: 'method', name: 'run', filePath: '/src/runner.ts', startLine: 10, endLine: 20, exported: true });
+    graph.addNode({ id: 'method-1', kind: 'method', name: 'run', filePath: '/src/runner.ts', startLine: 10, endLine: 20, exported: true, identityId: 'sym:v2:method:x', legacyIds: ['method:/src/runner.ts:run'] });
     const outDir = path.join(dir, 'with-meta');
     const result = writeNodeCSVs(graph, outDir);
     await flush();
     const content = fs.readFileSync(result.get('method_nodes')!, 'utf-8');
     assert.ok(content.includes('method-1'));
     assert.ok(content.includes('run'));
+    assert.ok(content.includes('sym:v2:method:x'));
   });
 
   it('handles content with commas by quoting', async () => {
@@ -102,7 +103,22 @@ describe('writeEdgeCSV', () => {
     const graph = createKnowledgeGraph();
     graph.addNode({ id: 'a', kind: 'function', name: 'a', filePath: '/src/a.ts' });
     graph.addNode({ id: 'b', kind: 'function', name: 'b', filePath: '/src/b.ts' });
-    graph.addEdge({ id: 'e1', source: 'a', target: 'b', kind: 'calls', weight: 1.0, label: 'b' });
+    graph.addEdge({
+      id: 'e1',
+      source: 'a',
+      target: 'b',
+      kind: 'calls',
+      weight: 1.0,
+      label: 'b',
+      callSiteId: 'callsite:v1:x',
+      confidence: 0.95,
+      certainty: 'exact',
+      strategy: 'same-file',
+      resolverVersion: 'resolver-v1',
+      evidenceRef: 'evidence:1',
+      ambiguous: false,
+      metadata: { ordinal: 1 },
+    });
     const outDir = path.join(dir, 'fn-edge');
     const result = writeEdgeCSV(graph, outDir);
     await flush();
@@ -112,6 +128,13 @@ describe('writeEdgeCSV', () => {
     assert.ok(content.includes('calls'));
     assert.ok(content.includes('a'));
     assert.ok(content.includes('b'));
+    assert.ok(content.includes('callsite:v1:x'));
+    assert.ok(content.includes('0.95'));
+    assert.ok(content.includes('exact'));
+    assert.ok(content.includes('same-file'));
+    assert.ok(content.includes('resolver-v1'));
+    assert.ok(content.includes('evidence:1'));
+    assert.ok(content.includes('false'));
   });
 
   it('skips edges whose source/target nodes are missing', async () => {

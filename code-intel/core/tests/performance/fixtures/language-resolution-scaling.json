@@ -1,0 +1,14 @@
+{
+  "fileCount": {
+    "generatedFiles": 1000
+  },
+  "referenceImportCount": {
+    "repetitions": 40
+  },
+  "pathDepth": {
+    "segments": 12
+  },
+  "sameNameCollisionDensity": {
+    "collisions": 250
+  }
+}

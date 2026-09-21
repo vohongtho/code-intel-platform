@@ -1,5 +1,6 @@
 import type { CodeNode, CodeEdge, CountGroup, GQLResult, GQLResultKind, QueryScope, ResolvedQueryScope } from 'code-intel-shared';
 import type { SearchResult, CurrentUser, AppConfig, SearchMode, SearchScope, EmbeddingModelCatalog } from '../state/types';
+import type { GraphDiffRequest, GraphDiffOutcome, GraphDiffResponse, GraphDiffUnavailableResponse } from './graph-diff-types';
 
 export class InvalidGQLResultError extends Error {
   constructor(message: string) {
@@ -90,7 +91,96 @@ export interface NodeInspectInfo {
 export interface BlastRadiusResult {
   target: string;
   affectedCount: number;
-  affected: { id: string; name: string; kind: string; depth: number }[];
+  riskLevel?: 'HIGH' | 'MEDIUM' | 'LOW' | 'UNKNOWN';
+  certainty?: 'exact' | 'lower-bound' | 'heuristic';
+  coverage?: {
+    complete: boolean;
+    examinedCount: number;
+    totalKnownCount?: number;
+    incompleteReasons: readonly string[];
+  };
+  boundaries?: { kind: string; evidenceRefs: readonly string[] }[];
+  affected: { id: string; name: string; kind: string; depth: number; filePath?: string }[];
+}
+
+// ── API contracts (Graph-Aware API Contracts) ───────────────────────────────
+
+export interface ApiCoverage {
+  complete: boolean;
+  boundaryReasons: readonly string[];
+}
+
+export type HttpShapeOrigin =
+  | { kind: 'symbol'; symbolRef: string; symbolName: string }
+  | { kind: 'inline'; fields: readonly { key: string; required?: boolean; type?: { kind: string; text: string; name?: string } }[] }
+  | { kind: 'unknown' };
+
+export interface ResolvedShapeView {
+  origin: HttpShapeOrigin;
+  coverage: ApiCoverage;
+}
+
+export interface RouteContractView {
+  factId: string;
+  method: string;
+  path: string;
+  normalizedPath: string;
+  filePath: string;
+  startLine?: number;
+  framework: string;
+  handlerName?: string;
+  middlewareRefs: readonly string[];
+  authEvidence?: readonly string[];
+  requestShape?: ResolvedShapeView;
+  responses: ReadonlyArray<{ status?: number | 'default'; shape?: ResolvedShapeView; evidence: string }>;
+  coverage: ApiCoverage;
+}
+
+export interface ApiContractMatchCandidate {
+  targetId: string;
+  confidence: number;
+  strategy: string;
+  evidenceRefs: readonly string[];
+}
+
+export interface ApiContractMatchResult {
+  referenceId: string;
+  certainty: 'exact' | 'candidate-set' | 'heuristic' | 'unresolved' | 'external-boundary' | 'truncated';
+  candidates: readonly ApiContractMatchCandidate[];
+  coverage: { complete: boolean; totalKnownCandidates?: number; emittedCandidates: number; incompleteReasons: readonly string[] };
+  boundary?: string;
+  resolverVersion: string;
+}
+
+export interface ConsumerMatchView {
+  consumerFactId: string;
+  filePath: string;
+  startLine?: number;
+  clientLibrary: 'fetch' | 'axios' | 'angular-http';
+  consumedKeys: readonly string[];
+  match: ApiContractMatchResult;
+}
+
+export interface ApiContractResult {
+  route: RouteContractView;
+  consumers: ConsumerMatchView[];
+  /** True only when consumer matching for this route had complete coverage — an empty
+   * `consumers` array alongside `true` means "proven no consumer"; `false` means "no known
+   * consumer" (unresolved/truncated matching). These must be displayed differently. */
+  consumerCoverageComplete: boolean;
+}
+
+export interface ApiImpactResult {
+  routes: RouteContractView[];
+  consumers: ConsumerMatchView[];
+  coverage: { totalRoutes: number; totalConsumers: number; consumerCoverageComplete: boolean };
+}
+
+export interface ApiRouteSelector {
+  routeNodeId?: string;
+  routeFactId?: string;
+  method?: string;
+  path?: string;
 }
 
 export interface GrepHit {
@@ -337,6 +427,61 @@ export class ApiClient {
     });
     if (!res.ok) throw new Error(`Blast radius failed: ${res.statusText}`);
     return res.json() as Promise<BlastRadiusResult>;
+  }
+
+  private apiContractQuery(selector: ApiRouteSelector, repoId?: string): string {
+    const params = new URLSearchParams();
+    if (selector.routeNodeId) params.set('route_node_id', selector.routeNodeId);
+    if (selector.routeFactId) params.set('route_fact_id', selector.routeFactId);
+    if (selector.method) params.set('method', selector.method);
+    if (selector.path) params.set('path', selector.path);
+    if (repoId) params.set('repoId', repoId);
+    return params.toString();
+  }
+
+  async apiContract(selector: ApiRouteSelector, repoId?: string): Promise<ApiContractResult[]> {
+    const res = await fetch(`${this.baseUrl}/api/v1/api-contract?${this.apiContractQuery(selector, repoId)}`, { credentials: 'include' });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { error?: { message?: string } };
+      throw new Error(body?.error?.message ?? `Api contract failed: ${res.statusText}`);
+    }
+    return res.json() as Promise<ApiContractResult[]>;
+  }
+
+  async apiImpact(selector: ApiRouteSelector, repoId?: string): Promise<ApiImpactResult> {
+    const res = await fetch(`${this.baseUrl}/api/v1/api-impact?${this.apiContractQuery(selector, repoId)}`, { credentials: 'include' });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { error?: { message?: string } };
+      throw new Error(body?.error?.message ?? `Api impact failed: ${res.statusText}`);
+    }
+    return res.json() as Promise<ApiImpactResult>;
+  }
+
+  // ── Semantic graph diff (Branch-Aware Semantic Graph Diff) ─────────────────
+
+  /**
+   * Compare the semantic graph between two Git refs. A 422 response ("one or
+   * both refs could not be built into a trustworthy snapshot") is a legitimate
+   * outcome, not an exception — it comes back as `{ status: 'unavailable' }`
+   * rather than a thrown Error so callers render it as a clear failure state.
+   */
+  async graphDiff(request: GraphDiffRequest): Promise<GraphDiffOutcome> {
+    const csrfToken = await this.getCsrfToken();
+    const res = await fetch(`${this.baseUrl}/api/v1/graph/diff`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      credentials: 'include',
+      body: JSON.stringify(request),
+    });
+    const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+    if (res.status === 422) {
+      return { status: 'unavailable', detail: body as unknown as GraphDiffUnavailableResponse };
+    }
+    if (!res.ok) {
+      const error = body?.error as { message?: string } | undefined;
+      throw new Error(error?.message ?? `Graph diff failed: ${res.statusText}`);
+    }
+    return { status: 'ok', diff: body as unknown as GraphDiffResponse };
   }
 
   async grep(pattern: string): Promise<{ results: GrepHit[] }> {
