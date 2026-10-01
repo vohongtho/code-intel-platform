@@ -11,6 +11,7 @@ import { Bm25Index, getBm25DbPath } from '../search/bm25-index.js';
 import { executeSearchRequest, type SearchMode } from '../search/execute-scoped-search.js';
 import { build, detectQueryIntent, type QueryIntent, type SeedSymbol } from '../context/builder.js';
 import { ContextDeliverySession } from '../context/session.js';
+import { createScopedExploreSearch, ExploreRequestError, runExplore, type ExploreRequest } from '../query/explore.js';
 import { resolveContextSeed } from '../context/selection.js';
 import type { ContextOmission } from '../context/receipt.js';
 import { getVectorDbPath } from '../storage/index.js';
@@ -377,7 +378,7 @@ function missingIndexResult(ctx: LoadedRepoGraph): ToolResult {
 }
 
 const GRAPH_BACKED_TOOLS = new Set([
-  'overview', 'inspect', 'context', 'blast_radius', 'file_symbols', 'find_path', 'list_exports', 'routes', 'clusters', 'flows',
+  'overview', 'inspect', 'context', 'explore', 'blast_radius', 'file_symbols', 'find_path', 'list_exports', 'routes', 'clusters', 'flows',
   'detect_changes', 'query', 'raw_query', 'explain_relationship', 'pr_impact', 'similar_symbols', 'health_report',
   'suggest_tests', 'cluster_summary', 'deprecated_usage', 'complexity_hotspots', 'coverage_gaps', 'secrets', 'vulnerability_scan',
   'api_contract', 'api_impact', 'api_drift', 'graph_diff',
@@ -731,6 +732,47 @@ export async function dispatchTool(
             }),
           }],
         };
+      }
+
+      // ── explore ────────────────────────────────────────────────────────────
+      case 'explore': {
+        const request: ExploreRequest = {
+          task: a.task as string,
+          intent: a.intent as ExploreRequest['intent'],
+          maxTokens: a.max_tokens as number | undefined,
+          compression: a.compression as ExploreRequest['compression'],
+          explainRanking: a.explain_ranking === true,
+          seeds: a.seeds as number | undefined,
+        };
+        try {
+          // Same scoped-search path as the `search` tool, pinned to the repo graphContext already resolved.
+          const result = await runExplore(request, {
+            graph,
+            search: createScopedExploreSearch({}, {
+              repoName: activeRepoName,
+              workspaceRoot: activeWorkspaceRoot,
+              ensureBm25Index: () => activeBm25 ?? (bm25Resolver ? bm25Resolver() : null),
+              getGraphForRepo: async () => graph,
+              getRepoSearchContext: async () => ({
+                graph,
+                bm25Index: activeBm25 ?? (bm25Resolver ? bm25Resolver() : null),
+                vectorDbPath: activeVectorDbPath,
+                snapshot: activeContext?.snapshot,
+                metadata: activeContext?.metadata,
+              }),
+            }),
+            repoDir: activeWorkspaceRoot,
+            repoName: activeRepoName,
+            session: contextSessionResolver?.(activeWorkspaceRoot ?? activeRepoName),
+            indexIdentity: activeContext?.snapshot?.generationId,
+          });
+          return { content: [{ type: 'text', text: compact(result) }] };
+        } catch (err) {
+          if (err instanceof ExploreRequestError) {
+            return { isError: true, content: [{ type: 'text', text: compact({ error: err.message, hint: err.hint, status: err.status }) }] };
+          }
+          throw err;
+        }
       }
 
       // ── blast_radius ───────────────────────────────────────────────────────

@@ -42,3 +42,23 @@ describe('ContextDeliverySession', () => {
     assert.equal(session.beginCall(), 3);
   });
 });
+
+describe('ContextDeliverySession.isFresh', () => {
+  it('requires identity, fingerprint and index identity to match', () => {
+    const session = new ContextDeliverySession('workspace-a');
+    const fp = contentFingerprint('function a() {}');
+    session.record('sym-1', fp, 15, undefined, 'gen-1');
+    assert.equal(session.isFresh('sym-1', fp, 'gen-1'), true);
+    assert.equal(session.isFresh('sym-1', fp, 'gen-2'), false);
+    assert.equal(session.isFresh('sym-1', fp), false);
+    assert.equal(session.isFresh('sym-1', contentFingerprint('changed'), 'gen-1'), false);
+    assert.equal(session.isFresh('sym-2', fp, 'gen-1'), false);
+  });
+
+  it('legacy records without index identity still match legacy lookups', () => {
+    const session = new ContextDeliverySession('workspace-a');
+    const fp = contentFingerprint('x');
+    session.record('sym-1', fp, 1);
+    assert.equal(session.isFresh('sym-1', fp), true);
+  });
+});

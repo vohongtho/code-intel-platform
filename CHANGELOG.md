@@ -15,6 +15,14 @@ All notable changes to this project are documented in this file.
 - Added ordinary TypeScript call-site extraction inside exported functions so persisted execution flows and dependence-aware impact analysis operate on real TypeScript call relationships rather than fixture-only facts.
 - Added source-valid mutation fixtures and a repeatable PDG mutation benchmark. The release benchmark was deterministic and produced graph precision `0.333333`, PDG precision `0.333333`, recall `1`, and relative precision improvement `0`; the promotion gate therefore failed, so `auto` intentionally remains graph-backed and PDG precision remains manual/experimental.
 
+### 🧭 Adaptive agent exploration
+
+- Added `explore` (MCP tool, `POST /api/v1/explore`, `code-intel explore`): one task-oriented call that composes scoped search, a deterministic graph-aware reranker, bounded intent expansion, and the existing token-budgeted context builder. Intent (`understand`, `debug`, `change`, `review`, `security`, `api`) changes allocation only, never semantic truth; output always carries certainty, coverage, boundaries and explicit degradations, and stays compact unless `explain_ranking` is set.
+- Added the `full | snippet | signature | skeleton | reference` render policy. Skeletons are tree-sitter based (TypeScript, JavaScript, Python, Java), re-parsed before use, and fall back to snippet/signature with a reported boundary where unsupported. Session references are valid only when canonical identity, content fingerprint and index identity all match.
+- Explore re-reads full symbol bodies from the working tree (repo-contained, drift-checked) because the graph store keeps only a source prefix.
+- Fixed the graph store readers (`graph-from-db`, lazy graph) to decode the escaped newlines the CSV writer produces; DB-loaded `content` previously came back as single-line text with literal `\n`. Known limit: a source literal backslash-n is indistinguishable from an escaped newline on read.
+- Paired benchmark (`node eval/run-explore-bench.mjs`, or `run-agent-bench.mjs --explore`) on a synthetic 6-case fixture: median 33% fewer delivered tokens than search+inspect+context+file reads at 0pp body-level correctness regression; against the tool-only sequence tokens are about equal (3.5% median) while body-level correctness is 100% versus 56%. Results are fixture-specific.
+
 ### ⬆️ Upgrading from 1.0.11
 
 - Stable flow identity adds a producer fingerprint to generation metadata. Existing indexes without the compatible fingerprint are rebuilt rather than treated as fresh.

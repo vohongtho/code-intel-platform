@@ -138,6 +138,31 @@ export const MCP_TOOL_DEFINITIONS = [
     },
   },
   {
+    name: 'explore',
+    description: 'Task-oriented exploration in one call: scoped search, graph-aware rerank, bounded intent expansion (impact/API/tests/security), and a token-budgeted context document with per-symbol render modes (full/snippet/signature/skeleton/reference). Specialized tools stay independently callable; absence of evidence is reported as a coverage boundary, never as proof.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        task: { type: 'string', description: 'What you are trying to understand, debug, change, review, secure, or integrate' },
+        intent: {
+          type: 'string',
+          enum: ['auto', 'understand', 'debug', 'change', 'review', 'security', 'api'],
+          description: 'Allocation/orchestration hint (default: auto-detected from the task). Never changes semantic truth.',
+        },
+        max_tokens: { type: 'number', description: 'Max total tokens for the returned context (default: 6000, server max: 6000)' },
+        compression: {
+          type: 'string',
+          enum: ['auto', 'none', 'aggressive'],
+          description: 'Source render policy: auto (default), none (no skeleton/signature compression), aggressive',
+        },
+        explain_ranking: { type: 'boolean', description: 'Include top rerank contributions per seed (default: false)' },
+        seeds: { type: 'number', description: 'Number of seed symbols to expand (1-8, default 5)' },
+        ..._tokenProp,
+      },
+      required: ['task'],
+    },
+  },
+  {
     name: 'blast_radius',
     description: 'Impact analysis: traverse the call/import graph to find all symbols that depend on or are affected by a given symbol. Returns risk level (LOW / MEDIUM / HIGH).',
     inputSchema: {

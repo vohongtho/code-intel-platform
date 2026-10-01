@@ -12,6 +12,7 @@ import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
 import { isLazyGraph } from '../graph/lazy-knowledge-graph.js';
 import { Bm25Index, getBm25DbPath } from '../search/bm25-index.js';
 import { executeSearchRequest, type SearchMode, type SearchScope } from '../search/execute-scoped-search.js';
+import { createScopedExploreSearch, ExploreRequestError, runExplore, type ExploreRequest } from '../query/explore.js';
 import { DbManager, getDbPath, getVectorDbPath } from '../storage/index.js';
 import { loadMetadata, shouldRebuildEmbeddings, type IndexMetadata } from '../storage/metadata.js';
 import { resolveIndexSnapshot, type IndexSnapshot } from '../storage/index-snapshot.js';
@@ -1153,6 +1154,51 @@ export function createApp(
       if (!('body' in result)) throw new Error('Invalid search result');
       res.json(result.body);
     } catch (err) {
+      res.status(500).json({ error: { code: ErrorCodes.INTERNAL_ERROR, message: err instanceof Error ? err.message : String(err) } });
+    }
+  });
+
+  // ── Explore ─────────────────────────────────────────────────────────────────
+  // Stateless transport over the shared orchestrator: no per-connection delivery
+  // session, so responses never contain session pointer references.
+  app.post('/api/v1/explore', requireToolScope('explore'), async (req, res) => {
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const scope = body.scope as { type?: string; repoId?: string } | undefined;
+      if (scope?.type === 'group' || typeof body.group === 'string') {
+        res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: 'Group scope is not supported by explore', hint: 'Use a repo scope: { "scope": { "type": "repo", "repoId": "..." } }' } });
+        return;
+      }
+      const requestedRepoId = (scope?.repoId ?? body.repoId) as string | undefined;
+      const searchContext = await getRepoSearchContext(requestedRepoId && requestedRepoId !== repoName ? requestedRepoId : undefined);
+      const request: ExploreRequest = {
+        task: body.task as string,
+        intent: body.intent as ExploreRequest['intent'],
+        maxTokens: (body.max_tokens ?? body.maxTokens) as number | undefined,
+        compression: body.compression as ExploreRequest['compression'],
+        explainRanking: (body.explain_ranking ?? body.explainRanking) === true,
+        seeds: body.seeds as number | undefined,
+      };
+      const result = await runExplore(request, {
+        graph: searchContext.graph,
+        search: createScopedExploreSearch(
+          { scope: body.scope as SearchScope | undefined, repoId: body.repoId as string | undefined },
+          { repoName, workspaceRoot, ensureBm25Index, getGraphForRepo, getRepoSearchContext },
+        ),
+        repoDir: workspaceRoot,
+        repoName,
+        indexIdentity: searchContext.snapshot?.generationId,
+      });
+      res.json(result);
+    } catch (err) {
+      if (err instanceof ExploreRequestError) {
+        res.status(err.status).json({ error: { code: err.status === 404 ? ErrorCodes.NOT_FOUND : ErrorCodes.INVALID_REQUEST, message: err.message, hint: err.hint } });
+        return;
+      }
+      if (err instanceof AppError) {
+        res.status(err.statusCode).json({ error: { code: err.code, message: err.message, hint: err.hint } });
+        return;
+      }
       res.status(500).json({ error: { code: ErrorCodes.INTERNAL_ERROR, message: err instanceof Error ? err.message : String(err) } });
     }
   });

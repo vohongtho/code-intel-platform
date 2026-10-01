@@ -723,6 +723,9 @@ code-intel clean --all --force           # Permanently remove all indexed reposi
 code-intel search <query>                # Execute intent-aware symbol search
 code-intel search <query> --limit <n>    # Limit number of results (default: 20)
 code-intel search <query> --json         # Include machine-readable qualified selectors
+code-intel explore <task>                # Search + rerank + bounded expansion + budgeted context in one call
+code-intel explore <task> --intent change --max-tokens 6000 --compression auto
+code-intel explore <task> --explain-ranking --json   # Add rerank contributions and per-symbol render reasons
 code-intel inspect <symbol>              # Inspect a unique symbol; lists candidates when ambiguous
 code-intel inspect <selector>            # Inspect an exact qualified result from search/inspect
 code-intel inspect <symbol> --json       # Structured result; ambiguity exits with status 2
@@ -788,6 +791,7 @@ code-intel group status <name>                                             # Aud
 | `GET`  | `/api/v1/repos` | List indexed repos |
 | `GET`  | `/api/v1/graph/:repoId` | Full graph (nodes + edges) |
 | `POST` | `/api/v1/search` | Canonical scoped search (`query`, `limit`, `mode`, `scope`) with repo/group targeting; repo scope uses `repoId` |
+| `POST` | `/api/v1/explore` | Task-oriented exploration (`task`, `intent`, `max_tokens`, `compression`, `explain_ranking`, `seeds`, repo `scope`/`repoId`); stateless, so no session references; group scope is rejected |
 | `POST` | `/api/v1/vector-search` | Deprecated compatibility alias for vector mode; returns resolved scope/mode metadata |
 | `GET`  | `/api/v1/vector-status` | Vector index ready/building status |
 | `GET`  | `/api/v1/nodes/:id` | Node detail (callers, callees, imports, etc.) |
@@ -817,6 +821,7 @@ All tools are available to any MCP-capable editor (Claude Desktop, Claude Code, 
 | `search` | `query` (string), `limit` (number, default 10), `mode` (`auto`\|`bm25`\|`vector`, default `auto`), `scope` (object, optional), legacy `repo`/`group` during migration | Scoped search with MCP default behavior matching HTTP: hybrid/semantic when vector is ready, BM25 otherwise; explicit `mode` can force BM25 or prefer vector with BM25 fallback |
 | `inspect` | `symbol_name` (string) | 360° view of a symbol: definition, callers, callees, imports, heritage (extends/implements), members, cluster, and source preview |
 | `context` | `symbols` (string[]), `intent` (`code`\|`callers`\|`architecture`\|`auto`, default `auto`), `max_tokens` (number, default/server max 6000), `limit` (number, default 10) | Token-budgeted deep context for one or more symbols: returns `summary`, `logic`, `relation`, `focusCode`, and `truncated` from the shared context builder; change-context surfaces preserve additive trust summaries when impact/test evidence is incomplete |
+| `explore` | `task` (string), `intent` (`auto`\|`understand`\|`debug`\|`change`\|`review`\|`security`\|`api`, default auto-detected), `max_tokens` (number, default/server max 6000), `compression` (`auto`\|`none`\|`aggressive`), `explain_ranking` (boolean), `seeds` (1–8, default 5) | Task-oriented exploration in one call: scoped search, deterministic graph-aware rerank, bounded intent expansion (callers/callees, impact, tests, API, recorded security signals) and a token-budgeted context with per-symbol render modes (`full`/`snippet`/`signature`/`skeleton`/`reference`). Always reports certainty, coverage, boundaries and `capabilities.degraded`; absence of evidence is never proof. Specialized tools stay independently callable. |
 | `blast_radius` | `target` (string), `direction` (`callers`\|`callees`\|`both`), `max_hops` (number, default 2) | Impact analysis: traverse the call/import graph to find all affected symbols. Returns additive trust fields including `riskLevel` (`LOW` / `MEDIUM` / `HIGH` / `UNKNOWN`), `certainty`, `coverage`, and `boundaries`. |
 | `file_symbols` | `file_path` (string, partial match), `limit` (number, default 10) | List all symbols defined in a file, ordered by line number. Avoids having to read raw source. |
 | `find_path` | `from` (string), `to` (string), `max_hops` (number, default 8) | Find the shortest call/import path between two symbols via BFS. Additive trust fields (`certainty`, `coverage`, `boundaries`) surface when traversal is bounded or evidence-backed. |

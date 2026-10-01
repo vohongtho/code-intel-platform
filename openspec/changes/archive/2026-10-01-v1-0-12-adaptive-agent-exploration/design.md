@@ -44,6 +44,11 @@ A render decision includes canonical node ID, mode, token allocation, reason, an
 
 Skeleton output preserves declaration signature, selected control headings, selected flow-spine calls, relevant return/throw statements, and source location. Unsupported constructs return `unsupported`, not best-effort corrupted text.
 
+Default allocation: one `full` (central), one `snippet` (focus), everything else `skeleton`, falling back to `signature` with a recorded boundary. Short bodies (<= 8 meaningful lines) stay whole.
+
+## Source hydration (added during implementation)
+The graph store keeps only a prefix of each symbol body (first 20 lines, at most 1000 characters, newlines escaped on disk), which is too little for syntax-aware skeletons. `context/source-hydration.ts` re-reads the full body from the working tree for rendering only. It is read-only, repo-contained (symlink-safe), size-capped, and verified against the indexed prefix (escape applied to both sides); on mismatch it keeps the indexed content and reports a `source-drift` / `stale-index` boundary. Store readers now decode escaped newlines (`unescapeNewlines`); the persisted format is unchanged, and a source literal backslash-n remains indistinguishable from an escaped newline on read.
+
 ## Session freshness
 Reuse `ContextDeliverySession` and `contentFingerprint`. A `reference` is valid only when canonical identity, content fingerprint, and selected index/snapshot identity match.
 

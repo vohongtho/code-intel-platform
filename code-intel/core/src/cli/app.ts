@@ -49,6 +49,7 @@ import {
 import { startHttpServer } from '../http/app.js';
 import { startMcpStdio } from '../mcp-server/server.js';
 import { textSearch } from '../search/text-search.js';
+import { ExploreRequestError, runExplore, type ExploreRequest } from '../query/explore.js';
 import { resolveEmbeddingUpdatePlan } from '../search/embedding-update-plan.js';
 import { EMBEDDING_MODELS, getDefaultEmbeddingModel, getEmbeddingModel, normalizeEmbeddingModelId } from '../search/embedding-model-registry.js';
 import type { PipelineContext } from '../pipeline/types.js';
@@ -2794,6 +2795,71 @@ program
       if (r.selector) console.log(`  ${''.padEnd(14)} ${r.selector}`);
     }
     console.log('');
+  });
+
+// ─── explore ─────────────────────────────────────────────────────────────────
+program
+  .command('explore')
+  .description('Task-oriented exploration: search, rerank, bounded expansion and a token-budgeted context in one call')
+  .argument('<task>', 'What you are trying to understand, debug, change, review, secure, or integrate')
+  .option('--intent <intent>', 'understand | debug | change | review | security | api | auto', 'auto')
+  .option('--max-tokens <n>', 'Hard token budget for the returned context (128-6000)', '6000')
+  .option('--compression <mode>', 'auto | none | aggressive', 'auto')
+  .option('--seeds <n>', 'Seed symbols to expand (1-8)', '5')
+  .option('--explain-ranking', 'Include top rerank contributions per seed')
+  .option('-p, --path <path>', 'Path to the repository (default: current directory)', '.')
+  .option('--json', 'Output machine-readable JSON')
+  .addHelpText('after', `
+  Intent only changes allocation and orchestration, never semantic truth.
+  Missing evidence is reported as a boundary, not as proof that nothing exists.
+
+  Examples:
+    $ code-intel explore "how does login reach session persistence?"
+    $ code-intel explore "what must change to add MFA?" --intent change --max-tokens 6000
+`)
+  .action(async (task: string, options: { intent: string; maxTokens: string; compression: string; seeds: string; explainRanking?: boolean; path: string; json?: boolean }) => {
+    const { graph, workspaceRoot, repoName } = await loadOrAnalyzeWorkspace(options.path);
+    const request: ExploreRequest = {
+      task,
+      intent: options.intent as ExploreRequest['intent'],
+      maxTokens: Number.parseInt(options.maxTokens, 10),
+      compression: options.compression as ExploreRequest['compression'],
+      explainRanking: options.explainRanking === true,
+      seeds: Number.parseInt(options.seeds, 10),
+    };
+    try {
+      const result = await runExplore(request, {
+        graph,
+        // Same BM25 text search the `search` command uses; vector/hybrid retrieval is the server path.
+        search: async (query, limit) => ({
+          hits: textSearch(graph, query, limit).map((hit) => ({ nodeId: hit.nodeId, name: hit.name, kind: hit.kind, filePath: hit.filePath, score: hit.score })),
+          actualMode: 'bm25',
+          vectorReady: false,
+        }),
+        repoDir: workspaceRoot,
+        repoName,
+      });
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+      console.log(`\n  Explore (${result.intent}, ${result.intentSource}) — ${result.seeds.length} seed(s), ${result.counters.tokensDelivered}/${result.maxTokens} tokens, certainty: ${result.certainty}\n`);
+      for (const seed of result.seeds) console.log(`  ${String(seed.rank).padStart(2)}. ${seed.kind.padEnd(10)} ${seed.symbol}  ${seed.filePath}${seed.startLine ? ':' + seed.startLine : ''}`);
+      for (const block of [result.context.summary, result.context.logic, result.context.relation, result.context.focusCode]) {
+        if (block) console.log(`\n${block}`);
+      }
+      const modes = Object.entries(result.counters.renderModes).filter(([, count]) => count > 0).map(([mode, count]) => `${mode}:${count}`).join(' ');
+      console.log(`\n  Render modes: ${modes || 'none'}`);
+      for (const note of result.capabilities.degraded) console.log(`  ! ${note}`);
+      console.log('');
+    } catch (err) {
+      if (err instanceof ExploreRequestError) {
+        console.error(`\n  ${err.message}${err.hint ? ` — ${err.hint}` : ''}\n`);
+        process.exitCode = 1;
+        return;
+      }
+      throw err;
+    }
   });
 
 // ─── inspect: optional program-analysis evidence ─────────────────────────────

@@ -181,6 +181,7 @@ describe('OpenAPI spec — every /api/v1/ route appears in paths', () => {
     { method: 'get',    path: '/repos' },
     { method: 'get',    path: '/graph/{repo}' },
     { method: 'post',   path: '/search' },
+    { method: 'post',   path: '/explore' },
     { method: 'post',   path: '/vector-search' },
     { method: 'get',    path: '/vector-status' },
     { method: 'get',    path: '/embeddings/models' },
