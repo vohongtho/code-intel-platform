@@ -133,7 +133,20 @@ function csvRow(fields: string[]): string {
  * Callers that need to read the value back can unescape with:
  *   value.replace(/\\n/g, '\n').replace(/\\r/g, '\r')
  */
-function escapeNewlines(s: string): string {
+/**
+ * Inverse of escapeNewlines — every reader of the persisted `content` column must apply it.
+ *
+ * Known limit (format is unchanged here): backslashes are not escaped on write, so a source
+ * literal `\n` (backslash + n, e.g. inside a string) is indistinguishable from an escaped
+ * newline and also decodes to a line break. Comparisons against the working tree must go
+ * through `escapeNewlines` on both sides (see context/source-hydration).
+ */
+export function unescapeNewlines(s: string): string {
+  if (!s.includes('\\')) return s;
+  return s.replace(/\\n/g, '\n').replace(/\\r/g, '\r');
+}
+
+export function escapeNewlines(s: string): string {
   // Only do the work when actually needed — avoids churning the string
   // for the common case (short names, file paths, metadata without newlines).
   if (!s.includes('\n') && !s.includes('\r')) return s;

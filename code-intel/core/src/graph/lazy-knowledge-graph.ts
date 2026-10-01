@@ -17,6 +17,7 @@ import type { CodeNode, CodeEdge, EdgeKind, NodeKind } from '../shared/index.js'
 import type { DbManager } from '../storage/db-manager.js';
 import { NODE_TABLE_MAP, ALL_NODE_TABLES } from '../storage/schema.js';
 import Logger from '../shared/logger.js';
+import { unescapeNewlines } from '../storage/csv-writer.js';
 
 // ── Reverse table→kind lookup ────────────────────────────────────────────────
 const TABLE_TO_KIND: Record<string, NodeKind> = Object.fromEntries(
@@ -90,7 +91,7 @@ function parseNodeRow(row: Record<string, unknown>, kind: NodeKind): CodeNode {
     startLine: row['start_line'] != null ? Number(row['start_line']) : undefined,
     endLine: row['end_line'] != null ? Number(row['end_line']) : undefined,
     exported: row['exported'] != null ? Boolean(row['exported']) : undefined,
-    content: row['content'] ? String(row['content']) : undefined,
+    content: row['content'] ? unescapeNewlines(String(row['content'])) : undefined,
     identityId: row['identity_id'] ? String(row['identity_id']) : undefined,
     legacyIds: row['legacy_ids']
       ? (() => {
