@@ -1,5 +1,9 @@
+import path from 'node:path';
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
 import type { AnalysisBoundary, AnalysisCertainty, AnalysisCoverage, CodeEdge } from '../shared/index.js';
+import { detectLanguage } from '../shared/detection.js';
+import type { ChangeSlice, ProjectedSliceImpact, SliceCallEdge } from '../program-analysis/change-slice.js';
+import type { ChangedLineRange } from '../program-analysis/source-map.js';
 import { riskFromCount, summarizeEdgeTrust } from './trust.js';
 import {
   buildRouteContractView,
@@ -27,6 +31,20 @@ export interface PRImpactChangedSymbol {
   certainty?: AnalysisCertainty;
   coverage?: AnalysisCoverage;
   boundaries?: readonly AnalysisBoundary[];
+  precision?: 'graph' | 'pdg';
+  slice?: ChangeSlice;
+  fallbackReason?: string;
+}
+
+export type PRImpactPrecision = 'graph' | 'pdg' | 'auto';
+
+export interface PRImpactPrecisionMetrics {
+  changedFunctions: number;
+  pdgBuilds: number;
+  pdgCacheHits: number;
+  sliceNodes: number;
+  projectionHops: number;
+  pdgDurationMs: number;
 }
 
 export interface PRImpactResult {
@@ -45,6 +63,17 @@ export interface PRImpactResult {
    * Absent (not an empty object) when there is nothing to report, so existing consumers that
    * don't know about this field see no change in shape. */
   apiImpact?: PRApiImpact;
+  requestedPrecision?: PRImpactPrecision;
+  actualPrecision?: 'graph' | 'pdg' | 'mixed';
+  sliceSummary?: {
+    analyzedFunctions: number;
+    slicedFunctions: number;
+    truncatedFunctions: number;
+  };
+  fallbackCounts?: Record<string, number>;
+  projectedImpact?: ProjectedSliceImpact[];
+  riskFactors?: Array<{ functionId: string; factors: string[] }>;
+  precisionMetrics?: PRImpactPrecisionMetrics;
 }
 
 function isChangedFile(filePath: string, changedFiles: readonly string[]): boolean {
@@ -66,6 +95,38 @@ export function parseDiffFiles(diff: string): string[] {
     }
   }
   return files;
+}
+
+/** Extracts changed new-file line ranges from unified diff hunks. */
+export function parseDiffChangedLineRanges(diff: string): ChangedLineRange[] {
+  const ranges: ChangedLineRange[] = [];
+  let filePath: string | undefined;
+  let newLine: number | undefined;
+  for (const line of diff.split('\n')) {
+    const fileMatch = line.match(/^\+\+\+ b\/(.+)/);
+    if (fileMatch) {
+      filePath = fileMatch[1];
+      newLine = undefined;
+      continue;
+    }
+    const hunkMatch = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/);
+    if (hunkMatch) {
+      newLine = filePath ? Number(hunkMatch[1]) : undefined;
+      continue;
+    }
+    if (!filePath || newLine === undefined) continue;
+    if (line.startsWith('+')) {
+      const previous = ranges.at(-1);
+      if (previous?.filePath === filePath && previous.endLine + 1 === newLine) previous.endLine = newLine;
+      else ranges.push({ filePath, startLine: newLine, endLine: newLine });
+      newLine += 1;
+    } else if (line.startsWith(' ')) {
+      newLine += 1;
+    } else if (!line.startsWith('-') && !line.startsWith('\\')) {
+      newLine = undefined;
+    }
+  }
+  return ranges;
 }
 
 export function computePRImpact(
@@ -230,5 +291,163 @@ export function computePRImpact(
     coverage: aggregateTrust.coverage,
     boundaries: aggregateTrust.boundaries,
     apiImpact,
+  };
+}
+
+function incrementCount(counts: Record<string, number>, reason: string): void {
+  counts[reason] = (counts[reason] ?? 0) + 1;
+}
+
+function callCertainty(edge: CodeEdge): SliceCallEdge['certainty'] {
+  if (edge.certainty === 'exact') return 'exact';
+  if (edge.certainty === 'candidate') return 'candidate-set';
+  if (edge.certainty === 'heuristic') return 'heuristic';
+  return 'unresolved';
+}
+
+/**
+ * Additive precision-aware PR impact. The existing synchronous graph result
+ * remains the default; PDG analysis is attempted only when explicitly
+ * requested. `auto` stays on graph precision until the mutation gate enables
+ * it, so it cannot silently promote an unevaluated precision mode.
+ */
+export async function computePRImpactWithPrecision(
+  graph: KnowledgeGraph,
+  changedFiles: string[],
+  maxHops: number,
+  options: {
+    repoDir?: string;
+    precision?: PRImpactPrecision;
+    changedRanges?: readonly ChangedLineRange[];
+    mutationGateEnabled?: boolean;
+  } = {},
+): Promise<PRImpactResult> {
+  const requestedPrecision = options.precision ?? 'graph';
+  const result = computePRImpact(graph, changedFiles, maxHops, options.repoDir);
+  const fallbackCounts: Record<string, number> = {};
+  const metrics: PRImpactPrecisionMetrics = {
+    changedFunctions: 0,
+    pdgBuilds: 0,
+    pdgCacheHits: 0,
+    sliceNodes: 0,
+    projectionHops: 0,
+    pdgDurationMs: 0,
+  };
+
+  if (requestedPrecision === 'graph' || (requestedPrecision === 'auto' && !options.mutationGateEnabled)) {
+    if (requestedPrecision === 'auto') incrementCount(fallbackCounts, 'mutation-gate-disabled');
+    return {
+      ...result,
+      requestedPrecision,
+      actualPrecision: 'graph',
+      fallbackCounts,
+      precisionMetrics: metrics,
+    };
+  }
+
+  const [pipelineModule, changeSliceModule, sourceMapModule] = await Promise.all([
+    import('../program-analysis/pipeline.js'),
+    import('../program-analysis/change-slice.js'),
+    import('../program-analysis/source-map.js'),
+  ]);
+  const { analyzeFunctionDependence } = pipelineModule;
+  const { buildChangeSlice, projectChangeSliceAcrossCalls } = changeSliceModule;
+  const { mapChangedLineRanges } = sourceMapModule;
+
+  const changedNodes = [...graph.allNodes()]
+    .filter((node) => (node.kind === 'function' || node.kind === 'method') && node.startLine !== undefined && isChangedFile(node.filePath, changedFiles))
+    .sort((a, b) => a.id.localeCompare(b.id));
+  metrics.changedFunctions = changedNodes.length;
+  const slices = new Map<string, ChangeSlice>();
+  const projectedByFunction = new Map<string, ProjectedSliceImpact>();
+  const riskFactors: Array<{ functionId: string; factors: string[] }> = [];
+  const startedAt = Date.now();
+
+  for (const node of changedNodes) {
+    const language = detectLanguage(node.filePath);
+    if (!language || !options.repoDir) {
+      incrementCount(fallbackCounts, !options.repoDir ? 'repository-path-unavailable' : 'language-unsupported');
+      continue;
+    }
+    const ranges = (options.changedRanges ?? [])
+      .filter((range) => isChangedFile(node.filePath, [range.filePath]))
+      .map((range) => ({ ...range, filePath: path.resolve(options.repoDir!, node.filePath) }));
+    if (ranges.length === 0) {
+      incrementCount(fallbackCounts, 'changed-lines-unavailable');
+      continue;
+    }
+
+    metrics.pdgBuilds += 1;
+    const analysis = await analyzeFunctionDependence({
+      language,
+      filePath: path.resolve(options.repoDir, node.filePath),
+      startLine: node.startLine!,
+      canonicalFunctionId: node.identityId ?? node.id,
+      resolverVersion: 'evidence-based-v1',
+    });
+    if (analysis.cacheHit) metrics.pdgCacheHits += 1;
+    if (analysis.capability !== 'supported' || !analysis.ir || !analysis.pdg) {
+      incrementCount(fallbackCounts, analysis.reason ?? 'pdg-unsupported');
+      continue;
+    }
+
+    const mapped = mapChangedLineRanges([analysis.ir], ranges);
+    if (mapped.statementRefs.length === 0) {
+      incrementCount(fallbackCounts, 'changed-lines-not-mapped');
+      continue;
+    }
+    const slice = buildChangeSlice({
+      pdg: analysis.pdg,
+      seedStatementIds: mapped.statementRefs.map((ref) => ref.statementId),
+      includeBackward: true,
+    });
+    slices.set(node.id, slice);
+    metrics.sliceNodes += slice.forward.length + (slice.backward?.length ?? 0);
+    const factors = [
+      slice.dataDependencies > 0 ? 'data-dependencies' : '',
+      slice.controlDependencies > 0 ? 'control-dependencies' : '',
+      slice.truncated ? 'truncated-analysis' : '',
+    ].filter(Boolean);
+    riskFactors.push({ functionId: node.id, factors });
+
+    const callEdges = [...graph.findEdgesTo(node.id)]
+      .filter((edge) => edge.kind === 'calls')
+      .map((edge): SliceCallEdge => ({
+        sourceFunctionId: node.id,
+        targetFunctionId: edge.source,
+        certainty: callCertainty(edge),
+        evidenceRef: edge.evidenceRef,
+      }));
+    if (callEdges.length > 0) {
+      const projection = projectChangeSliceAcrossCalls({ repoDir: options.repoDir, slice, callEdges });
+      if (!projection.allowed && projection.reason) incrementCount(fallbackCounts, 'interprocedural-projection-gated');
+      for (const impact of projection.projected) {
+        projectedByFunction.set(impact.functionId, impact);
+        metrics.projectionHops += impact.depth;
+      }
+    }
+  }
+  metrics.pdgDurationMs = Date.now() - startedAt;
+
+  const changedSymbols = result.changedSymbols.map((symbol) => {
+    const node = changedNodes.find((candidate) => candidate.name === symbol.name);
+    if (!node) return symbol;
+    const slice = slices.get(node.id);
+    return slice
+      ? { ...symbol, precision: 'pdg' as const, slice }
+      : { ...symbol, precision: 'graph' as const, fallbackReason: 'PDG evidence unavailable; graph result retained.' };
+  });
+  const slicedFunctions = slices.size;
+  const truncatedFunctions = [...slices.values()].filter((slice) => slice.truncated).length;
+  return {
+    ...result,
+    changedSymbols,
+    requestedPrecision,
+    actualPrecision: slicedFunctions === 0 ? 'graph' : Object.keys(fallbackCounts).length > 0 ? 'mixed' : 'pdg',
+    sliceSummary: { analyzedFunctions: metrics.pdgBuilds, slicedFunctions, truncatedFunctions },
+    fallbackCounts,
+    projectedImpact: [...projectedByFunction.values()].sort((a, b) => a.functionId.localeCompare(b.functionId)),
+    riskFactors,
+    precisionMetrics: metrics,
   };
 }

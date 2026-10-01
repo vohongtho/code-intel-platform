@@ -43,6 +43,7 @@ export interface SemanticSnapshotDescriptor {
   resolverFingerprint: string;
   graphSchemaFingerprint: string;
   contractFingerprint?: string;
+  flowIdentityFingerprint: string;
   createdAt: string;
 }
 

@@ -206,4 +206,42 @@ describe('flowPhase', () => {
     assert.ok(flows.length > 0);
     assert.ok(flows.every((node) => !JSON.stringify(node.metadata ?? {}).includes('/tests/')));
   });
+
+  it('persists stable canonical flow identity independent of graph insertion order', async () => {
+    const analyze = async (reverse: boolean) => {
+      const ctx = makeContext();
+      const nodes = [
+        { id: 'ep-storage', identityId: 'symbol:v2:app:main', kind: 'function' as const, name: 'main', filePath: '/src/app.ts', exported: true },
+        { id: 'service-storage', identityId: 'symbol:v2:service:load', kind: 'function' as const, name: 'load', filePath: '/src/service.ts' },
+        { id: 'store-storage', identityId: 'symbol:v2:store:read', kind: 'function' as const, name: 'read', filePath: '/src/store.ts' },
+      ];
+      const edges = [
+        { id: 'e1', source: 'ep-storage', target: 'service-storage', kind: 'calls' as const, callSiteId: 'callsite:v1:main-load' },
+        { id: 'e2', source: 'service-storage', target: 'store-storage', kind: 'calls' as const, callSiteId: 'callsite:v1:load-read' },
+      ];
+      for (const node of reverse ? [...nodes].reverse() : nodes) ctx.graph.addNode(node);
+      for (const edge of reverse ? [...edges].reverse() : edges) ctx.graph.addEdge(edge);
+
+      await flowPhase.execute(ctx, new Map());
+      return [...ctx.graph.allNodes()]
+        .filter((node) => node.kind === 'flow')
+        .map((node) => ({ id: node.id, name: node.name, metadata: node.metadata }));
+    };
+
+    const first = await analyze(false);
+    const second = await analyze(true);
+    assert.deepEqual(first, second);
+    assert.deepEqual(first[0]?.metadata?.['entryPointCanonicalId'], 'symbol:v2:app:main');
+    assert.deepEqual(first[0]?.metadata?.['stepCanonicalIds'], [
+      'symbol:v2:app:main',
+      'symbol:v2:service:load',
+      'symbol:v2:store:read',
+    ]);
+    assert.deepEqual(first[0]?.metadata?.['callSiteIds'], [
+      'callsite:v1:main-load',
+      'callsite:v1:load-read',
+    ]);
+    assert.equal(typeof first[0]?.metadata?.['flowFingerprint'], 'string');
+    assert.equal(typeof first[0]?.metadata?.['algorithmVersion'], 'string');
+  });
 });

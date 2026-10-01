@@ -408,6 +408,11 @@ export const MCP_TOOL_DEFINITIONS = [
           type: 'number',
           description: 'Maximum BFS depth for blast radius (default: 2, max: 10)',
         },
+        precision: {
+          type: 'string',
+          enum: ['graph', 'pdg', 'auto'],
+          description: 'Impact precision. Default graph preserves existing behavior; pdg explicitly attempts statement slicing; auto remains graph until the evaluation gate passes.',
+        },
         analysisMode: {
           type: 'string',
           enum: ['current-graph', 'semantic-snapshot'],

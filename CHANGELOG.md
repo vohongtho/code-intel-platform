@@ -4,6 +4,22 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.0.12] - 2026-09-22
+
+### 🎯 Change risk and test intelligence
+
+- Added stable, versioned execution-flow identity and canonical flow metadata. Independently analyzed snapshots now produce deterministic flow nodes, and semantic graph diff reports unchanged, path-changed, ambiguous-split, and removed flow deltas instead of marking all flow comparison unsupported. Cluster deltas remain explicitly unsupported.
+- Added source-range-to-IR mapping and bounded forward/backward program-dependence-graph slicing with explicit unsupported, truncated, and no-map boundaries. Interprocedural projection is trust-gated and never increases certainty across a call edge.
+- Extended `pr_impact` across CLI, MCP, and HTTP with additive `precision: "graph" | "pdg" | "auto"` selection, slice summaries, graph-fallback counts, projected impact, structural metrics, and precision-aware risk factors. Existing graph evidence remains available when PDG analysis cannot produce a trustworthy slice.
+- Added deterministic test-evidence classification and ranking (`direct`, `affected-flow`, `transitive`, `candidate`, `unknown`) with a centralized coverage gate. Generic test-case suggestions remain separate from evidence-backed existing tests.
+- Added ordinary TypeScript call-site extraction inside exported functions so persisted execution flows and dependence-aware impact analysis operate on real TypeScript call relationships rather than fixture-only facts.
+- Added source-valid mutation fixtures and a repeatable PDG mutation benchmark. The release benchmark was deterministic and produced graph precision `0.333333`, PDG precision `0.333333`, recall `1`, and relative precision improvement `0`; the promotion gate therefore failed, so `auto` intentionally remains graph-backed and PDG precision remains manual/experimental.
+
+### ⬆️ Upgrading from 1.0.11
+
+- Stable flow identity adds a producer fingerprint to generation metadata. Existing indexes without the compatible fingerprint are rebuilt rather than treated as fresh.
+- Existing `pr_impact` callers retain graph behavior by default. Select `precision: "pdg"` explicitly to evaluate dependence slicing; `auto` does not select PDG in this release.
+
 ## [1.0.11] - 2026-09-08
 
 

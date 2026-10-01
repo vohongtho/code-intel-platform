@@ -6,6 +6,7 @@ import { RESOLUTION_LANGUAGE_STRATEGIES } from '../resolution/languages.js';
 import { RESOLVER_VERSION } from '../resolution/contracts.js';
 import { EVIDENCE_SCHEMA_VERSION } from '../evidence/store.js';
 import { API_CONTRACT_SCHEMA_VERSION } from '../semantic/api-contracts/types.js';
+import { FLOW_IDENTITY_VERSION } from '../flow-detection/identity.js';
 import { getSchemaDdlFingerprint } from '../storage/schema.js';
 import type { AnalyzerCompatibilityReceipt } from '../storage/index-generation.js';
 import type { EmbeddingMetadata, IndexMetadata } from '../storage/metadata.js';
@@ -63,7 +64,7 @@ export function buildAnalyzerCompatibilityReceipt(args: {
   identityFingerprint: string;
   resolverFingerprint?: string;
   embeddingMetadata?: Pick<EmbeddingMetadata, 'provider' | 'model' | 'dimension'>;
-}): AnalyzerCompatibilityReceipt {
+}): AnalyzerCompatibilityReceipt & { flowIdentityFingerprint: string } {
   const languageRegistryFingerprint = buildLanguageRegistryFingerprint();
   const analyzerFingerprint = sha256({
     parser: args.parser,
@@ -84,6 +85,7 @@ export function buildAnalyzerCompatibilityReceipt(args: {
     evidenceFingerprint: sha256({ evidenceSchemaVersion: EVIDENCE_SCHEMA_VERSION, resolverVersion: RESOLVER_VERSION }),
     embeddingFingerprint: args.embeddingMetadata ? sha256(args.embeddingMetadata) : undefined,
     apiContractFingerprint: sha256({ apiContractSchemaVersion: API_CONTRACT_SCHEMA_VERSION }),
+    flowIdentityFingerprint: FLOW_IDENTITY_VERSION,
   };
 }
 
@@ -119,6 +121,7 @@ export function isSemanticProducerIncompatible(metadata: IndexMetadata): boolean
     resolverVersion: RESOLVER_VERSION,
   });
   const currentApiContractFingerprint = sha256({ apiContractSchemaVersion: API_CONTRACT_SCHEMA_VERSION });
+  const flowIdentityMismatch = metadata.compatibilityReceipt?.flowIdentityFingerprint !== FLOW_IDENTITY_VERSION;
   const persistedLanguageRegistryFingerprint = metadata.compatibilityReceipt?.languageRegistryFingerprint;
   const languageRegistryMismatch = Boolean(
     persistedLanguageRegistryFingerprint && persistedLanguageRegistryFingerprint !== buildLanguageRegistryFingerprint(),
@@ -133,7 +136,8 @@ export function isSemanticProducerIncompatible(metadata: IndexMetadata): boolean
     || (metadata.evidenceSchemaFingerprint && metadata.evidenceSchemaFingerprint !== currentEvidenceFingerprint)
     || (metadata.apiContractSchemaVersion && metadata.apiContractSchemaVersion !== API_CONTRACT_SCHEMA_VERSION)
     || (metadata.apiContractFingerprint && metadata.apiContractFingerprint !== currentApiContractFingerprint)
-    || languageRegistryMismatch,
+    || languageRegistryMismatch
+    || flowIdentityMismatch,
   );
   return fieldMismatch || !metadata.compatibilityReceipt;
 }

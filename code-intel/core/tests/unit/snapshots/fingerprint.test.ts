@@ -31,6 +31,11 @@ describe('fingerprint: snapshot descriptor identity', () => {
     assert.notEqual(a.snapshotId, b.snapshotId);
   });
 
+  it('includes the stable flow producer in snapshot identity', () => {
+    const descriptor = buildSnapshotDescriptor({ repositoryIdentity: 'repo-1', gitTree: 'tree-abc' });
+    assert.match(descriptor.flowIdentityFingerprint, /^flow-identity-v\d+$/);
+  });
+
   it('computeSnapshotId is a pure function of its fields, excluding snapshotId/createdAt themselves', () => {
     const base = {
       repositoryIdentity: 'repo-1',
@@ -43,8 +48,10 @@ describe('fingerprint: snapshot descriptor identity', () => {
       resolverFingerprint: 'r1',
       graphSchemaFingerprint: 'g1',
       contractFingerprint: 'c1',
+      flowIdentityFingerprint: 'flow-identity-v1',
     };
     assert.equal(computeSnapshotId(base), computeSnapshotId({ ...base }));
     assert.notEqual(computeSnapshotId(base), computeSnapshotId({ ...base, resolverFingerprint: 'r2' }));
+    assert.notEqual(computeSnapshotId(base), computeSnapshotId({ ...base, flowIdentityFingerprint: 'flow-identity-v2' }));
   });
 });

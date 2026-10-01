@@ -6,8 +6,8 @@ import { getDbPath } from '../storage/metadata.js';
 import { verifyIndexTrust, upgradeLegacyIndexMetadata } from '../storage/index-trust.js';
 import { CURRENT_SCHEMA_VERSION } from '../migrations/migration-runner.js';
 import { loadGraphFromDB } from '../multi-repo/graph-from-db.js';
-import { buildChangeContext } from '../query/change-context.js';
-import { parseDiffFiles } from '../query/pr-impact.js';
+import { buildChangeContextWithPrecision } from '../query/change-context.js';
+import { parseDiffChangedLineRanges, parseDiffFiles, type PRImpactPrecision } from '../query/pr-impact.js';
 import { startChangeContextHttp, startChangeContextMcp } from './change-context-transports.js';
 import { DEFAULT_CONFIG, loadConfig } from './init-wizard.js';
 import {
@@ -95,16 +95,21 @@ async function runChangeContext(args: string[]): Promise<void> {
   const fileOption = optionValue(args, '--files');
   const diffFile = optionValue(args, '--diff-file');
   let changedFiles = fileOption?.split(',').map((value) => value.trim()).filter(Boolean) ?? [];
+  let diff: string | undefined;
   if (diffFile) {
-    const diff = fs.readFileSync(path.resolve(diffFile), 'utf8');
+    diff = fs.readFileSync(path.resolve(diffFile), 'utf8');
     changedFiles = [...new Set([...changedFiles, ...parseDiffFiles(diff)])];
   }
   if (changedFiles.length === 0) {
     throw new Error('Provide --files file1,file2 or --diff-file path/to/change.diff');
   }
   const graph = await loadGraph(repoDir);
-  const result = buildChangeContext(graph, {
+  const precision = (optionValue(args, '--precision') ?? 'graph') as PRImpactPrecision;
+  if (!['graph', 'pdg', 'auto'].includes(precision)) throw new Error('--precision must be graph, pdg, or auto');
+  const result = await buildChangeContextWithPrecision(graph, {
     changedFiles,
+    precision,
+    changedRanges: diff ? parseDiffChangedLineRanges(diff) : undefined,
     maxHops: numberOption(args, '--max-hops'),
     maxTokens: numberOption(args, '--max-tokens'),
     maxChangedSymbols: numberOption(args, '--max-symbols'),

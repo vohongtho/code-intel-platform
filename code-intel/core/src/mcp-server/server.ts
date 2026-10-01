@@ -35,7 +35,7 @@ import path from 'node:path';
 import { withSpan, isTracingEnabled, sanitizeAttrs } from '../observability/tracing.js';
 import { mcpToolCallsTotal, mcpToolDurationSeconds } from '../observability/metrics.js';
 import { explainRelationship } from '../query/explain-relationship.js';
-import { computePRImpact, parseDiffFiles } from '../query/pr-impact.js';
+import { computePRImpactWithPrecision, parseDiffChangedLineRanges, parseDiffFiles, type PRImpactPrecision } from '../query/pr-impact.js';
 import { findSimilarSymbols } from '../query/similar-symbols.js';
 import { computeHealthReport } from '../query/health-report.js';
 import { suggestTests } from '../query/suggest-tests.js';
@@ -1316,6 +1316,7 @@ export async function dispatchTool(
       case 'pr_impact': {
         const maxHops = (a.maxHops as number) ?? 2;
         let changedFiles: string[] = (a.changedFiles as string[]) ?? [];
+        const changedRanges = a.diff && typeof a.diff === 'string' ? parseDiffChangedLineRanges(a.diff) : [];
 
         // If a diff string is provided, extract files from it
         if (a.diff && typeof a.diff === 'string') {
@@ -1326,6 +1327,11 @@ export async function dispatchTool(
         const analysisMode = (a.analysisMode as string | undefined) ?? 'current-graph';
         if (analysisMode !== 'current-graph' && analysisMode !== 'semantic-snapshot') {
           return { content: [{ type: 'text', text: compact({ error: 'analysisMode must be "current-graph" or "semantic-snapshot".' }) }], isError: true };
+        }
+
+        const precision = (a.precision as PRImpactPrecision | undefined) ?? 'graph';
+        if (!['graph', 'pdg', 'auto'].includes(precision)) {
+          return { content: [{ type: 'text', text: compact({ error: 'precision must be "graph", "pdg", or "auto".' }) }], isError: true };
         }
 
         if (changedFiles.length === 0 && analysisMode === 'current-graph') {
@@ -1340,7 +1346,11 @@ export async function dispatchTool(
         // Textual-hunk blast radius — computed whenever changed files are known,
         // in both modes. semantic-snapshot mode adds to this; it never replaces it.
         const textualImpact = changedFiles.length > 0
-          ? computePRImpact(graph, changedFiles, maxHops, activeWorkspaceRoot)
+          ? await computePRImpactWithPrecision(graph, changedFiles, maxHops, {
+              repoDir: activeWorkspaceRoot,
+              precision,
+              changedRanges,
+            })
           : null;
 
         if (analysisMode === 'current-graph') {

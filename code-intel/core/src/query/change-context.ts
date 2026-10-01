@@ -1,7 +1,8 @@
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
 import type { AnalysisBoundary, AnalysisCertainty, AnalysisCoverage } from '../shared/index.js';
 import { build, type ContextDocument, type SeedSymbol } from '../context/builder.js';
-import { computePRImpact, type PRImpactResult } from './pr-impact.js';
+import { computePRImpact, computePRImpactWithPrecision, type PRImpactPrecision, type PRImpactResult } from './pr-impact.js';
+import type { ChangedLineRange } from '../program-analysis/source-map.js';
 import { suggestTests, type SuggestTestsResult } from './suggest-tests.js';
 import { mergeBoundaries, mergeCoverage } from './trust.js';
 
@@ -11,6 +12,8 @@ export interface ChangeContextOptions {
   maxTokens?: number;
   maxChangedSymbols?: number;
   repoDir?: string;
+  precision?: PRImpactPrecision;
+  changedRanges?: readonly ChangedLineRange[];
 }
 
 export interface ChangeContextTestSuggestion {
@@ -96,5 +99,30 @@ export function buildChangeContext(
     certainty: impact.certainty,
     coverage: mergeCoverage([impact.coverage, ...testSuggestions.map((item) => 'error' in item.result ? undefined : item.result.coverage)]),
     boundaries: mergeBoundaries([impact.boundaries, ...testSuggestions.map((item) => 'error' in item.result ? undefined : item.result.boundaries)]),
+  };
+}
+
+export async function buildChangeContextWithPrecision(
+  graph: KnowledgeGraph,
+  options: ChangeContextOptions,
+): Promise<ChangeContextResult> {
+  const base = buildChangeContext(graph, options);
+  const impact = await computePRImpactWithPrecision(graph, base.changedFiles, options.maxHops ?? 3, {
+    repoDir: options.repoDir,
+    precision: options.precision,
+    changedRanges: options.changedRanges,
+  });
+  return {
+    ...base,
+    impact,
+    summary: {
+      ...base.summary,
+      changedSymbolCount: impact.changedSymbols.length,
+      impactedSymbolCount: impact.impactedSymbols.length,
+      coverageGapCount: impact.coverageGaps.length,
+    },
+    certainty: impact.certainty,
+    coverage: mergeCoverage([impact.coverage, ...base.testSuggestions.map((item) => 'error' in item.result ? undefined : item.result.coverage)]),
+    boundaries: mergeBoundaries([impact.boundaries, ...base.testSuggestions.map((item) => 'error' in item.result ? undefined : item.result.boundaries)]),
   };
 }

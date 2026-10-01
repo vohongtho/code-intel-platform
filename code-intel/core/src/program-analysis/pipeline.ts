@@ -16,13 +16,16 @@ import type { Node as TSNode } from 'web-tree-sitter';
 import type { Language } from '../shared/languages.js';
 import { parseSource } from '../parsing/parser-manager.js';
 import { hashIdentityPayload } from '../identity/normalization.js';
-import { PROGRAM_ANALYSIS_VERSION, type ProgramAnalysisFingerprint } from './contracts.js';
+import { generateProgramAnalysisArtifactId, PROGRAM_ANALYSIS_VERSION, type ProgramAnalysisFingerprint } from './contracts.js';
 import { getLoweringTable } from './languages/lowering-tables.js';
 import { lowerFunctionToIr } from './languages/generic-lowering.js';
 import { validateFunctionIr } from './ir/validate.js';
 import { buildFunctionCfg } from './cfg/build.js';
+import { computeControlDependence } from './cfg/control-dependence.js';
 import { computeReachingDefinitions } from './dataflow/reaching-definitions.js';
 import { computeDefUseChains } from './dataflow/def-use.js';
+import { buildProgramDependenceGraph } from './pdg/build.js';
+import type { ProgramDependenceGraph } from './pdg/contracts.js';
 import { buildFunctionSummary } from './summaries/build.js';
 import { FUNCTION_SUMMARY_VERSION, type FunctionSummary } from './summaries/contracts.js';
 import type { FunctionIr } from './ir/contracts.js';
@@ -48,6 +51,21 @@ export interface FunctionAnalysisResult {
   capability: FunctionAnalysisCapability;
   reason?: string;
   summary?: FunctionSummary;
+}
+
+export interface FunctionDependenceAnalysisResult {
+  capability: FunctionAnalysisCapability;
+  reason?: string;
+  ir?: FunctionIr;
+  pdg?: ProgramDependenceGraph;
+  cacheHit: boolean;
+}
+
+interface PreparedFunctionAnalysis {
+  bodyNode: TSNode;
+  bodyHash: string;
+  fingerprint: ProgramAnalysisFingerprint;
+  parameterNames: readonly string[];
 }
 
 /**
@@ -107,6 +125,36 @@ function computeSummary(ir: FunctionIr, bodyHash: string, fingerprint: ProgramAn
   return buildFunctionSummary({ ir, parameterNames, reachingDefinitions, defUse, bodyHash, fingerprint });
 }
 
+async function prepareFunctionAnalysis(request: FunctionAnalysisRequest): Promise<PreparedFunctionAnalysis | FunctionAnalysisResult> {
+  const table = getLoweringTable(request.language);
+  if (!table) return { capability: 'unsupported', reason: `no program-analysis lowering table for language ${request.language}` };
+
+  let sourceText: string;
+  try {
+    sourceText = fs.readFileSync(request.filePath, 'utf8');
+  } catch (err) {
+    return { capability: 'unsupported', reason: `could not read source file: ${err instanceof Error ? err.message : String(err)}` };
+  }
+
+  const tree = await parseSource(request.language, sourceText).catch(() => null);
+  if (!tree) return { capability: 'unsupported', reason: 'tree-sitter parse failed or grammar unavailable' };
+
+  const bodyNode = findBodyNode(tree.rootNode as unknown as TSNode, request.startLine, table.blockTypes);
+  if (!bodyNode) return { capability: 'unsupported', reason: 'could not locate a function body node at the given source range' };
+
+  return {
+    bodyNode,
+    bodyHash: hashIdentityPayload(bodyNode.text),
+    fingerprint: {
+      programAnalysisVersion: PROGRAM_ANALYSIS_VERSION,
+      languageLoweringVersion: table.loweringVersion,
+      resolverVersion: request.resolverVersion,
+      semanticGraphFingerprint: request.semanticGraphFingerprint,
+    },
+    parameterNames: request.parameterNames ?? [],
+  };
+}
+
 /**
  * Analyzes one function on demand. Never throws — any failure (unsupported
  * language, unreadable file, parse failure, no body node found) comes back
@@ -114,32 +162,9 @@ function computeSummary(ir: FunctionIr, bodyHash: string, fingerprint: ProgramAn
  */
 export async function analyzeFunction(request: FunctionAnalysisRequest): Promise<FunctionAnalysisResult> {
   try {
-    const table = getLoweringTable(request.language);
-    if (!table) {
-      return { capability: 'unsupported', reason: `no program-analysis lowering table for language ${request.language}` };
-    }
-
-    let sourceText: string;
-    try {
-      sourceText = fs.readFileSync(request.filePath, 'utf8');
-    } catch (err) {
-      return { capability: 'unsupported', reason: `could not read source file: ${err instanceof Error ? err.message : String(err)}` };
-    }
-
-    const tree = await parseSource(request.language, sourceText).catch(() => null);
-    if (!tree) return { capability: 'unsupported', reason: 'tree-sitter parse failed or grammar unavailable' };
-
-    const bodyNode = findBodyNode(tree.rootNode as unknown as TSNode, request.startLine, table.blockTypes);
-    if (!bodyNode) return { capability: 'unsupported', reason: 'could not locate a function body node at the given source range' };
-
-    const bodyHash = hashIdentityPayload(bodyNode.text);
-    const fingerprint: ProgramAnalysisFingerprint = {
-      programAnalysisVersion: PROGRAM_ANALYSIS_VERSION,
-      languageLoweringVersion: table.loweringVersion,
-      resolverVersion: request.resolverVersion,
-      semanticGraphFingerprint: request.semanticGraphFingerprint,
-    };
-    const parameterNames = request.parameterNames ?? [];
+    const prepared = await prepareFunctionAnalysis(request);
+    if ('capability' in prepared) return prepared;
+    const { bodyNode, bodyHash, fingerprint, parameterNames } = prepared;
 
     const summary = getOrComputeArtifact(
       sharedCache,
@@ -159,5 +184,48 @@ export async function analyzeFunction(request: FunctionAnalysisRequest): Promise
     return { capability: 'supported', summary };
   } catch (err) {
     return { capability: 'unsupported', reason: `internal error: ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
+/** Builds and caches the PDG while returning the same lowered IR whose existing SourceRanges seed change slicing. */
+export async function analyzeFunctionDependence(request: FunctionAnalysisRequest): Promise<FunctionDependenceAnalysisResult> {
+  try {
+    const prepared = await prepareFunctionAnalysis(request);
+    if ('capability' in prepared) return { ...prepared, cacheHit: false };
+    const ir = lowerFunctionToIr({
+      bodyNode: prepared.bodyNode,
+      language: request.language,
+      functionId: request.canonicalFunctionId,
+      filePath: request.filePath,
+      parameterNames: prepared.parameterNames,
+    });
+    const validation = validateFunctionIr(ir);
+    if (!validation.valid) {
+      return { capability: 'unsupported', reason: `lowered IR failed validation: ${validation.errors.slice(0, 3).join('; ')}`, cacheHit: false };
+    }
+
+    const key = {
+      kind: 'pdg' as const,
+      canonicalFunctionId: request.canonicalFunctionId,
+      bodyHash: prepared.bodyHash,
+      fingerprint: prepared.fingerprint,
+    };
+    const artifactId = generateProgramAnalysisArtifactId(key);
+    const cacheHit = sharedCache.has(artifactId);
+    const pdg = getOrComputeArtifact(sharedCache, key, () => {
+      const cfg = buildFunctionCfg(ir);
+      const reachingDefinitions = computeReachingDefinitions(ir, cfg);
+      const defUse = computeDefUseChains(ir, cfg, reachingDefinitions);
+      return buildProgramDependenceGraph({
+        ir,
+        cfg,
+        controlDependence: computeControlDependence(cfg),
+        reachingDefinitions,
+        defUse,
+      });
+    });
+    return { capability: 'supported', ir, pdg, cacheHit };
+  } catch (err) {
+    return { capability: 'unsupported', reason: `internal error: ${err instanceof Error ? err.message : String(err)}`, cacheHit: false };
   }
 }

@@ -33,6 +33,7 @@ function descriptor(commit: string): SemanticSnapshotDescriptor {
     identityFingerprint: 'i1',
     resolverFingerprint: 'r1',
     graphSchemaFingerprint: 'g1',
+    flowIdentityFingerprint: 'flow-identity-v1',
     createdAt: '2026-01-01T00:00:00.000Z',
   };
 }

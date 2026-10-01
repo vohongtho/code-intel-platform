@@ -1,5 +1,6 @@
 import type { Phase, PhaseResult, PipelineContext } from '../types.js';
-import { generateNodeId, generateEdgeId } from '../../graph/id-generator.js';
+import { generateEdgeId } from '../../graph/id-generator.js';
+import { buildFlowIdentity } from '../../flow-detection/identity.js';
 
 function isTestLikePath(filePath: string): boolean {
   return filePath.includes('test') || filePath.includes('spec') || filePath.includes('fixture');
@@ -38,7 +39,7 @@ export const flowPhase: Phase = {
       }
     }
 
-    entryPoints.sort((a, b) => b.score - a.score);
+    entryPoints.sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
 
     // Trace flows from top entry points (max 20)
     const maxFlows = 75;
@@ -53,12 +54,16 @@ export const flowPhase: Phase = {
       if (flowCount >= maxFlows) break;
 
       // BFS trace
-      const queue: { nodeId: string; path: string[] }[] = [{ nodeId: ep.id, path: [ep.id] }];
+      const queue: { nodeId: string; path: string[]; callSiteIds: string[] }[] = [{
+        nodeId: ep.id,
+        path: [ep.id],
+        callSiteIds: [],
+      }];
       const visited = new Set<string>();
       const filterTargets = !isTestLikePath(ep.filePath);
 
       while (queue.length > 0 && flowCount < maxFlows) {
-        const { nodeId, path } = queue.shift()!;
+        const { nodeId, path, callSiteIds } = queue.shift()!;
         if (path.length > maxDepth) continue;
 
         const callEdges = [...graph.findEdgesFrom(nodeId)]
@@ -68,25 +73,35 @@ export const flowPhase: Phase = {
             const targetNode = graph.getNode(e.target);
             return targetNode ? !isTestLikePath(targetNode.filePath) : true;
           })
+          .sort((a, b) => (a.callSiteId ?? a.id).localeCompare(b.callSiteId ?? b.id))
           .slice(0, maxBranching);
 
         if (callEdges.length === 0 && path.length >= 3) {
-          // Record flow
-          const flowId = generateNodeId('flow', ep.filePath, `flow-${flowCount}`);
+          const entryPointCanonicalId = graph.getNode(ep.id)?.identityId ?? ep.id;
+          const stepCanonicalIds = path.map((stepId) => graph.getNode(stepId)?.identityId ?? stepId);
+          const identity = buildFlowIdentity({ entryPointCanonicalId, stepCanonicalIds, callSiteIds });
           graph.addNode({
-            id: flowId,
+            id: identity.flowId,
             kind: 'flow',
-            name: `${ep.name} flow ${flowCount}`,
+            name: `${ep.name} flow ${identity.flowFingerprint.slice(0, 8)}`,
             filePath: ep.filePath,
-            metadata: { steps: path, entryPoint: ep.name },
+            metadata: {
+              steps: path,
+              entryPoint: ep.name,
+              entryPointCanonicalId,
+              stepCanonicalIds,
+              callSiteIds,
+              flowFingerprint: identity.flowFingerprint,
+              algorithmVersion: identity.algorithmVersion,
+            },
           });
 
           // Add step_of edges
           for (let i = 0; i < path.length; i++) {
             graph.addEdge({
-              id: generateEdgeId(path[i], flowId, `step_of_${i}`),
+              id: generateEdgeId(path[i], identity.flowId, `step_of_${i}`),
               source: path[i],
-              target: flowId,
+              target: identity.flowId,
               kind: 'step_of',
               weight: 1.0,
               label: `step ${i + 1}`,
@@ -100,7 +115,11 @@ export const flowPhase: Phase = {
         for (const edge of callEdges) {
           if (visited.has(edge.target)) continue;
           visited.add(edge.target);
-          queue.push({ nodeId: edge.target, path: [...path, edge.target] });
+          queue.push({
+            nodeId: edge.target,
+            path: [...path, edge.target],
+            callSiteIds: [...callSiteIds, edge.callSiteId ?? edge.id],
+          });
         }
       }
     }

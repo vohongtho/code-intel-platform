@@ -54,6 +54,14 @@ export type EdgeFieldKey = (typeof EDGE_FIELD_KEYS)[number];
 export interface NormalizedGraph {
   nodesById: Map<string, NormalizedNode>;
   edgesByKey: Map<string, NormalizedEdge>;
+  flowsById?: Map<string, NormalizedFlow>;
+}
+
+export interface NormalizedFlow {
+  flowId: string;
+  entryPointId: string;
+  stepCanonicalIds: string[];
+  callSiteIds: string[];
 }
 
 function fingerprintContent(content: string | undefined): string | undefined {
@@ -106,14 +114,10 @@ export function normalizeEdge(edge: CodeEdge): NormalizedEdge {
 }
 
 /**
- * `flow` and `cluster` nodes (and their `step_of` / `belongs_to` membership
- * edges) are excluded here, not just from the top-level diff sections. Their
- * IDs are generated from an accumulating per-run enumeration index
- * (pipeline/phases/flow-phase.ts, cluster-phase.ts), not a content
- * fingerprint, so they are not guaranteed to match across two independent
- * analysis runs even when nothing semantically changed — including them in
- * the generic node/edge diff would fabricate spurious added/removed deltas.
- * See types.ts `UnsupportedDiffSection`.
+ * Flow and cluster nodes stay out of the generic node/edge diff. Stable flow
+ * metadata is projected separately into `flowsById`; clusters remain excluded
+ * because their IDs still use per-run enumeration. Membership edges stay out
+ * of the generic relationship diff because each section owns its semantics.
  */
 const UNSTABLE_IDENTITY_NODE_KINDS: ReadonlySet<NodeKind> = new Set(['flow', 'cluster']);
 const UNSTABLE_IDENTITY_EDGE_KINDS: ReadonlySet<EdgeKind> = new Set(['step_of', 'belongs_to']);
@@ -122,7 +126,8 @@ const UNSTABLE_IDENTITY_EDGE_KINDS: ReadonlySet<EdgeKind> = new Set(['step_of', 
  * Reduces a reopened KnowledgeGraph to maps keyed by canonical node ID and
  * normalized edge key. Multiple call sites between the same (source, kind,
  * target) produce distinct entries here because `callSiteId` is part of the
- * key — they are never collapsed into one edge. `contentFingerprints` is a
+ * key — they are never collapsed into one edge. Stable flows are projected
+ * from their persisted canonical metadata. `contentFingerprints` is a
  * snapshot's content-fingerprints.json sidecar (node ID -> declaration
  * fingerprint); pass it whenever available so change/rename/move detection
  * has real per-symbol content to compare, not just `node.content` (see
@@ -130,7 +135,28 @@ const UNSTABLE_IDENTITY_EDGE_KINDS: ReadonlySet<EdgeKind> = new Set(['step_of', 
  */
 export function normalizeGraphForDiff(graph: KnowledgeGraph, contentFingerprints?: Record<string, string>): NormalizedGraph {
   const nodesById = new Map<string, NormalizedNode>();
+  const flowsById = new Map<string, NormalizedFlow>();
   for (const node of graph.allNodes()) {
+    if (node.kind === 'flow') {
+      const entryPointId = node.metadata?.['entryPointCanonicalId'];
+      const stepCanonicalIds = node.metadata?.['stepCanonicalIds'];
+      const callSiteIds = node.metadata?.['callSiteIds'];
+      if (
+        typeof entryPointId === 'string'
+        && Array.isArray(stepCanonicalIds)
+        && stepCanonicalIds.every((step) => typeof step === 'string')
+        && Array.isArray(callSiteIds)
+        && callSiteIds.every((callSite) => typeof callSite === 'string')
+      ) {
+        flowsById.set(node.id, {
+          flowId: node.id,
+          entryPointId,
+          stepCanonicalIds,
+          callSiteIds,
+        });
+      }
+      continue;
+    }
     if (!node.id || UNSTABLE_IDENTITY_NODE_KINDS.has(node.kind)) continue;
     nodesById.set(node.id, normalizeNode(node, contentFingerprints?.[node.id]));
   }
@@ -140,5 +166,5 @@ export function normalizeGraphForDiff(graph: KnowledgeGraph, contentFingerprints
     const normalized = normalizeEdge(edge);
     edgesByKey.set(normalized.key, normalized);
   }
-  return { nodesById, edgesByKey };
+  return { nodesById, edgesByKey, flowsById };
 }

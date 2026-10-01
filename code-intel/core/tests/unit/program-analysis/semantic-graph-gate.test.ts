@@ -17,6 +17,7 @@ import { saveMetadata, computeIndexVersionForPaths, getDbPath, getVectorDbPath }
 import { Bm25Index, getBm25DbPath } from '../../../src/search/bm25-index.js';
 import { CURRENT_SCHEMA_VERSION } from '../../../src/migrations/migration-runner.js';
 import { gateInterproceduralAnalysis, boundCertaintyByCallRelationship } from '../../../src/program-analysis/semantic-graph-gate.js';
+import { projectChangeSliceAcrossCalls, type ChangeSlice } from '../../../src/program-analysis/change-slice.js';
 import { buildAnalyzerCompatibilityReceipt, CURRENT_IDENTITY_FINGERPRINT } from '../../../src/pipeline/compatibility-receipt.js';
 
 const created: string[] = [];
@@ -90,5 +91,35 @@ describe('gateInterproceduralAnalysis', () => {
 
   it('re-exports the certainty-bounding helper used once an interprocedural result is authorized', () => {
     assert.equal(boundCertaintyByCallRelationship('exact', 'heuristic'), 'heuristic');
+  });
+
+  it('gates projection on index trust and bounds certainty at every crossed call edge', async () => {
+    const repoDir = mkRepoDir();
+    const slice: ChangeSlice = {
+      supported: true,
+      functionId: 'fn:a',
+      seedStatementIds: ['s1'],
+      forward: [],
+      dataDependencies: 0,
+      controlDependencies: 0,
+      truncated: false,
+      certainty: 'exact',
+    };
+    const callEdges = [
+      { sourceFunctionId: 'fn:a', targetFunctionId: 'fn:b', certainty: 'exact' as const },
+      { sourceFunctionId: 'fn:b', targetFunctionId: 'fn:c', certainty: 'heuristic' as const },
+    ];
+
+    const gated = projectChangeSliceAcrossCalls({ repoDir, slice, callEdges });
+    assert.equal(gated.allowed, false);
+    assert.deepEqual(gated.projected, []);
+
+    await writeTrustedIndex(repoDir);
+    const projected = projectChangeSliceAcrossCalls({ repoDir, slice, callEdges });
+    assert.equal(projected.allowed, true);
+    assert.deepEqual(projected.projected.map((item) => [item.functionId, item.certainty]), [
+      ['fn:b', 'exact'],
+      ['fn:c', 'heuristic'],
+    ]);
   });
 });

@@ -289,6 +289,19 @@ describe('resolveAnalysisPlan', () => {
     } finally { fs.rmSync(value.root, { recursive: true, force: true }); }
   });
 
+  it('selects full semantic reanalysis when the persisted flow identity fingerprint is absent', () => {
+    const value = fixture();
+    try {
+      delete value.metadata.compatibilityReceipt?.flowIdentityFingerprint;
+      const plan = resolveAnalysisPlan({ args: ['analyze'], metadata: value.metadata, snapshot: value.snapshot, source: unchanged });
+      assert.equal(plan.mode, 'publish');
+      if (plan.mode !== 'publish') return;
+      assert.equal(plan.evolution, 'full-reanalysis');
+      assert.equal(plan.graph, 'full');
+      assert.equal(plan.bm25, 'full');
+    } finally { fs.rmSync(value.root, { recursive: true, force: true }); }
+  });
+
   it('does not force reanalysis when the language-registry fingerprint specifically is absent from an otherwise-current receipt', () => {
     const value = fixture();
     try {

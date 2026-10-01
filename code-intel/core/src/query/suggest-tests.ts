@@ -1,12 +1,16 @@
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
 import type { AnalysisBoundary, AnalysisCertainty, AnalysisCoverage, CodeEdge } from '../shared/index.js';
 import { emptyTrust, summarizeEdgeTrust } from './trust.js';
+import { selectTestsForImpact, type MissingTestFinding, type TestEvidence } from './test-selection.js';
 
 export interface SuggestTestsResult {
   callPaths: string[][];
   suggestedCases: string[];
   existingTests: string[];
   untestedCallers: string[];
+  /** Discovered graph/flow evidence. Generic `suggestedCases` remains a separate list. */
+  testEvidence: TestEvidence[];
+  missingTestFinding?: MissingTestFinding;
   certainty?: AnalysisCertainty;
   coverage?: AnalysisCoverage;
   boundaries?: readonly AnalysisBoundary[];
@@ -163,6 +167,7 @@ export function suggestTests(
   }
 
   const suggestedCases = getSuggestedCases(symbolName);
+  const selection = selectTestsForImpact(graph, [targetId], { repoDir });
   const trust = trustEdges.length > 0
     ? summarizeEdgeTrust(trustEdges, repoDir, { truncated })
     : emptyTrust();
@@ -172,6 +177,8 @@ export function suggestTests(
     suggestedCases,
     existingTests,
     untestedCallers,
+    testEvidence: selection.evidence,
+    missingTestFinding: selection.missingTestFinding,
     certainty: trust.certainty,
     coverage: trust.coverage,
     boundaries: trust.boundaries,

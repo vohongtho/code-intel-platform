@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
+import { loadGraphSnapshotFromDbPath } from '../../../src/multi-repo/graph-from-db.js';
+import { buildIsolatedSnapshot } from '../../../src/snapshots/snapshot-builder.js';
 import { computeSemanticGraphDiff } from '../../../src/snapshots/service.js';
 
 function git(args: string[], cwd: string): string {
@@ -28,6 +30,18 @@ function mkRepo(): string {
   return repoDir;
 }
 
+async function analyzeFlowNodes(repoDir: string, ref: string, stagingDir: string): Promise<string> {
+  const result = await buildIsolatedSnapshot({ repoDir, ref, allowCache: false }, stagingDir);
+  assert.equal(result.status, 'built', result.error);
+  assert.ok(result.artifactsDir);
+  const graph = await loadGraphSnapshotFromDbPath(path.join(result.artifactsDir!, 'graph.db'));
+  const flows = [...graph.allNodes()]
+    .filter((node) => node.kind === 'flow')
+    .sort((a, b) => a.id.localeCompare(b.id));
+  assert.ok(flows.length > 0, 'fixture must produce at least one persisted flow');
+  return JSON.stringify(flows);
+}
+
 /**
  * These fixtures stand in for the convergence scenarios in tasks.md §12
  * (body-only edit, rename, deletion, added/removed call, certainty
@@ -43,6 +57,125 @@ function mkRepo(): string {
  * change categories end-to-end, against a real Git repo and a real analyze run.
  */
 describe('semantic graph diff: change-type scenarios (real pipeline)', { timeout: 120_000 }, () => {
+  it('persists byte-identical flow nodes across repeated full analyses', async () => {
+    const repoDir = mkRepo();
+    const stagingRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'stable-flow-rerun-'));
+    try {
+      const ref = commit(repoDir, {
+        'index.ts': [
+          'export function main(): number {',
+          '  return service();',
+          '}',
+          'export function service(): number {',
+          '  return store();',
+          '}',
+          'export function store(): number {',
+          '  return 1;',
+          '}',
+        ].join('\n'),
+      }, 'stable flow');
+
+      const first = await analyzeFlowNodes(repoDir, ref, path.join(stagingRoot, 'first'));
+      const second = await analyzeFlowNodes(repoDir, ref, path.join(stagingRoot, 'second'));
+      assert.equal(second, first);
+    } finally {
+      fs.rmSync(repoDir, { recursive: true, force: true });
+      fs.rmSync(stagingRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('diffs unchanged, changed, split/ambiguous, and removed flows across refs', async () => {
+    const repoDir = mkRepo();
+    try {
+      const unchangedBase = commit(repoDir, {
+        'index.ts': [
+          'export function main(): number {',
+          '  return service();',
+          '}',
+          'export function service(): number {',
+          '  return store();',
+          '}',
+          'export function store(): number {',
+          '  return 1;',
+          '}',
+          'export function unrelated(): number {',
+          '  return 1;',
+          '}',
+        ].join('\n'),
+      }, 'flow base');
+      const unchangedHead = commit(repoDir, {
+        'index.ts': [
+          'export function main(): number {',
+          '  return service();',
+          '}',
+          'export function service(): number {',
+          '  return store();',
+          '}',
+          'export function store(): number {',
+          '  return 1;',
+          '}',
+          'export function unrelated(): number {',
+          '  return 2;',
+          '}',
+        ].join('\n'),
+      }, 'unrelated edit');
+      const changedHead = commit(repoDir, {
+        'index.ts': [
+          'export function main(): number {',
+          '  return store();',
+          '}',
+          'export function service(): number {',
+          '  return 1;',
+          '}',
+          'export function store(): number {',
+          '  return service();',
+          '}',
+        ].join('\n'),
+      }, 'reorder flow path');
+      const splitHead = commit(repoDir, {
+        'index.ts': [
+          'export function main(): number {',
+          '  return branchA() + branchB();',
+          '}',
+          'export function branchA(): number {',
+          '  return leafA();',
+          '}',
+          'export function leafA(): number {',
+          '  return 1;',
+          '}',
+          'export function branchB(): number {',
+          '  return leafB();',
+          '}',
+          'export function leafB(): number {',
+          '  return 2;',
+          '}',
+        ].join('\n'),
+      }, 'split flow');
+      const removedHead = commit(repoDir, {
+        'index.ts': [
+          'export function main(): number {',
+          '  return 0;',
+          '}',
+        ].join('\n'),
+      }, 'remove flows');
+
+      const compareFlows = async (base: string, head: string) => {
+        const { diff } = await computeSemanticGraphDiff({ repoDir, base, head, includeContracts: false });
+        assert.ok(diff);
+        const flows = diff!.flows;
+        if (!flows.supported) assert.fail(flows.reason);
+        return flows.deltas;
+      };
+
+      assert.deepEqual(await compareFlows(unchangedBase, unchangedHead), []);
+      assert.deepEqual((await compareFlows(unchangedHead, changedHead)).map((delta) => delta.kind), ['path-changed']);
+      assert.deepEqual((await compareFlows(changedHead, splitHead)).map((delta) => delta.kind), ['added', 'added', 'removed']);
+      assert.deepEqual((await compareFlows(splitHead, removedHead)).map((delta) => delta.kind), ['removed', 'removed']);
+    } finally {
+      fs.rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
   it('diffs a body-only edit as changed, an addition as added, and a deletion as removed', async () => {
     const repoDir = mkRepo();
     try {
@@ -117,6 +250,8 @@ describe('semantic graph diff: change-type scenarios (real pipeline)', { timeout
       assert.equal(diff!.nodes.length, 0);
       assert.equal(diff!.relationships.length, 0);
       assert.equal(diff!.coverage.complete, true);
+      assert.equal(diff!.flows.supported, true);
+      if (diff!.flows.supported) assert.deepEqual(diff!.flows.deltas, []);
     } finally {
       fs.rmSync(repoDir, { recursive: true, force: true });
     }

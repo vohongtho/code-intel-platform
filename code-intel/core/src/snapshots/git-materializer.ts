@@ -102,6 +102,12 @@ export function listChangedFilesBetweenRefs(repoDir: string, baseRef: string, he
   return output ? output.split('\n').filter(Boolean) : [];
 }
 
+export function getUnifiedDiffBetweenRefs(repoDir: string, baseRef: string, headRef: string): string {
+  const base = resolveGitRef(repoDir, baseRef);
+  const head = resolveGitRef(repoDir, headRef);
+  return execGit(['diff', '--unified=0', `${base.commit}..${head.commit}`, '--'], repoDir);
+}
+
 /**
  * Materializes a resolved commit's tree into `targetDir` as a real, isolated
  * filesystem checkout via `git worktree add --detach`, without touching the

@@ -56,7 +56,7 @@ import { saveMetadata, loadMetadata, getDbPath, getVectorDbPath, loadAgentTarget
 import { API_CONTRACT_SCHEMA_VERSION } from '../semantic/api-contracts/types.js';
 import { buildAnalyzerCompatibilityReceipt, buildFrameworkFingerprint, CURRENT_IDENTITY_FINGERPRINT } from '../pipeline/compatibility-receipt.js';
 import { computeSemanticGraphDiff } from '../snapshots/service.js';
-import { listChangedFilesBetweenRefs } from '../snapshots/git-materializer.js';
+import { getUnifiedDiffBetweenRefs, listChangedFilesBetweenRefs } from '../snapshots/git-materializer.js';
 import { resolveIndexSnapshot } from '../storage/index-snapshot.js';
 import { writeContextFiles } from './context-writer.js';
 import { installWorkflows, planWorkflowInstall } from '../agents/workflows/installer.js';
@@ -4692,6 +4692,7 @@ program
   .option('--head <ref>', 'Head git ref (default: HEAD)', 'HEAD')
   .option('--fail-on <level>', 'Exit code 1 if this risk level found: HIGH|MEDIUM', '')
   .option('--format <fmt>', 'Output format: text|json|sarif (default: text)', 'text')
+  .option('--precision <mode>', 'Impact precision: graph|pdg|auto (default: graph)', 'graph')
   .option('--path <path>', 'Repo path (default: current dir)')
   .addHelpText('after', `
   Computes the blast radius for files changed between two git refs.
@@ -4707,6 +4708,7 @@ program
     head: string;
     failOn: string;
     format: string;
+    precision: string;
     path?: string;
   }) => {
     const repoPath = path.resolve(opts.path ?? '.');
@@ -4733,8 +4735,19 @@ program
     const { graph } = await loadOrAnalyzeWorkspace(repoPath);
 
     // 3. Compute PR impact
-    const { computePRImpact } = await import('../query/pr-impact.js');
-    const result = computePRImpact(graph, changedFiles, 5);
+    const precision = opts.precision.toLowerCase();
+    if (!['graph', 'pdg', 'auto'].includes(precision)) {
+      console.error('\n  ✗  --precision must be graph, pdg, or auto\n');
+      process.exitCode = 1;
+      return;
+    }
+    const { computePRImpactWithPrecision, parseDiffChangedLineRanges } = await import('../query/pr-impact.js');
+    const unifiedDiff = getUnifiedDiffBetweenRefs(repoPath, opts.base, opts.head);
+    const result = await computePRImpactWithPrecision(graph, changedFiles, 5, {
+      repoDir: repoPath,
+      precision: precision as 'graph' | 'pdg' | 'auto',
+      changedRanges: parseDiffChangedLineRanges(unifiedDiff),
+    });
 
     // 4. Output based on --format
     const fmt = (opts.format ?? 'text').toLowerCase();

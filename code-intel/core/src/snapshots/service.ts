@@ -3,9 +3,10 @@ import { loadGraphSnapshotFromDbPath } from '../multi-repo/graph-from-db.js';
 import { getApiDrift } from '../semantic/api-contracts/service.js';
 import { detectRenamedFiles } from './git-materializer.js';
 import { DEFAULT_SNAPSHOT_CACHE_POLICY, getOrBuildSnapshot, type SnapshotCachePolicy } from './cache.js';
-import { diffEntitiesWithContinuity, diffRelationships } from './graph-diff.js';
+import { diffEntitiesWithContinuity, diffFlows, diffRelationships } from './graph-diff.js';
 import { normalizeGraphForDiff } from './normalizer.js';
 import { readContentFingerprints } from './content-fingerprints.js';
+import { FLOW_IDENTITY_VERSION } from '../flow-detection/identity.js';
 import type { PhaseMetric, SemanticGraphDiff, SnapshotBoundary, SnapshotBuildRequest, SnapshotBuildResult } from './types.js';
 
 /** Wall-clock time/memory spent computing the diff itself, once both snapshots are usable — see `PhaseMetric`. */
@@ -107,6 +108,11 @@ export async function computeSemanticGraphDiff(request: GraphDiffRequest): Promi
   const diffStartRss = process.memoryUsage().rss;
   const nodes = diffEntitiesWithContinuity(baseNormalized, headNormalized, renamedFiles);
   const relationships = diffRelationships(baseNormalized, headNormalized);
+  const stableFlowIdentity = base.descriptor.flowIdentityFingerprint === FLOW_IDENTITY_VERSION
+    && head.descriptor.flowIdentityFingerprint === FLOW_IDENTITY_VERSION;
+  const flows: SemanticGraphDiff['flows'] = stableFlowIdentity
+    ? { supported: true, deltas: diffFlows(baseNormalized, headNormalized) }
+    : { supported: false, reason: 'Flow diff requires snapshots produced with the current stable flow identity version.' };
   const diffPhase = phaseMetric(diffStarted, diffStartRss);
 
   const contractsStarted = Date.now();
@@ -131,7 +137,7 @@ export async function computeSemanticGraphDiff(request: GraphDiffRequest): Promi
     nodes,
     relationships,
     contracts,
-    flows: { supported: false, reason: 'Flow node identity (pipeline/phases/flow-phase.ts) is a per-run enumeration index, not a content fingerprint, so it is not guaranteed stable across independent analysis runs.' },
+    flows,
     clusters: { supported: false, reason: 'Cluster node identity (pipeline/phases/cluster-phase.ts) is a per-run enumeration index, not a content fingerprint, so it is not guaranteed stable across independent analysis runs.' },
     coverage: {
       complete: incompleteReasons.length === 0,
