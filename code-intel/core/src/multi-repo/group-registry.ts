@@ -13,7 +13,14 @@ import { findRepoById, findRepoByName, loadRegistry } from '../storage/repo-regi
 const GROUPS_DIR = path.join(os.homedir(), '.code-intel', 'groups');
 const GROUP_STATE_SCHEMA_VERSION = GROUP_CONTRACT_SCHEMA_VERSION;
 
+/** Group names become file names under GROUPS_DIR; anything that could leave that directory is rejected. */
+export function isSafeGroupName(name: string): boolean {
+  return typeof name === 'string' && name.length > 0 && name.length <= 255
+    && !/[/\\\0]/.test(name) && name !== '.' && name !== '..' && path.basename(name) === name;
+}
+
 function groupFile(name: string): string {
+  if (!isSafeGroupName(name)) throw new Error(`Invalid group name: ${JSON.stringify(name)}`);
   return path.join(GROUPS_DIR, `${name}.json`);
 }
 
@@ -88,6 +95,7 @@ function quarantineUnreadable(filePath: string): void {
 }
 
 export function loadGroup(name: string): RepoGroup | null {
+  if (!isSafeGroupName(name)) return null;
   const filePath = groupFile(name);
   const raw = readJsonFile<RepoGroup>(filePath);
   if (!isGroupShape(raw)) {
@@ -118,13 +126,14 @@ export function listGroups(): RepoGroup[] {
 }
 
 export function deleteGroup(name: string): void {
+  if (!isSafeGroupName(name)) return;
   try { fs.unlinkSync(groupFile(name)); } catch { /* ignore */ }
   // also remove sync artifact
   try { fs.unlinkSync(path.join(GROUPS_DIR, `${name}.sync.json`)); } catch { /* ignore */ }
 }
 
 export function groupExists(name: string): boolean {
-  return fs.existsSync(groupFile(name));
+  return isSafeGroupName(name) && fs.existsSync(groupFile(name));
 }
 
 /** Add or update a member (by groupPath). Returns the updated group. */

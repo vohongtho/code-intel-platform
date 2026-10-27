@@ -21,7 +21,7 @@ import path from 'node:path';
 import type { Express, Request, Response } from 'express';
 import { requireAuth, requireRole, requireToolScope } from '../auth/middleware.js';
 import { ErrorCodes } from '../errors/codes.js';
-import { loadGroup } from '../multi-repo/group-registry.js';
+import { isSafeGroupName, loadGroup } from '../multi-repo/group-registry.js';
 import { getGroupSystemFlows, querySystemFlows } from '../multi-repo/system-flows/service.js';
 import { loadRegistry } from '../storage/repo-registry.js';
 import {
@@ -52,6 +52,7 @@ const STATUS_BY_CODE: Record<WorkflowSessionErrorCode, number> = {
   CORRUPT: 422,
   OVERSIZE: 422,
   UNSUPPORTED_SCHEMA: 422,
+  QUOTA_EXCEEDED: 429,
 };
 
 function sendError(res: Response, status: number, code: string, message: string, extra: Record<string, unknown> = {}): void {
@@ -62,7 +63,7 @@ function sendWorkflowError(res: Response, err: unknown): void {
   const payload = workflowErrorPayload(err);
   if (err instanceof WorkflowSessionError) {
     const status = STATUS_BY_CODE[err.code];
-    const code = status === 404 ? ErrorCodes.NOT_FOUND : status === 409 ? ErrorCodes.CONFLICT : ErrorCodes.INVALID_REQUEST;
+    const code = status === 404 ? ErrorCodes.NOT_FOUND : status === 409 ? ErrorCodes.CONFLICT : status === 429 ? ErrorCodes.RATE_LIMIT_EXCEEDED : ErrorCodes.INVALID_REQUEST;
     sendError(res, status, code, payload.error, { workflowCode: err.code, ...(payload.details ? { details: payload.details } : {}) });
     return;
   }
@@ -98,6 +99,7 @@ function resolveScope(req: Request, options: WorkflowRouteOptions): ResolvedScop
   const group = typeof source['group'] === 'string' ? source['group'] : undefined;
   if (group || source['scope'] === 'group') {
     if (!group) return { error: { status: 400, code: ErrorCodes.INVALID_REQUEST, message: 'group scope requires `group`' } };
+    if (!isSafeGroupName(group)) return { error: { status: 400, code: ErrorCodes.INVALID_REQUEST, message: 'Invalid group name' } };
     const loaded = loadGroup(group);
     if (!loaded) return { error: { status: 404, code: ErrorCodes.NOT_FOUND, message: `Group "${group}" not found` } };
     return { scope: 'group', groupName: group, repositoryIds: loaded.members.map((member) => member.repoId ?? member.registryName) };
@@ -239,7 +241,12 @@ export function registerWorkflowRoutes(app: Express, options: WorkflowRouteOptio
   }
 
   app.get('/api/v1/groups/:name/system-flows', requireAuth, requireToolScope('system_flows'), async (req: Request, res: Response) => {
-    const group = loadGroup(req.params['name'] as string);
+    const name = req.params['name'] as string;
+    if (!isSafeGroupName(name)) {
+      sendError(res, 400, ErrorCodes.INVALID_REQUEST, 'Invalid group name');
+      return;
+    }
+    const group = loadGroup(name);
     if (!group) {
       sendError(res, 404, ErrorCodes.NOT_FOUND, 'Group not found');
       return;

@@ -152,6 +152,8 @@ describe('change workflow — HTTP transport with ownership', () => {
 
   it('system flows endpoint requires the group to exist', async () => {
     assert.equal((await call('alice', 'GET', '/api/v1/groups/no-such-group/system-flows')).status, 404);
+    assert.equal((await call('alice', 'GET', `/api/v1/groups/${encodeURIComponent('../repos')}/system-flows`)).status, 400);
+    assert.equal((await call('alice', 'GET', `/api/v1/workflows?group=${encodeURIComponent('../x')}`)).status, 400);
   });
 
   it('explore enforces repository access for repo-scoped tokens', async () => {
@@ -159,5 +161,10 @@ describe('change workflow — HTTP transport with ownership', () => {
     assert.equal(res.status, 403);
     const mismatch = await call('alice', 'POST', '/api/v1/explore', { task: 'double total', repoId: 'a', scope: { repoId: 'b' } });
     assert.equal(mismatch.status, 400);
+    // An empty or non-string selector must not fall through to the default repository.
+    for (const payload of [{ scope: { repoId: '' }, repoId: 'shop' }, { scope: { repoId: '' } }, { repoId: ['shop'] }, { scope: 'shop' }]) {
+      const res = await call('scoped', 'POST', '/api/v1/explore', { task: 'double total', ...payload });
+      assert.equal(res.status, 400, JSON.stringify(payload));
+    }
   });
 });

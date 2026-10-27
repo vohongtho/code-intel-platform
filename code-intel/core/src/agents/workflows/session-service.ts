@@ -877,6 +877,8 @@ export async function startWorkflow(request: StartWorkflowRequest, deps: ChangeW
   const at = resolved.now().toISOString();
   const id = resolved.newId();
   const store = storeForScope(scope, resolved);
+  store.prune(resolved.now());
+  store.assertCapacity();
   const baselines: RepositoryBaseline[] = [];
   for (const repo of prepared) {
     const written = store.writeBaseline(id, repo.baseline.repositoryId, repo.payload);

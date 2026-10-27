@@ -1164,17 +1164,35 @@ export function createApp(
   // session, so responses never contain session pointer references.
   // Repo-scoped tokens may only explore their repos; scope.repoId and repoId must not disagree,
   // so the authorized repo and the explored repo are always the same one.
-  app.post('/api/v1/explore', requireToolScope('explore'), requireRepoAccess((req) => {
+  // Selectors are validated before authorization: a present selector must be a non-empty string, so the
+  // value requireRepoAccess checks is exactly the value the handler resolves (no ''/non-string fallthrough).
+  const validateExploreSelectors = (req: Request, res: Response, next: NextFunction): void => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const scope = body.scope;
+    if (scope !== undefined && (scope === null || typeof scope !== 'object' || Array.isArray(scope))) {
+      res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: 'scope must be an object' } });
+      return;
+    }
+    const scopeRepoId = (scope as { repoId?: unknown } | undefined)?.repoId;
+    for (const [label, value] of [['scope.repoId', scopeRepoId], ['repoId', body.repoId]] as const) {
+      if (value !== undefined && (typeof value !== 'string' || value.length === 0)) {
+        res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: `${label} must be a non-empty string` } });
+        return;
+      }
+    }
+    if (scopeRepoId !== undefined && body.repoId !== undefined && scopeRepoId !== body.repoId) {
+      res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: 'scope.repoId and repoId disagree', hint: 'Pass one repository selector.' } });
+      return;
+    }
+    next();
+  };
+  app.post('/api/v1/explore', requireToolScope('explore'), validateExploreSelectors, requireRepoAccess((req) => {
     const body = (req.body ?? {}) as { scope?: { repoId?: string }; repoId?: string };
     return body.scope?.repoId ?? body.repoId ?? findRepoByName(repoName)?.id ?? repoName;
   }), async (req, res) => {
     try {
       const body = (req.body ?? {}) as Record<string, unknown>;
       const scope = body.scope as { type?: string; repoId?: string } | undefined;
-      if (scope?.repoId && typeof body.repoId === 'string' && scope.repoId !== body.repoId) {
-        res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: 'scope.repoId and repoId disagree', hint: 'Pass one repository selector.' } });
-        return;
-      }
       if (scope?.type === 'group' || typeof body.group === 'string') {
         res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: 'Group scope is not supported by explore', hint: 'Use a repo scope: { "scope": { "type": "repo", "repoId": "..." } }' } });
         return;

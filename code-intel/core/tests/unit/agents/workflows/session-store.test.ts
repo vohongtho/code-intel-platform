@@ -183,6 +183,17 @@ describe('workflow session store', () => {
     assert.ok(!fs.readdirSync(root).some((file) => file.startsWith(oldComplete.id)), 'baseline sidecars are pruned with their session');
   });
 
+  it('never evicts active sessions; refuses new ones at the cap instead', () => {
+    const store = createSessionStore(root, { maxSessions: 2 });
+    const activeA = makeSession({ updatedAt: '2026-09-01T00:00:00.000Z' });
+    const activeB = makeSession({ updatedAt: '2026-09-02T00:00:00.000Z' });
+    store.create(activeA);
+    store.create(activeB);
+    expectCode(() => store.create(makeSession()), 'QUOTA_EXCEEDED');
+    assert.deepEqual(store.prune(new Date('2027-01-01T00:00:00.000Z')), []);
+    assert.deepEqual(store.list().map((s) => s.id).sort(), [activeA.id, activeB.id].sort());
+  });
+
   it('verifies baseline sidecar checksums and size bounds', () => {
     const store = createSessionStore(root, { maxBaselineBytes: 64 });
     const id = newSessionId();

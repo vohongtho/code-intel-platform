@@ -58,7 +58,8 @@ export type WorkflowSessionErrorCode =
   | 'LOCKED'
   | 'INVALID_TRANSITION'
   | 'INVALID_REQUEST'
-  | 'INDEX_NOT_READY';
+  | 'INDEX_NOT_READY'
+  | 'QUOTA_EXCEEDED';
 
 export class WorkflowSessionError extends Error {
   constructor(
@@ -197,6 +198,8 @@ export interface SessionStore {
   writeBaseline(id: string, repositoryId: string, payload: unknown): { sha256: string; sizeBytes: number };
   readBaseline<T = unknown>(id: string, repositoryId: string, expectedSha256: string): T;
   prune(now?: Date): string[];
+  /** Throws QUOTA_EXCEEDED when the store already holds `maxSessions` active sessions. */
+  assertCapacity(): void;
 }
 
 export interface SessionStoreOptions {
@@ -290,6 +293,7 @@ export function createSessionStore(root: string, options: SessionStoreOptions = 
     create(session) {
       validateSessionShape(session, session.id);
       const filePath = sessionPath(session.id);
+      store.assertCapacity();
       return withLock(session.id, () => {
         if (fs.existsSync(filePath)) throw new WorkflowSessionError('INVALID_REQUEST', `session ${session.id} already exists`);
         atomicWrite(filePath, serialize(session));
@@ -386,14 +390,22 @@ export function createSessionStore(root: string, options: SessionStoreOptions = 
         if (summary.phase === 'complete' && now.getTime() - Date.parse(summary.updatedAt) > completedRetentionMs) remove(summary.id);
       }
       const remaining = summaries.filter((summary) => !removed.includes(summary.id));
-      // Oldest-first beyond the cap; completed sessions go before active ones.
+      // Beyond the cap, drop the oldest completed sessions only. Active sessions may belong to
+      // other users (HTTP), so they are never evicted; `assertCapacity` refuses new ones instead.
       const overflow = remaining.length - maxSessions;
       if (overflow > 0) {
-        const ordered = [...remaining].sort((a, b) =>
-          Number(b.phase === 'complete') - Number(a.phase === 'complete') || a.updatedAt.localeCompare(b.updatedAt));
-        for (const summary of ordered.slice(0, overflow)) remove(summary.id);
+        const completed = remaining.filter((summary) => summary.phase === 'complete')
+          .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
+        for (const summary of completed.slice(0, overflow)) remove(summary.id);
       }
       return removed.sort();
+    },
+
+    assertCapacity() {
+      const active = store.list().filter((summary) => summary.phase !== 'complete').length;
+      if (active >= maxSessions) {
+        throw new WorkflowSessionError('QUOTA_EXCEEDED', `session store already holds ${active} active sessions (limit ${maxSessions}); complete or remove one first`);
+      }
     },
   };
   return store;
