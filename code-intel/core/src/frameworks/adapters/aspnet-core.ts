@@ -5,6 +5,7 @@ import { declaration } from '../../semantic/adapters/common.js';
 import { buildHttpProducerFacts } from '../../semantic/api-contracts/index.js';
 import { summarizeFrameworkDetection } from '../detection.js';
 import type { FrameworkAdapter, FrameworkDetectionSignal, RepositoryFactView } from '../contracts.js';
+import { workspaceRelativePath } from '../contracts.js';
 
 const VERSION = '0.2.0';
 
@@ -56,7 +57,7 @@ function extractFacts(view: RepositoryFactView): FactBundle['facts'] {
   for (const filePath of view.filePaths) {
     const source = view.fileCache.get(filePath) ?? '';
     if (!source) continue;
-    const relPath = filePath.replace(/^.*?code-intel-platform\//, '');
+    const relPath = workspaceRelativePath(view.workspaceRoot, filePath);
     const lines = source.split('\n');
 
     let controllerPrefix = '';

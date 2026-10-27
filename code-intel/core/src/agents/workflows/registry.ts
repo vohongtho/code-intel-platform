@@ -26,7 +26,7 @@ export const WORKFLOW_REGISTRY: Record<WorkflowId, WorkflowManifest> = {
     summary: 'Scope a repo/group, find the right symbols, and build an evidence-backed picture of how a part of the codebase works before changing anything.',
     assetPath: './assets/explore.md',
     minCodeIntelVersion: CODE_INTEL_VERSION,
-    contentVersion: 1,
+    contentVersion: 2,
     targets: targetsFor('explore'),
     requiredTools: [
       { tool: 'search', fields: ['query', 'scope'], note: 'primary discovery step' },
@@ -35,6 +35,12 @@ export const WORKFLOW_REGISTRY: Record<WorkflowId, WorkflowManifest> = {
       { tool: 'context', fields: ['symbols', 'task'], note: 'token-budgeted evidence bundle for the selected symbols' },
     ],
     optionalTools: [
+      {
+        tool: 'explore',
+        fields: ['task', 'intent'],
+        fallback: 'use search + inspect + context separately',
+        reducedGuarantee: 'more tool calls and delivered tokens; no graph-aware rerank or bounded intent expansion',
+      },
       {
         tool: 'routes',
         fallback: 'skip route-level architecture evidence',
@@ -66,7 +72,7 @@ export const WORKFLOW_REGISTRY: Record<WorkflowId, WorkflowManifest> = {
     summary: 'Localize a symptom to graph evidence, rank hypotheses by what the call graph actually shows, and require a falsification step before recommending an edit.',
     assetPath: './assets/debug.md',
     minCodeIntelVersion: CODE_INTEL_VERSION,
-    contentVersion: 1,
+    contentVersion: 2,
     targets: targetsFor('debug'),
     requiredTools: [
       { tool: 'search', fields: ['query'], note: 'localize the symptom to candidate symbols' },
@@ -75,6 +81,18 @@ export const WORKFLOW_REGISTRY: Record<WorkflowId, WorkflowManifest> = {
       { tool: 'find_path', fields: ['from', 'to'], note: 'prove or disprove a suspected call path between two symbols' },
     ],
     optionalTools: [
+      {
+        tool: 'explore',
+        fields: ['task', 'intent'],
+        fallback: 'use search + inspect + context separately',
+        reducedGuarantee: 'more tool calls and delivered tokens; no graph-aware rerank or bounded intent expansion',
+      },
+      {
+        tool: 'change_workflow',
+        fields: ['action', 'session_id', 'task', 'targets', 'expected_revision'],
+        fallback: 'follow the static tool sequence and re-run the relevant tools after `code-intel analyze` to check the result by hand',
+        reducedGuarantee: 'no durable, conflict-safe session and no deterministic expected-vs-actual verification; completion cannot be claimed as verified',
+      },
       {
         tool: 'explain_relationship',
         fields: ['from', 'to'],
@@ -96,7 +114,7 @@ export const WORKFLOW_REGISTRY: Record<WorkflowId, WorkflowManifest> = {
     summary: 'Turn a diff into directly-changed symbols, exact downstream impact, candidate/heuristic impact, and suggested tests — never collapsing "small result count" into "low risk".',
     assetPath: './assets/impact.md',
     minCodeIntelVersion: CODE_INTEL_VERSION,
-    contentVersion: 1,
+    contentVersion: 2,
     targets: targetsFor('impact'),
     requiredTools: [
       { tool: 'detect_changes', fields: ['base_ref', 'diff_text'], note: 'maps a git diff to changed graph symbols' },
@@ -105,6 +123,18 @@ export const WORKFLOW_REGISTRY: Record<WorkflowId, WorkflowManifest> = {
       { tool: 'suggest_tests', fields: ['symbol'], note: 'evidence-backed test suggestions per changed symbol' },
     ],
     optionalTools: [
+      {
+        tool: 'explore',
+        fields: ['task', 'intent'],
+        fallback: 'use search + inspect + context separately',
+        reducedGuarantee: 'more tool calls and delivered tokens; no graph-aware rerank or bounded intent expansion',
+      },
+      {
+        tool: 'change_workflow',
+        fields: ['action', 'session_id', 'task', 'targets', 'expected_revision'],
+        fallback: 'follow the static tool sequence and re-run the relevant tools after `code-intel analyze` to check the result by hand',
+        reducedGuarantee: 'no durable, conflict-safe session and no deterministic expected-vs-actual verification; completion cannot be claimed as verified',
+      },
       {
         tool: 'flows',
         fallback: 'skip flow-level impact and say execution-flow impact was not checked',
@@ -141,7 +171,7 @@ export const WORKFLOW_REGISTRY: Record<WorkflowId, WorkflowManifest> = {
     summary: 'Identify canonical target symbols, owners, consumers, contracts, flows, and tests before proposing any file edit, distinguishing required edits from candidate edits.',
     assetPath: './assets/plan.md',
     minCodeIntelVersion: CODE_INTEL_VERSION,
-    contentVersion: 1,
+    contentVersion: 2,
     targets: targetsFor('plan'),
     requiredTools: [
       { tool: 'search', fields: ['query'], note: 'locate candidate target symbols' },
@@ -150,6 +180,18 @@ export const WORKFLOW_REGISTRY: Record<WorkflowId, WorkflowManifest> = {
       { tool: 'context', fields: ['symbols', 'task', 'intent'], note: 'token-budgeted evidence bundle for plan steps' },
     ],
     optionalTools: [
+      {
+        tool: 'explore',
+        fields: ['task', 'intent'],
+        fallback: 'use search + inspect + context separately',
+        reducedGuarantee: 'more tool calls and delivered tokens; no graph-aware rerank or bounded intent expansion',
+      },
+      {
+        tool: 'change_workflow',
+        fields: ['action', 'session_id', 'task', 'targets', 'expected_revision'],
+        fallback: 'follow the static tool sequence and re-run the relevant tools after `code-intel analyze` to check the result by hand',
+        reducedGuarantee: 'no durable, conflict-safe session and no deterministic expected-vs-actual verification; completion cannot be claimed as verified',
+      },
       {
         tool: 'routes',
         fallback: 'skip route ownership evidence for the plan',
@@ -193,7 +235,7 @@ export const WORKFLOW_REGISTRY: Record<WorkflowId, WorkflowManifest> = {
     summary: 'Review changed symbols first, then broaden to impact/health/complexity/coverage/security signal only as relevant to the diff, with severity tied to demonstrated behavior.',
     assetPath: './assets/review.md',
     minCodeIntelVersion: CODE_INTEL_VERSION,
-    contentVersion: 1,
+    contentVersion: 2,
     targets: targetsFor('review'),
     requiredTools: [
       { tool: 'detect_changes', fields: ['base_ref', 'diff_text'], note: 'changed files/symbols is the review scope' },
@@ -201,6 +243,12 @@ export const WORKFLOW_REGISTRY: Record<WorkflowId, WorkflowManifest> = {
       { tool: 'health_report', fields: ['scope'], note: 'dead code, cycles, god nodes, orphan files near the change' },
     ],
     optionalTools: [
+      {
+        tool: 'change_workflow',
+        fields: ['action', 'session_id', 'task', 'targets', 'expected_revision'],
+        fallback: 'follow the static tool sequence and re-run the relevant tools after `code-intel analyze` to check the result by hand',
+        reducedGuarantee: 'no durable, conflict-safe session and no deterministic expected-vs-actual verification; completion cannot be claimed as verified',
+      },
       {
         tool: 'complexity_hotspots',
         fields: ['scope'],
@@ -252,13 +300,19 @@ export const WORKFLOW_REGISTRY: Record<WorkflowId, WorkflowManifest> = {
     summary: 'Review HTTP method/path/request/response/consumer changes using graph-aware API contract tools when registered, falling back to routes + pr_impact with an explicit capability boundary otherwise.',
     assetPath: './assets/api-review.md',
     minCodeIntelVersion: CODE_INTEL_VERSION,
-    contentVersion: 1,
+    contentVersion: 2,
     targets: targetsFor('api-review'),
     requiredTools: [
       { tool: 'routes', note: 'baseline route inventory, always available' },
       { tool: 'pr_impact', fields: ['changedFiles', 'diff'], note: 'always-available fallback impact for route handler symbols' },
     ],
     optionalTools: [
+      {
+        tool: 'change_workflow',
+        fields: ['action', 'session_id', 'task', 'targets', 'expected_revision'],
+        fallback: 'follow the static tool sequence and re-run the relevant tools after `code-intel analyze` to check the result by hand',
+        reducedGuarantee: 'no durable, conflict-safe session and no deterministic expected-vs-actual verification; completion cannot be claimed as verified',
+      },
       {
         tool: 'api_contract',
         fields: ['method', 'path', 'route_node_id'],
@@ -298,7 +352,7 @@ export const WORKFLOW_REGISTRY: Record<WorkflowId, WorkflowManifest> = {
     summary: 'Produce a minimal, evidence-backed test plan distinguishing tests that directly cover changed symbols from tests suggested by transitive impact, never claiming "no tests required" when coverage data is incomplete.',
     assetPath: './assets/test-coverage.md',
     minCodeIntelVersion: CODE_INTEL_VERSION,
-    contentVersion: 1,
+    contentVersion: 2,
     targets: targetsFor('test-coverage'),
     requiredTools: [
       { tool: 'suggest_tests', fields: ['symbol'], note: 'call paths, suggested cases, existing tests, untested callers' },
@@ -306,6 +360,12 @@ export const WORKFLOW_REGISTRY: Record<WorkflowId, WorkflowManifest> = {
       { tool: 'blast_radius', fields: ['target', 'direction'], note: 'transitive impact used to rank suggested-but-not-direct tests' },
     ],
     optionalTools: [
+      {
+        tool: 'change_workflow',
+        fields: ['action', 'session_id', 'task', 'targets', 'expected_revision'],
+        fallback: 'follow the static tool sequence and re-run the relevant tools after `code-intel analyze` to check the result by hand',
+        reducedGuarantee: 'no durable, conflict-safe session and no deterministic expected-vs-actual verification; completion cannot be claimed as verified',
+      },
       {
         tool: 'detect_changes',
         fields: ['base_ref', 'diff_text'],
@@ -326,7 +386,7 @@ export const WORKFLOW_REGISTRY: Record<WorkflowId, WorkflowManifest> = {
     summary: 'Combine heuristic scanner signal (secrets, vulnerability_scan) with call-graph path evidence, always distinguishing a scanner finding from a proven exploitable flow.',
     assetPath: './assets/security-investigation.md',
     minCodeIntelVersion: CODE_INTEL_VERSION,
-    contentVersion: 1,
+    contentVersion: 2,
     targets: targetsFor('security-investigation'),
     requiredTools: [
       { tool: 'secrets', fields: ['scope', 'includeTestFiles'], note: 'hardcoded secret scan' },
@@ -334,6 +394,12 @@ export const WORKFLOW_REGISTRY: Record<WorkflowId, WorkflowManifest> = {
       { tool: 'find_path', fields: ['from', 'to'], note: 'prove or disprove a source-to-sink call path for a scanner finding' },
     ],
     optionalTools: [
+      {
+        tool: 'change_workflow',
+        fields: ['action', 'session_id', 'task', 'targets', 'expected_revision'],
+        fallback: 'follow the static tool sequence and re-run the relevant tools after `code-intel analyze` to check the result by hand',
+        reducedGuarantee: 'no durable, conflict-safe session and no deterministic expected-vs-actual verification; completion cannot be claimed as verified',
+      },
       {
         tool: 'explain_relationship',
         fields: ['from', 'to'],

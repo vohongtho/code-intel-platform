@@ -537,7 +537,21 @@ export const parsePhase: Phase = {
         treeSitterCount++;
         usedTreeSitter = true;
 
-        const funcs = projected.nodes
+        // The semantic adapters declare only a subset of callables (e.g. TypeScript: exported
+        // functions with an explicit return type) and only anchor them at their declaration line.
+        // Without this merge, class methods and other functions in a semantic-first file were
+        // dropped entirely, and no projected callable had a real body span.
+        if (queryStr) {
+          try {
+            const tree = await extractFromTreeAsync(lang, source, relativePath, fileNodeId, queryStr);
+            symbolCount += mergeTreeSitterCallables(context.graph, projected.nodes, tree);
+          } catch (err) {
+            Logger.warn(`  [parse] tree-sitter merge failed for ${relativePath}: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+
+        const funcs = [...projected.nodes, ...[...context.graph.findEdgesFrom(fileNodeId)].map((e) => context.graph.getNode(e.target)).filter((n): n is CodeNode => Boolean(n))]
+          .filter((n, i, all) => all.findIndex((other) => other.id === n.id) === i)
           .filter((n) => n.kind === 'function' || n.kind === 'method')
           .map((n) => ({ id: n.id, startLine: n.startLine ?? 0, endLine: n.endLine }))
           .sort((a, b) => a.startLine - b.startLine);
@@ -624,6 +638,44 @@ export const parsePhase: Phase = {
 };
 
 // ─── Tree-sitter extraction ───────────────────────────────────────────────────
+
+const MERGEABLE_CALLABLE_KINDS: ReadonlySet<NodeKind> = new Set<NodeKind>(['function', 'method', 'constructor']);
+
+/**
+ * Merges tree-sitter callables into a semantic-first projection: a projected callable with the
+ * same kind, name and declaration line gains the tree-sitter body span (`endLine`) when it only
+ * had an anchor; callables the projection does not declare at all are added with their file
+ * `contains` edge. Projected nodes keep their identity — nothing projected is replaced.
+ * Returns the number of nodes added.
+ */
+export function mergeTreeSitterCallables(
+  graph: { addNode(node: CodeNode): void; addEdge(edge: CodeEdge): void; getNode(id: string): CodeNode | undefined },
+  projectedNodes: readonly CodeNode[],
+  tree: { nodes: CodeNode[]; edges: CodeEdge[] },
+): number {
+  const projectedByKey = new Map<string, CodeNode>();
+  const projectedNames = new Set<string>();
+  for (const node of projectedNodes) {
+    if (!MERGEABLE_CALLABLE_KINDS.has(node.kind)) continue;
+    projectedByKey.set(`${node.kind}\u0000${node.name}\u0000${node.startLine ?? ''}`, node);
+    projectedNames.add(`${node.kind}\u0000${node.name}`);
+  }
+  let added = 0;
+  for (const node of tree.nodes) {
+    if (!MERGEABLE_CALLABLE_KINDS.has(node.kind)) continue;
+    const match = projectedByKey.get(`${node.kind}\u0000${node.name}\u0000${node.startLine ?? ''}`);
+    if (match) {
+      const stored = graph.getNode(match.id);
+      if (stored && node.endLine !== undefined && (stored.endLine === undefined || stored.endLine <= (stored.startLine ?? 0))) stored.endLine = node.endLine;
+      continue;
+    }
+    if (projectedNames.has(`${node.kind}\u0000${node.name}`) || graph.getNode(node.id)) continue;
+    graph.addNode(node);
+    added += 1;
+    for (const edge of tree.edges) if (edge.target === node.id) graph.addEdge(edge);
+  }
+  return added;
+}
 
 async function extractFromTreeAsync(
   lang: Language,

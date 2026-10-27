@@ -27,6 +27,7 @@ import type { Contract } from '../multi-repo/types.js';
 import { createKnowledgeGraph } from '../graph/knowledge-graph.js';
 import { loadGraphFromDB } from '../multi-repo/graph-from-db.js';
 import { loadRegistry, findRepoByName } from '../storage/repo-registry.js';
+import { registerWorkflowRoutes } from './workflow-routes.js';
 import { computeSemanticGraphDiff } from '../snapshots/service.js';
 import Logger from '../shared/logger.js';
 import { AppError, ErrorCodes } from '../errors/codes.js';
@@ -1161,10 +1162,19 @@ export function createApp(
   // ── Explore ─────────────────────────────────────────────────────────────────
   // Stateless transport over the shared orchestrator: no per-connection delivery
   // session, so responses never contain session pointer references.
-  app.post('/api/v1/explore', requireToolScope('explore'), async (req, res) => {
+  // Repo-scoped tokens may only explore their repos; scope.repoId and repoId must not disagree,
+  // so the authorized repo and the explored repo are always the same one.
+  app.post('/api/v1/explore', requireToolScope('explore'), requireRepoAccess((req) => {
+    const body = (req.body ?? {}) as { scope?: { repoId?: string }; repoId?: string };
+    return body.scope?.repoId ?? body.repoId ?? findRepoByName(repoName)?.id ?? repoName;
+  }), async (req, res) => {
     try {
       const body = (req.body ?? {}) as Record<string, unknown>;
       const scope = body.scope as { type?: string; repoId?: string } | undefined;
+      if (scope?.repoId && typeof body.repoId === 'string' && scope.repoId !== body.repoId) {
+        res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: 'scope.repoId and repoId disagree', hint: 'Pass one repository selector.' } });
+        return;
+      }
       if (scope?.type === 'group' || typeof body.group === 'string') {
         res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: 'Group scope is not supported by explore', hint: 'Use a repo scope: { "scope": { "type": "repo", "repoId": "..." } }' } });
         return;
@@ -1202,6 +1212,8 @@ export function createApp(
       res.status(500).json({ error: { code: ErrorCodes.INTERNAL_ERROR, message: err instanceof Error ? err.message : String(err) } });
     }
   });
+
+  registerWorkflowRoutes(app, { repoName, workspaceRoot });
 
   // ── Vector search ───────────────────────────────────────────────────────────
   app.post('/api/v1/vector-search', requireToolScope('search'), async (req, res) => {

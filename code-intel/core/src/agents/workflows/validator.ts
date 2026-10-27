@@ -83,6 +83,71 @@ function validateAsset(manifest: WorkflowManifest): WorkflowValidationIssue[] {
   return [];
 }
 
+const TOOL_MENTION = /`([a-z][a-z0-9_]*)`/g;
+
+function mentionedTools(text: string, caps: RuntimeCapabilities): string[] {
+  return [...new Set([...text.matchAll(TOOL_MENTION)].map((match) => match[1]!).filter((name) => caps.toolNames.has(name)))].sort();
+}
+
+/**
+ * An asset may only name MCP tools its manifest declares (required or
+ * optional) — declared tools are in turn checked against the live inventory
+ * above, so an asset can never tell an agent to call a tool the runtime does
+ * not register without failing release validation.
+ */
+function validateAssetToolMentions(manifest: WorkflowManifest, caps: RuntimeCapabilities): WorkflowValidationIssue[] {
+  const assetAbsPath = path.join(__dirname, manifest.assetPath);
+  if (!fs.existsSync(assetAbsPath)) return [];
+  const declared = new Set([...manifest.requiredTools, ...manifest.optionalTools].map((req) => req.tool));
+  return mentionedTools(fs.readFileSync(assetAbsPath, 'utf-8'), caps)
+    .filter((tool) => !declared.has(tool))
+    .map((tool) => ({ workflowId: manifest.id, severity: 'error' as const, message: `asset names tool '${tool}' that the manifest does not declare (add it to requiredTools/optionalTools)` }));
+}
+
+const SHARED_FRAGMENTS = [
+  { file: 'assets/_shared-evidence-guide.md', requiresTool: undefined },
+  { file: 'assets/_change-session-guide.md', requiresTool: 'change_workflow' },
+] as const;
+
+/**
+ * Shared fragments are rendered into many workflows: every tool they name
+ * must exist in the live inventory, and a gated fragment (the change-session
+ * guide) may only name its gating tool plus tools every gated manifest declares.
+ */
+function validateSharedFragments(manifests: WorkflowManifest[], caps: RuntimeCapabilities): WorkflowValidationIssue[] {
+  const issues: WorkflowValidationIssue[] = [];
+  for (const fragment of SHARED_FRAGMENTS) {
+    const abs = path.join(__dirname, fragment.file);
+    if (!fs.existsSync(abs) || fs.readFileSync(abs, 'utf-8').trim().length === 0) {
+      issues.push({ workflowId: '*', severity: 'error', message: `shared fragment missing or empty: ${fragment.file}` });
+      continue;
+    }
+    const text = fs.readFileSync(abs, 'utf-8');
+    const backticked = [...new Set([...text.matchAll(TOOL_MENTION)].map((match) => match[1]!))];
+    if (fragment.requiresTool && !caps.toolNames.has(fragment.requiresTool)) {
+      issues.push({ workflowId: '*', severity: 'error', message: `${fragment.file} is gated on '${fragment.requiresTool}', which the MCP server does not register` });
+    }
+    if (!fragment.requiresTool) continue;
+    const gated = manifests.filter((m) => [...m.requiredTools, ...m.optionalTools].some((req) => req.tool === fragment.requiresTool));
+    for (const tool of mentionedTools(text, caps)) {
+      if (tool === fragment.requiresTool) continue;
+      for (const manifest of gated) {
+        if (![...manifest.requiredTools, ...manifest.optionalTools].some((req) => req.tool === tool)) {
+          issues.push({ workflowId: manifest.id, severity: 'error', message: `${fragment.file} names tool '${tool}' that this manifest does not declare` });
+        }
+      }
+    }
+    // Field names the gated fragment relies on must still exist on the gating tool.
+    const fields = caps.toolFields.get(fragment.requiresTool) ?? new Set<string>();
+    for (const field of ['action', 'session_id', 'expected_revision', 'conditions', 'remove_condition_ids', 'step_id', 'targets', 'scope', 'group']) {
+      if (backticked.includes(field) && !fields.has(field)) {
+        issues.push({ workflowId: '*', severity: 'error', message: `${fragment.file} references '${fragment.requiresTool}' field '${field}', which no longer exists` });
+      }
+    }
+  }
+  return issues;
+}
+
 function validateTargets(manifest: WorkflowManifest, knownAgentIds: ReadonlySet<string>): WorkflowValidationIssue[] {
   const issues: WorkflowValidationIssue[] = [];
   if (manifest.targets.length === 0) {
@@ -110,10 +175,14 @@ export function validateWorkflowRegistry(
   caps: RuntimeCapabilities = resolveRuntimeCapabilities(),
 ): WorkflowValidationReport {
   const knownAgentIds = new Set(AGENT_OPTIONS.map((a) => a.id));
-  const issues = manifests.flatMap((manifest) => [
-    ...validateToolReferences(manifest, caps),
-    ...validateAsset(manifest),
-    ...validateTargets(manifest, knownAgentIds),
-  ]);
+  const issues = [
+    ...manifests.flatMap((manifest) => [
+      ...validateToolReferences(manifest, caps),
+      ...validateAsset(manifest),
+      ...validateAssetToolMentions(manifest, caps),
+      ...validateTargets(manifest, knownAgentIds),
+    ]),
+    ...validateSharedFragments(manifests, caps),
+  ];
   return { ok: issues.every((i) => i.severity !== 'error'), issues };
 }

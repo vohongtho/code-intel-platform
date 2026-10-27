@@ -25,6 +25,7 @@ import { generateNodeId } from '../../graph/id-generator.js';
 import Logger from '../../shared/logger.js';
 import { WorkerPool } from './worker-pool.js';
 import type { ParseTask, ParseResult } from './parse-worker.js';
+import { mergeTreeSitterCallables } from '../phases/parse-phase.js';
 
 // Resolve the compiled worker script path (dist/pipeline/workers/parse-worker.js)
 function workerScriptPath(): string {
@@ -101,6 +102,8 @@ export const parsePhaseParallel: Phase = {
 
     // ── Build tasks ───────────────────────────────────────────────────────────
     const tasks: ParseTask[] = [];
+    /** Semantic-first files whose tree-sitter result is merged, not added wholesale. */
+    const mergeInto = new Map<string, import('../../shared/index.js').CodeNode[]>();
     for (const filePath of filePaths) {
       const lang = detectLanguage(filePath);
       if (!lang) continue;
@@ -142,6 +145,12 @@ export const parsePhaseParallel: Phase = {
           .map((n) => ({ id: n.id, startLine: n.startLine ?? 0, endLine: n.endLine }))
           .sort((a, b) => a.startLine - b.startLine);
         if (funcs.length > 0) context.fileFunctionIndex!.set(relativePath, funcs);
+        // Same merge as the sequential parse phase: tree-sitter callables the projection lacks.
+        const queryStr = getLanguageQuery(lang);
+        if (queryStr) {
+          mergeInto.set(filePath, projected.nodes);
+          tasks.push({ taskId: filePath, filePath, relativePath, source, lang: lang as string, fileNodeId, queryStr });
+        }
         continue;
       }
 
@@ -180,6 +189,11 @@ export const parsePhaseParallel: Phase = {
       for (const res of results) {
         if (res.error) {
           Logger.warn(`[parse-parallel] task error: ${res.error}`);
+        }
+        const projectedNodes = mergeInto.get(res.taskId);
+        if (projectedNodes) {
+          symbolCount += mergeTreeSitterCallables(context.graph, projectedNodes, res);
+          continue;
         }
         for (const n of res.nodes) context.graph.addNode(n);
         for (const e of res.edges) context.graph.addEdge(e);

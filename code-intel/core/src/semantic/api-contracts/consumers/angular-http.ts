@@ -8,6 +8,7 @@ import type { HttpConsumerFact } from '../types.js';
 import { parseArrowParam, parseUrlExpression } from './common.js';
 import { summarizeFrameworkDetection } from '../../../frameworks/detection.js';
 import type { FrameworkAdapter, FrameworkDetectionSignal, RepositoryFactView } from '../../../frameworks/contracts.js';
+import { workspaceRelativePath } from '../../../frameworks/contracts.js';
 
 const VERSION = '0.1.0';
 const MAX_SUBSCRIBE_LOOKAHEAD = 4;
@@ -66,7 +67,7 @@ function extractFacts(view: RepositoryFactView): FactBundle['facts'] {
   for (const filePath of view.filePaths) {
     const source = view.fileCache.get(filePath) ?? '';
     if (!source || !/from\s+['"]@angular\/common\/http['"]/.test(source)) continue;
-    const relPath = filePath.replace(/^.*?code-intel-platform\//, '');
+    const relPath = workspaceRelativePath(view.workspaceRoot, filePath);
     const lines = source.split('\n');
     const httpFieldNames = findHttpClientFieldNames(source);
     if (httpFieldNames.size === 0) continue;

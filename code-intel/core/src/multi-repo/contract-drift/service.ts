@@ -10,6 +10,7 @@ import { contractFingerprintFromContract, computeSemanticContractFingerprint, se
 import { compareContractVersions } from './comparator.js';
 import { loadGroup, loadSyncResult } from '../group-registry.js';
 import { suggestTests } from '../../query/suggest-tests.js';
+import { getGroupSystemFlows, systemFlowImpactForContracts, type SystemFlowImpact } from '../system-flows/service.js';
 import type { Contract, ContractDriftFinding, ContractDriftSummary, ContractDriftTestSuggestion, GroupContractVersion, GroupSyncResult, KnownConsumerCoverage } from '../types.js';
 
 export interface GroupContractDriftRequest {
@@ -27,6 +28,9 @@ export interface GroupContractDriftRequest {
   /** Restrict analysis to contracts produced by one member repository (by stable repo ID, not
    * the mutable registry name). */
   repositoryId?: string;
+  /** Additive: attach system flows crossing any non-compatible changed contract. Built from the
+   * members' currently published indexes (cached by input fingerprint), not from base/head refs. */
+  includeSystemFlows?: boolean;
 }
 
 /** Observability counters for one `getGroupContractDrift` call (task 10.1). Every count is
@@ -60,6 +64,25 @@ export interface GroupContractDriftResult {
   base: Record<string, SnapshotBuildResult | { status: 'provided'; snapshotId: string }>;
   head: Record<string, SnapshotBuildResult | { status: 'provided'; snapshotId: string }>;
   metrics: GroupContractDriftMetrics;
+  /** Present only when `includeSystemFlows` was requested. */
+  systemFlowImpact?: SystemFlowImpact & { truncated: boolean; error?: string };
+}
+
+const SYSTEM_FLOW_IMPACT_CAP = 50;
+
+async function systemFlowImpactFor(groupName: string, findings: readonly ContractDriftFinding[], contracts: readonly Contract[]): Promise<NonNullable<GroupContractDriftResult['systemFlowImpact']>> {
+  const changed = new Set(findings.filter((finding) => finding.compatibility !== 'compatible').map((finding) => finding.contractId));
+  // Route-match boundaries are keyed by route fact ID (the contract's sourceCanonicalId).
+  const ids = new Set(changed);
+  for (const contract of contracts) if (contract.contractId && changed.has(contract.contractId) && contract.sourceCanonicalId) ids.add(contract.sourceCanonicalId);
+  try {
+    const { result } = await getGroupSystemFlows(groupName, { allowCache: true });
+    const impact = systemFlowImpactForContracts(result, ids);
+    return { ...impact, affected: impact.affected.slice(0, SYSTEM_FLOW_IMPACT_CAP), truncated: impact.affected.length > SYSTEM_FLOW_IMPACT_CAP };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    return { affected: [], coverage: { complete: false, examinedCount: 0, incompleteReasons: [reason] }, note: 'system flows unavailable', truncated: false, error: reason };
+  }
 }
 
 function fullCoverage() {
@@ -408,5 +431,7 @@ export async function getGroupContractDrift(request: GroupContractDriftRequest):
     elapsedMs: Date.now() - startedAt,
   };
 
-  return { groupName: request.groupName, findings: limited, totalFindings: sorted.length, summary, base, head, metrics };
+  const result: GroupContractDriftResult = { groupName: request.groupName, findings: limited, totalFindings: sorted.length, summary, base, head, metrics };
+  if (request.includeSystemFlows) result.systemFlowImpact = await systemFlowImpactFor(request.groupName, sorted, sync.contracts);
+  return result;
 }

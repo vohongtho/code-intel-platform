@@ -61,7 +61,12 @@ export interface Contract {
   coverage?: AnalysisCoverage;
 }
 
-export type LinkKind = 'name-match' | 'route-match' | 'import-match';
+/**
+ * `route-match`: HTTP method + normalized path facts. `event-topic-match` / `graphql-operation-match`
+ * / `grpc-method-match`: literal protocol keys (see protocol-facts.ts). `name-match` /
+ * `import-match`: names only — never exact enough for a cross-repository continuation.
+ */
+export type LinkKind = 'name-match' | 'route-match' | 'import-match' | 'event-topic-match' | 'graphql-operation-match' | 'grpc-method-match';
 
 /**
  * A cross-repo link: a contract in one repo matched to a contract

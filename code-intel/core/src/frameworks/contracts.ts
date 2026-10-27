@@ -1,3 +1,4 @@
+import path from 'node:path';
 import type { Language } from '../shared/languages.js';
 import type { FactBundle } from '../semantic/fact-bundle.js';
 
@@ -23,6 +24,18 @@ export interface RepositoryFactView {
   workspaceRoot: string;
   filePaths: readonly string[];
   fileCache: ReadonlyMap<string, string>;
+}
+
+/**
+ * Workspace-relative, forward-slash path for a fact's `filePath`. Pipeline
+ * views hand adapters absolute paths; graph file nodes are keyed by the
+ * workspace-relative path, so facts must use the same form or their
+ * `contains` edges dangle (and atomic publication rejects the index as
+ * collapsed). Already-relative paths (unit-test views) pass through.
+ */
+export function workspaceRelativePath(workspaceRoot: string, filePath: string): string {
+  const relative = path.isAbsolute(filePath) && workspaceRoot ? path.relative(workspaceRoot, filePath) : filePath;
+  return relative.split(path.sep).join('/').replace(/^\.\//, '');
 }
 
 export interface FrameworkFactBundle extends FactBundle {}

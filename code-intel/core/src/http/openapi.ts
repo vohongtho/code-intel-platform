@@ -305,6 +305,99 @@ export const openApiSpec = {
         },
       },
     },
+    '/workflows': {
+      get: {
+        tags: ['Workflows'],
+        summary: 'List change-workflow sessions in a repo or group scope that the caller may access (owner or admin)',
+        parameters: [
+          { name: 'repoId', in: 'query', required: false, schema: { type: 'string' } },
+          { name: 'group', in: 'query', required: false, schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': { description: 'Visible sessions', content: { 'application/json': { schema: { type: 'object' } } } },
+          '403': { description: 'No access to a repository in scope', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+      post: {
+        tags: ['Workflows'],
+        summary: 'Start a change session (pins the current trusted index; caller becomes the owner; analyst role)',
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['task'], properties: {
+          task: { type: 'string' },
+          targets: { type: 'array', items: { type: 'string' } },
+          repoId: { type: 'string' },
+          scope: { type: 'string', enum: ['repo', 'group'] },
+          group: { type: 'string' },
+          task_retention: { type: 'string', enum: ['summary', 'fingerprint-only'] },
+        } } } } },
+        responses: {
+          '201': { description: 'Compact session view', content: { 'application/json': { schema: { type: 'object' } } } },
+          '403': { description: 'Role or repository access insufficient', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '409': { description: 'Index not trusted/current (run analyze first)', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
+    '/workflows/{id}': {
+      get: {
+        tags: ['Workflows'],
+        summary: 'Session status (owner or admin); moves to reindex-required when source changed',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'repoId', in: 'query', required: false, schema: { type: 'string' } },
+          { name: 'group', in: 'query', required: false, schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': { description: 'Compact session view', content: { 'application/json': { schema: { type: 'object' } } } },
+          '403': { description: 'Not the owner, or no access to a repository in the session', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '404': { description: 'Session not found in this scope', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
+    ...Object.fromEntries((['checkpoint', 'verify', 'complete'] as const).map((action) => [`/workflows/{id}/${action}`, {
+      post: {
+        tags: ['Workflows'],
+        summary: action === 'checkpoint'
+          ? 'Record note / expected conditions / lenses / edited flag (owner or admin; analyst role)'
+          : action === 'verify'
+            ? 'Expected-vs-actual verification against the pinned baseline (owner or admin; analyst role)'
+            : 'Complete a passed session and return a suggested commit plan (never executed)',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: false, content: { 'application/json': { schema: { type: 'object', properties: {
+          repoId: { type: 'string' },
+          group: { type: 'string' },
+          expected_revision: { type: 'number' },
+          note: { type: 'string' },
+          conditions: { type: 'array', items: { type: 'object' } },
+          remove_condition_ids: { type: 'array', items: { type: 'string' } },
+          step_id: { type: 'string' },
+          lenses: { type: 'array', items: { type: 'string' } },
+          edited: { type: 'boolean' },
+        } } } } },
+        responses: {
+          '200': { description: 'Compact session view', content: { 'application/json': { schema: { type: 'object' } } } },
+          '403': { description: 'Not the owner, role too low, or no repository access', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '409': { description: 'Revision conflict or invalid phase transition', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    }])),
+    '/groups/{name}/system-flows': {
+      get: {
+        tags: ['Groups'],
+        summary: 'Read-only cross-repository system flows (requires access to every member repository)',
+        parameters: [
+          { name: 'name', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'symbol_id', in: 'query', required: false, schema: { type: 'string' } },
+          { name: 'contract_id', in: 'query', required: false, schema: { type: 'string' } },
+          { name: 'repository_id', in: 'query', required: false, schema: { type: 'string' } },
+          { name: 'limit', in: 'query', required: false, schema: { type: 'integer', maximum: 100 } },
+          { name: 'offset', in: 'query', required: false, schema: { type: 'integer' } },
+        ],
+        responses: {
+          '200': { description: 'Paged system flows, candidates, coverage and boundaries', content: { 'application/json': { schema: { type: 'object' } } } },
+          '403': { description: 'No access to a member repository', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '404': { description: 'Group not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
     '/vector-search': {
       post: {
         tags: ['Search'],

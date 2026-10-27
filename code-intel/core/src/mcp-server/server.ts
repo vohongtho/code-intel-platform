@@ -29,6 +29,8 @@ import {
 import { syncGroup } from '../multi-repo/group-sync.js';
 import { queryGroup } from '../multi-repo/group-query.js';
 import { getGroupContractDrift } from '../multi-repo/contract-drift/service.js';
+import { getGroupSystemFlows, querySystemFlows } from '../multi-repo/system-flows/service.js';
+import { runChangeWorkflowAction, workflowErrorPayload } from '../agents/workflows/session-service.js';
 import type { Contract } from '../multi-repo/types.js';
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -1301,6 +1303,62 @@ export async function dispatchTool(
       }
 
       // ── group_status ───────────────────────────────────────────────────────
+      // ── system_flows ───────────────────────────────────────────────────────
+      case 'system_flows': {
+        const groupName = a.name as string;
+        if (!groupName || !loadGroup(groupName)) return { content: [{ type: 'text', text: compact({ error: `Group "${groupName}" not found.` }) }], isError: true };
+        try {
+          const { result, cache } = await getGroupSystemFlows(groupName, { allowCache: true });
+          const page = querySystemFlows(result, {
+            symbolId: a.symbol_id as string | undefined,
+            contractId: a.contract_id as string | undefined,
+            repositoryId: a.repository_id as string | undefined,
+            limit: a.limit as number | undefined,
+            offset: a.offset as number | undefined,
+          });
+          return { content: [{ type: 'text', text: compact({ groupName, ...page, cacheHit: cache.hit }) }] };
+        } catch (err) {
+          return { content: [{ type: 'text', text: compact({ error: err instanceof Error ? err.message : String(err) }) }], isError: true };
+        }
+      }
+
+      // ── change_workflow ────────────────────────────────────────────────────
+      case 'change_workflow': {
+        // Scope policy: a session is reachable only through the repository the caller selected
+        // (repoId/repo, same resolution as every repo tool) or the group it explicitly names.
+        try {
+          const scope = (a.scope as 'repo' | 'group' | undefined) ?? (a.group ? 'group' : 'repo');
+          let repoDir: string | undefined;
+          if (scope === 'repo') {
+            const resolved = resolveRepo(a.repoId as string | undefined, a.repo as string | undefined, repoName, workspaceRoot);
+            if (!resolved?.path) return { content: [{ type: 'text', text: compact({ error: 'No repository selected for a repo-scoped workflow. Pass repoId/repo or run the server inside a repository.' }) }], isError: true };
+            repoDir = resolved.path;
+          } else if (!a.group || !loadGroup(a.group as string)) {
+            return { content: [{ type: 'text', text: compact({ error: `Group "${String(a.group)}" not found.` }) }], isError: true };
+          }
+          const result = await runChangeWorkflowAction({
+            action: a.action as string,
+            sessionId: a.session_id as string | undefined,
+            task: a.task as string | undefined,
+            scope,
+            repoDir,
+            groupName: scope === 'group' ? a.group as string : undefined,
+            targets: a.targets as string[] | undefined,
+            taskRetention: a.task_retention as 'summary' | 'fingerprint-only' | undefined,
+            expectedRevision: a.expected_revision as number | undefined,
+            note: a.note as string | undefined,
+            conditions: a.conditions as Array<Record<string, unknown>> | undefined,
+            removeConditionIds: a.remove_condition_ids as string[] | undefined,
+            stepId: a.step_id as string | undefined,
+            lenses: a.lenses as string[] | undefined,
+            edited: a.edited as boolean | undefined,
+          }, {}, { strict: true });
+          return { content: [{ type: 'text', text: compact(result) }] };
+        } catch (err) {
+          return { content: [{ type: 'text', text: compact(workflowErrorPayload(err)) }], isError: true };
+        }
+      }
+
       case 'group_status': {
         const groupName = a.name as string;
         const group = loadGroup(groupName);
@@ -1416,7 +1474,7 @@ export async function dispatchTool(
             : undefined;
           if (group && loadSyncResult(group.name)) {
             try {
-              crossRepositoryContracts = await getGroupContractDrift({ groupName: group.name, baseRef, headRef, allowCache: true });
+              crossRepositoryContracts = await getGroupContractDrift({ groupName: group.name, baseRef, headRef, allowCache: true, includeSystemFlows: true });
             } catch (error) {
               crossRepositoryContracts = {
                 groupName: group.name,

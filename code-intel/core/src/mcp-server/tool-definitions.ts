@@ -23,7 +23,7 @@ const REPO_SELECTABLE_TOOL_NAMES = new Set([
   'overview', 'search', 'context', 'blast_radius', 'file_symbols', 'find_path', 'list_exports', 'routes', 'clusters', 'flows',
   'detect_changes', 'query', 'raw_query', 'explain_relationship', 'pr_impact', 'similar_symbols', 'health_report',
   'suggest_tests', 'cluster_summary', 'deprecated_usage', 'complexity_hotspots', 'coverage_gaps', 'secrets', 'vulnerability_scan',
-  'api_contract', 'api_impact', 'api_drift', 'graph_diff',
+  'api_contract', 'api_impact', 'api_drift', 'graph_diff', 'change_workflow',
 ]);
 const withRepoSelector = <T extends { name: string; inputSchema?: { type?: string; properties?: Record<string, unknown> } }>(tool: T): T => (
   REPO_SELECTABLE_TOOL_NAMES.has(tool.name) && tool.inputSchema?.type === 'object'
@@ -397,6 +397,50 @@ export const MCP_TOOL_DEFINITIONS = [
         ..._tokenProp,
       },
       required: ['name'],
+    },
+  },
+  {
+    name: 'system_flows',
+    description: 'Read-only cross-repository system flows for a group: stable local flows stitched across exact provider/consumer contract boundaries (HTTP route facts; never name-only matches). Candidate continuations are listed separately. Static traces over published indexes, not runtime traces; bounded pagination with coverage/truncation fields.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        name: { type: 'string', description: 'Group name' },
+        symbol_id: { type: 'string', description: 'Filter: canonical symbol ID that appears in any segment' },
+        contract_id: { type: 'string', description: 'Filter: contract ID crossed at a boundary' },
+        repository_id: { type: 'string', description: 'Filter: member repository ID' },
+        limit: { type: 'number', description: 'Max flows to return (default 20, max 100)' },
+        offset: { type: 'number', description: 'Pagination offset (default 0)' },
+        ..._tokenProp,
+      },
+      required: ['name'],
+    },
+  },
+
+  // ── Change workflows ──────────────────────────────────────────────────
+  {
+    name: 'change_workflow',
+    description: 'Resumable, graph-verified change session: start (pin baseline + plan required/candidate/optional/blocked steps), status, checkpoint (declare expectations / mark edited), verify (expected-vs-actual after you edit files and run `code-intel analyze`), complete (suggested commit plan only). Never edits source or touches Git; stale indexes report reindex-required; unknown/partial evidence never counts as satisfied.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        action: { type: 'string', enum: ['start', 'status', 'checkpoint', 'verify', 'complete', 'list'], description: 'Workflow action' },
+        session_id: { type: 'string', description: 'Session ID (wf_…); required except for start/list' },
+        task: { type: 'string', description: 'start: what you intend to change' },
+        scope: { type: 'string', enum: ['repo', 'group'], description: 'start/lookup scope (default repo = the selected repository)' },
+        group: { type: 'string', description: 'Group name when scope is group' },
+        targets: { type: 'array', items: { type: 'string' }, description: 'start: symbol names or canonical node IDs that must change (unique matches become required steps)' },
+        task_retention: { type: 'string', enum: ['summary', 'fingerprint-only'], description: 'start: keep a truncated task summary (default) or only its fingerprint' },
+        expected_revision: { type: 'number', description: 'Optimistic concurrency: the session revision you last saw; a stale revision is rejected' },
+        note: { type: 'string', description: 'checkpoint: short note' },
+        conditions: { type: 'array', items: { type: 'object' }, description: 'checkpoint: expected conditions to add, e.g. {"kind":"contract-expected-breaking","contractId":"…"}' },
+        remove_condition_ids: { type: 'array', items: { type: 'string' }, description: 'checkpoint: condition IDs to remove (e.g. to restate a target after a signature change)' },
+        step_id: { type: 'string', description: 'checkpoint: plan step to attach conditions/lenses to' },
+        lenses: { type: 'array', items: { type: 'string', enum: ['architecture', 'api', 'tests', 'security', 'change-risk', 'scope'] }, description: 'checkpoint: additional review lenses' },
+        edited: { type: 'boolean', description: 'checkpoint: you edited files; move to reindex-required' },
+        ..._tokenProp,
+      },
+      required: ['action'],
     },
   },
 

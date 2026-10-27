@@ -449,6 +449,8 @@ Eight bundled workflows cover the recurring engineering tasks the MCP tools are 
 
 Every workflow is graph-first but evidence-aware: each one requires canonical symbol identity before conclusions, propagates the coverage/certainty signals the MCP tools already report, and explicitly downgrades to "candidate"/"needs verification" language instead of stating an unproven result as fact. A workflow's *required* tools must exist on the connected server; its *optional* tools each declare an explicit fallback and a named reduced guarantee for when they're unavailable (e.g. `api-review` uses `api_contract`/`api_impact`/`api_drift` when registered, and falls back to `routes` + `pr_impact` + source reading — while stating plainly that response-shape compatibility wasn't proven).
 
+Workflows that may lead to an edit (all but `explore`) also include a change-session section when the server registers `change_workflow`: start or join a session, edit outside Code Intel, run `code-intel analyze`, then `verify`, and only claim completion after a `passed` result. See [Change workflows](#change-workflows).
+
 Installed workflow files are managed like `AGENTS.md`/`CLAUDE.md`: each carries a content fingerprint, and `code-intel analyze` only ever creates or updates a file that still matches its last-installed fingerprint. If you've edited an installed workflow file yourself, the next `analyze` leaves it untouched and reports a conflict instead of overwriting your changes. `code-intel analyze --dry-run` previews exactly which workflow files would be created, updated, skipped (unchanged), or left as a conflict, without writing anything.
 
 ---
@@ -726,6 +728,12 @@ code-intel search <query> --json         # Include machine-readable qualified se
 code-intel explore <task>                # Search + rerank + bounded expansion + budgeted context in one call
 code-intel explore <task> --intent change --max-tokens 6000 --compression auto
 code-intel explore <task> --explain-ranking --json   # Add rerank contributions and per-symbol render reasons
+code-intel workflow start --task "<task>" --target <symbol>   # Pin baseline + plan (repo); add --group <name> for a group
+code-intel workflow status <session>       # Phase, plan, freshness (moves to reindex-required after edits)
+code-intel workflow checkpoint <session> --conditions '<json>' --remove-condition <id>   # Declare intent
+code-intel workflow verify <session>       # Expected-vs-actual after `code-intel analyze`
+code-intel workflow complete <session>     # Suggested commit plan only; nothing is committed
+code-intel group flows <name>              # Cross-repo system flows (exact HTTP links; candidates listed separately)
 code-intel inspect <symbol>              # Inspect a unique symbol; lists candidates when ambiguous
 code-intel inspect <selector>            # Inspect an exact qualified result from search/inspect
 code-intel inspect <symbol> --json       # Structured result; ambiguity exits with status 2
@@ -783,6 +791,22 @@ code-intel group status <name>                                             # Aud
 
 ---
 
+### Change workflows
+
+A change session pins the current trusted index as a baseline, plans the change, and later checks what actually changed:
+
+```bash
+code-intel workflow start --task "add idempotency to payment capture" --target capturePayment
+# edit files yourself (or with your agent)
+code-intel analyze
+code-intel workflow verify <session>
+code-intel workflow complete <session>
+```
+
+`verify` returns `passed`, `needs-revision`, `reindex-required` or `blocked`, per-condition statuses, unplanned changes and review-lens results. It never reasons from a stale index. Group sessions (`--group <name>`) also plan consumer updates from the group's consumer index and report a stale `group sync` instead of trusting it. Session files hold canonical IDs and content fingerprints, not source text; pass `--fingerprint-only` to keep only a hash of the task description. Over HTTP (`/api/v1/workflows`), a session belongs to the user or token that started it: only that owner or an admin can read or advance it, every repository in scope must be accessible to the caller, and mutations need the `analyst` role. Sessions started from the CLI or MCP have no owner and are admin-only over HTTP.
+
+Cross-repository system flows (`code-intel group flows <name>`, MCP `system_flows`, `GET /api/v1/groups/:name/system-flows`) join stable local flows across exact contract links: HTTP route facts, and literal protocol keys found during `group sync` — event topics (`publish`/`subscribe`, Kafka, NestJS patterns), GraphQL root operations (`gql` documents → resolvers) and gRPC methods (clients → `@GrpcMethod`/`addService`). Matches on names alone, unresolved endpoints and partially covered members are listed as candidates, not stitched.
+
 ## 🌐 HTTP API
 
 | Method | Endpoint | Description |
@@ -791,7 +815,12 @@ code-intel group status <name>                                             # Aud
 | `GET`  | `/api/v1/repos` | List indexed repos |
 | `GET`  | `/api/v1/graph/:repoId` | Full graph (nodes + edges) |
 | `POST` | `/api/v1/search` | Canonical scoped search (`query`, `limit`, `mode`, `scope`) with repo/group targeting; repo scope uses `repoId` |
-| `POST` | `/api/v1/explore` | Task-oriented exploration (`task`, `intent`, `max_tokens`, `compression`, `explain_ranking`, `seeds`, repo `scope`/`repoId`); stateless, so no session references; group scope is rejected |
+| `POST` | `/api/v1/explore` | Task-oriented exploration (`task`, `intent`, `max_tokens`, `compression`, `explain_ranking`, `seeds`, repo `scope`/`repoId`); stateless, so no session references; group scope is rejected; repo-scoped tokens may only explore their repositories |
+| `POST` | `/api/v1/workflows` | Start a change session (`task`, `targets`, `repoId` or `scope: "group"` + `group`, `task_retention`); caller becomes the owner; `analyst` role |
+| `GET`  | `/api/v1/workflows` | List sessions in a repo/group scope that the caller owns (admins: all) |
+| `GET`  | `/api/v1/workflows/:id` | Session status (owner or admin); `repoId`/`group` query selects the scope |
+| `POST` | `/api/v1/workflows/:id/checkpoint` · `/verify` · `/complete` | Advance a session (owner or admin; `analyst`); `expected_revision` gives optimistic concurrency (409 on conflict) |
+| `GET`  | `/api/v1/groups/:name/system-flows` | Read-only system flows (`symbol_id`, `contract_id`, `repository_id`, `limit` ≤ 100, `offset`); requires access to every member repository |
 | `POST` | `/api/v1/vector-search` | Deprecated compatibility alias for vector mode; returns resolved scope/mode metadata |
 | `GET`  | `/api/v1/vector-status` | Vector index ready/building status |
 | `GET`  | `/api/v1/nodes/:id` | Node detail (callers, callees, imports, etc.) |
@@ -822,6 +851,8 @@ All tools are available to any MCP-capable editor (Claude Desktop, Claude Code, 
 | `inspect` | `symbol_name` (string) | 360° view of a symbol: definition, callers, callees, imports, heritage (extends/implements), members, cluster, and source preview |
 | `context` | `symbols` (string[]), `intent` (`code`\|`callers`\|`architecture`\|`auto`, default `auto`), `max_tokens` (number, default/server max 6000), `limit` (number, default 10) | Token-budgeted deep context for one or more symbols: returns `summary`, `logic`, `relation`, `focusCode`, and `truncated` from the shared context builder; change-context surfaces preserve additive trust summaries when impact/test evidence is incomplete |
 | `explore` | `task` (string), `intent` (`auto`\|`understand`\|`debug`\|`change`\|`review`\|`security`\|`api`, default auto-detected), `max_tokens` (number, default/server max 6000), `compression` (`auto`\|`none`\|`aggressive`), `explain_ranking` (boolean), `seeds` (1–8, default 5) | Task-oriented exploration in one call: scoped search, deterministic graph-aware rerank, bounded intent expansion (callers/callees, impact, tests, API, recorded security signals) and a token-budgeted context with per-symbol render modes (`full`/`snippet`/`signature`/`skeleton`/`reference`). Always reports certainty, coverage, boundaries and `capabilities.degraded`; absence of evidence is never proof. Specialized tools stay independently callable. |
+| `change_workflow` | `action` (`start`\|`status`\|`checkpoint`\|`verify`\|`complete`\|`list`), `session_id`, `task`, `targets`, `scope` (`repo`\|`group`), `group`, `expected_revision`, `conditions`, `remove_condition_ids`, `step_id`, `lenses`, `edited`, `task_retention` | Resumable change session. Sessions are reachable only through the selected repository or the named group. Stale index → `reindex-required`; unknown/partial evidence is never `satisfied`; never edits source or Git. |
+| `system_flows` | `name` (group), `symbol_id`, `contract_id`, `repository_id`, `limit` (max 100), `offset` | Read-only system flows stitched across exact contract links, with candidate continuations, coverage and cap boundaries. |
 | `blast_radius` | `target` (string), `direction` (`callers`\|`callees`\|`both`), `max_hops` (number, default 2) | Impact analysis: traverse the call/import graph to find all affected symbols. Returns additive trust fields including `riskLevel` (`LOW` / `MEDIUM` / `HIGH` / `UNKNOWN`), `certainty`, `coverage`, and `boundaries`. |
 | `file_symbols` | `file_path` (string, partial match), `limit` (number, default 10) | List all symbols defined in a file, ordered by line number. Avoids having to read raw source. |
 | `find_path` | `from` (string), `to` (string), `max_hops` (number, default 8) | Find the shortest call/import path between two symbols via BFS. Additive trust fields (`certainty`, `coverage`, `boundaries`) surface when traversal is bounded or evidence-backed. |

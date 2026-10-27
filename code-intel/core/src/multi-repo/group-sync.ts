@@ -7,7 +7,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import type { CodeNode } from '../shared/index.js';
-import type { RepoGroup, Contract, ContractLink, GroupSyncResult, GroupContractVersion, ContractRole } from './types.js';
+import type { RepoGroup, Contract, ContractLink, GroupSyncResult, GroupContractVersion, ContractRole, LinkKind } from './types.js';
 import { findRepoById, loadRegistry } from '../storage/repo-registry.js';
 import { DbManager } from '../storage/db-manager.js';
 import { createKnowledgeGraph, type KnowledgeGraph } from '../graph/knowledge-graph.js';
@@ -16,6 +16,8 @@ import Logger from '../shared/logger.js';
 import { parseOpenAPIContracts } from './schema-parsers/openapi-parser.js';
 import { parseGraphQLContracts } from './schema-parsers/graphql-parser.js';
 import { parseProtoContracts } from './schema-parsers/proto-parser.js';
+import { extractProtocolFacts, isProtocolSourceFile, PROTOCOL_FACT_LIMITS, type ProtocolFact, type ProtocolKind } from './protocol-facts.js';
+import { buildSymbolSpanIndex } from './symbol-spans.js';
 import { computeContractSimilarity } from './type-similarity.js';
 import { collectGraphFacts, matchApiContracts, routeFactFromNode, type ScopedFact } from '../semantic/api-contracts/index.js';
 import type { HttpConsumerFact, HttpRouteFact } from '../semantic/api-contracts/types.js';
@@ -212,12 +214,103 @@ function matchRouteConsumersViaFacts(memberGraphs: ReadonlyArray<{ repoId: strin
   return links;
 }
 
+const PROTOCOL_LINK_KIND: Record<ProtocolKind, LinkKind> = {
+  event: 'event-topic-match',
+  graphql: 'graphql-operation-match',
+  grpc: 'grpc-method-match',
+};
+
+/** Reads a member's TS/JS sources (bounded, repository-contained) for protocol-fact extraction. */
+function readMemberSources(repoPath: string, graph: KnowledgeGraph): Array<{ filePath: string; source: string }> {
+  const files: Array<{ filePath: string; source: string }> = [];
+  const root = path.resolve(repoPath);
+  for (const node of graph.allNodes()) {
+    if (node.kind !== 'file' || !isProtocolSourceFile(node.filePath)) continue;
+    if (files.length >= PROTOCOL_FACT_LIMITS.maxFilesPerRepo) break;
+    const abs = path.resolve(root, node.filePath);
+    if (abs !== root && !abs.startsWith(root + path.sep)) continue; // never read outside the repository
+    try {
+      if (fs.statSync(abs).size > PROTOCOL_FACT_LIMITS.maxFileBytes) continue;
+      files.push({ filePath: node.filePath, source: fs.readFileSync(abs, 'utf-8') });
+    } catch {
+      // File moved since analysis; it contributes no facts until the next analyze.
+    }
+  }
+  return files;
+}
+
+function protocolContract(fact: ProtocolFact, member: { repoId: string; repoName: string; repoPath: string; snapshotId: string }): Contract {
+  const anchor = `${fact.protocol}:${fact.key}@${fact.filePath}:${fact.line}`;
+  return enrichContract({
+    repoName: member.repoName,
+    repoPath: member.repoPath,
+    repositoryId: member.repoId,
+    kind: fact.protocol,
+    name: fact.key,
+    nodeId: fact.symbolId ?? anchor,
+    nodeKind: `protocol:${fact.role}`,
+    filePath: fact.filePath,
+    sourceCanonicalId: `${fact.protocol}:${fact.role}:${fact.key}:${fact.symbolId ?? anchor}`,
+    role: fact.role === 'provider' ? 'producer' : 'consumer',
+    certainty: fact.symbolId ? 'exact' : 'heuristic',
+  }, member.repoId, member.snapshotId);
+}
+
+/**
+ * Cross-repository protocol links: a provider fact and a consumer fact in different members
+ * with the same literal protocol key. Exact only when both endpoint symbols resolved; an
+ * unresolved endpoint yields a heuristic link without a consumer contract ID, which the consumer
+ * index skips and the system-flow stitcher reports as a candidate.
+ */
+export function matchProtocolFacts(members: ReadonlyArray<{ repoId: string; repoName: string; repoPath: string; snapshotId: string; facts: readonly ProtocolFact[] }>): { contracts: Contract[]; links: ContractLink[] } {
+  type Entry = { fact: ProtocolFact; contract: Contract; repoId: string };
+  const contracts: Contract[] = [];
+  const providers = new Map<string, Entry[]>();
+  const consumers = new Map<string, Entry[]>();
+  for (const member of members) {
+    for (const fact of member.facts) {
+      const contract = protocolContract(fact, member);
+      contracts.push(contract);
+      const bucket = fact.role === 'provider' ? providers : consumers;
+      const bucketKey = `${fact.protocol} ${fact.key}`;
+      bucket.set(bucketKey, [...(bucket.get(bucketKey) ?? []), { fact, contract, repoId: member.repoId }]);
+    }
+  }
+  const links: ContractLink[] = [];
+  for (const [bucketKey, providerList] of [...providers.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    for (const provider of providerList) {
+      for (const consumer of consumers.get(bucketKey) ?? []) {
+        if (consumer.repoId === provider.repoId) continue;
+        const exact = Boolean(provider.fact.symbolId && consumer.fact.symbolId);
+        links.push({
+          providerRepo: provider.repoId,
+          providerContract: provider.fact.key,
+          consumerRepo: consumer.repoId,
+          consumerContract: `${consumer.fact.filePath}:${consumer.fact.line}`,
+          matchKind: PROTOCOL_LINK_KIND[provider.fact.protocol],
+          confidence: exact ? 1 : 0.5,
+          providerContractId: provider.contract.contractId,
+          ...(exact ? { consumerContractId: consumer.contract.contractId } : {}),
+          providerSourceCanonicalId: provider.fact.symbolId,
+          consumerSourceCanonicalId: consumer.fact.symbolId,
+          certainty: exact ? 'exact' : 'heuristic',
+          coverage: exact
+            ? fullCoverage()
+            : { complete: false, examinedCount: 1, incompleteReasons: [provider.fact.unresolvedReason ?? consumer.fact.unresolvedReason ?? 'endpoint symbol unresolved'] },
+        });
+      }
+    }
+  }
+  return { contracts, links };
+}
+
 function matchContracts(allContracts: Contract[]): ContractLink[] {
   const links: ContractLink[] = [];
 
   // Group contracts by repo. Route contracts are excluded here — they're matched separately
-  // by matchRouteConsumersViaFacts using real method/path/consumer evidence, not name equality.
-  const nonRouteContracts = allContracts.filter((c) => c.kind !== 'route');
+  // by matchRouteConsumersViaFacts using real method/path/consumer evidence, not name equality —
+  // and so are protocol-fact contracts (matched by literal protocol key in matchProtocolFacts).
+  const nonRouteContracts = allContracts.filter((c) => c.kind !== 'route' && !c.nodeKind.startsWith('protocol:'));
   const byRepo = new Map<string, Contract[]>();
   for (const c of nonRouteContracts) {
     const arr = byRepo.get(c.repoName) ?? [];
@@ -339,6 +432,7 @@ export async function syncGroup(group: RepoGroup): Promise<GroupSyncResult> {
   const contractVersions: GroupContractVersion[] = [];
   const memberGraphs: Array<{ repoId: string; graph: KnowledgeGraph }> = [];
   const memberFacts: Array<{ repoId: string; repositoryName: string; facts: ReturnType<typeof collectGraphFacts> }> = [];
+  const protocolMembers: Array<{ repoId: string; repoName: string; repoPath: string; snapshotId: string; facts: ProtocolFact[] }> = [];
 
   for (const member of group.members) {
     // Resolve the actual repo path from the registry
@@ -425,12 +519,23 @@ export async function syncGroup(group: RepoGroup): Promise<GroupSyncResult> {
       }, regEntry.id, snapshotId));
     }
 
+    protocolMembers.push({
+      repoId: regEntry.id,
+      repoName: regEntry.name,
+      repoPath: regEntry.path,
+      snapshotId,
+      facts: extractProtocolFacts(readMemberSources(regEntry.path, graph), buildSymbolSpanIndex(graph)),
+    });
+
     Logger.info(`  ✓ ${regEntry.name} (${member.groupPath}): ${contracts.length} contracts`);
     allContracts.push(...contracts);
     contractVersions.push(...contracts.map((contract) => versionFromContract(contract, regEntry.id)));
   }
 
-  const links = [...matchContracts(allContracts), ...matchRouteConsumersViaFacts(memberGraphs)];
+  const protocol = matchProtocolFacts(protocolMembers);
+  allContracts.push(...protocol.contracts);
+  contractVersions.push(...protocol.contracts.map((contract) => versionFromContract(contract, contract.repositoryId!)));
+  const links = [...matchContracts(allContracts), ...matchRouteConsumersViaFacts(memberGraphs), ...protocol.links];
 
   return {
     groupName: group.name,

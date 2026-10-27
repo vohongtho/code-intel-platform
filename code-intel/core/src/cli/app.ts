@@ -50,6 +50,8 @@ import { startHttpServer } from '../http/app.js';
 import { startMcpStdio } from '../mcp-server/server.js';
 import { textSearch } from '../search/text-search.js';
 import { ExploreRequestError, runExplore, type ExploreRequest } from '../query/explore.js';
+import { compactSessionView, runChangeWorkflowAction, workflowErrorPayload } from '../agents/workflows/session-service.js';
+import { getGroupSystemFlows, querySystemFlows } from '../multi-repo/system-flows/service.js';
 import { resolveEmbeddingUpdatePlan } from '../search/embedding-update-plan.js';
 import { EMBEDDING_MODELS, getDefaultEmbeddingModel, getEmbeddingModel, normalizeEmbeddingModelId } from '../search/embedding-model-registry.js';
 import type { PipelineContext } from '../pipeline/types.js';
@@ -2862,6 +2864,157 @@ program
     }
   });
 
+// ─── workflow: resumable graph-verified change sessions ─────────────────────
+const workflowCmd = program
+  .command('workflow')
+  .description('Resumable change sessions: plan, edit externally, analyze, verify expected-vs-actual, complete')
+  .addHelpText('after', `
+  Code Intel never edits source and never stages, commits or pushes. You (or
+  your agent) edit files, run \`code-intel analyze\`, then verify. A stale index
+  reports reindex-required; unknown/partial evidence is never "satisfied".
+
+  Examples:
+    $ code-intel workflow start --task "add idempotency to payment capture" --target capturePayment
+    $ code-intel workflow status <session>
+    $ code-intel analyze && code-intel workflow verify <session>
+    $ code-intel workflow start --task "rename customerId to accountId" --group commerce
+    $ code-intel workflow complete <session>
+`);
+
+interface WorkflowCliOptions {
+  path: string;
+  group?: string;
+  json?: boolean;
+  full?: boolean;
+  revision?: string;
+}
+
+function workflowCliBase(opts: WorkflowCliOptions) {
+  return {
+    scope: opts.group ? 'group' as const : 'repo' as const,
+    repoDir: path.resolve(opts.path),
+    groupName: opts.group,
+    expectedRevision: opts.revision !== undefined ? Number.parseInt(opts.revision, 10) : undefined,
+    full: opts.full === true,
+  };
+}
+
+function printWorkflowResult(result: unknown, opts: WorkflowCliOptions): void {
+  if (opts.json || opts.full) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  const view = result as ReturnType<typeof compactSessionView> & { sessions?: Array<{ id: string; phase: string; revision: number; updatedAt: string }> };
+  if (view.sessions) {
+    if (view.sessions.length === 0) console.log('\n  No workflow sessions.\n');
+    for (const session of view.sessions) console.log(`  ${session.id}  ${session.phase.padEnd(17)} r${session.revision}  ${session.updatedAt}`);
+    return;
+  }
+  console.log(`\n  Session ${view.sessionId}  phase: ${view.phase}  revision: ${view.revision}`);
+  for (const step of view.plan.steps) {
+    console.log(`  [${step.category}] ${step.title}  (${step.certainty}; ${step.expected.length} condition(s))`);
+    for (const boundary of step.boundaries) console.log(`      ! ${boundary}`);
+  }
+  if (view.plan.truncated) console.log(`  … ${view.plan.totalSteps} steps total`);
+  for (const repo of view.repositories ?? []) console.log(`  repo ${repo.repositoryId}: ${repo.state}${repo.reasons.length ? ` (${repo.reasons.slice(0, 3).join('; ')})` : ''}`);
+  if (view.verification) {
+    const v = view.verification;
+    console.log(`\n  Verification: ${v.outcome}  satisfied ${v.counts.satisfied}/${v.counts.plannedConditions}  unexpected ${v.counts.unexpectedChanges}`);
+    for (const condition of v.conditions.filter((c) => c.status !== 'satisfied')) console.log(`    ${condition.status.padEnd(19)} ${condition.kind}: ${condition.reason}`);
+    for (const lens of v.lenses.filter((l) => l.status !== 'pass')) console.log(`    lens ${lens.lensId}: ${lens.status}${lens.reducedGuarantee ? ` — ${lens.reducedGuarantee}` : ''}`);
+    for (const boundary of v.boundaries) console.log(`    ! ${boundary}`);
+  }
+  for (const missing of view.capabilities.unavailable) console.log(`  ~ ${missing.capability}: ${missing.reducedGuarantee}`);
+  if (view.commitPlan) {
+    console.log(`\n  Suggested commits (not executed):`);
+    for (const group of view.commitPlan.groups) console.log(`    ${group.order}. ${group.title}  [${group.files.join(', ')}]`);
+  }
+  console.log(`\n  Next: ${view.next}\n`);
+}
+
+async function runWorkflowCli(input: Parameters<typeof runChangeWorkflowAction>[0], opts: WorkflowCliOptions): Promise<void> {
+  try {
+    printWorkflowResult(await runChangeWorkflowAction(input), opts);
+  } catch (err) {
+    const payload = workflowErrorPayload(err);
+    if (opts.json) console.log(JSON.stringify(payload, null, 2));
+    else console.error(`\n  ✗  ${payload.error}${payload.code ? ` (${payload.code})` : ''}\n`);
+    process.exitCode = 1;
+  }
+}
+
+const withWorkflowScopeOptions = (cmd: Command) => cmd
+  .option('-p, --path <path>', 'Repository path (default: current directory)', '.')
+  .option('--group <name>', 'Repository group (group-scoped session)')
+  .option('--json', 'Output the compact JSON view')
+  .option('--full', 'Output the full session JSON');
+
+withWorkflowScopeOptions(workflowCmd
+  .command('start')
+  .description('Pin the current trusted index as the baseline and plan the change')
+  .requiredOption('--task <text>', 'What you intend to change')
+  .option('--target <symbol...>', 'Symbol names or canonical node IDs that must change (unique matches become required steps)')
+  .option('--fingerprint-only', 'Store only a fingerprint of the task text, not a summary'))
+  .action(async (opts: WorkflowCliOptions & { task: string; target?: string[]; fingerprintOnly?: boolean }) => {
+    await runWorkflowCli({ action: 'start', ...workflowCliBase(opts), task: opts.task, targets: opts.target, taskRetention: opts.fingerprintOnly ? 'fingerprint-only' : 'summary' }, opts);
+  });
+
+withWorkflowScopeOptions(workflowCmd
+  .command('status <session>')
+  .description('Show phase/plan/freshness; moves to reindex-required when source changed since analysis'))
+  .action(async (session: string, opts: WorkflowCliOptions) => {
+    await runWorkflowCli({ action: 'status', ...workflowCliBase(opts), sessionId: session }, opts);
+  });
+
+withWorkflowScopeOptions(workflowCmd
+  .command('checkpoint <session>')
+  .description('Record a note, declare expected conditions, add lenses, or mark that files were edited')
+  .option('--note <text>', 'Short note')
+  .option('--conditions <json>', 'JSON array of expected conditions to add')
+  .option('--remove-condition <id...>', 'Condition IDs to remove')
+  .option('--step <id>', 'Plan step to attach conditions/lenses to')
+  .option('--lens <id...>', 'Additional review lenses: architecture | api | tests | security | change-risk | scope')
+  .option('--edited', 'Files were edited; move to reindex-required')
+  .option('--revision <n>', 'Expected session revision (optimistic concurrency)'))
+  .action(async (session: string, opts: WorkflowCliOptions & { note?: string; conditions?: string; removeCondition?: string[]; step?: string; lens?: string[]; edited?: boolean }) => {
+    let conditions: Array<Record<string, unknown>> | undefined;
+    if (opts.conditions) {
+      try {
+        const parsed = JSON.parse(opts.conditions) as unknown;
+        if (!Array.isArray(parsed)) throw new Error('expected a JSON array');
+        conditions = parsed as Array<Record<string, unknown>>;
+      } catch (err) {
+        console.error(`\n  ✗  --conditions must be a JSON array: ${err instanceof Error ? err.message : String(err)}\n`);
+        process.exitCode = 1;
+        return;
+      }
+    }
+    await runWorkflowCli({ action: 'checkpoint', ...workflowCliBase(opts), sessionId: session, note: opts.note, conditions, removeConditionIds: opts.removeCondition, stepId: opts.step, lenses: opts.lens, edited: opts.edited }, opts);
+  });
+
+withWorkflowScopeOptions(workflowCmd
+  .command('verify <session>')
+  .description('Verify expected-vs-actual semantic changes against the pinned baseline (requires a current index)')
+  .option('--revision <n>', 'Expected session revision (optimistic concurrency)'))
+  .action(async (session: string, opts: WorkflowCliOptions) => {
+    await runWorkflowCli({ action: 'verify', ...workflowCliBase(opts), sessionId: session }, opts);
+  });
+
+withWorkflowScopeOptions(workflowCmd
+  .command('complete <session>')
+  .description('Complete a verified session and print a suggested commit plan (never executed)')
+  .option('--revision <n>', 'Expected session revision (optimistic concurrency)'))
+  .action(async (session: string, opts: WorkflowCliOptions) => {
+    await runWorkflowCli({ action: 'complete', ...workflowCliBase(opts), sessionId: session }, opts);
+  });
+
+withWorkflowScopeOptions(workflowCmd
+  .command('list')
+  .description('List workflow sessions for this repository (or --group)'))
+  .action(async (opts: WorkflowCliOptions) => {
+    await runWorkflowCli({ action: 'list', ...workflowCliBase(opts) }, opts);
+  });
+
 // ─── inspect: optional program-analysis evidence ─────────────────────────────
 // Best-effort only: a function/method target gets a lazily-computed summary
 // (parameter-to-return influence, called functions) appended to its normal
@@ -3566,6 +3719,57 @@ groupCmd
     }
   });
 
+// group flows <name>
+groupCmd
+  .command('flows <name>')
+  .description('Cross-repository system flows: stable local flows stitched across exact contract boundaries')
+  .option('--symbol <canonicalId>', 'Filter by canonical symbol ID in any segment')
+  .option('--contract <contractId>', 'Filter by boundary contract ID')
+  .option('--repo-id <repositoryId>', 'Filter by member repository ID')
+  .option('-l, --limit <n>', 'Max flows (default 20, max 100)')
+  .option('--offset <n>', 'Pagination offset')
+  .option('--no-cache', 'Rebuild instead of using the fingerprinted cache')
+  .option('--json', 'Output raw JSON')
+  .addHelpText('after', `
+  Only evidence-backed contract links (HTTP route facts) produce exact
+  continuations; name-only matches and partial coverage are listed as
+  candidates. System flows are static traces, not runtime traces.
+`)
+  .action(async (name: string, opts: { symbol?: string; contract?: string; repoId?: string; limit?: string; offset?: string; cache?: boolean; json?: boolean }) => {
+    if (!loadGroup(name)) {
+      console.error(`\n  ✗  Group "${name}" not found.\n`);
+      process.exit(1);
+    }
+    try {
+      const { result, cache } = await getGroupSystemFlows(name, { allowCache: opts.cache !== false });
+      const page = querySystemFlows(result, {
+        symbolId: opts.symbol,
+        contractId: opts.contract,
+        repositoryId: opts.repoId,
+        limit: opts.limit ? Number.parseInt(opts.limit, 10) : undefined,
+        offset: opts.offset ? Number.parseInt(opts.offset, 10) : undefined,
+      });
+      if (opts.json) {
+        console.log(JSON.stringify({ groupName: name, ...page, cacheHit: cache.hit }, null, 2));
+        return;
+      }
+      console.log(`\n  System flows for ${name}: ${page.total} exact, ${page.candidatesTotal} candidate continuation(s)${cache.hit ? ' (cached)' : ''}\n`);
+      for (const flow of page.flows) {
+        console.log(`  ${flow.id}  ${flow.certainty}`);
+        for (const segment of flow.segments) {
+          console.log(`    ${segment.repositoryId}: ${segment.entrySymbolId}${segment.exitSymbolId ? ` → ${segment.exitSymbolId}` : ''}`);
+          if (segment.boundaryToNext) console.log(`      ⇢ ${segment.boundaryToNext.kind} ${segment.boundaryToNext.contractId} (${segment.boundaryToNext.evidence})`);
+        }
+      }
+      if (page.truncated) console.log(`\n  … more results; use --offset ${page.offset + page.limit}`);
+      for (const boundary of page.boundaries) console.log(`  ! ${boundary.kind}: ${boundary.message}`);
+      console.log('');
+    } catch (err) {
+      console.error(`\n  ✗  ${err instanceof Error ? err.message : String(err)}\n`);
+      process.exitCode = 1;
+    }
+  });
+
 // group drift <name>
 groupCmd
   .command('drift <name>')
@@ -3576,6 +3780,7 @@ groupCmd
   .option('--repo <repo>', 'Restrict analysis to one member repo, by registry name')
   .option('-l, --limit <n>', 'Presentation limit for returned findings; analysis still computes total findings')
   .option('--no-cache', 'Force a full rebuild of both snapshots, ignoring any cached entry')
+  .option('--system-flows', 'Also list system flows crossing non-compatible changed contracts (current published indexes)')
   .option('--json', 'Output raw JSON instead of a human-readable summary')
   .addHelpText('after', `
   Compares each member repo's contracts (HTTP routes, shared schemas, events)
@@ -3588,7 +3793,7 @@ groupCmd
     $ code-intel group drift my-platform --base main --head HEAD --kind schema
     $ code-intel group drift my-platform --base main --head HEAD --repo auth-service --json
 `)
-  .action(async (name: string, opts: { base: string; head: string; kind?: string; repo?: string; limit?: string; cache?: boolean; json?: boolean }) => {
+  .action(async (name: string, opts: { base: string; head: string; kind?: string; repo?: string; limit?: string; cache?: boolean; systemFlows?: boolean; json?: boolean }) => {
     if (!loadGroup(name)) {
       console.error(`\n  ✗  Group "${name}" not found.\n`);
       process.exit(1);
@@ -3613,6 +3818,7 @@ groupCmd
         repositoryId,
         limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
         allowCache: opts.cache !== false,
+        includeSystemFlows: opts.systemFlows === true,
       });
 
       if (opts.json) {
