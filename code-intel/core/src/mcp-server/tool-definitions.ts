@@ -23,7 +23,7 @@ const REPO_SELECTABLE_TOOL_NAMES = new Set([
   'overview', 'search', 'context', 'blast_radius', 'file_symbols', 'find_path', 'list_exports', 'routes', 'clusters', 'flows',
   'detect_changes', 'query', 'raw_query', 'explain_relationship', 'pr_impact', 'similar_symbols', 'health_report',
   'suggest_tests', 'cluster_summary', 'deprecated_usage', 'complexity_hotspots', 'coverage_gaps', 'secrets', 'vulnerability_scan',
-  'api_contract', 'api_impact', 'api_drift', 'graph_diff', 'change_workflow',
+  'api_contract', 'api_impact', 'api_shape_check', 'api_drift', 'graph_diff', 'change_workflow',
 ]);
 const withRepoSelector = <T extends { name: string; inputSchema?: { type?: string; properties?: Record<string, unknown> } }>(tool: T): T => (
   REPO_SELECTABLE_TOOL_NAMES.has(tool.name) && tool.inputSchema?.type === 'object'
@@ -517,6 +517,21 @@ export const MCP_TOOL_DEFINITIONS = [
         path: { type: 'string', description: 'Normalized route path, e.g. /users/{} (parameter segments normalized to {})' },
         route_fact_id: { type: 'string', description: 'Exact route fact id from a prior api_contract/api_impact result' },
         route_node_id: { type: 'string', description: "The route's graph node id (as returned by inspect/routes/query)" },
+        ..._tokenProp,
+      },
+    },
+  },
+  {
+    name: 'api_shape_check',
+    description: 'Checks the response fields each statically resolved consumer reads (nested paths such as user.profile.displayName or items[].price, through destructuring, optional chaining and local aliases) against the route\'s success response shapes. Verdict is breaking only for exact reads of fields a complete producer shape lacks; it is compatible only when producer and consumer coverage are both complete — otherwise unknown.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        method: { type: 'string', description: 'HTTP method, e.g. GET, POST (omit to match any method)' },
+        path: { type: 'string', description: 'Route path in framework (/users/:id) or normalized (/users/{}) spelling' },
+        route_fact_id: { type: 'string', description: 'Exact route fact id from a prior api_contract/api_impact result' },
+        route_node_id: { type: 'string', description: "The route's graph node id (as returned by inspect/routes/query)" },
+        max_findings: { type: 'number', description: 'Maximum findings per route (default 100; totalFindings is always exact)' },
         ..._tokenProp,
       },
     },

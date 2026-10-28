@@ -2,6 +2,7 @@ import type { Language } from '../../shared/languages.js';
 import type { SourceRange } from '../anchors.js';
 import type { FrameworkEvidenceFact, TypeReferenceFact } from '../facts.js';
 import type { ResolutionOutcome } from '../../resolution/contracts.js';
+import type { ConsumerAccessPath } from './consumers/access-paths.js';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS';
 export type HttpMethodOrAny = HttpMethod | 'ANY';
@@ -10,7 +11,7 @@ export type HttpMethodOrAny = HttpMethod | 'ANY';
  * or their graph projection change shape. A generation stamped with an older/incompatible
  * version must degrade explicitly (see analysis-plan.ts#hasSemanticFingerprintMismatch)
  * rather than silently reusing stale or malformed API-contract data. */
-export const API_CONTRACT_SCHEMA_VERSION = '1.0.11';
+export const API_CONTRACT_SCHEMA_VERSION = '1.0.12';
 
 /**
  * Mirrors `FactBase` from semantic/facts.ts structurally (duplicated, not imported) so
@@ -36,6 +37,8 @@ export type ApiBoundaryReason =
   | 'candidate-cap-exceeded'
   | 'unsupported-framework-construct'
   | 'local-data-flow-exceeded'
+  | 'dynamic-computed-access'
+  | 'legacy-consumer-facts'
   | 'analysis-truncated';
 
 export interface ApiCoverage {
@@ -126,6 +129,13 @@ export interface HttpConsumerFact extends HttpFactBase {
   /** shapeFingerprint of a co-emitted HttpRequestShapeFact, when statically recoverable. */
   requestShapeRef?: string;
   consumedKeys: readonly string[];
+  /** Normalized nested response-field reads (see consumers/access-paths.ts). Absent on facts
+   * persisted before API_CONTRACT_SCHEMA_VERSION 1.0.12 — readers must not treat absence as
+   * "reads nothing". `consumedKeys` stays the flat top-level view for older callers. */
+  consumedPaths?: readonly ConsumerAccessPath[];
+  /** Coverage of `consumedPaths` alone, kept separate from `coverage` so access-path
+   * boundaries never change route-matching certainty. */
+  consumedPathCoverage?: ApiCoverage;
   expectedResponseShapeSymbolRef?: string;
   coverage: ApiCoverage;
 }

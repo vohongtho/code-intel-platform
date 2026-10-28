@@ -11,7 +11,8 @@ import { compareContractVersions } from './comparator.js';
 import { loadGroup, loadSyncResult } from '../group-registry.js';
 import { suggestTests } from '../../query/suggest-tests.js';
 import { getGroupSystemFlows, systemFlowImpactForContracts, type SystemFlowImpact } from '../system-flows/service.js';
-import type { Contract, ContractDriftFinding, ContractDriftSummary, ContractDriftTestSuggestion, GroupContractVersion, GroupSyncResult, KnownConsumerCoverage } from '../types.js';
+import type { Contract, ContractConsumerRef, ContractDriftFinding, ContractDriftSummary, ContractDriftTestSuggestion, GroupContractVersion, GroupSyncResult, KnownConsumerCoverage } from '../types.js';
+import { buildProtocolConsumerRefs, graphqlContracts, grpcContracts, readProtocolSnapshot, type ProtocolMemberSnapshot, type ProtocolSnapshot } from '../protocol-contracts.js';
 
 export interface GroupContractDriftRequest {
   groupName: string;
@@ -199,6 +200,13 @@ async function loadSnapshotGraph(repoPath: string, snapshotId: string): Promise<
   try { return await loadGraphSnapshotFromDbPath(graphDbPath); } catch { return null; }
 }
 
+/** The sidecar carries no service label (it is ref-independent); the registry name is applied
+ * here so canonical GraphQL ids match the ones group sync produced. */
+function labelProtocolSnapshot(snapshot: ProtocolSnapshot | undefined, service: string): ProtocolSnapshot | undefined {
+  if (!snapshot?.graphql.schema) return snapshot;
+  return { ...snapshot, graphql: { ...snapshot.graphql, schema: { ...snapshot.graphql.schema, service } } };
+}
+
 async function buildOrLoadRepoState(input: {
   repoId: string;
   repoName: string;
@@ -207,18 +215,32 @@ async function buildOrLoadRepoState(input: {
   providedSnapshotId?: string;
   allowCache?: boolean;
   cachePolicy?: SnapshotCachePolicy;
-}): Promise<{ graph: KnowledgeGraph | null; snapshotId?: string; result: SnapshotBuildResult | { status: 'provided'; snapshotId: string } }> {
+}): Promise<{ graph: KnowledgeGraph | null; snapshotId?: string; protocol?: ProtocolSnapshot; result: SnapshotBuildResult | { status: 'provided'; snapshotId: string } }> {
   if (input.providedSnapshotId) {
     return {
       graph: await loadSnapshotGraph(input.repoPath, input.providedSnapshotId),
       snapshotId: input.providedSnapshotId,
+      protocol: labelProtocolSnapshot(readProtocolSnapshot(`${input.repoPath}/.code-intel/snapshots/${input.providedSnapshotId}`), input.repoName),
       result: { status: 'provided', snapshotId: input.providedSnapshotId },
     };
   }
   if (!input.ref) return { graph: null, result: { status: 'failed', descriptor: null, artifactsDir: null, fromCache: false, boundaries: [{ kind: 'unknown-ref', message: 'missing ref' }], durationMs: 0, error: 'missing ref' } };
   const snapshot = await getOrBuildSnapshot({ repoDir: input.repoPath, ref: input.ref, allowCache: input.allowCache }, input.cachePolicy);
   if (!snapshot.artifactsDir) return { graph: null, result: snapshot };
-  return { graph: await loadGraphSnapshotFromDbPath(`${snapshot.artifactsDir}/graph.db`), snapshotId: snapshot.descriptor?.snapshotId, result: snapshot };
+  return {
+    graph: await loadGraphSnapshotFromDbPath(`${snapshot.artifactsDir}/graph.db`),
+    snapshotId: snapshot.descriptor?.snapshotId,
+    protocol: labelProtocolSnapshot(readProtocolSnapshot(snapshot.artifactsDir), input.repoName),
+    result: snapshot,
+  };
+}
+
+function isProtocolSchemaContract(contract: Contract): boolean {
+  return (contract.kind === 'graphql' || contract.kind === 'grpc') && !contract.nodeKind.startsWith('protocol:');
+}
+
+function dedupeConsumerRefs(refs: readonly ContractConsumerRef[]): ContractConsumerRef[] {
+  return [...new Map(refs.map((ref) => [`${ref.repositoryId}\u0000${ref.consumerId}\u0000${ref.sourceAnchor ?? ''}`, ref])).values()];
 }
 
 function summarize(findings: readonly ContractDriftFinding[], extraReasons: readonly string[]): ContractDriftSummary {
@@ -302,6 +324,12 @@ export async function getGroupContractDrift(request: GroupContractDriftRequest):
   const headContracts = new Map<string, { contract: Contract; version: GroupContractVersion; graph?: KnowledgeGraph }>();
   const headGraphByRepo = new Map<string, KnowledgeGraph>();
   const repoPathByRepo = new Map<string, string>();
+  // Repositories whose base/head state has no rich protocol sidecar (snapshot predates it).
+  const protocolUnavailableByRepo = new Map<string, { base: boolean; head: boolean }>();
+  // Consumer view for protocol drift: operations / binding sites as they exist in head, mapped
+  // against the base schema they relied on.
+  const protocolConsumerView: ProtocolMemberSnapshot[] = [];
+  const baseProtocolContracts: Contract[] = [];
 
   for (const member of group.members) {
     const entry = member.repoId ? findRepoById(member.repoId, registry) : registry.find((repo) => repo.name === member.registryName);
@@ -332,6 +360,47 @@ export async function getGroupContractDrift(request: GroupContractDriftRequest):
         headContracts.set(contract.contractId!, { contract, version: versionFromContract(contract, entry.id), graph: headState.graph });
       }
     }
+
+    const contractMember = (snapshotId: string) => ({ repoName: entry.name, repoPath: entry.path, repositoryId: entry.id, snapshotId });
+    if (baseState.protocol && baseState.snapshotId) {
+      for (const contract of [...graphqlContracts(baseState.protocol, contractMember(baseState.snapshotId)), ...grpcContracts(baseState.protocol, contractMember(baseState.snapshotId))]) {
+        baseContracts.set(contract.contractId!, { contract, version: versionFromContract(contract, entry.id) });
+        baseProtocolContracts.push(contract);
+      }
+    }
+    if (headState.protocol && headState.snapshotId) {
+      for (const contract of [...graphqlContracts(headState.protocol, contractMember(headState.snapshotId)), ...grpcContracts(headState.protocol, contractMember(headState.snapshotId))]) {
+        headContracts.set(contract.contractId!, { contract, version: versionFromContract(contract, entry.id) });
+      }
+    }
+    const unavailable = { base: Boolean(baseState.graph) && !baseState.protocol, head: Boolean(headState.graph) && !headState.protocol };
+    if (unavailable.base || unavailable.head) protocolUnavailableByRepo.set(entry.id, unavailable);
+    const consumerSide = headState.protocol ?? baseState.protocol;
+    if (consumerSide) {
+      protocolConsumerView.push({
+        repoId: entry.id,
+        repoName: entry.name,
+        snapshot: {
+          ...consumerSide,
+          graphql: { ...consumerSide.graphql, schema: baseState.protocol?.graphql.schema },
+          grpc: { ...consumerSide.grpc, files: baseState.protocol?.grpc.files ?? [] },
+        },
+      });
+    }
+  }
+
+  // Legacy fallback: a repository with no rich protocol state on some side still has its synced
+  // GraphQL/gRPC contracts compared — explicitly as `legacy-schema` unknowns, never silently.
+  for (const contract of sync.contracts) {
+    if (!contract.contractId || !contract.repositoryId || !isProtocolSchemaContract(contract)) continue;
+    if (!protocolUnavailableByRepo.has(contract.repositoryId)) continue;
+    if (baseContracts.has(contract.contractId) || headContracts.has(contract.contractId)) continue;
+    if (!contract.snapshotId || !contract.semanticFingerprint) continue;
+    headContracts.set(contract.contractId, { contract, version: versionFromContract(contract, contract.repositoryId) });
+  }
+  const driftProtocolRefs = new Map<string, ContractConsumerRef[]>();
+  for (const { contractId, ref } of buildProtocolConsumerRefs(baseProtocolContracts, protocolConsumerView)) {
+    driftProtocolRefs.set(contractId, [...(driftProtocolRefs.get(contractId) ?? []), ref]);
   }
 
   const consumerIndexById = sync.consumerIndex?.byContractId ?? {};
@@ -371,7 +440,10 @@ export async function getGroupContractDrift(request: GroupContractDriftRequest):
     // provably yields no finding — every comparator already returns [] for unchanged content.
     // Skip the deep comparator call rather than re-deriving that same empty result. Missing or
     // legacy version data is never provably unchanged, so it always falls through below.
-    const isFullyComparedKind = kind === 'route' || kind === 'schema' || kind === 'event';
+    const repositoryForContract = headEntry?.version.repositoryId ?? baseEntry?.version.repositoryId ?? '';
+    const protocolUnavailable = (kind === 'graphql' || kind === 'grpc') ? protocolUnavailableByRepo.get(repositoryForContract) : undefined;
+    const isFullyComparedKind = kind === 'route' || kind === 'schema' || kind === 'event'
+      || ((kind === 'graphql' || kind === 'grpc') && Boolean(baseEntry?.contract.protocol && headEntry?.contract.protocol) && !protocolUnavailable);
     const canProveUnchanged = Boolean(
       baseEntry?.version && headEntry?.version
       && baseEntry.version.certainty !== 'legacy' && headEntry.version.certainty !== 'legacy',
@@ -386,17 +458,22 @@ export async function getGroupContractDrift(request: GroupContractDriftRequest):
     }
     comparisonsExecuted += 1;
 
+    const indexedConsumers = consumerIndexById[contractId]
+      ?? (syncContract?.contractId ? consumerIndexById[syncContract.contractId] ?? [] : undefined)
+      ?? (fingerprint ? consumerIndexByFingerprint[fingerprint] ?? [] : []);
+    const isProtocolKind = kind === 'graphql' || kind === 'grpc';
     findings.push(...compareContractVersions({
       kind,
       baseVersion: baseEntry?.version,
       headVersion: headEntry?.version,
-      baseContract: baseEntry?.contract ?? syncContract,
-      headContract: headEntry?.contract ?? syncContract,
+      // A protocol contract missing on one side is added/removed (or legacy, via
+      // protocolUnavailable) — never substituted with the current sync's payload.
+      baseContract: baseEntry?.contract ?? (isProtocolKind ? undefined : syncContract),
+      headContract: headEntry?.contract ?? (isProtocolKind ? undefined : syncContract),
       baseGraph: baseEntry?.graph,
       headGraph: headEntry?.graph,
-      affectedConsumers: consumerIndexById[contractId]
-        ?? (syncContract?.contractId ? consumerIndexById[syncContract.contractId] ?? [] : undefined)
-        ?? (fingerprint ? consumerIndexByFingerprint[fingerprint] ?? [] : []),
+      affectedConsumers: isProtocolKind ? dedupeConsumerRefs([...indexedConsumers, ...(driftProtocolRefs.get(contractId) ?? [])]) : indexedConsumers,
+      protocolUnavailable,
     }));
   }
 

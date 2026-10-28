@@ -4,7 +4,9 @@ import { routeFactFromNode } from '../semantic/api-contracts/index.js';
 import { parseStructuredFields } from './contract-drift/common.js';
 import type { Contract, ContractKind } from './types.js';
 
-export const GROUP_CONTRACT_SCHEMA_VERSION = '1.0.11';
+/** 1.0.12: GraphQL/gRPC contracts became one-per-type/definition with versioned rich payloads
+ * (protocol-contracts.ts); earlier persisted group state is not a comparable baseline. */
+export const GROUP_CONTRACT_SCHEMA_VERSION = '1.0.12';
 
 export interface ContractFingerprintParts {
   kind: ContractKind;

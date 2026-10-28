@@ -5194,6 +5194,51 @@ program
   });
 
 program
+  .command('api-shape-check')
+  .description('Check the response fields each consumer reads (nested paths) against the route\'s response shapes')
+  .option('--method <method>', 'HTTP method, e.g. GET, POST (omit to match any method)')
+  .option('--path <path>', 'Route path in framework or normalized spelling, e.g. /users/:id or /users/{}')
+  .option('--route-path <path>', 'Normalized route path, e.g. /users/{} (alias of --path)')
+  .option('--route-fact-id <id>', 'Exact route fact id from a prior api-contract/api-impact result')
+  .option('--max-findings <n>', 'Maximum findings per route (default: 100)')
+  .option('--dir <path>', 'Repo path (default: current dir)')
+  .option('--format <fmt>', 'Output format: text|json (default: text)', 'text')
+  .action(async (opts: { method?: string; path?: string; routePath?: string; routeFactId?: string; maxFindings?: string; dir?: string; format?: string }) => {
+    const repoPath = path.resolve(opts.dir ?? '.');
+    const { graph } = await loadOrAnalyzeWorkspace(repoPath);
+    const { getApiShapeCheck, normalizeRoutePath } = await import('../semantic/api-contracts/index.js');
+    const rawPath = opts.path ?? opts.routePath;
+    const maxFindings = opts.maxFindings ? Number.parseInt(opts.maxFindings, 10) : undefined;
+    const result = getApiShapeCheck(
+      graph,
+      { method: opts.method, normalizedPath: rawPath ? normalizeRoutePath(rawPath).normalizedPath : undefined, routeFactId: opts.routeFactId },
+      'local',
+      maxFindings && maxFindings > 0 ? { maxFindings } : {},
+    );
+
+    if ((opts.format ?? 'text').toLowerCase() === 'json') {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+    if (result.length === 0) {
+      console.log('\n  No matching route contract found.\n');
+      return;
+    }
+    console.log('\n  ◈  API Shape Check\n');
+    for (const entry of result) {
+      const check = entry.shapeCheck;
+      console.log(`  ${entry.route.method} ${entry.route.path}  verdict: ${check.verdict.toUpperCase()}`);
+      console.log(`    consumers: ${check.consumerCount}  producer coverage: ${formatApiCoverage(check.producerCoverage)}  consumer coverage: ${formatApiCoverage(check.consumerCoverage)}`);
+      for (const finding of check.findings) {
+        console.log(`    [${finding.verdict.toUpperCase()}] ${finding.path}${finding.optional ? ' (optional)' : ''}  ${finding.evidence[0] ?? ''}`);
+        if (finding.verdict !== 'compatible') console.log(`      ${finding.reason}`);
+      }
+      if (check.truncated) console.log(`    … ${check.totalFindings - check.findings.length} more finding(s); raise --max-findings`);
+      console.log('');
+    }
+  });
+
+program
   .command('api-drift')
   .description('Compare API contracts between two separately indexed repo checkouts (base vs head)')
   .requiredOption('--base-dir <path>', 'Repo path for the base (before) state')

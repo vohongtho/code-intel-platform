@@ -6,6 +6,7 @@ import { normalizeHttpMethod } from '../route-normalizer.js';
 import { fullApiCoverage, partialApiCoverage } from '../types.js';
 import type { HttpConsumerFact } from '../types.js';
 import { parseArrowParam, parseUrlExpression } from './common.js';
+import { trackAccessPaths, type AccessPathResult } from './access-paths.js';
 import { summarizeFrameworkDetection } from '../../../frameworks/detection.js';
 import type { FrameworkAdapter, FrameworkDetectionSignal, RepositoryFactView } from '../../../frameworks/contracts.js';
 import { workspaceRelativePath } from '../../../frameworks/contracts.js';
@@ -52,11 +53,11 @@ function scanMemberAccessKeys(lines: readonly string[], fromIndex: number, varNa
   return [...keys].sort();
 }
 
-function findSubscribeCallback(lines: readonly string[], fromIndex: number): { lineIndex: number; paramText: string } | undefined {
+function findSubscribeCallback(lines: readonly string[], fromIndex: number): { lineIndex: number; paramText: string; declEnd: number } | undefined {
   const windowEnd = Math.min(lines.length, fromIndex + MAX_SUBSCRIBE_LOOKAHEAD);
   for (let i = fromIndex; i < windowEnd; i += 1) {
     const match = lines[i]!.match(/\.subscribe\s*\(\s*(\(?[^=]*\)?)\s*=>/);
-    if (match) return { lineIndex: i, paramText: match[1]! };
+    if (match) return { lineIndex: i, paramText: match[1]!, declEnd: match.index! + match[0].length };
   }
   return undefined;
 }
@@ -91,8 +92,15 @@ function extractFacts(view: RepositoryFactView): FactBundle['facts'] {
       if (!url.isFullyStatic) boundaries.push('dynamic-url-expression');
 
       let consumedKeys: readonly string[] = [];
+      let access: AccessPathResult | undefined;
       const subscribeCallback = findSubscribeCallback(lines, index);
       if (subscribeCallback) {
+        access = trackAccessPaths(
+          lines,
+          subscribeCallback.lineIndex,
+          { kind: 'binding-pattern', patternText: subscribeCallback.paramText, lineIndex: subscribeCallback.lineIndex, declEnd: subscribeCallback.declEnd },
+          relPath,
+        );
         const parsedParam = parseArrowParam(subscribeCallback.paramText);
         if (parsedParam && 'keys' in parsedParam) {
           consumedKeys = parsedParam.keys;
@@ -138,6 +146,8 @@ function extractFacts(view: RepositoryFactView): FactBundle['facts'] {
         url,
         requestShapeRef,
         consumedKeys,
+        consumedPaths: access?.paths,
+        consumedPathCoverage: access?.coverage,
         expectedResponseShapeSymbolRef: generic,
         coverage: boundaries.length === 0 ? fullApiCoverage() : partialApiCoverage(boundaries),
       };

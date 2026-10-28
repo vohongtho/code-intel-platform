@@ -154,38 +154,59 @@ function extractGraphql(filePath: string, source: string, lines: readonly string
     });
   }
   // Consumers: gql`...` / graphql`...` documents, attributed to the function using them.
-  const tag = /\b(?:gql|graphql)\s*`/g;
-  for (const m of source.matchAll(tag)) {
-    const start = m.index! + m[0].length;
-    const end = source.indexOf('`', start);
-    if (end === -1) continue;
-    const key = graphqlOperationKey(source.slice(start, end));
+  for (const template of findGraphqlTemplates(source)) {
+    const key = graphqlOperationKey(template.text);
     if (!key) continue;
-    const line = source.slice(0, m.index).split('\n').length;
-    const inside = enclosingSymbol(index, filePath, line);
-    if (inside) {
-      out.push({ protocol: 'graphql', role: 'consumer', key, filePath, line, pattern: 'gql-inline', symbolId: canonicalSymbolId(inside), symbolName: inside.name });
-      continue;
-    }
-    const constName = new RegExp(`(?:const|let|var)\\s+(${IDENT})\\s*=\\s*$`).exec(source.slice(source.lastIndexOf('\n', m.index!) + 1, m.index))?.[1];
-    if (!constName) {
-      out.push({ protocol: 'graphql', role: 'consumer', key, filePath, line, pattern: 'gql-unbound', unresolvedReason: 'operation document is not bound to a name or used inside a function' });
-      continue;
-    }
-    const usage = new RegExp(`\\b${constName.replace(/\$/g, '\\$')}\\b`);
-    const users = new Map<string, CodeNode>();
-    lines.forEach((text, i) => {
-      if (i + 1 === line || !usage.test(text)) return;
-      const user = enclosingSymbol(index, filePath, i + 1);
-      if (user) users.set(user.id, user);
-    });
-    if (users.size === 0) {
-      out.push({ protocol: 'graphql', role: 'consumer', key, filePath, line, pattern: 'gql-const', unresolvedReason: `${constName} is not used inside a function with a known span` });
-    }
-    for (const user of users.values()) {
-      out.push({ protocol: 'graphql', role: 'consumer', key, filePath, line: user.startLine ?? line, pattern: 'gql-const', symbolId: canonicalSymbolId(user), symbolName: user.name });
+    for (const use of attributeDocumentUse(index, filePath, source, lines, template.start)) {
+      out.push({ protocol: 'graphql', role: 'consumer', key, filePath, ...use });
     }
   }
+}
+
+/** gql`...` / graphql`...` tagged templates: tag offset, body text and body start offset. */
+export function findGraphqlTemplates(source: string): Array<{ start: number; bodyStart: number; text: string }> {
+  const templates: Array<{ start: number; bodyStart: number; text: string }> = [];
+  for (const m of source.matchAll(/\b(?:gql|graphql)\s*`/g)) {
+    const bodyStart = m.index! + m[0].length;
+    const end = source.indexOf('`', bodyStart);
+    if (end === -1) continue;
+    templates.push({ start: m.index!, bodyStart, text: source.slice(bodyStart, end) });
+  }
+  return templates;
+}
+
+export interface DocumentUse {
+  line: number;
+  pattern: 'gql-inline' | 'gql-unbound' | 'gql-const';
+  symbolId?: string;
+  symbolName?: string;
+  unresolvedReason?: string;
+}
+
+/** Attributes a GraphQL document at `offset` to the function containing it or, when it is
+ * bound to a top-level const, to every function using that const. */
+export function attributeDocumentUse(index: SymbolSpanIndex, filePath: string, source: string, lines: readonly string[], offset: number): DocumentUse[] {
+  const line = source.slice(0, offset).split('\n').length;
+  const inside = enclosingSymbol(index, filePath, line);
+  if (inside) return [{ line, pattern: 'gql-inline', symbolId: canonicalSymbolId(inside), symbolName: inside.name }];
+  const constName = new RegExp(`(?:const|let|var)\\s+(${IDENT})\\s*=\\s*$`).exec(source.slice(source.lastIndexOf('\n', offset) + 1, offset))?.[1];
+  if (!constName) return [{ line, pattern: 'gql-unbound', unresolvedReason: 'operation document is not bound to a name or used inside a function' }];
+  return attributeIdentifierUse(index, filePath, lines, constName, line);
+}
+
+/** Every function in `lines` that mentions `identifier` (excluding its declaration line). */
+export function attributeIdentifierUse(index: SymbolSpanIndex, filePath: string, lines: readonly string[], identifier: string, declarationLine: number): DocumentUse[] {
+  const usage = new RegExp(`\\b${identifier.replace(/\$/g, '\\$')}\\b`);
+  const users = new Map<string, CodeNode>();
+  lines.forEach((text, i) => {
+    if (i + 1 === declarationLine || !usage.test(text)) return;
+    const user = enclosingSymbol(index, filePath, i + 1);
+    if (user) users.set(user.id, user);
+  });
+  if (users.size === 0) {
+    return [{ line: declarationLine, pattern: 'gql-const', unresolvedReason: `${identifier} is not used inside a function with a known span` }];
+  }
+  return [...users.values()].map((user) => ({ line: user.startLine ?? declarationLine, pattern: 'gql-const' as const, symbolId: canonicalSymbolId(user), symbolName: user.name }));
 }
 
 function grpcKey(service: string, rpc: string): string {

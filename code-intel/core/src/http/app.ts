@@ -77,7 +77,7 @@ import {
 import { withSpan, isTracingEnabled } from '../observability/tracing.js';
 import { openApiSpec } from './openapi.js';
 import { computeBlastRadiusWithTrust } from '../mcp-server/blast-radius-trust.js';
-import { getApiContract, getApiDrift, getApiImpact, type RouteSelector } from '../semantic/api-contracts/index.js';
+import { getApiContract, getApiDrift, getApiImpact, getApiShapeCheck, normalizeRoutePath, type RouteSelector } from '../semantic/api-contracts/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -1598,6 +1598,27 @@ export function createApp(
         routeNodeId: req.query['route_node_id'] as string | undefined,
       };
       res.json(getApiImpact(g, selector));
+    } catch (err) {
+      if (err instanceof AppError) {
+        res.status(err.statusCode).json({ error: { code: err.code, message: err.message, hint: err.hint, requestId: req.requestId, timestamp: new Date().toISOString() } });
+        return;
+      }
+      throw err;
+    }
+  });
+
+  app.get('/api/v1/api-shape-check', async (req, res) => {
+    try {
+      const g = await getGraphForRepoIdOrThrow(req.query['repoId'] as string | undefined);
+      const rawPath = req.query['path'] as string | undefined;
+      const selector: RouteSelector = {
+        method: req.query['method'] as string | undefined,
+        normalizedPath: rawPath ? normalizeRoutePath(rawPath).normalizedPath : undefined,
+        routeFactId: req.query['route_fact_id'] as string | undefined,
+        routeNodeId: req.query['route_node_id'] as string | undefined,
+      };
+      const maxFindings = Number(req.query['max_findings']);
+      res.json(getApiShapeCheck(g, selector, 'local', Number.isInteger(maxFindings) && maxFindings > 0 ? { maxFindings } : {}));
     } catch (err) {
       if (err instanceof AppError) {
         res.status(err.statusCode).json({ error: { code: err.code, message: err.message, hint: err.hint, requestId: req.requestId, timestamp: new Date().toISOString() } });

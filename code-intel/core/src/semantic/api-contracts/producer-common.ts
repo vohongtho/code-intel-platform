@@ -79,7 +79,7 @@ export interface ParsedObjectLiteral {
 /** Parses a single-line `{ a, b: expr, ... }` literal into field names. Returns undefined
  * when `text` is not (syntactically, shallowly) an object literal — callers must treat that
  * as "shape not statically provable", never as "shape is empty". */
-export function parseInlineObjectKeys(text: string): ParsedObjectLiteral | undefined {
+export function parseInlineObjectKeys(text: string, depth = 0): ParsedObjectLiteral | undefined {
   const trimmed = text.trim().replace(/;$/, '');
   if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return undefined;
   const inner = trimmed.slice(1, -1).trim();
@@ -98,10 +98,15 @@ export function parseInlineObjectKeys(text: string): ParsedObjectLiteral | undef
     const rawKey = (colonIndex === -1 ? part : part.slice(0, colonIndex)).trim();
     const key = rawKey.replace(/^["']|["']$/g, '');
     if (!/^[A-Za-z_$][\w$]*$/.test(key)) return undefined; // computed/dynamic key: can't prove statically
-    fields.push({ key, required: true });
+    // A nested object literal value is recorded as nested fields; anything else (identifier,
+    // call, spread-bearing literal) leaves `nested` absent, i.e. unknown below this key.
+    const nested = colonIndex === -1 || depth >= MAX_INLINE_NESTING ? undefined : parseInlineObjectKeys(part.slice(colonIndex + 1), depth + 1);
+    fields.push(nested && !nested.hasSpread ? { key, required: true, nested: nested.fields } : { key, required: true });
   }
   return { fields, hasSpread };
 }
+
+const MAX_INLINE_NESTING = 8;
 
 function findTopLevelColon(text: string): number {
   let depth = 0;

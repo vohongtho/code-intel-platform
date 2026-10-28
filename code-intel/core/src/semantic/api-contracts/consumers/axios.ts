@@ -6,6 +6,7 @@ import { normalizeHttpMethod } from '../route-normalizer.js';
 import { fullApiCoverage, partialApiCoverage } from '../types.js';
 import type { HttpConsumerFact } from '../types.js';
 import { composeUrlExpression, parseUrlExpression, trackConsumedKeys } from './common.js';
+import { trackAccessPaths, type AccessPathResult } from './access-paths.js';
 import { summarizeFrameworkDetection } from '../../../frameworks/detection.js';
 import type { FrameworkAdapter, FrameworkDetectionSignal, RepositoryFactView } from '../../../frameworks/contracts.js';
 import { workspaceRelativePath } from '../../../frameworks/contracts.js';
@@ -106,10 +107,12 @@ function extractFacts(view: RepositoryFactView): FactBundle['facts'] {
       if (!url.isFullyStatic) boundaries.push('dynamic-url-expression');
 
       let consumedKeys: readonly string[] = [];
+      let access: AccessPathResult | undefined;
       if (parsed.responseVar) {
         const tracked = trackConsumedKeys(lines, index + 1, `${parsed.responseVar}\\.data`);
         consumedKeys = tracked.keys;
         if (tracked.boundaryExceeded) boundaries.push('local-data-flow-exceeded');
+        access = trackAccessPaths(lines, index + 1, { kind: 'expression', patternSource: `${parsed.responseVar}\\.data` }, relPath);
       }
 
       const bodyParsed = parsed.bodyArg ? parseInlineObjectKeys(parsed.bodyArg) : undefined;
@@ -147,6 +150,8 @@ function extractFacts(view: RepositoryFactView): FactBundle['facts'] {
         url,
         requestShapeRef,
         consumedKeys,
+        consumedPaths: access?.paths,
+        consumedPathCoverage: access?.coverage,
         expectedResponseShapeSymbolRef: parsed.generic,
         coverage: boundaries.length === 0 ? fullApiCoverage() : partialApiCoverage(boundaries),
       };

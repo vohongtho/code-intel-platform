@@ -19,6 +19,7 @@ import {
 import { buildSnapshotDescriptor } from './fingerprint.js';
 import { createWorktreeDir } from './paths.js';
 import { computeContentFingerprints, writeContentFingerprints } from './content-fingerprints.js';
+import { extractProtocolSnapshot, writeProtocolSnapshot } from '../multi-repo/protocol-contracts.js';
 import type { PhaseMetric, SnapshotBoundary, SnapshotBuildRequest, SnapshotBuildResult, SnapshotPhaseDurations } from './types.js';
 
 function phaseMetric(startedAt: number, startRss: number): PhaseMetric {
@@ -178,9 +179,9 @@ export async function verifySnapshotReadBack(stagingDir: string, metadata: Index
  * a fingerprinting problem degrades the diff's accuracy rather than failing
  * the whole snapshot build.
  */
-async function tryWriteContentFingerprints(worktreeDir: string, stagingDir: string): Promise<string | null> {
+async function tryWriteContentFingerprints(worktreeDir: string, stagingDir: string): Promise<{ fingerprintError: string | null; protocolError: string | null }> {
+  const graph = createKnowledgeGraph();
   try {
-    const graph = createKnowledgeGraph();
     const db = new DbManager(path.join(stagingDir, 'graph.db'), true);
     await db.init();
     try {
@@ -189,9 +190,18 @@ async function tryWriteContentFingerprints(worktreeDir: string, stagingDir: stri
       db.close();
     }
     writeContentFingerprints(stagingDir, computeContentFingerprints(worktreeDir, graph));
-    return null;
   } catch (error) {
-    return error instanceof Error ? error.message : String(error);
+    return { fingerprintError: error instanceof Error ? error.message : String(error), protocolError: null };
+  }
+  // Protocol contracts (GraphQL/protobuf schemas, client operations, gRPC binding sites) are
+  // parsed now, while the ref's source still exists. A missing sidecar later reads as
+  // `legacy-schema` for GraphQL/gRPC drift, so a failure here is a boundary, not a build failure.
+  // The service label is assigned by the reader (registry name), never baked in here.
+  try {
+    writeProtocolSnapshot(stagingDir, extractProtocolSnapshot({ rootDir: worktreeDir, service: '', graph }));
+    return { fingerprintError: null, protocolError: null };
+  } catch (error) {
+    return { fingerprintError: null, protocolError: error instanceof Error ? error.message : String(error) };
   }
 }
 
@@ -346,8 +356,11 @@ export async function buildIsolatedSnapshot(
 
     const fingerprintingStarted = Date.now();
     const fingerprintingStartRss = process.memoryUsage().rss;
-    const fingerprintingError = await tryWriteContentFingerprints(worktreeDir, stagingDir);
+    const { fingerprintError: fingerprintingError, protocolError } = await tryWriteContentFingerprints(worktreeDir, stagingDir);
     phases.fingerprinting = phaseMetric(fingerprintingStarted, fingerprintingStartRss);
+    if (protocolError) {
+      boundaries.push({ kind: 'readback-failed', message: `protocol contract extraction failed (non-fatal): ${protocolError}` });
+    }
     if (fingerprintingError) {
       // Content fingerprints are an accuracy improvement for body-edit and
       // rename/move detection, not a correctness requirement for the diff to

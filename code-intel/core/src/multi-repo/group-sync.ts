@@ -14,9 +14,9 @@ import { createKnowledgeGraph, type KnowledgeGraph } from '../graph/knowledge-gr
 import { loadGraphFromDB } from './graph-from-db.js';
 import Logger from '../shared/logger.js';
 import { parseOpenAPIContracts } from './schema-parsers/openapi-parser.js';
-import { parseGraphQLContracts } from './schema-parsers/graphql-parser.js';
-import { parseProtoContracts } from './schema-parsers/proto-parser.js';
-import { extractProtocolFacts, isProtocolSourceFile, PROTOCOL_FACT_LIMITS, type ProtocolFact, type ProtocolKind } from './protocol-facts.js';
+import { extractProtocolFacts, type ProtocolFact, type ProtocolKind } from './protocol-facts.js';
+import { buildProtocolConsumerRefs, extractProtocolSnapshot, graphqlContracts, grpcContracts, readProtocolSources, type ProtocolMemberSnapshot } from './protocol-contracts.js';
+import { GRAPHQL_BINDING_CAPABILITIES, GRPC_BINDING_CAPABILITIES } from '../semantic/protocol-contracts/grpc-bindings.js';
 import { buildSymbolSpanIndex } from './symbol-spans.js';
 import { computeContractSimilarity } from './type-similarity.js';
 import { collectGraphFacts, matchApiContracts, routeFactFromNode, type ScopedFact } from '../semantic/api-contracts/index.js';
@@ -220,25 +220,6 @@ const PROTOCOL_LINK_KIND: Record<ProtocolKind, LinkKind> = {
   grpc: 'grpc-method-match',
 };
 
-/** Reads a member's TS/JS sources (bounded, repository-contained) for protocol-fact extraction. */
-function readMemberSources(repoPath: string, graph: KnowledgeGraph): Array<{ filePath: string; source: string }> {
-  const files: Array<{ filePath: string; source: string }> = [];
-  const root = path.resolve(repoPath);
-  for (const node of graph.allNodes()) {
-    if (node.kind !== 'file' || !isProtocolSourceFile(node.filePath)) continue;
-    if (files.length >= PROTOCOL_FACT_LIMITS.maxFilesPerRepo) break;
-    const abs = path.resolve(root, node.filePath);
-    if (abs !== root && !abs.startsWith(root + path.sep)) continue; // never read outside the repository
-    try {
-      if (fs.statSync(abs).size > PROTOCOL_FACT_LIMITS.maxFileBytes) continue;
-      files.push({ filePath: node.filePath, source: fs.readFileSync(abs, 'utf-8') });
-    } catch {
-      // File moved since analysis; it contributes no facts until the next analyze.
-    }
-  }
-  return files;
-}
-
 function protocolContract(fact: ProtocolFact, member: { repoId: string; repoName: string; repoPath: string; snapshotId: string }): Contract {
   const anchor = `${fact.protocol}:${fact.key}@${fact.filePath}:${fact.line}`;
   return enrichContract({
@@ -309,8 +290,10 @@ function matchContracts(allContracts: Contract[]): ContractLink[] {
 
   // Group contracts by repo. Route contracts are excluded here — they're matched separately
   // by matchRouteConsumersViaFacts using real method/path/consumer evidence, not name equality —
-  // and so are protocol-fact contracts (matched by literal protocol key in matchProtocolFacts).
-  const nonRouteContracts = allContracts.filter((c) => c.kind !== 'route' && !c.nodeKind.startsWith('protocol:'));
+  // and so are protocol-fact contracts (matched by literal protocol key in matchProtocolFacts) and
+  // schema-backed GraphQL/gRPC contracts (consumers keyed by canonical identity in
+  // protocol-contracts.ts#buildProtocolConsumerRefs).
+  const nonRouteContracts = allContracts.filter((c) => c.kind !== 'route' && !c.nodeKind.startsWith('protocol:') && !c.protocol);
   const byRepo = new Map<string, Contract[]>();
   for (const c of nonRouteContracts) {
     const arr = byRepo.get(c.repoName) ?? [];
@@ -433,6 +416,8 @@ export async function syncGroup(group: RepoGroup): Promise<GroupSyncResult> {
   const memberGraphs: Array<{ repoId: string; graph: KnowledgeGraph }> = [];
   const memberFacts: Array<{ repoId: string; repositoryName: string; facts: ReturnType<typeof collectGraphFacts> }> = [];
   const protocolMembers: Array<{ repoId: string; repoName: string; repoPath: string; snapshotId: string; facts: ProtocolFact[] }> = [];
+  const protocolSnapshots: ProtocolMemberSnapshot[] = [];
+  const protocolCoverage: NonNullable<GroupSyncResult['protocolCoverage']> = {};
 
   for (const member of group.members) {
     // Resolve the actual repo path from the registry
@@ -470,12 +455,17 @@ export async function syncGroup(group: RepoGroup): Promise<GroupSyncResult> {
       repositoryId: regEntry.id,
     }));
 
-    // Schema-file contracts (OpenAPI, GraphQL, Protobuf)
-    const [openapiContracts, graphqlContracts, protoContracts] = await Promise.all([
-      parseOpenAPIContracts(regEntry.path).catch(() => []),
-      parseGraphQLContracts(regEntry.path).catch(() => []),
-      parseProtoContracts(regEntry.path).catch(() => []),
-    ]);
+    // Schema-file contracts. OpenAPI stays flat; GraphQL/protobuf use the versioned rich model
+    // (one contract per GraphQL type / proto service, message and enum) — see protocol-contracts.ts.
+    const openapiContracts = await parseOpenAPIContracts(regEntry.path).catch(() => []);
+    const sources = readProtocolSources(regEntry.path, graph);
+    const protocolSnapshot = extractProtocolSnapshot({ rootDir: regEntry.path, service: regEntry.name, graph });
+    protocolSnapshots.push({ repoId: regEntry.id, repoName: regEntry.name, snapshot: protocolSnapshot });
+    protocolCoverage[regEntry.id] = {
+      graphql: [...protocolSnapshot.graphql.boundaries, ...(protocolSnapshot.graphql.schema?.coverage.boundaryReasons ?? [])].sort(),
+      grpc: [...protocolSnapshot.grpc.boundaries, ...protocolSnapshot.grpc.files.flatMap((file) => file.coverage.boundaryReasons.map((reason) => `${file.filePath}:${reason}`))].sort(),
+    };
+    const protocolMember = { repoName: regEntry.name, repoPath: regEntry.path, repositoryId: regEntry.id, snapshotId };
 
     for (const c of openapiContracts) {
       contracts.push(enrichContract({
@@ -492,39 +482,14 @@ export async function syncGroup(group: RepoGroup): Promise<GroupSyncResult> {
         sourceCanonicalId: `openapi:${c.method}:${c.path}`,
       }, regEntry.id, snapshotId));
     }
-    for (const c of graphqlContracts) {
-      contracts.push(enrichContract({
-        repoName: regEntry.name,
-        repoPath: regEntry.path,
-        repositoryId: regEntry.id,
-        kind: 'graphql',
-        name: c.name,
-        nodeId: `graphql:${c.name}`,
-        nodeKind: 'graphql',
-        filePath: c.filePath,
-        sourceCanonicalId: `graphql:${c.operation}:${c.name}`,
-      }, regEntry.id, snapshotId));
-    }
-    for (const c of protoContracts) {
-      contracts.push(enrichContract({
-        repoName: regEntry.name,
-        repoPath: regEntry.path,
-        repositoryId: regEntry.id,
-        kind: 'grpc',
-        name: c.name,
-        nodeId: `grpc:${c.serviceName}:${c.rpcName}`,
-        nodeKind: 'grpc',
-        filePath: c.filePath,
-        sourceCanonicalId: `grpc:${c.serviceName}:${c.rpcName}`,
-      }, regEntry.id, snapshotId));
-    }
+    contracts.push(...graphqlContracts(protocolSnapshot, protocolMember), ...grpcContracts(protocolSnapshot, protocolMember));
 
     protocolMembers.push({
       repoId: regEntry.id,
       repoName: regEntry.name,
       repoPath: regEntry.path,
       snapshotId,
-      facts: extractProtocolFacts(readMemberSources(regEntry.path, graph), buildSymbolSpanIndex(graph)),
+      facts: extractProtocolFacts(sources, buildSymbolSpanIndex(graph)),
     });
 
     Logger.info(`  ✓ ${regEntry.name} (${member.groupPath}): ${contracts.length} contracts`);
@@ -546,6 +511,13 @@ export async function syncGroup(group: RepoGroup): Promise<GroupSyncResult> {
     schemaVersion: GROUP_CONTRACT_SCHEMA_VERSION,
     contractVersions,
     changedContractIds: computeChangedContractIds(contractVersions, previousVersions),
-    consumerIndex: buildContractConsumerIndex({ contracts: allContracts, links, memberFacts }),
+    consumerIndex: buildContractConsumerIndex({
+      contracts: allContracts,
+      links,
+      memberFacts,
+      protocolConsumers: buildProtocolConsumerRefs(allContracts, protocolSnapshots),
+    }),
+    protocolCapabilities: [...GRAPHQL_BINDING_CAPABILITIES, ...GRPC_BINDING_CAPABILITIES],
+    protocolCoverage,
   };
 }

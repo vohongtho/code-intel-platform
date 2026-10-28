@@ -7,6 +7,7 @@ import type {
   ContractDriftFinding,
   GroupContractVersion,
   KnownConsumerCoverage,
+  ProtocolCompatibilityDimensions,
 } from '../types.js';
 import type { AnalysisCoverage, AnalysisCertainty } from '../../shared/index.js';
 
@@ -19,6 +20,10 @@ export interface ContractComparatorInput {
   baseGraph?: KnowledgeGraph;
   headGraph?: KnowledgeGraph;
   affectedConsumers?: readonly ContractConsumerRef[];
+  /** Set when a side's state could not supply rich protocol contracts at all (a snapshot built
+   * before the protocol sidecar existed): protocol comparators then report `legacy-schema`
+   * rather than reading the contract as added/removed. */
+  protocolUnavailable?: { base?: boolean; head?: boolean };
 }
 
 export interface ParsedField {
@@ -99,10 +104,12 @@ export function makeFinding(input: {
   repositoryId: string;
   baseVersion?: GroupContractVersion;
   headVersion?: GroupContractVersion;
+  protocolDimensions?: ProtocolCompatibilityDimensions;
 }): ContractDriftFinding {
   const affectedConsumers = sortConsumerRefs(input.affectedConsumers ?? []);
   const coverage = aggregateCoverage(affectedConsumers, input.extraCoverageReasons ?? []);
   return {
+    ...(input.protocolDimensions ? { protocolDimensions: input.protocolDimensions } : {}),
     contractId: input.contractId,
     kind: input.kind,
     repositoryId: input.repositoryId,

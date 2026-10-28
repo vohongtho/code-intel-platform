@@ -49,7 +49,7 @@ import { loadGraphFromDB } from '../multi-repo/graph-from-db.js';
 import { createKnowledgeGraph } from '../graph/knowledge-graph.js';
 import { CURRENT_SCHEMA_VERSION } from '../migrations/migration-runner.js';
 import { resolveSymbolTarget } from '../cli/symbol-target.js';
-import { getApiContract, getApiDrift, getApiImpact, type RouteSelector } from '../semantic/api-contracts/index.js';
+import { getApiContract, getApiDrift, getApiImpact, getApiShapeCheck, normalizeRoutePath, type RouteSelector } from '../semantic/api-contracts/index.js';
 import { computeSemanticGraphDiff } from '../snapshots/service.js';
 import { computeBlastRadiusWithTrust } from './blast-radius-trust.js';
 import { MCP_TOOL_DEFINITIONS } from './tool-definitions.js';
@@ -383,7 +383,7 @@ const GRAPH_BACKED_TOOLS = new Set([
   'overview', 'inspect', 'context', 'explore', 'blast_radius', 'file_symbols', 'find_path', 'list_exports', 'routes', 'clusters', 'flows',
   'detect_changes', 'query', 'raw_query', 'explain_relationship', 'pr_impact', 'similar_symbols', 'health_report',
   'suggest_tests', 'cluster_summary', 'deprecated_usage', 'complexity_hotspots', 'coverage_gaps', 'secrets', 'vulnerability_scan',
-  'api_contract', 'api_impact', 'api_drift', 'graph_diff',
+  'api_contract', 'api_impact', 'api_shape_check', 'api_drift', 'graph_diff',
 ]);
 
 export async function dispatchTool(
@@ -1540,6 +1540,20 @@ export async function dispatchTool(
           routeNodeId: a.route_node_id as string | undefined,
         };
         const result = getApiImpact(graph, selector, activeRepoName);
+        return { content: [{ type: 'text', text: compact(result) }] };
+      }
+
+      // ── api_shape_check ────────────────────────────────────────────────────
+      case 'api_shape_check': {
+        const rawPath = a.path as string | undefined;
+        const selector: RouteSelector = {
+          method: a.method as string | undefined,
+          normalizedPath: rawPath ? normalizeRoutePath(rawPath).normalizedPath : undefined,
+          routeFactId: a.route_fact_id as string | undefined,
+          routeNodeId: a.route_node_id as string | undefined,
+        };
+        const maxFindings = a.max_findings as number | undefined;
+        const result = getApiShapeCheck(graph, selector, activeRepoName, Number.isInteger(maxFindings) && maxFindings! > 0 ? { maxFindings } : {});
         return { content: [{ type: 'text', text: compact(result) }] };
       }
 

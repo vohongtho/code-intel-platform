@@ -538,6 +538,24 @@ export const openApiSpec = {
         },
       },
     },
+    '/api-shape-check': {
+      get: {
+        tags: ['API Contracts'],
+        summary: 'Checks the response fields each statically resolved consumer reads (nested paths) against the route\'s success response shapes',
+        parameters: [
+          { name: 'repoId', in: 'query', schema: { type: 'string' } },
+          { name: 'method', in: 'query', description: 'HTTP method, e.g. GET, POST (omit to match any method)', schema: { type: 'string' } },
+          { name: 'path', in: 'query', description: 'Route path in framework (/users/:id) or normalized (/users/{}) spelling', schema: { type: 'string' } },
+          { name: 'route_fact_id', in: 'query', description: 'Exact route fact id from a prior api-contract/api-impact result', schema: { type: 'string' } },
+          { name: 'route_node_id', in: 'query', description: 'The route\'s graph node id', schema: { type: 'string' } },
+          { name: 'max_findings', in: 'query', description: 'Maximum findings per route (default 100; totalFindings is always exact)', schema: { type: 'integer', minimum: 1 } },
+        ],
+        responses: {
+          '200': { description: 'One shape-check result per matching route (verdict compatible|breaking|unknown, per-path findings, producer/consumer coverage)', content: { 'application/json': { schema: { type: 'array' } } } },
+          '404': { description: 'Repo not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
     '/api-drift': {
       get: {
         tags: ['API Contracts'],
