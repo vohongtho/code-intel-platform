@@ -43,6 +43,7 @@ export const SESSION_STORE_LIMITS = Object.freeze({
   maxTargets: 500,
   maxConditions: 2000,
   maxSessions: 200,
+  maxActiveSessionsPerOwner: 20,
   completedRetentionMs: 30 * 24 * 60 * 60 * 1000,
   lockStaleMs: 30_000,
   lockWaitMs: 5_000,
@@ -183,6 +184,8 @@ export interface SessionSummary {
   revision: number;
   updatedAt: string;
   scope: ChangeWorkflowSession['scope'];
+  /** HTTP owner's user ID; absent for CLI/MCP sessions. */
+  ownerId?: string;
 }
 
 export interface SessionStore {
@@ -198,8 +201,11 @@ export interface SessionStore {
   writeBaseline(id: string, repositoryId: string, payload: unknown): { sha256: string; sizeBytes: number };
   readBaseline<T = unknown>(id: string, repositoryId: string, expectedSha256: string): T;
   prune(now?: Date): string[];
-  /** Throws QUOTA_EXCEEDED when the store already holds `maxSessions` active sessions. */
-  assertCapacity(): void;
+  /**
+   * Throws QUOTA_EXCEEDED when the store already holds `maxSessions` active sessions, or when
+   * `ownerId` already has `maxActiveSessionsPerOwner` active sessions in it.
+   */
+  assertCapacity(ownerId?: string): void;
 }
 
 export interface SessionStoreOptions {
@@ -207,6 +213,7 @@ export interface SessionStoreOptions {
   maxSessionBytes?: number;
   maxBaselineBytes?: number;
   maxSessions?: number;
+  maxActiveSessionsPerOwner?: number;
   completedRetentionMs?: number;
 }
 
@@ -219,6 +226,7 @@ export function createSessionStore(root: string, options: SessionStoreOptions = 
   const maxSessionBytes = options.maxSessionBytes ?? SESSION_STORE_LIMITS.maxSessionBytes;
   const maxBaselineBytes = options.maxBaselineBytes ?? SESSION_STORE_LIMITS.maxBaselineBytes;
   const maxSessions = options.maxSessions ?? SESSION_STORE_LIMITS.maxSessions;
+  const maxActiveSessionsPerOwner = options.maxActiveSessionsPerOwner ?? SESSION_STORE_LIMITS.maxActiveSessionsPerOwner;
   const completedRetentionMs = options.completedRetentionMs ?? SESSION_STORE_LIMITS.completedRetentionMs;
 
   const sessionPath = (id: string) => {
@@ -293,7 +301,7 @@ export function createSessionStore(root: string, options: SessionStoreOptions = 
     create(session) {
       validateSessionShape(session, session.id);
       const filePath = sessionPath(session.id);
-      store.assertCapacity();
+      store.assertCapacity(session.owner?.userId);
       return withLock(session.id, () => {
         if (fs.existsSync(filePath)) throw new WorkflowSessionError('INVALID_REQUEST', `session ${session.id} already exists`);
         atomicWrite(filePath, serialize(session));
@@ -337,7 +345,7 @@ export function createSessionStore(root: string, options: SessionStoreOptions = 
         if (!match) continue;
         try {
           const session = readFile(match[1]);
-          summaries.push({ id: session.id, phase: session.phase, revision: session.revision, updatedAt: session.updatedAt, scope: session.scope });
+          summaries.push({ id: session.id, phase: session.phase, revision: session.revision, updatedAt: session.updatedAt, scope: session.scope, ...(session.owner ? { ownerId: session.owner.userId } : {}) });
         } catch {
           // Unreadable sessions are skipped from listings; `read` reports why.
         }
@@ -401,10 +409,16 @@ export function createSessionStore(root: string, options: SessionStoreOptions = 
       return removed.sort();
     },
 
-    assertCapacity() {
-      const active = store.list().filter((summary) => summary.phase !== 'complete').length;
-      if (active >= maxSessions) {
-        throw new WorkflowSessionError('QUOTA_EXCEEDED', `session store already holds ${active} active sessions (limit ${maxSessions}); complete or remove one first`);
+    assertCapacity(ownerId) {
+      const active = store.list().filter((summary) => summary.phase !== 'complete');
+      if (ownerId !== undefined) {
+        const owned = active.filter((summary) => summary.ownerId === ownerId).length;
+        if (owned >= maxActiveSessionsPerOwner) {
+          throw new WorkflowSessionError('QUOTA_EXCEEDED', `you already have ${owned} active sessions here (limit ${maxActiveSessionsPerOwner}); complete one first`);
+        }
+      }
+      if (active.length >= maxSessions) {
+        throw new WorkflowSessionError('QUOTA_EXCEEDED', `session store already holds ${active.length} active sessions (limit ${maxSessions}); complete or remove one first`);
       }
     },
   };

@@ -194,6 +194,19 @@ describe('workflow session store', () => {
     assert.deepEqual(store.list().map((s) => s.id).sort(), [activeA.id, activeB.id].sort());
   });
 
+  it('caps active sessions per owner without blocking other owners or local sessions', () => {
+    const store = createSessionStore(root, { maxActiveSessionsPerOwner: 1 });
+    const alice = { userId: 'u-alice', username: 'alice' };
+    store.create(makeSession({ owner: alice }));
+    expectCode(() => store.create(makeSession({ owner: alice })), 'QUOTA_EXCEEDED');
+    store.create(makeSession({ owner: { userId: 'u-bob', username: 'bob' } }));
+    store.create(makeSession());
+    const done = makeSession({ owner: { userId: 'u-carol', username: 'carol' }, phase: 'complete' });
+    store.create(done);
+    store.create(makeSession({ owner: { userId: 'u-carol', username: 'carol' } }));
+    assert.equal(store.list().length, 5);
+  });
+
   it('verifies baseline sidecar checksums and size bounds', () => {
     const store = createSessionStore(root, { maxBaselineBytes: 64 });
     const id = newSessionId();
