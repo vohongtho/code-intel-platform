@@ -234,6 +234,7 @@ export async function runAtomicAnalyze(args: string[], binUrl: URL): Promise<num
       console.log(`    clone modes: ${Object.entries(cloneModes).map(([name, mode]) => `${name}=${mode}`).join(', ')}`);
     }
     const childArgs = [...args];
+    let embeddingsRemembered = false;
 
     if (
       previous?.embeddings?.enabled
@@ -241,11 +242,14 @@ export async function runAtomicAnalyze(args: string[], binUrl: URL): Promise<num
       && !childArgs.includes('--skip-embeddings')
     ) {
       childArgs.push('--embeddings');
+      embeddingsRemembered = true;
     }
 
     const childStatus = runChild(childArgs, binUrl, {
       CODE_INTEL_INDEX_STAGING_DIR: generation.stagingDir,
       CODE_INTEL_ANALYSIS_PLAN: JSON.stringify(plan),
+      // The flag above came from the repo's remembered preference, not the user.
+      ...(embeddingsRemembered ? { CODE_INTEL_EMBEDDINGS_REMEMBERED: '1' } : {}),
     });
     if (childStatus !== 0) {
       abortIndexGeneration(generation);

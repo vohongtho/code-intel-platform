@@ -179,7 +179,10 @@ describe('OpenAPI spec — every /api/v1/ route appears in paths', () => {
   const appRoutes: Array<{ method: string; path: string }> = [
     { method: 'get',    path: '/health' },
     { method: 'get',    path: '/repos' },
-    { method: 'get',    path: '/graph/{repo}' },
+    { method: 'get',    path: '/graph/{repoId}' },
+    { method: 'post',   path: '/graph/diff' },
+    { method: 'get',    path: '/api-shape-check' },
+    { method: 'get',    path: '/groups/{name}/drift' },
     { method: 'post',   path: '/search' },
     { method: 'post',   path: '/explore' },
     { method: 'get',    path: '/workflows' },

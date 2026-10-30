@@ -510,12 +510,17 @@ async function analyzeWorkspace(targetPath: string, options?: {
   const loadedConfig = loadConfig();
   const configuredEmbeddingModelId = normalizeEmbeddingModelId(loadedConfig?.embeddings.model ?? getDefaultEmbeddingModel().id);
   const runtimeEmbeddingMetadata = buildEmbeddingMetadata('ready', configuredEmbeddingModelId);
-  const embeddingMode = resolveEmbeddingMode({
+  const resolvedEmbeddingMode = resolveEmbeddingMode({
     explicitEnable: options?.embeddings,
     explicitSkip: options?.skipEmbeddings,
     metadata: previousMetadata,
     hasLegacyVectorDb: !previousMetadata?.embeddings && fs.existsSync(vectorDbPath),
   });
+  // The atomic parent forwards a remembered preference as `--embeddings` (see
+  // atomic-analyze.ts); keep its provenance so the user sees where it came from.
+  const embeddingMode = resolvedEmbeddingMode.source === 'explicit' && process.env['CODE_INTEL_EMBEDDINGS_REMEMBERED'] === '1'
+    ? { ...resolvedEmbeddingMode, source: 'metadata' as const }
+    : resolvedEmbeddingMode;
   const graph = createKnowledgeGraph();
   let activeGraph: KnowledgeGraph = graph;
 
@@ -637,7 +642,9 @@ async function analyzeWorkspace(targetPath: string, options?: {
         );
         detectedChangedFiles = decision.changedExistingFiles ?? [];
         detectedDeletedFiles = decision.deletedFiles ?? [];
-        detectedChangeSetKnown = true;
+        // Only a decision that reports its change set makes it known; an absent list
+        // (no comparable history) must force full vector work, never read as "no changes".
+        detectedChangeSetKnown = decision.changedExistingFiles !== undefined;
         if (decision.incremental) {
           const dbPath = getDbPath(workspaceRoot);
           if (fs.existsSync(dbPath)) {

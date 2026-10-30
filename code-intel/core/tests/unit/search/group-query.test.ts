@@ -88,8 +88,11 @@ describe('queryGroup pinned metadata contract', () => {
       content: 'newer generation content',
     });
 
+    // Pin the older generation by repointing the real published manifest; a hand-written
+    // pointer without publishedAt/artifacts is (correctly) rejected as an invalid manifest.
     const currentPath = path.join(repoDir, '.code-intel', 'current.json');
-    fs.writeFileSync(currentPath, JSON.stringify({ version: 2, generationId: 'gen-a' }, null, 2));
+    const published = JSON.parse(fs.readFileSync(currentPath, 'utf8')) as Record<string, unknown>;
+    fs.writeFileSync(currentPath, JSON.stringify({ ...published, generationId: 'gen-a' }, null, 2));
 
     saveRegistry([{ id: 'repo-1', name: 'repo-a', path: repoDir, indexedAt: new Date(0).toISOString(), stats: { nodes: 1, edges: 0, files: 1 } }]);
     const group = {

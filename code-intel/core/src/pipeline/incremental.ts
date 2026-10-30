@@ -164,9 +164,14 @@ export function decideIncremental(
           dependencyAwareCandidate: delta,
         };
       }
+      // The graph rebuilds in full, but the change set is still known: callers that
+      // scope other artifacts by it (vector upserts in cli/app.ts) must receive it,
+      // or a full-rebuild run looks like a zero-change run to them.
       return {
         incremental: false,
         fallbackReason: `${source}: correctness-first full rebuild required for ${deduplicated.length} changed and ${deletedFiles.length} deleted file(s)`,
+        changedExistingFiles: deduplicated,
+        deletedFiles,
         totalFiles: total,
         dependencyAwareCandidate: delta,
       };
