@@ -52,7 +52,11 @@ import { resolveSymbolTarget } from '../cli/symbol-target.js';
 import { getApiContract, getApiDrift, getApiImpact, getApiShapeCheck, normalizeRoutePath, type RouteSelector } from '../semantic/api-contracts/index.js';
 import { computeSemanticGraphDiff } from '../snapshots/service.js';
 import { computeBlastRadiusWithTrust } from './blast-radius-trust.js';
-import { MCP_TOOL_DEFINITIONS } from './tool-definitions.js';
+import { MCP_TOOL_DEFINITIONS, REF_SELECTABLE_TOOL_NAMES } from './tool-definitions.js';
+import { resolveReadIndexView } from '../storage/index-view-resolver.js';
+import { summarizeIndexView, type ReadIndexView } from '../storage/index-view.js';
+import { runWithEvidenceDb } from '../evidence/store.js';
+import { loadIndexViewArtifacts, resetIndexViewLoaderForTests } from '../storage/index-view-loader.js';
 
 export { MCP_TOOL_DEFINITIONS } from './tool-definitions.js';
 
@@ -204,6 +208,8 @@ type LoadedRepoGraph = {
   bm25Index: Bm25Index | null;
   vectorDbPath?: string;
   missingIndex?: boolean;
+  /** Set when this context is an alternate-ref snapshot view rather than the active index. */
+  indexView?: ReadIndexView;
 };
 
 const repoGraphCache = new Map<string, LoadedRepoGraph>();
@@ -212,6 +218,7 @@ const repoReloads = new Map<string, Promise<LoadedRepoGraph>>();
 export function resetRepoGraphCacheForTests(): void {
   repoGraphCache.clear();
   repoReloads.clear();
+  resetIndexViewLoaderForTests();
 }
 
 function repoCacheKey(repoId: string, repoPath: string): string {
@@ -285,6 +292,99 @@ async function loadRepoGraph(
     bm25Index,
     vectorDbPath: snapshot.vectorDbPath,
   };
+}
+
+async function loadViewContext(
+  resolved: { id: string; name: string; path: string },
+  view: ReadIndexView,
+): Promise<LoadedRepoGraph> {
+  const loaded = await loadIndexViewArtifacts(view);
+  return {
+    id: resolved.id,
+    repo: resolved.name,
+    path: resolved.path,
+    indexVersion: view.identity,
+    schemaVersion: loaded.metadata?.schemaVersion ?? CURRENT_SCHEMA_VERSION,
+    generationId: view.identity,
+    snapshot: null,
+    metadata: loaded.metadata,
+    graph: loaded.graph,
+    bm25Index: loaded.bm25Index,
+    vectorDbPath: view.vectorDbPath,
+    indexView: view,
+  };
+}
+
+/** Adds the compact `indexView` identity to every JSON object payload of a ref-served result. */
+function attachIndexView(result: ToolResult, view: ReadIndexView): ToolResult {
+  const summary = summarizeIndexView(view);
+  let attached = false;
+  const content = result.content.map((item) => {
+    if (item.type !== 'text') return item;
+    try {
+      const parsed = JSON.parse(item.text) as unknown;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return item;
+      attached = true;
+      return { ...item, text: compact({ ...(parsed as Record<string, unknown>), indexView: summary }) };
+    } catch {
+      return item;
+    }
+  });
+  if (!attached) content.push({ type: 'text', text: compact({ indexView: summary }) });
+  return { ...result, content };
+}
+
+function refError(message: string, extra: Record<string, unknown> = {}): ToolResult {
+  return { isError: true, content: [{ type: 'text', text: compact({ error: message, ...extra }) }] };
+}
+
+/**
+ * Serves one ref-capable tool call from the semantic snapshot of `a.ref`. The view
+ * is resolved once, held by a read pin for the whole call, and every artifact
+ * (graph, BM25, vectors, evidence) comes from it. Failures are boundaries — there
+ * is no fallback to the current index.
+ */
+async function dispatchToolAtRef(
+  name: string,
+  a: Record<string, unknown>,
+  graph: KnowledgeGraph,
+  repoName: string,
+  workspaceRoot: string | undefined,
+  bm25Resolver?: () => Bm25Index | null,
+  contextSessionResolver?: (workspaceIdentity: string) => ContextDeliverySession,
+): Promise<ToolResult> {
+  const ref = a.ref;
+  if (!REF_SELECTABLE_TOOL_NAMES.has(name)) {
+    return refError(`Tool '${name}' does not accept ref`, { hint: 'Omit ref, or use graph_diff / pr_impact to compare refs.' });
+  }
+  if (typeof ref !== 'string' || ref.trim() === '') return refError('ref must be a non-empty string', { boundary: 'unknown-ref' });
+  const scope = a.scope as { type?: string; repoId?: string } | undefined;
+  if (scope?.type === 'group' || typeof a.group === 'string') {
+    return refError('ref cannot be combined with a group scope', { hint: 'Select one repository with repoId or scope.repoId.' });
+  }
+  let resolved: { id: string; name: string; path: string } | null;
+  try {
+    resolved = resolveRepo((a.repoId as string | undefined) ?? scope?.repoId, a.repo as string | undefined, repoName, workspaceRoot);
+  } catch (err) {
+    return refError(err instanceof Error ? err.message : String(err));
+  }
+  if (!resolved) return refError('No repository selected for ref', { hint: 'Pass repoId.' });
+
+  const resolution = await resolveReadIndexView({ repoDir: resolved.path, ref });
+  if (!resolution.ok) {
+    return refError(resolution.boundary.message, { boundary: resolution.boundary.kind, ref, repo: resolved.name });
+  }
+  const view = resolution.view;
+  try {
+    const ctx = await loadViewContext(resolved, view);
+    const result = await runWithEvidenceDb(
+      view.evidenceDbPath ?? null,
+      () => dispatchTool(name, a, graph, repoName, workspaceRoot, bm25Resolver, contextSessionResolver, ctx),
+    );
+    return attachIndexView(result, view);
+  } finally {
+    view.release();
+  }
 }
 
 async function ensureRepoLoaded(
@@ -362,6 +462,11 @@ async function graphContext(a: Record<string, unknown>, repoName: string, worksp
   return ensureRepoLoaded(a.repoId as string | undefined, a.repo as string | undefined, repoName, workspaceRoot, graph);
 }
 
+/** Delivery memory is per workspace *and* per view: content delivered from one ref is not "already delivered" for another. */
+function sessionIdentity(workspace: string, ctx: LoadedRepoGraph | null): string {
+  return ctx?.indexView ? `${workspace}@${ctx.indexView.identity}` : workspace;
+}
+
 function missingIndexResult(ctx: LoadedRepoGraph): ToolResult {
   const repoLabel = ctx.path || ctx.repo;
   return {
@@ -394,7 +499,12 @@ export async function dispatchTool(
   workspaceRoot: string | undefined,
   bm25Resolver?: () => Bm25Index | null,
   contextSessionResolver?: (workspaceIdentity: string) => ContextDeliverySession,
+  /** Internal: a context already pinned to one alternate-ref view (see dispatchToolAtRef). */
+  pinnedContext?: LoadedRepoGraph,
 ): Promise<ToolResult> {
+  if (a.ref !== undefined && !pinnedContext) {
+    return dispatchToolAtRef(name, a, graph, repoName, workspaceRoot, bm25Resolver, contextSessionResolver);
+  }
   let activeRepoName = repoName;
   let activeWorkspaceRoot = workspaceRoot;
   let activeBm25: Bm25Index | null | undefined;
@@ -422,9 +532,9 @@ export async function dispatchTool(
     }
     preloadSearchContext = normalized.scope === undefined;
   }
-  if (GRAPH_BACKED_TOOLS.has(name) || preloadSearchContext) {
+  if (pinnedContext || GRAPH_BACKED_TOOLS.has(name) || preloadSearchContext) {
     try {
-      const ctx = await graphContext(a, repoName, workspaceRoot, graph);
+      const ctx = pinnedContext ?? await graphContext(a, repoName, workspaceRoot, graph);
       activeContext = ctx;
       graph = ctx.graph;
       activeRepoName = ctx.repo;
@@ -512,12 +622,25 @@ export async function dispatchTool(
             workspaceRoot: activeWorkspaceRoot,
             ensureBm25Index: () => activeBm25 ?? ((!a.repoId && (!a.repo || a.repo === repoName)) ? (bm25Resolver ? bm25Resolver() : null) : null),
             getGraphForRepo: async (requestedRepo) => {
-              if (!requestedRepo || requestedRepo === activeRepoName) return graph;
+              if (!requestedRepo || requestedRepo === activeRepoName || pinnedContext) return graph;
               const ctx = await ensureRepoLoaded(requestedRepo, undefined, repoName, workspaceRoot, graph);
               if (ctx.missingIndex) throw missingIndexError(ctx);
               return ctx.graph;
             },
             getRepoSearchContext: async (requestedRepo) => {
+              if (pinnedContext) {
+                // A ref-pinned call searches exactly the repo/view it resolved; never another index.
+                if (requestedRepo && requestedRepo !== pinnedContext.id && requestedRepo !== pinnedContext.repo) {
+                  throw new Error(`ref was resolved for repo '${pinnedContext.repo}', not '${requestedRepo}'`);
+                }
+                return {
+                  graph: pinnedContext.graph,
+                  bm25Index: pinnedContext.bm25Index,
+                  vectorDbPath: pinnedContext.vectorDbPath,
+                  metadata: pinnedContext.metadata,
+                  indexView: pinnedContext.indexView,
+                };
+              }
               const ctx = !requestedRepo || requestedRepo === activeRepoName
                 ? activeContext ?? await ensureRepoLoaded(requestedRepo, undefined, repoName, workspaceRoot, graph)
                 : await ensureRepoLoaded(requestedRepo, undefined, repoName, workspaceRoot, graph);
@@ -708,7 +831,7 @@ export async function dispatchTool(
           };
         }
 
-        const contextSession = contextSessionResolver?.(activeWorkspaceRoot ?? activeRepoName);
+        const contextSession = contextSessionResolver?.(sessionIdentity(activeWorkspaceRoot ?? activeRepoName, activeContext));
         const doc = build(resolvedSeeds, graph, {
           queryIntent,
           maxTokens,
@@ -757,16 +880,21 @@ export async function dispatchTool(
               getGraphForRepo: async () => graph,
               getRepoSearchContext: async () => ({
                 graph,
-                bm25Index: activeBm25 ?? (bm25Resolver ? bm25Resolver() : null),
+                bm25Index: activeContext?.indexView ? activeBm25 ?? null : activeBm25 ?? (bm25Resolver ? bm25Resolver() : null),
                 vectorDbPath: activeVectorDbPath,
                 snapshot: activeContext?.snapshot,
                 metadata: activeContext?.metadata,
+                indexView: activeContext?.indexView,
               }),
             }),
             repoDir: activeWorkspaceRoot,
             repoName: activeRepoName,
-            session: contextSessionResolver?.(activeWorkspaceRoot ?? activeRepoName),
-            indexIdentity: activeContext?.snapshot?.generationId,
+            session: contextSessionResolver?.(sessionIdentity(activeWorkspaceRoot ?? activeRepoName, activeContext)),
+            indexIdentity: activeContext?.indexView?.identity ?? activeContext?.snapshot?.generationId,
+            ...(activeContext?.indexView ? {
+              hydrateSource: false,
+              sourceContentAvailable: activeContext.indexView.capabilities.sourceContent,
+            } : {}),
           });
           return { content: [{ type: 'text', text: compact(result) }] };
         } catch (err) {

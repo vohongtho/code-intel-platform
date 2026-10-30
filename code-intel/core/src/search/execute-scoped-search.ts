@@ -10,6 +10,7 @@ import type { QueryScope, ResolvedQueryScope } from 'code-intel-shared';
 import { resolveVectorRuntimeState, type VectorRuntimeState } from './vector-runtime-state.js';
 import { type IndexMetadata } from '../storage/metadata.js';
 import type { IndexSnapshot } from '../storage/index-snapshot.js';
+import { summarizeIndexView, type ReadIndexView } from '../storage/index-view.js';
 import { getEmbeddingFingerprint } from './embedder.js';
 import { getDefaultEmbeddingModel, getEmbeddingModel } from './embedding-model-registry.js';
 import type { EmbeddingModelDescriptor } from './embedding-model-registry.js';
@@ -209,6 +210,12 @@ export interface RepoSearchContext {
   vectorDbPath?: string;
   snapshot?: IndexSnapshot | null;
   metadata?: IndexMetadata | null;
+  /**
+   * Set when the search is pinned to a non-current view (alternate ref). Every
+   * artifact then comes from this context only: no fallback to the active
+   * generation's BM25 or vectors, even when this view has none.
+   */
+  indexView?: ReadIndexView;
 }
 
 export type ExecuteScopedSearchDeps = {
@@ -311,14 +318,17 @@ export async function executeSearchRequest(
   const repoEntry = requestedRepo && requestedRepo !== deps.repoName
     ? registry.find((repo) => repo.id === requestedRepo)
     : null;
-  const vectorDbPath = searchContext?.vectorDbPath ?? (repoEntry
+  const isolatedView = searchContext?.indexView?.kind === 'semantic-snapshot' ? searchContext.indexView : undefined;
+  const vectorDbPath = isolatedView ? isolatedView.vectorDbPath : searchContext?.vectorDbPath ?? (repoEntry
     ? getVectorDbPath(repoEntry.path)
     : deps.workspaceRoot
       ? getVectorDbPath(deps.workspaceRoot)
       : undefined);
   const metadata = searchContext?.metadata;
-  const bm25 = searchContext?.bm25Index
-    ?? ((!requestedRepo || requestedRepo === deps.repoName) ? deps.ensureBm25Index() : null);
+  const bm25 = isolatedView
+    ? searchContext?.bm25Index ?? null
+    : searchContext?.bm25Index ?? ((!requestedRepo || requestedRepo === deps.repoName) ? deps.ensureBm25Index() : null);
+  const indexViewBody = isolatedView ? { indexView: summarizeIndexView(isolatedView) } : {};
   const bm25Results = bm25 ? bm25.search(query, limit * 3) : null;
 
   // Resolve vector runtime state for accurate readiness and fallback reporting
@@ -340,6 +350,7 @@ export async function executeSearchRequest(
         searchMode: 'bm25',
         explanation: explain ? buildSearchExplanation(requestedMode, 'bm25', vectorRuntimeState?.ready ?? false) : undefined,
         scope: resolvedScope,
+        ...indexViewBody,
         vectorReady: vectorRuntimeState?.ready ?? false,
         deprecated: deprecatedFlag,
         deprecation,
@@ -385,6 +396,7 @@ export async function executeSearchRequest(
       fallbackReason,
       explanation: explain ? buildSearchExplanation(requestedMode, actualMode, vectorReady, fallbackReason) : undefined,
       scope: resolvedScope,
+      ...indexViewBody,
       vectorReady,
       deprecated: deprecatedFlag,
       deprecation,

@@ -215,6 +215,37 @@ export interface SemanticGraphDiff {
   coverage: AnalysisCoverage;
 }
 
+export type PortablePrivacyProfile = 'full' | 'metadata-only';
+
+/**
+ * What one snapshot view can actually answer. Locally-built entries carry every
+ * capability their artifacts provide; entries published by a portable import carry
+ * exactly what the package's manifest declared after its privacy profile was applied
+ * (see export-import.ts). Source-dependent readers must check `sourceContent` and
+ * report a boundary rather than reaching for the working tree.
+ */
+export interface SnapshotCapabilities {
+  privacyProfile: PortablePrivacyProfile;
+  /** Indexed symbol bodies/snippets are present in graph.db. */
+  sourceContent: boolean;
+  bm25: boolean;
+  /** `names-only` when BM25 was rebuilt from a content-stripped graph. */
+  bm25Content: 'full' | 'names-only' | 'none';
+  vector: boolean;
+  evidence: boolean;
+  protocolContracts: boolean;
+}
+
+export const FULL_SNAPSHOT_CAPABILITIES: SnapshotCapabilities = Object.freeze({
+  privacyProfile: 'full',
+  sourceContent: true,
+  bm25: true,
+  bm25Content: 'full',
+  vector: false,
+  evidence: true,
+  protocolContracts: true,
+}) as SnapshotCapabilities;
+
 export interface CacheEntryMetadata {
   schemaVersion: number;
   descriptor: SemanticSnapshotDescriptor;

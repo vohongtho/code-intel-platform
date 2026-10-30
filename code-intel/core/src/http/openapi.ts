@@ -130,10 +130,30 @@ export const openApiSpec = {
           },
         ],
       },
+      IndexViewSummary: {
+        type: 'object',
+        description: 'Identity of the immutable index a ref-served response was read from.',
+        properties: {
+          kind: { type: 'string', enum: ['generation', 'semantic-snapshot'] },
+          identity: { type: 'string', description: 'Snapshot ID (content-derived) or generation ID' },
+          ref: { type: 'string' },
+          commit: { type: 'string' },
+          gitTree: { type: 'string' },
+          resolution: { type: 'string', enum: ['active', 'cached', 'built'] },
+          privacyProfile: { type: 'string', enum: ['full', 'metadata-only'] },
+          capabilities: {
+            type: 'object',
+            properties: { sourceContent: { type: 'boolean' }, bm25: { type: 'boolean' }, vector: { type: 'boolean' }, evidence: { type: 'boolean' } },
+          },
+          boundaries: { type: 'array', items: { type: 'object', properties: { kind: { type: 'string' }, message: { type: 'string' } } } },
+        },
+        required: ['kind', 'identity', 'resolution', 'privacyProfile', 'capabilities'],
+      },
       SearchRequest: {
         type: 'object',
         properties: {
           query: { type: 'string', description: 'Search query' },
+          ref: { type: 'string', description: "Optional committed Git ref (branch, tag or SHA). Serves the request from that ref's isolated semantic snapshot instead of the current index; never falls back to current state. Building an uncached snapshot requires the analyst role. Cannot be combined with a group scope." },
           limit: { type: 'integer', default: 20 },
           mode: { type: 'string', enum: ['bm25', 'vector', 'hybrid'], default: 'hybrid', description: 'Malformed explicit scope fails closed with 400; unknown explicit repo/group targets return 404.' },
           scope: { '$ref': '#/components/schemas/SearchScope' },
@@ -148,6 +168,7 @@ export const openApiSpec = {
         properties: {
           results: { type: 'array', items: { '$ref': '#/components/schemas/CodeNode' } },
           searchMode: { type: 'string', enum: ['bm25', 'vector', 'hybrid'] },
+          indexView: { '$ref': '#/components/schemas/IndexViewSummary' },
           scope: { '$ref': '#/components/schemas/ResolvedSearchScope' },
           deprecated: { type: 'boolean' },
           deprecation: { type: 'string' },
@@ -163,6 +184,7 @@ export const openApiSpec = {
         type: 'object',
         properties: {
           task: { type: 'string', description: 'What you are trying to understand, debug, change, review, secure, or integrate' },
+          ref: { type: 'string', description: "Optional committed Git ref (branch, tag or SHA). Serves the request from that ref's isolated semantic snapshot instead of the current index; never falls back to current state. Building an uncached snapshot requires the analyst role. Working-tree source hydration is disabled at a ref." },
           intent: { type: 'string', enum: ['auto', 'understand', 'debug', 'change', 'review', 'security', 'api'], description: 'Allocation/orchestration hint; never changes semantic truth. Default: detected from the task.' },
           max_tokens: { type: 'integer', minimum: 128, maximum: 6000, description: 'Hard token budget for the returned context (clamped to 128-6000, default 6000)' },
           compression: { type: 'string', enum: ['auto', 'none', 'aggressive'], default: 'auto' },
@@ -416,7 +438,7 @@ export const openApiSpec = {
       get: {
         tags: ['Nodes'],
         summary: 'Get detailed information about a symbol node',
-        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }, { name: 'repoId', in: 'query', schema: { type: 'string' } }, { name: 'ref', in: 'query', description: "Optional committed Git ref (branch, tag or SHA). Serves the request from that ref's isolated semantic snapshot instead of the current index; never falls back to current state. Building an uncached snapshot requires the analyst role.", schema: { type: 'string' } }],
         responses: {
           '200': { description: 'Node detail', content: { 'application/json': { schema: { type: 'object' } } } },
           '404': { description: 'Node not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
@@ -438,6 +460,7 @@ export const openApiSpec = {
                   direction: { type: 'string', enum: ['callers', 'callees', 'both'], default: 'both' },
                   max_hops: { type: 'integer', default: 5 },
                   repoId: { type: 'string' },
+                  ref: { type: 'string', description: "Optional committed Git ref (branch, tag or SHA). Serves the request from that ref's isolated semantic snapshot instead of the current index; never falls back to current state. Building an uncached snapshot requires the analyst role." },
                 },
                 required: ['target'],
               },
@@ -478,7 +501,7 @@ export const openApiSpec = {
           },
         },
         responses: {
-          '200': { description: 'Semantic graph diff, paginated node/relationship delta lists, and coverage', content: { 'application/json': { schema: { type: 'object' } } } },
+          '200': { description: 'Semantic graph diff, paginated node/relationship delta lists, and coverage. baseSnapshot/headSnapshot carry an IndexViewSummary (`indexView`) for each usable side.', content: { 'application/json': { schema: { type: 'object' } } } },
           '400': { description: 'Missing base_ref/head_ref', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
           '404': { description: 'Repository not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
           '422': { description: 'One or both refs could not be built into a trustworthy snapshot', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
@@ -489,7 +512,7 @@ export const openApiSpec = {
       get: {
         tags: ['Graph'],
         summary: 'List execution flows detected in the graph',
-        parameters: [{ name: 'repoId', in: 'query', schema: { type: 'string' } }],
+        parameters: [{ name: 'repoId', in: 'query', schema: { type: 'string' } }, { name: 'ref', in: 'query', description: "Optional committed Git ref (branch, tag or SHA). Serves the request from that ref's isolated semantic snapshot instead of the current index; never falls back to current state. Building an uncached snapshot requires the analyst role.", schema: { type: 'string' } }],
         responses: {
           '200': { description: 'List of flows', content: { 'application/json': { schema: { type: 'object' } } } },
         },
@@ -499,7 +522,7 @@ export const openApiSpec = {
       get: {
         tags: ['Graph'],
         summary: 'List community clusters detected in the graph',
-        parameters: [{ name: 'repoId', in: 'query', schema: { type: 'string' } }],
+        parameters: [{ name: 'repoId', in: 'query', schema: { type: 'string' } }, { name: 'ref', in: 'query', description: "Optional committed Git ref (branch, tag or SHA). Serves the request from that ref's isolated semantic snapshot instead of the current index; never falls back to current state. Building an uncached snapshot requires the analyst role.", schema: { type: 'string' } }],
         responses: {
           '200': { description: 'List of clusters', content: { 'application/json': { schema: { type: 'object' } } } },
         },

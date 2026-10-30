@@ -40,6 +40,7 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 - **API and Protocol Contract Intelligence** _(v1.0.12)_ — `api_shape_check` / `code-intel api-shape-check` checks the nested response paths each HTTP consumer reads (`user.profile.displayName`, `items[].price`) against the route's response shapes. `group_contract_drift` now compares GraphQL schemas (graphql-js AST, operations mapped to canonical `Type.field` ids) and protobuf/gRPC contracts, reporting gRPC wire and generated-source compatibility separately. Rule table, binding capabilities and limits: [docs/protocol-contract-compatibility.md](docs/protocol-contract-compatibility.md).
 - **Extensible Taint and Receiver Dispatch** _(v1.0.12)_ — taint sources, sinks and sanitizers are declarative, validated models: built-in runtime models, framework adapter contributions (Express, NestJS, Spring, Flask, Go `net/http`, ASP.NET Core) and an optional `.code-intel/taint-models.json`. Model changes invalidate cached findings. `code-intel taint-trace`, MCP `taint_trace` and `GET /api/v1/taint-trace` report model ids, source/sink locations, sanitizer evidence, certainty and coverage, and follow persisted call edges when the index is trusted. A no-finding result is reported as `no-findings-partial-coverage` whenever coverage is incomplete, never as safe. Member calls with receiver evidence resolve through receiver type sets that keep every valid target. Details and limits: [docs/extensible-taint-and-dispatch.md](docs/extensible-taint-and-dispatch.md).
 - **Branch-Aware Semantic Graph Diff** _(v1.0.11)_ — compares the semantic graph between two Git refs (branches, tags, or commits) instead of only mapping textual hunks onto one graph state: added/removed/changed/moved/renamed symbols, relationship and call-site certainty changes, and API-contract deltas. Each ref is analyzed independently in an isolated temporary `git worktree` checkout — never touching your working tree, HEAD, or the currently published index — and cached per (ref, analyzer version) under `.code-intel/snapshots/`. `code-intel graph diff --base <ref> --head <ref>`, a `graph_diff` MCP tool, `POST /api/v1/graph/diff` HTTP route, and an optional `analysisMode: "semantic-snapshot"` on `pr_impact` that adds the semantic diff alongside (never in place of) its existing textual-hunk blast radius.
+- **Ref-aware reads and portable indexes** _(v1.0.12)_ — an optional `ref` on read tools (MCP, HTTP, `--ref` on CLI `search`/`inspect`/`impact`/`explore`) serves the query from that committed ref's isolated semantic snapshot instead of the current index, with an `indexView` identity in the response and no fallback to current state on failure. `code-intel index export`/`import` move a snapshot between machines as a validated `.cidx` package (repository identity, analyzer fingerprints and artifact hashes checked before anything is published; optional `metadata-only` profile strips source content). See [docs/ref-aware-portable-indexes.md](docs/ref-aware-portable-indexes.md).
   - Rename/move detection is conservative: a symbol is only reported as `renamed`/`moved` when its declaration content is byte-identical across an unambiguous one-to-one pairing (optionally corroborated by Git's own rename detection); a shared display name alone is never treated as proof. Ambiguous candidates (e.g. identical-body overloads) are left as separate added/removed deltas annotated with candidate correlation metadata, never merged.
   - Coverage is always reported: a failed or unsupported ref never silently degrades to "no semantic impact" — `coverage.complete` and `coverage.incompleteReasons` (or, for `pr_impact`, `baseSnapshot`/`headSnapshot` boundaries) say why when a diff can't be produced or is partial.
   - Flow deltas use stable, versioned semantic identities as of v1.0.12. Cluster deltas remain unsupported and are reported explicitly (`clusters: { supported: false, reason }`) instead of being fabricated.
@@ -766,6 +767,20 @@ code-intel graph diff --base v1.2.0 --head v1.3.0 --no-contracts  # Skip API-con
 code-intel graph diff --base main --head HEAD --no-cache          # Force a full rebuild of both snapshots
 ```
 
+### Ref-aware reads and portable indexes
+
+```bash
+code-intel search "UserService" --ref main            # Read from main's snapshot; checkout and current index untouched
+code-intel inspect PaymentService --ref v2.3.0
+code-intel index refs                                 # Cached snapshots and the local branches/tags that map to them
+code-intel index export --ref main -o main.cidx       # Portable package; prints its sha256
+code-intel index export --ref main -o main.cidx --privacy metadata-only
+code-intel index import main.cidx --pin --expect-sha256 <digest>
+code-intel index pin|unpin|remove <ref | snapshot-id>
+```
+
+Import is rejected for another repository's package, an incompatible analyzer version, tampered artifacts, or unsafe archive entries, and it never changes the current index. Details and the security model: [docs/ref-aware-portable-indexes.md](docs/ref-aware-portable-indexes.md).
+
 Each ref is analyzed independently in an isolated temporary `git worktree` — your working tree, index, HEAD, and this repository's currently published index are never touched, on success or failure. Results are cached under `.code-intel/snapshots/`, keyed by (ref, analyzer version); a repeated diff against an unchanged ref is served from cache. See the Features section above for what is and isn't diffed (flow/cluster deltas are not yet supported).
 
 ### Groups (multi-repo / monorepo service tracking)
@@ -825,15 +840,17 @@ Cross-repository system flows (`code-intel group flows <name>`, MCP `system_flow
 | `GET`  | `/api/v1/groups/:name/system-flows` | Read-only system flows (`symbol_id`, `contract_id`, `repository_id`, `limit` ≤ 100, `offset`); requires access to every member repository |
 | `POST` | `/api/v1/vector-search` | Deprecated compatibility alias for vector mode; returns resolved scope/mode metadata |
 | `GET`  | `/api/v1/vector-status` | Vector index ready/building status |
-| `GET`  | `/api/v1/nodes/:id` | Node detail (callers, callees, imports, etc.) |
-| `POST` | `/api/v1/blast-radius` | Impact analysis; request body accepts canonical `repoId` |
+| `GET`  | `/api/v1/nodes/:id` | Node detail (callers, callees, imports, etc.); accepts optional `repoId` and `ref` |
+| `POST` | `/api/v1/blast-radius` | Impact analysis; request body accepts canonical `repoId` and optional `ref` |
 | `POST` | `/api/v1/query` | Execute a GQL query string; accepts optional canonical `scope`, returns normalized `{ kind, nodes, edges, groups, path, executionTimeMs, truncated, totalCount, scope }` |
 | `POST` | `/api/v1/query/explain` | Return query plan without executing; accepts optional canonical `scope` |
 | `GET`  | `/api/v1/source` | Fetch file content with ±20 lines context; path-traversal protected; accepts optional `repoId` |
 | `POST` | `/api/v1/grep` | Regex search in file content |
-| `GET`  | `/api/v1/flows` | List detected flows; accepts optional `repoId` |
-| `GET`  | `/api/v1/clusters` | List clusters; accepts optional `repoId` |
-| `POST` | `/api/v1/graph/diff` | Semantic graph diff between two Git refs (`base_ref`, `head_ref`, optional `repoId`); paginated `nodes`/`relationships`. Requires the `analyst` role. |
+| `GET`  | `/api/v1/flows` | List detected flows; accepts optional `repoId` and `ref` |
+| `GET`  | `/api/v1/clusters` | List clusters; accepts optional `repoId` and `ref` |
+| `POST` | `/api/v1/graph/diff` | Semantic graph diff between two Git refs (`base_ref`, `head_ref`, optional `repoId`); paginated `nodes`/`relationships`; each side reports its `indexView`. Requires the `analyst` role. |
+
+`ref` (also accepted by `POST /api/v1/search`, `POST /api/v1/explore` and `GET /api/v1/graph/:repoId/nodes`) serves the request from that committed ref's semantic snapshot and adds `indexView` to the response. Only `analyst`+ may trigger a build of an uncached snapshot; other roles get `404` with `boundary: "snapshot-not-built"`. An unknown ref is `404` with `boundary: "unknown-ref"`.
 
 Migration note: internal/UI-owned repo selectors now use `repoId`. Legacy flat `repo` inputs remain only as bounded compatibility adapters on selected surfaces during migration.
 
@@ -842,6 +859,8 @@ Migration note: internal/UI-owned repo selectors now use `repoId`. Legacy flat `
 ## 🤖 MCP Server Tools
 
 All tools are available to any MCP-capable editor (Claude Desktop, Claude Code, VS Code, Cursor, etc.) after running `code-intel setup`.
+
+Read tools that advertise a `ref` input (`overview`, `search`, `inspect`, `context`, `explore`, `blast_radius`, `file_symbols`, `find_path`, `list_exports`, `routes`, `clusters`, `flows`, `query`, `explain_relationship`, `similar_symbols`, `health_report`, `cluster_summary`, `deprecated_usage`, `complexity_hotspots`, `api_contract`, `api_impact`, `api_shape_check`) can answer from a committed ref's snapshot; the result then includes `indexView`. Other tools reject `ref`.
 
 ### Core Tools
 

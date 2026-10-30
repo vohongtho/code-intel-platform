@@ -28,7 +28,7 @@ import { createKnowledgeGraph } from '../graph/knowledge-graph.js';
 import { loadGraphFromDB } from '../multi-repo/graph-from-db.js';
 import { loadRegistry, findRepoByName } from '../storage/repo-registry.js';
 import { registerWorkflowRoutes } from './workflow-routes.js';
-import { computeSemanticGraphDiff } from '../snapshots/service.js';
+import { computeSemanticGraphDiff, summarizeSnapshotBuild } from '../snapshots/service.js';
 import Logger from '../shared/logger.js';
 import { AppError, ErrorCodes } from '../errors/codes.js';
 import type { CountGroup, GQLResult, GQLResultKind, QueryScope, ResolvedQueryScope } from 'code-intel-shared';
@@ -44,7 +44,12 @@ import {
   createSession,
   verifyPassword,
   countActiveSessions,
+  meetsRole,
 } from '../auth/middleware.js';
+import { resolveReadIndexView } from '../storage/index-view-resolver.js';
+import { summarizeIndexView, type IndexViewBoundary, type IndexViewBoundaryKind, type ReadIndexView } from '../storage/index-view.js';
+import { loadIndexViewArtifacts } from '../storage/index-view-loader.js';
+import { runWithEvidenceDb } from '../evidence/store.js';
 import { getOrCreateUsersDB } from '../auth/users-db.js';
 import type { Role } from '../auth/users-db.js';
 import { getOrCreateJobsDB } from '../jobs/jobs-db.js';
@@ -1064,6 +1069,95 @@ export function createApp(
   }
 
 
+  // ── Ref-pinned index views ──────────────────────────────────────────────────
+  // `ref` selects a committed Git ref's semantic snapshot instead of the current
+  // index. One view is resolved per request, held by a read pin until the
+  // response is produced, and all artifacts (graph/BM25/vectors/evidence) come
+  // from it. Building a missing snapshot runs Git + a full analysis, so only
+  // analyst+ may trigger it; other callers are served cached/imported snapshots
+  // and otherwise get `snapshot-not-built`.
+  class IndexViewHttpError extends AppError {
+    constructor(readonly boundary: IndexViewBoundary, code: string, hint: string, status: number) {
+      super(code, boundary.message, hint, status);
+    }
+  }
+
+  const VIEW_BOUNDARY_HTTP: Record<IndexViewBoundaryKind, { code: string; status: number; hint: string }> = {
+    'unknown-ref': { code: ErrorCodes.NOT_FOUND, status: 404, hint: 'Pass an existing branch, tag or commit SHA' },
+    'snapshot-not-built': { code: ErrorCodes.INDEX_NOT_FOUND, status: 404, hint: 'Ask an analyst to query this ref once, or import a portable index (code-intel index import)' },
+    'snapshot-build-failed': { code: ErrorCodes.ANALYSIS_FAILED, status: 500, hint: 'Snapshot analysis failed; see server logs' },
+    'snapshot-unsupported': { code: ErrorCodes.INVALID_REQUEST, status: 400, hint: 'Only committed refs are supported' },
+    'missing-index': { code: ErrorCodes.INDEX_NOT_FOUND, status: 404, hint: 'Run code-intel analyze for that repository and retry' },
+    'missing-content': { code: ErrorCodes.INVALID_REQUEST, status: 400, hint: 'The selected index carries no source content' },
+    'missing-vector': { code: ErrorCodes.INVALID_REQUEST, status: 400, hint: 'The selected index has no vectors' },
+    'missing-evidence': { code: ErrorCodes.INVALID_REQUEST, status: 400, hint: 'The selected index has no evidence' },
+  };
+
+  function readRefParam(value: unknown): string | undefined {
+    if (value === undefined) return undefined;
+    if (typeof value !== 'string' || value.trim() === '') {
+      throw new AppError(ErrorCodes.INVALID_REQUEST, 'ref must be a non-empty string', 'Pass a branch, tag or commit SHA', 400);
+    }
+    return value;
+  }
+
+  interface RefRepoContext extends HttpRepoContext {
+    view: ReadIndexView;
+    repoDir: string;
+  }
+
+  async function withRefContext<T>(req: Request, repoSelector: string | undefined, ref: string, fn: (ctx: RefRepoContext) => Promise<T>): Promise<T> {
+    const wantsOther = Boolean(repoSelector && repoSelector !== repoName);
+    const entry = wantsOther ? loadRegistry().find((r) => r.id === repoSelector || r.name === repoSelector) : undefined;
+    if (wantsOther && !entry) throw new AppError(ErrorCodes.NOT_FOUND, `Repo "${repoSelector}" not found`, 'Use /api/v1/repos to list available repositories', 404);
+    const repoDir = entry?.path ?? workspaceRoot;
+    if (!repoDir) throw new AppError(ErrorCodes.NOT_FOUND, 'No repository selected for ref', 'Pass repoId', 404);
+    const allowBuild = Boolean(req.user && meetsRole(req.user.role, 'analyst'));
+    const resolution = await resolveReadIndexView({ repoDir, ref, allowBuild });
+    if (!resolution.ok) {
+      const mapped = VIEW_BOUNDARY_HTTP[resolution.boundary.kind];
+      throw new IndexViewHttpError(resolution.boundary, mapped.code, mapped.hint, mapped.status);
+    }
+    const view = resolution.view;
+    try {
+      const loaded = await loadIndexViewArtifacts(view);
+      return await runWithEvidenceDb(view.evidenceDbPath ?? null, () => fn({
+        graph: loaded.graph,
+        snapshot: null,
+        metadata: loaded.metadata,
+        bm25Index: loaded.bm25Index,
+        vectorDbPath: view.vectorDbPath,
+        view,
+        repoDir,
+      }));
+    } finally {
+      view.release();
+    }
+  }
+
+  /** Runs `fn` against the current graph (`ref` absent: unchanged behavior) or the ref's pinned view. */
+  async function withRequestGraph<T>(req: Request, repoId: string | undefined, ref: string | undefined, fn: (g: KnowledgeGraph, view: ReadIndexView | undefined) => Promise<T>): Promise<T> {
+    if (ref === undefined) return fn(await getGraphForRepoIdOrThrow(repoId), undefined);
+    return withRefContext(req, repoId, ref, (ctx) => fn(ctx.graph, ctx.view));
+  }
+
+  function indexViewField(view: ReadIndexView | undefined): { indexView?: ReturnType<typeof summarizeIndexView> } {
+    return view ? { indexView: summarizeIndexView(view) } : {};
+  }
+
+  function sendAppError(req: Request, res: Response, err: AppError): void {
+    res.status(err.statusCode).json({
+      error: {
+        code: err.code,
+        message: err.message,
+        hint: err.hint,
+        ...(err instanceof IndexViewHttpError ? { boundary: err.boundary.kind } : {}),
+        requestId: req.requestId,
+        timestamp: new Date().toISOString(),
+      },
+    });
+  }
+
   // ── Graph download ──────────────────────────────────────────────────────────
   app.get('/api/v1/graph/:repoId', requireRepoAccess((req) => {
     const p = req.params['repoId'];
@@ -1100,6 +1194,22 @@ export function createApp(
     const requestedRepo = decodeURIComponent(Array.isArray(rawRepoId) ? (rawRepoId[0] ?? '') : (rawRepoId ?? ''));
     const limit = Math.min(parseInt((req.query['limit'] as string | undefined) ?? '200', 10), 1000);
     const offset = Math.max(parseInt((req.query['offset'] as string | undefined) ?? '0', 10), 0);
+
+    let ref: string | undefined;
+    try {
+      ref = readRefParam(req.query['ref']);
+      if (ref !== undefined) {
+        await withRefContext(req, requestedRepo, ref, async (ctx) => {
+          const all = [...ctx.graph.allNodes()];
+          const nodes = all.slice(offset, offset + limit);
+          res.json({ nodes, offset, limit, total: all.length, hasMore: offset + nodes.length < all.length, ...indexViewField(ctx.view) });
+        });
+        return;
+      }
+    } catch (err) {
+      if (err instanceof AppError) { sendAppError(req, res, err); return; }
+      throw err;
+    }
 
     const g = requestedRepo === repoName ? graph : await loadRepoGraph(requestedRepo);
     if (!g) {
@@ -1141,13 +1251,28 @@ export function createApp(
   // ── Search ──────────────────────────────────────────────────────────────────
   app.post('/api/v1/search', requireToolScope('search'), async (req, res) => {
     try {
-      const result = await executeSearchRequest(req.body as { query?: string; limit?: number; mode?: SearchMode; scope?: SearchScope; repoId?: string; repo?: string; group?: string }, {
-        repoName,
-        workspaceRoot,
-        ensureBm25Index,
-        getGraphForRepo,
-        getRepoSearchContext,
-      });
+      const searchBody = req.body as { query?: string; limit?: number; mode?: SearchMode; scope?: SearchScope; repoId?: string; repo?: string; group?: string; ref?: unknown };
+      const ref = readRefParam(searchBody.ref);
+      const scopeRepoId = (searchBody.scope as { type?: string; repoId?: string } | undefined);
+      if (ref !== undefined && (scopeRepoId?.type === 'group' || typeof searchBody.group === 'string')) {
+        throw new AppError(ErrorCodes.INVALID_REQUEST, 'ref cannot be combined with a group scope', 'Select one repository with scope.repoId', 400);
+      }
+      const result = ref === undefined
+        ? await executeSearchRequest(searchBody, {
+          repoName,
+          workspaceRoot,
+          ensureBm25Index,
+          getGraphForRepo,
+          getRepoSearchContext,
+        })
+        : await withRefContext(req, scopeRepoId?.repoId ?? searchBody.repoId ?? searchBody.repo, ref, (ctx) => executeSearchRequest(searchBody, {
+          repoName,
+          workspaceRoot,
+          // Isolated view: no fallback to the active generation's BM25/vectors.
+          ensureBm25Index: () => null,
+          getGraphForRepo: async () => ctx.graph,
+          getRepoSearchContext: async () => ({ graph: ctx.graph, bm25Index: ctx.bm25Index, vectorDbPath: ctx.vectorDbPath, metadata: ctx.metadata, indexView: ctx.view }),
+        }));
       if ('error' in result && result.error) {
         res.status(result.error.status).json({ error: { code: result.error.status === 404 ? ErrorCodes.NOT_FOUND : ErrorCodes.INVALID_REQUEST, message: result.error.message, hint: result.error.hint } });
         return;
@@ -1155,6 +1280,7 @@ export function createApp(
       if (!('body' in result)) throw new Error('Invalid search result');
       res.json(result.body);
     } catch (err) {
+      if (err instanceof AppError) { sendAppError(req, res, err); return; }
       res.status(500).json({ error: { code: ErrorCodes.INTERNAL_ERROR, message: err instanceof Error ? err.message : String(err) } });
     }
   });
@@ -1198,7 +1324,7 @@ export function createApp(
         return;
       }
       const requestedRepoId = (scope?.repoId ?? body.repoId) as string | undefined;
-      const searchContext = await getRepoSearchContext(requestedRepoId && requestedRepoId !== repoName ? requestedRepoId : undefined);
+      const ref = readRefParam(body.ref);
       const request: ExploreRequest = {
         task: body.task as string,
         intent: body.intent as ExploreRequest['intent'],
@@ -1207,6 +1333,27 @@ export function createApp(
         explainRanking: (body.explain_ranking ?? body.explainRanking) === true,
         seeds: body.seeds as number | undefined,
       };
+      if (ref !== undefined) {
+        const pinned = await withRefContext(req, requestedRepoId, ref, async (ctx) => {
+          const viewContext = { graph: ctx.graph, bm25Index: ctx.bm25Index, vectorDbPath: ctx.vectorDbPath, metadata: ctx.metadata, indexView: ctx.view };
+          const explored = await runExplore(request, {
+            graph: ctx.graph,
+            search: createScopedExploreSearch(
+              {},
+              { repoName, workspaceRoot: ctx.repoDir, ensureBm25Index: () => null, getGraphForRepo: async () => ctx.graph, getRepoSearchContext: async () => viewContext },
+            ),
+            repoDir: ctx.repoDir,
+            repoName,
+            indexIdentity: ctx.view.identity,
+            hydrateSource: false,
+            sourceContentAvailable: ctx.view.capabilities.sourceContent,
+          });
+          return { ...explored, ...indexViewField(ctx.view) };
+        });
+        res.json(pinned);
+        return;
+      }
+      const searchContext = await getRepoSearchContext(requestedRepoId && requestedRepoId !== repoName ? requestedRepoId : undefined);
       const result = await runExplore(request, {
         graph: searchContext.graph,
         search: createScopedExploreSearch(
@@ -1359,7 +1506,7 @@ export function createApp(
   app.get('/api/v1/nodes/:id', async (req, res) => {
     try {
       const nodeId = decodeURIComponent(req.params.id);
-      const g = await getGraphForRepoIdOrThrow(req.query['repoId'] as string | undefined);
+      await withRequestGraph(req, req.query['repoId'] as string | undefined, readRefParam(req.query['ref']), async (g, view) => {
     // In lazy mode, fall through to DB if node is not in LRU cache
     const node = isLazyGraph(g)
       ? await g.getNodeAsync(nodeId)
@@ -1394,12 +1541,11 @@ export function createApp(
         implementsEdges: await Promise.all(outgoing.filter((e) => e.kind === 'implements').map(async (e) => ({ id: e.target, name: await resolveName(e.target) }))),
         members: await Promise.all(outgoing.filter((e) => e.kind === 'has_member').map(async (e) => ({ id: e.target, name: await resolveName(e.target), kind: await resolveKind(e.target) }))),
         cluster: (await Promise.all(incoming.filter((e) => e.kind === 'belongs_to').map(async (e) => resolveName(e.target))))[0],
+        ...indexViewField(view),
+      });
       });
     } catch (err) {
-      if (err instanceof AppError) {
-        res.status(err.statusCode).json({ error: { code: err.code, message: err.message, hint: err.hint, requestId: req.requestId, timestamp: new Date().toISOString() } });
-        return;
-      }
+      if (err instanceof AppError) { sendAppError(req, res, err); return; }
       throw err;
     }
   });
@@ -1407,8 +1553,8 @@ export function createApp(
   // ── Blast radius ────────────────────────────────────────────────────────────
   app.post('/api/v1/blast-radius', async (req, res) => {
     try {
-      const { target, direction = 'both', max_hops = 5, repoId } = req.body as { target?: string; direction?: string; max_hops?: number; repoId?: string };
-      const g = await getGraphForRepoIdOrThrow(repoId);
+      const { target, direction = 'both', max_hops = 5, repoId, ref: rawRef } = req.body as { target?: string; direction?: string; max_hops?: number; repoId?: string; ref?: unknown };
+      await withRequestGraph(req, repoId, readRefParam(rawRef), async (g, view) => {
     let targetNode = null;
     if (isLazyGraph(g) && target) {
       // Lazy mode: search by ID first (fast), then stream all nodes if needed
@@ -1429,7 +1575,7 @@ export function createApp(
     }
     const registry = loadRegistry();
     const repoDir = repoId
-      ? registry.find((entry) => entry.id === repoId)?.path
+      ? registry.find((entry) => entry.id === repoId || (view !== undefined && entry.name === repoId))?.path
       : workspaceRoot;
     const result = computeBlastRadiusWithTrust({
       graph: g,
@@ -1447,12 +1593,11 @@ export function createApp(
         coverage: result.trust.coverage,
         boundaries: result.trust.boundaries,
         affected: result.affected.filter((a) => a.depth > 0),
+        ...indexViewField(view),
+      });
       });
     } catch (err) {
-      if (err instanceof AppError) {
-        res.status(err.statusCode).json({ error: { code: err.code, message: err.message, hint: err.hint, requestId: req.requestId, timestamp: new Date().toISOString() } });
-        return;
-      }
+      if (err instanceof AppError) { sendAppError(req, res, err); return; }
       throw err;
     }
   });
@@ -1492,8 +1637,8 @@ export function createApp(
       if (!diff) {
         res.status(422).json({
           error: { code: ErrorCodes.ANALYSIS_FAILED, message: 'Semantic graph diff unavailable for one or both refs', requestId: req.requestId },
-          baseSnapshot: { status: base.status, boundaries: base.boundaries, error: base.error },
-          headSnapshot: { status: head.status, boundaries: head.boundaries, error: head.error },
+          baseSnapshot: { status: base.status, boundaries: base.boundaries, error: base.error, indexView: summarizeSnapshotBuild(base, base_ref) },
+          headSnapshot: { status: head.status, boundaries: head.boundaries, error: head.error, indexView: summarizeSnapshotBuild(head, head_ref) },
         });
         return;
       }
@@ -1520,8 +1665,8 @@ export function createApp(
         relationshipsOffset: rOffset,
         relationshipsLimit: rLimit,
         relationshipsHasMore: rOffset + rLimit < diff.relationships.length,
-        baseSnapshot: { status: base.status, fromCache: base.fromCache, boundaries: base.boundaries },
-        headSnapshot: { status: head.status, fromCache: head.fromCache, boundaries: head.boundaries },
+        baseSnapshot: { status: base.status, fromCache: base.fromCache, boundaries: base.boundaries, indexView: summarizeSnapshotBuild(base, base_ref) },
+        headSnapshot: { status: head.status, fromCache: head.fromCache, boundaries: head.boundaries, indexView: summarizeSnapshotBuild(head, head_ref) },
       });
     } catch (err) {
       if (err instanceof AppError) {
@@ -1535,17 +1680,15 @@ export function createApp(
   // ── Flows ───────────────────────────────────────────────────────────────────
   app.get('/api/v1/flows', async (req, res) => {
     try {
-      const g = await getGraphForRepoIdOrThrow(req.query['repoId'] as string | undefined);
-    const flows: { id: string; name: string; steps: unknown }[] = [];
-    for (const node of g.allNodes()) {
-      if (node.kind === 'flow') flows.push({ id: node.id, name: node.name, steps: node.metadata?.steps });
-    }
-      res.json({ flows });
+      await withRequestGraph(req, req.query['repoId'] as string | undefined, readRefParam(req.query['ref']), async (g, view) => {
+        const flows: { id: string; name: string; steps: unknown }[] = [];
+        for (const node of g.allNodes()) {
+          if (node.kind === 'flow') flows.push({ id: node.id, name: node.name, steps: node.metadata?.steps });
+        }
+        res.json({ flows, ...indexViewField(view) });
+      });
     } catch (err) {
-      if (err instanceof AppError) {
-        res.status(err.statusCode).json({ error: { code: err.code, message: err.message, hint: err.hint, requestId: req.requestId, timestamp: new Date().toISOString() } });
-        return;
-      }
+      if (err instanceof AppError) { sendAppError(req, res, err); return; }
       throw err;
     }
   });
@@ -1553,17 +1696,15 @@ export function createApp(
   // ── Clusters ────────────────────────────────────────────────────────────────
   app.get('/api/v1/clusters', async (req, res) => {
     try {
-      const g = await getGraphForRepoIdOrThrow(req.query['repoId'] as string | undefined);
-    const clusters: { id: string; name: string; memberCount: number }[] = [];
-    for (const node of g.allNodes()) {
-      if (node.kind === 'cluster') clusters.push({ id: node.id, name: node.name, memberCount: (node.metadata?.memberCount as number) ?? 0 });
-    }
-      res.json({ clusters });
+      await withRequestGraph(req, req.query['repoId'] as string | undefined, readRefParam(req.query['ref']), async (g, view) => {
+        const clusters: { id: string; name: string; memberCount: number }[] = [];
+        for (const node of g.allNodes()) {
+          if (node.kind === 'cluster') clusters.push({ id: node.id, name: node.name, memberCount: (node.metadata?.memberCount as number) ?? 0 });
+        }
+        res.json({ clusters, ...indexViewField(view) });
+      });
     } catch (err) {
-      if (err instanceof AppError) {
-        res.status(err.statusCode).json({ error: { code: err.code, message: err.message, hint: err.hint, requestId: req.requestId, timestamp: new Date().toISOString() } });
-        return;
-      }
+      if (err instanceof AppError) { sendAppError(req, res, err); return; }
       throw err;
     }
   });

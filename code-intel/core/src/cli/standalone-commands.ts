@@ -229,7 +229,9 @@ export async function runStandaloneCommand(argv: string[]): Promise<boolean> {
     await runIndexStatus(args);
     return true;
   }
-  if (command === 'index') {
+  // Only the maintenance subcommands are standalone; `index refs|export|import|pin|unpin|remove`
+  // are Commander commands in app.ts.
+  if (command === 'index' && (args[0] === 'cleanup' || args[0] === 'unlock')) {
     await runIndexMaintenance(args);
     return true;
   }

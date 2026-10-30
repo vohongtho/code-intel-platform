@@ -63,16 +63,43 @@ export interface SnapshotBoundary {
   message: string;
 }
 
+// ── Selected-index identity (mirrors storage/index-view.ts IndexViewSummary) ──
+
+export type IndexViewBoundaryKind =
+  | 'unknown-ref'
+  | 'snapshot-not-built'
+  | 'snapshot-build-failed'
+  | 'snapshot-unsupported'
+  | 'missing-index'
+  | 'missing-content'
+  | 'missing-vector'
+  | 'missing-evidence';
+
+export interface IndexViewSummary {
+  kind: 'generation' | 'semantic-snapshot';
+  identity: string;
+  ref?: string;
+  commit?: string;
+  gitTree?: string;
+  resolution: 'active' | 'cached' | 'built';
+  privacyProfile: 'full' | 'metadata-only';
+  capabilities: { sourceContent: boolean; bm25: boolean; vector: boolean; evidence: boolean };
+  boundaries?: { kind: IndexViewBoundaryKind; message: string }[];
+}
+
 /**
  * Per-side build status as embedded in a /graph/diff response. On success
  * (200) it carries `fromCache`; on failure (422) it carries `error` instead —
  * both fields are optional here so this one type covers both cases.
+ * `indexView` is present only when the server supplied the side's selected
+ * index identity (newer servers, usable sides only).
  */
 export interface GraphDiffSnapshotStatus {
   status: SnapshotBuildStatus;
   fromCache?: boolean;
   boundaries: SnapshotBoundary[];
   error?: string;
+  indexView?: IndexViewSummary;
 }
 
 // ── Entity (node) deltas ────────────────────────────────────────────────────────

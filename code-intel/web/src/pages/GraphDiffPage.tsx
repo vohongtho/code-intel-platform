@@ -12,6 +12,7 @@ import type {
   RelationshipDelta,
   RelationshipCertainty,
   FlowDelta,
+  IndexViewSummary,
 } from '../api/graph-diff-types';
 
 const INPUT = 'w-full h-10 bg-elevated text-text-primary rounded-lg px-3 py-2 border border-border-default focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 placeholder-text-muted transition text-sm font-mono';
@@ -220,6 +221,16 @@ export function GraphDiffPage() {
 
         {result && (
           <>
+            {(result.baseSnapshot.indexView || result.headSnapshot.indexView) && (
+              <section className={SECTION} aria-label="Compared indexes">
+                <h2 className="text-lg font-semibold">Compared indexes</h2>
+                <div className="grid md:grid-cols-2 gap-4 text-sm">
+                  <IndexViewCard label="Base" view={result.baseSnapshot.indexView} />
+                  <IndexViewCard label="Head" view={result.headSnapshot.indexView} />
+                </div>
+              </section>
+            )}
+
             {!result.coverage.complete && (
               <div className="rounded-lg border border-amber-800/50 bg-amber-950/20 px-4 py-3 text-sm text-amber-300">
                 <p className="font-semibold mb-1">⚠ Partial coverage — this diff is not exhaustive</p>
@@ -490,7 +501,34 @@ function FlowDeltaRow({ delta }: { delta: FlowDelta }) {
         <span className="text-xs font-mono text-text-muted">{delta.kind}</span>
         <span className="text-text-primary font-mono text-xs truncate">{delta.flowId}</span>
       </div>
+      {delta.entryPointId && <p className="text-[11px] text-text-muted font-mono">entry: {delta.entryPointId}</p>}
       {delta.details && <p className="text-[11px] text-text-muted">{delta.details}</p>}
+    </div>
+  );
+}
+
+/** Renders the server-supplied identity of one compared index; never derived client-side. */
+function IndexViewCard({ label, view }: { label: string; view?: IndexViewSummary }) {
+  if (!view) {
+    return (
+      <div className="rounded-lg border border-border-subtle bg-elevated/40 p-3">
+        <p className="font-semibold">{label}</p>
+        <p className="text-text-muted text-xs italic">Index identity not reported by the server.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-lg border border-border-subtle bg-elevated/40 p-3 space-y-1" data-testid={`index-view-${label.toLowerCase()}`}>
+      <p className="font-semibold">{label} <span className="font-mono text-xs text-text-muted">{view.ref}</span></p>
+      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
+        {view.commit && (<><dt className="text-text-muted">Commit</dt><dd className="font-mono truncate" title={view.commit}>{view.commit.slice(0, 12)}</dd></>)}
+        <dt className="text-text-muted">Snapshot</dt><dd className="font-mono truncate" title={view.identity}>{view.identity.slice(0, 12)}</dd>
+        <dt className="text-text-muted">Source</dt><dd>{view.resolution}</dd>
+        <dt className="text-text-muted">Privacy</dt><dd>{view.privacyProfile}</dd>
+      </dl>
+      {(view.boundaries ?? []).map((b, i) => (
+        <p key={i} className="text-[11px] text-amber-300">⚠ {b.kind}: {b.message}</p>
+      ))}
     </div>
   );
 }

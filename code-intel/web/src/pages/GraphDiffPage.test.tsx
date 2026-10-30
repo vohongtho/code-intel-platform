@@ -210,4 +210,103 @@ describe('GraphDiffPage', () => {
     expect(clustersSection).not.toBeNull();
     expect(within(clustersSection as HTMLElement).getByText(/Not supported yet/i)).toBeInTheDocument();
   });
+
+  it('renders backend stable-flow deltas verbatim, including entry points', async () => {
+    graphDiffMock.mockResolvedValue({
+      status: 'ok',
+      diff: baseResponse({
+        flows: {
+          supported: true,
+          deltas: [
+            { kind: 'added', flowId: 'flow:checkout', entryPointId: 'route:POST /checkout' },
+            { kind: 'membership-changed', flowId: 'flow:login', details: '+1 step, -0 steps' },
+          ],
+        },
+      }),
+    });
+    renderPage();
+    await runCompare();
+
+    const flowsSection = (await screen.findByRole('heading', { name: 'Flows' })).closest('section') as HTMLElement;
+    expect(within(flowsSection).getByText('flow:checkout')).toBeInTheDocument();
+    expect(within(flowsSection).getByText('entry: route:POST /checkout')).toBeInTheDocument();
+    expect(within(flowsSection).getByText('membership-changed')).toBeInTheDocument();
+    expect(within(flowsSection).getByText('+1 step, -0 steps')).toBeInTheDocument();
+    expect(within(flowsSection).queryByText(/Not supported yet/i)).not.toBeInTheDocument();
+  });
+
+  it('shows the selected index identity of each side only when the server supplies it', async () => {
+    graphDiffMock.mockResolvedValue({
+      status: 'ok',
+      diff: baseResponse({
+        nodes: [{ kind: 'added', nodeKind: 'function', headId: 'fn-1', headName: 'fn1', headFilePath: 'a.ts' }],
+        nodesTotal: 1,
+        baseSnapshot: {
+          status: 'cached', fromCache: true, boundaries: [],
+          indexView: {
+            kind: 'semantic-snapshot', identity: 'aaaaaaaaaaaa1111', ref: 'main', commit: 'base-sha-0123456789', resolution: 'cached',
+            privacyProfile: 'metadata-only', capabilities: { sourceContent: false, bm25: true, vector: false, evidence: true },
+            boundaries: [{ kind: 'missing-content', message: 'indexed source content is unavailable' }],
+          },
+        },
+        headSnapshot: {
+          status: 'built', fromCache: false, boundaries: [],
+          indexView: {
+            kind: 'semantic-snapshot', identity: 'bbbbbbbbbbbb2222', ref: 'HEAD', commit: 'head-sha-9876543210', resolution: 'built',
+            privacyProfile: 'full', capabilities: { sourceContent: true, bm25: true, vector: false, evidence: true },
+          },
+        },
+      }),
+    });
+    renderPage();
+    await runCompare();
+
+    const base = await screen.findByTestId('index-view-base');
+    expect(within(base).getByText('aaaaaaaaaaaa')).toBeInTheDocument();
+    expect(within(base).getByText('metadata-only')).toBeInTheDocument();
+    expect(within(base).getByText(/missing-content/)).toBeInTheDocument();
+    const head = screen.getByTestId('index-view-head');
+    expect(within(head).getByText('bbbbbbbbbbbb')).toBeInTheDocument();
+    expect(within(head).getByText('built')).toBeInTheDocument();
+    expect(within(head).queryByText(/missing-content/)).not.toBeInTheDocument();
+    // Deltas still render as sent; index metadata never changes the diff itself.
+    expect(screen.getByText('fn1')).toBeInTheDocument();
+  });
+
+  it('omits the compared-indexes panel for servers that do not report index identity', async () => {
+    graphDiffMock.mockResolvedValue({ status: 'ok', diff: baseResponse() });
+    renderPage();
+    await runCompare();
+    await screen.findByRole('heading', { name: /^Nodes/ });
+    expect(screen.queryByRole('region', { name: 'Compared indexes' })).not.toBeInTheDocument();
+  });
+
+  it('keeps paginated partial results with candidate continuity while showing index metadata', async () => {
+    graphDiffMock.mockResolvedValue({
+      status: 'ok',
+      diff: baseResponse({
+        coverage: { complete: false, examinedCount: 3, incompleteReasons: ['base readback-failed: content fingerprinting failed (non-fatal)'] },
+        nodes: [{
+          kind: 'removed', nodeKind: 'function', baseId: 'fn-old', baseName: 'oldName', baseFilePath: 'a.ts',
+          continuity: { certainty: 'candidate', reason: 'two equally likely successors', evidenceKinds: ['content-fingerprint'] },
+          continuityCandidates: ['fn-x', 'fn-y'],
+        }],
+        nodesTotal: 50,
+        nodesLimit: 1,
+        nodesHasMore: true,
+        baseSnapshot: {
+          status: 'cached', fromCache: true, boundaries: [],
+          indexView: { kind: 'semantic-snapshot', identity: 'cccccccccccc3333', ref: 'main', resolution: 'cached', privacyProfile: 'full', capabilities: { sourceContent: true, bm25: true, vector: false, evidence: true } },
+        },
+      }),
+    });
+    renderPage();
+    await runCompare();
+
+    expect(await screen.findByText(/Partial coverage/i)).toBeInTheDocument();
+    expect(screen.getByText('oldName')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /load more \(1 \/ 50\)/i })).toBeInTheDocument();
+    expect(screen.getByTestId('index-view-base')).toBeInTheDocument();
+    expect(screen.getByText(/Index identity not reported/i)).toBeInTheDocument();
+  });
 });

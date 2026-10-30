@@ -9,19 +9,26 @@ import { buildSnapshotDescriptor } from './fingerprint.js';
 import { GitMaterializationError, resolveGitRef, resolveRepositoryIdentity } from './git-materializer.js';
 import {
   getSnapshotEntryDir,
+  getSnapshotLocalPinPath,
   getSnapshotLockPath,
   getSnapshotMetadataPath,
+  getSnapshotReadPinsDir,
   getSnapshotStagingDir,
   getSnapshotsRoot,
+  isSafeSnapshotId,
+  SNAPSHOT_CAPABILITIES_FILE,
   SNAPSHOT_STAGING_PREFIX,
 } from './paths.js';
+import { PROTOCOL_SNAPSHOT_FILE } from '../multi-repo/protocol-contracts.js';
 import {
+  FULL_SNAPSHOT_CAPABILITIES,
   SNAPSHOT_SCHEMA_VERSION,
   type CacheEntryMetadata,
   type SemanticSnapshotDescriptor,
   type SnapshotBoundary,
   type SnapshotBuildRequest,
   type SnapshotBuildResult,
+  type SnapshotCapabilities,
 } from './types.js';
 
 export interface SnapshotCachePolicy {
@@ -118,6 +125,52 @@ function failedResult(descriptor: SemanticSnapshotDescriptor | null, boundary: S
  * so a partially-deleted, corrupted, or interrupted-eviction entry is detected
  * and discarded rather than silently served as valid data.
  */
+const PRIVACY_PROFILES = new Set(['full', 'metadata-only']);
+const BM25_CONTENT = new Set(['full', 'names-only', 'none']);
+
+function parseCapabilities(raw: unknown): SnapshotCapabilities | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const c = raw as Record<string, unknown>;
+  const bools = ['sourceContent', 'bm25', 'vector', 'evidence', 'protocolContracts'] as const;
+  if (!bools.every((key) => typeof c[key] === 'boolean')) return null;
+  if (!PRIVACY_PROFILES.has(c.privacyProfile as string) || !BM25_CONTENT.has(c.bm25Content as string)) return null;
+  return {
+    privacyProfile: c.privacyProfile as SnapshotCapabilities['privacyProfile'],
+    sourceContent: c.sourceContent as boolean,
+    bm25: c.bm25 as boolean,
+    bm25Content: c.bm25Content as SnapshotCapabilities['bm25Content'],
+    vector: c.vector as boolean,
+    evidence: c.evidence as boolean,
+    protocolContracts: c.protocolContracts as boolean,
+  };
+}
+
+/**
+ * What an entry can answer. An imported entry's declared capabilities are
+ * authoritative (an unreadable/invalid declaration fails closed: `null`, which
+ * callers treat as an invalid entry). A locally-built entry derives them from the
+ * artifacts actually present.
+ */
+export function readSnapshotCapabilities(entryDir: string, metadata?: IndexMetadata | null): SnapshotCapabilities | null {
+  const declaredPath = path.join(entryDir, SNAPSHOT_CAPABILITIES_FILE);
+  if (fs.existsSync(declaredPath)) {
+    try {
+      return parseCapabilities(JSON.parse(fs.readFileSync(declaredPath, 'utf8')));
+    } catch {
+      return null;
+    }
+  }
+  const has = (name: string) => fs.existsSync(path.join(entryDir, name));
+  return {
+    ...FULL_SNAPSHOT_CAPABILITIES,
+    bm25: has('bm25.db'),
+    bm25Content: has('bm25.db') ? 'full' : 'none',
+    vector: has('vector.db') && metadata?.embeddings?.enabled === true && metadata.embeddings.status === 'ready',
+    evidence: has('evidence.db'),
+    protocolContracts: has(PROTOCOL_SNAPSHOT_FILE),
+  };
+}
+
 async function loadValidCacheEntry(entryDir: string, snapshotId: string): Promise<SemanticSnapshotDescriptor | null> {
   const metaPath = getSnapshotMetadataPath(entryDir);
   let cacheMeta: CacheEntryMetadata;
@@ -136,8 +189,10 @@ async function loadValidCacheEntry(entryDir: string, snapshotId: string): Promis
   } catch {
     return null;
   }
+  const capabilities = readSnapshotCapabilities(entryDir, metadata);
+  if (!capabilities) return null;
   try {
-    const verification = await verifySnapshotReadBack(entryDir, metadata);
+    const verification = await verifySnapshotReadBack(entryDir, metadata, capabilities);
     if (!verification.ok) return null;
   } catch {
     // A missing/corrupt artifact (e.g. graph.db deleted out from under a
@@ -194,15 +249,232 @@ function cleanupStaleStaging(repoDir: string, staleAfterMs: number): void {
   }
 }
 
+// ─── Read pins ────────────────────────────────────────────────────────────────
+//
+// A read pin is one file per in-flight reader under `.read-pins/<snapshotId>/`.
+// Eviction and explicit removal skip any entry with a live pin. Pins left by a
+// crashed process on this host are reclaimed by PID liveness; pins from another
+// host (shared filesystem) are honoured until they are LOCK_STALE_AFTER_MS old.
+
+interface ReadPinOwner extends LockOwner {
+  pinId: string;
+}
+
+function isLivePin(pinPath: string): boolean {
+  let owner: ReadPinOwner | null = null;
+  try { owner = JSON.parse(fs.readFileSync(pinPath, 'utf8')) as ReadPinOwner; } catch { /* malformed */ }
+  const ageMs = (() => { try { return Date.now() - fs.statSync(pinPath).mtimeMs; } catch { return Number.POSITIVE_INFINITY; } })();
+  if (!owner) return ageMs < LOCK_STALE_AFTER_MS;
+  if (owner.hostname === os.hostname()) return isProcessAlive(owner.pid);
+  return ageMs < LOCK_STALE_AFTER_MS;
+}
+
+/** True when any live reader holds `snapshotId`. Reclaims dead pins as a side effect. */
+export function hasLiveReadPin(repoDir: string, snapshotId: string): boolean {
+  const dir = getSnapshotReadPinsDir(repoDir, snapshotId);
+  let names: string[];
+  try { names = fs.readdirSync(dir); } catch { return false; }
+  let live = false;
+  for (const name of names) {
+    const pinPath = path.join(dir, name);
+    if (isLivePin(pinPath)) live = true;
+    else fs.rmSync(pinPath, { force: true });
+  }
+  if (!live) {
+    try { fs.rmdirSync(dir); } catch { /* not empty (a pin raced in) or already gone */ }
+  }
+  return live;
+}
+
+/**
+ * Pins `snapshotId` against eviction/removal for the duration of one read.
+ * Acquire the pin *before* validating/opening the entry: eviction re-checks pins
+ * after moving an entry aside (see `evictEntry`), so a reader that pinned first is
+ * never left holding a deleted directory. The returned release is idempotent.
+ */
+export function acquireSnapshotReadPin(repoDir: string, snapshotId: string): () => void {
+  const dir = getSnapshotReadPinsDir(repoDir, snapshotId);
+  fs.mkdirSync(dir, { recursive: true });
+  const pinId = crypto.randomUUID();
+  const pinPath = path.join(dir, `${pinId}.json`);
+  const owner: ReadPinOwner = { pid: process.pid, hostname: os.hostname(), startedAt: new Date().toISOString(), pinId };
+  fs.writeFileSync(pinPath, JSON.stringify(owner), { mode: 0o600, flag: 'wx' });
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    fs.rmSync(pinPath, { force: true });
+    try { fs.rmdirSync(dir); } catch { /* other readers still hold pins */ }
+  };
+}
+
+// ─── Local pins (persistent "keep" marker) ───────────────────────────────────
+
+export interface SnapshotLocalPin {
+  snapshotId: string;
+  pinnedAt: string;
+  reason?: string;
+}
+
+export function isSnapshotPinned(repoDir: string, snapshotId: string): boolean {
+  return fs.existsSync(getSnapshotLocalPinPath(repoDir, snapshotId));
+}
+
+export function pinSnapshot(repoDir: string, snapshotId: string, reason?: string): SnapshotLocalPin {
+  const target = getSnapshotLocalPinPath(repoDir, snapshotId);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  const pin: SnapshotLocalPin = { snapshotId, pinnedAt: new Date().toISOString(), ...(reason ? { reason } : {}) };
+  const tmp = `${target}.tmp-${process.pid}-${Date.now()}`;
+  fs.writeFileSync(tmp, JSON.stringify(pin, null, 2));
+  fs.renameSync(tmp, target);
+  return pin;
+}
+
+export function unpinSnapshot(repoDir: string, snapshotId: string): boolean {
+  const target = getSnapshotLocalPinPath(repoDir, snapshotId);
+  const existed = fs.existsSync(target);
+  fs.rmSync(target, { force: true });
+  return existed;
+}
+
+/**
+ * Moves an entry aside, re-checks for a reader that pinned in the meantime, and
+ * either restores it or deletes it. Returns true when the entry was removed.
+ * The rename is atomic, so a reader either sees the full entry or no entry.
+ */
+/** Test seam: runs between moving an entry aside and re-checking pins, to force the reader race. */
+export const cacheTestHooks: { afterMoveAside?: (repoDir: string, snapshotId: string) => void } = {};
+
+function evictEntry(repoDir: string, entryPath: string): boolean {
+  const snapshotId = path.basename(entryPath);
+  if (hasLiveReadPin(repoDir, snapshotId)) return false;
+  const aside = getSnapshotStagingDir(repoDir, `evict-${crypto.randomUUID()}`);
+  try {
+    fs.renameSync(entryPath, aside);
+  } catch {
+    return false;
+  }
+  cacheTestHooks.afterMoveAside?.(repoDir, snapshotId);
+  if (hasLiveReadPin(repoDir, snapshotId)) {
+    try {
+      if (!fs.existsSync(entryPath)) {
+        fs.renameSync(aside, entryPath);
+        return false;
+      }
+    } catch { /* fall through: an equivalent entry was republished meanwhile */ }
+  }
+  fs.rmSync(aside, { recursive: true, force: true });
+  return true;
+}
+
+// ─── Entry listing / removal / publication ───────────────────────────────────
+
+export interface SnapshotEntrySummary {
+  snapshotId: string;
+  descriptor: SemanticSnapshotDescriptor | null;
+  createdAt?: string;
+  lastAccessedAt?: string;
+  sizeBytes: number;
+  pinned: boolean;
+  readers: boolean;
+  capabilities: SnapshotCapabilities | null;
+  /** False when snapshot.json is unreadable or from another schema version; such entries are evictable. */
+  valid: boolean;
+}
+
+function listEntryDirs(repoDir: string): string[] {
+  const root = getSnapshotsRoot(repoDir);
+  if (!fs.existsSync(root)) return [];
+  return fs.readdirSync(root, { withFileTypes: true })
+    // Every bookkeeping directory (.locks, .read-pins, .pinned, .staging-*) is dot-prefixed;
+    // snapshot IDs are hex digests and never are.
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
+    .map((entry) => path.join(root, entry.name));
+}
+
+/** Cheap listing (no artifact read-back) for `code-intel index refs`; sorted by snapshot ID. */
+export function listSnapshotEntries(repoDir: string): SnapshotEntrySummary[] {
+  return listEntryDirs(repoDir).map((entryPath) => {
+    const snapshotId = path.basename(entryPath);
+    let meta: CacheEntryMetadata | null = null;
+    try { meta = JSON.parse(fs.readFileSync(getSnapshotMetadataPath(entryPath), 'utf8')) as CacheEntryMetadata; } catch { /* invalid */ }
+    const valid = Boolean(meta && meta.schemaVersion === SNAPSHOT_SCHEMA_VERSION && meta.descriptor?.snapshotId === snapshotId);
+    let metadata: IndexMetadata | null = null;
+    try { metadata = JSON.parse(fs.readFileSync(path.join(entryPath, 'meta.json'), 'utf8')) as IndexMetadata; } catch { /* derived below */ }
+    return {
+      snapshotId,
+      descriptor: valid ? meta!.descriptor : null,
+      createdAt: meta?.createdAt,
+      lastAccessedAt: meta?.lastAccessedAt,
+      sizeBytes: meta?.sizeBytes ?? 0,
+      pinned: isSafeSnapshotId(snapshotId) && isSnapshotPinned(repoDir, snapshotId),
+      readers: isSafeSnapshotId(snapshotId) && hasLiveReadPin(repoDir, snapshotId),
+      capabilities: readSnapshotCapabilities(entryPath, metadata),
+      valid,
+    };
+  }).sort((a, b) => a.snapshotId.localeCompare(b.snapshotId));
+}
+
+export type RemoveSnapshotResult = 'removed' | 'not-found' | 'in-use';
+
+/** Explicit removal (`code-intel index remove`). Never removes an entry a live reader holds; clears its local pin. */
+export function removeSnapshotEntry(repoDir: string, snapshotId: string): RemoveSnapshotResult {
+  const entryDir = getSnapshotEntryDir(repoDir, snapshotId);
+  if (!fs.existsSync(entryDir)) {
+    unpinSnapshot(repoDir, snapshotId);
+    return 'not-found';
+  }
+  if (!evictEntry(repoDir, entryDir)) return 'in-use';
+  unpinSnapshot(repoDir, snapshotId);
+  return 'removed';
+}
+
+/**
+ * Validates (full artifact read-back) and returns an existing entry's descriptor,
+ * or null. Callers that will read the entry afterwards must hold a read pin first.
+ */
+export async function loadSnapshotEntry(repoDir: string, snapshotId: string): Promise<SemanticSnapshotDescriptor | null> {
+  return loadValidCacheEntry(getSnapshotEntryDir(repoDir, snapshotId), snapshotId);
+}
+
+export type PublishSnapshotResult = 'published' | 'already-present';
+
+/**
+ * Atomically promotes a fully-validated staging directory into the cache (used by
+ * portable import). An existing valid entry with the same content-derived ID is
+ * kept — it is equivalent by construction — and the staging copy is discarded.
+ */
+export async function publishSnapshotEntry(
+  repoDir: string,
+  stagingDir: string,
+  descriptor: SemanticSnapshotDescriptor,
+  policy: SnapshotCachePolicy = DEFAULT_SNAPSHOT_CACHE_POLICY,
+): Promise<PublishSnapshotResult> {
+  const entryDir = getSnapshotEntryDir(repoDir, descriptor.snapshotId);
+  if (fs.existsSync(entryDir)) {
+    if (await loadValidCacheEntry(entryDir, descriptor.snapshotId)) {
+      fs.rmSync(stagingDir, { recursive: true, force: true });
+      touchCacheEntry(entryDir);
+      return 'already-present';
+    }
+    if (!evictEntry(repoDir, entryDir)) {
+      fs.rmSync(stagingDir, { recursive: true, force: true });
+      throw new Error(`snapshot ${descriptor.snapshotId} exists, is invalid, and is held by a live reader; retry later`);
+    }
+  }
+  writeCacheEntryMetadata(stagingDir, descriptor);
+  fs.renameSync(stagingDir, entryDir);
+  enforceCachePolicy(repoDir, policy);
+  return 'published';
+}
+
 /** Enforces max-age / max-count / max-bytes eviction across finished cache entries (LRU by last access). */
 function enforceCachePolicy(repoDir: string, policy: SnapshotCachePolicy): void {
   const root = getSnapshotsRoot(repoDir);
   if (!fs.existsSync(root)) return;
   const now = Date.now();
-  const entries = fs.readdirSync(root, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && !entry.name.startsWith(SNAPSHOT_STAGING_PREFIX) && entry.name !== '.locks')
-    .map((entry) => {
-      const entryPath = path.join(root, entry.name);
+  const entries = listEntryDirs(repoDir)
+    .map((entryPath) => {
       let meta: CacheEntryMetadata | null = null;
       try { meta = JSON.parse(fs.readFileSync(getSnapshotMetadataPath(entryPath), 'utf8')) as CacheEntryMetadata; } catch { /* corrupt; evict below */ }
       const lastAccessedMs = meta ? Date.parse(meta.lastAccessedAt) : 0;
@@ -213,11 +485,16 @@ function enforceCachePolicy(repoDir: string, policy: SnapshotCachePolicy): void 
   let totalBytes = entries.reduce((sum, e) => sum + (e.meta?.sizeBytes ?? 0), 0);
   const keep: typeof entries = [];
   for (const entry of entries) {
+    // A locally pinned entry is never evicted by policy (only by explicit removal);
+    // it still counts toward the totals so unpinned entries make room around it.
+    if (isSnapshotPinned(repoDir, path.basename(entry.entryPath))) {
+      keep.push(entry);
+      continue;
+    }
     const tooOld = !entry.meta || now - entry.lastAccessedMs >= policy.maxAgeMs;
     const overCount = keep.length >= policy.maxCount;
     const overBytes = totalBytes > policy.maxBytes && keep.length > 0;
-    if (tooOld || overCount || overBytes) {
-      fs.rmSync(entry.entryPath, { recursive: true, force: true });
+    if ((tooOld || overCount || overBytes) && evictEntry(repoDir, entry.entryPath)) {
       totalBytes -= entry.meta?.sizeBytes ?? 0;
       continue;
     }

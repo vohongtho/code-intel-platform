@@ -78,6 +78,14 @@ export interface ExploreDeps {
   indexIdentity?: string;
   /** Injectable clock for deterministic tests. */
   now?: () => number;
+  /**
+   * Re-read symbol bodies from `repoDir`'s working tree (drift-checked). Default true.
+   * Must be false when the graph is not the working tree's index (an alternate-ref
+   * snapshot): the working tree is not that ref's source.
+   */
+  hydrateSource?: boolean;
+  /** False when the selected index was exported without source content (metadata-only). */
+  sourceContentAvailable?: boolean;
 }
 
 export class ExploreRequestError extends Error {
@@ -461,8 +469,11 @@ export async function runExplore(request: ExploreRequest, deps: ExploreDeps): Pr
   // The store keeps only a prefix of each body; recover full source (read-only, drift-checked) for rendering.
   const contentOverrides = new Map<string, string>();
   const hydrationBoundaries = new Set<HydrationBoundary>();
+  const hydrationRoot = deps.hydrateSource === false ? undefined : deps.repoDir;
+  if (deps.hydrateSource === false) degraded.push('source: selected index is not the working tree — indexed (possibly truncated) content used');
+  if (deps.sourceContentAvailable === false) degraded.push('source: missing-content — the selected index carries no source content');
   const hydratedCandidates = contextNodes.map(({ node, relevance }) => {
-    const hydration = hydrateNodeSource(node, deps.repoDir);
+    const hydration = hydrateNodeSource(node, hydrationRoot);
     if (hydration.boundary) hydrationBoundaries.add(hydration.boundary);
     if (hydration.status === 'hydrated' && hydration.content !== undefined) {
       contentOverrides.set(node.id, hydration.content);

@@ -189,7 +189,7 @@ const ROLE_RANK: Record<Role, number> = {
   admin: 4,
 };
 
-function meetsRole(userRole: Role, required: Role): boolean {
+export function meetsRole(userRole: Role, required: Role): boolean {
   return (ROLE_RANK[userRole] ?? 0) >= (ROLE_RANK[required] ?? 0);
 }
 

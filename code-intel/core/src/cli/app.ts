@@ -34,6 +34,12 @@ import Logger from '../shared/logger.js';
 import { createKnowledgeGraph } from '../graph/knowledge-graph.js';
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
 import { LazyKnowledgeGraph } from '../graph/lazy-knowledge-graph.js';
+import { resolveReadIndexView } from '../storage/index-view-resolver.js';
+import { summarizeIndexView, type ReadIndexView } from '../storage/index-view.js';
+import { loadIndexViewArtifacts } from '../storage/index-view-loader.js';
+import { runWithEvidenceDb } from '../evidence/store.js';
+import { exportPortableIndex, importPortableIndex, listIndexRefs, pinIndex, removeIndex, unpinIndex } from '../snapshots/export-import.js';
+import { DEFAULT_PORTABLE_LIMITS } from '../snapshots/portable-format.js';
 import { runPipeline } from '../pipeline/orchestrator.js';
 import {
   scanPhase,
@@ -2740,6 +2746,40 @@ async function loadOrAnalyzeWorkspace(targetPath: string) {
   return analyzeWorkspace(targetPath, { silent: true });
 }
 
+/**
+ * Read-only commands with `--ref`: serve the command from that committed ref's
+ * semantic snapshot (built on first use, then cached) instead of the working
+ * tree's index. Never analyzes or mutates the current index; an unknown ref or a
+ * failed build exits non-zero instead of falling back to current state.
+ */
+async function withCliReadGraph(
+  targetPath: string,
+  ref: string | undefined,
+  json: boolean | undefined,
+  fn: (ctx: { graph: KnowledgeGraph; workspaceRoot: string; repoName: string; view?: ReadIndexView }) => Promise<void>,
+): Promise<void> {
+  if (ref === undefined) {
+    await fn(await loadOrAnalyzeWorkspace(targetPath));
+    return;
+  }
+  const workspaceRoot = path.resolve(targetPath);
+  const resolution = await resolveReadIndexView({ repoDir: workspaceRoot, ref });
+  if (!resolution.ok) {
+    if (json) console.log(JSON.stringify({ error: resolution.boundary.message, boundary: resolution.boundary.kind, ref }, null, 2));
+    else console.error(`\n  ${resolution.boundary.kind}: ${resolution.boundary.message}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  const view = resolution.view;
+  try {
+    const loaded = await loadIndexViewArtifacts(view);
+    if (!json) console.error(`  Index view: ref ${ref} → snapshot ${view.identity.slice(0, 12)} (${view.resolution}${view.capabilities.sourceContent ? '' : ', no source content'})`);
+    await runWithEvidenceDb(view.evidenceDbPath ?? null, () => fn({ graph: loaded.graph, workspaceRoot, repoName: path.basename(workspaceRoot), view }));
+  } finally {
+    view.release();
+  }
+}
+
 repoCmd.addHelpText('after', `
   Stable repo management commands:
     list                      List indexed repos with IDs
@@ -2762,6 +2802,7 @@ program
   .argument('<query>', 'Search query (name, kind, or partial match)')
   .option('-l, --limit <n>', 'Maximum number of results', '20')
   .option('-p, --path <path>', 'Path to the repository (default: current directory)', '.')
+  .option('--ref <ref>', 'Search a committed Git ref (branch/tag/SHA) via its semantic snapshot instead of the current index')
   .option('--json', 'Output machine-readable JSON')
   .addHelpText('after', `
   Runs BM25 text search across all indexed symbols — functions, classes,
@@ -2771,20 +2812,20 @@ program
     $ code-intel search "handleRequest"
     $ code-intel search "auth" --limit 10
     $ code-intel search "UserService" --path ./backend
+    $ code-intel search "UserService" --ref main
 
   Note:
     The HTTP API now uses canonical scoped search via POST /api/v1/search.
     Legacy /api/v1/vector-search and /api/v1/groups/:name/search remain
     compatibility adapters during migration.
 `)
-  .action(async (query: string, options: { limit: string; path: string; json?: boolean }) => {
-    const { graph } = await loadOrAnalyzeWorkspace(options.path);
+  .action(async (query: string, options: { limit: string; path: string; ref?: string; json?: boolean }) => withCliReadGraph(options.path, options.ref, options.json, async ({ graph, view }) => {
     const results = textSearch(graph, query, parseInt(options.limit, 10)).map((result) => {
       const node = graph.getNode(result.nodeId);
       return { ...result, selector: node ? formatSymbolTarget(node) : undefined };
     });
     if (options.json) {
-      console.log(JSON.stringify({ query, results }, null, 2));
+      console.log(JSON.stringify({ query, results, ...(view ? { indexView: summarizeIndexView(view) } : {}) }, null, 2));
       return;
     }
     if (results.length === 0) {
@@ -2797,7 +2838,7 @@ program
       if (r.selector) console.log(`  ${''.padEnd(14)} ${r.selector}`);
     }
     console.log('');
-  });
+  }));
 
 // ─── explore ─────────────────────────────────────────────────────────────────
 program
@@ -2810,6 +2851,7 @@ program
   .option('--seeds <n>', 'Seed symbols to expand (1-8)', '5')
   .option('--explain-ranking', 'Include top rerank contributions per seed')
   .option('-p, --path <path>', 'Path to the repository (default: current directory)', '.')
+  .option('--ref <ref>', 'Explore a committed Git ref (branch/tag/SHA) via its semantic snapshot')
   .option('--json', 'Output machine-readable JSON')
   .addHelpText('after', `
   Intent only changes allocation and orchestration, never semantic truth.
@@ -2819,8 +2861,7 @@ program
     $ code-intel explore "how does login reach session persistence?"
     $ code-intel explore "what must change to add MFA?" --intent change --max-tokens 6000
 `)
-  .action(async (task: string, options: { intent: string; maxTokens: string; compression: string; seeds: string; explainRanking?: boolean; path: string; json?: boolean }) => {
-    const { graph, workspaceRoot, repoName } = await loadOrAnalyzeWorkspace(options.path);
+  .action(async (task: string, options: { intent: string; maxTokens: string; compression: string; seeds: string; explainRanking?: boolean; path: string; ref?: string; json?: boolean }) => withCliReadGraph(options.path, options.ref, options.json, async ({ graph, workspaceRoot, repoName, view }) => {
     const request: ExploreRequest = {
       task,
       intent: options.intent as ExploreRequest['intent'],
@@ -2840,9 +2881,10 @@ program
         }),
         repoDir: workspaceRoot,
         repoName,
+        ...(view ? { indexIdentity: view.identity, hydrateSource: false, sourceContentAvailable: view.capabilities.sourceContent } : {}),
       });
       if (options.json) {
-        console.log(JSON.stringify(result, null, 2));
+        console.log(JSON.stringify(view ? { ...result, indexView: summarizeIndexView(view) } : result, null, 2));
         return;
       }
       console.log(`\n  Explore (${result.intent}, ${result.intentSource}) — ${result.seeds.length} seed(s), ${result.counters.tokensDelivered}/${result.maxTokens} tokens, certainty: ${result.certainty}\n`);
@@ -2862,7 +2904,7 @@ program
       }
       throw err;
     }
-  });
+  }));
 
 // ─── workflow: resumable graph-verified change sessions ─────────────────────
 const workflowCmd = program
@@ -3074,6 +3116,7 @@ program
   .description('Inspect a symbol — show callers, callees, file location, and export status')
   .argument('<symbol>', 'Symbol name or qualified selector to inspect')
   .option('-p, --path <path>', 'Path to the repository (default: current directory)', '.')
+  .option('--ref <ref>', 'Inspect at a committed Git ref (branch/tag/SHA) via its semantic snapshot')
   .option('--json', 'Output machine-readable JSON')
   .addHelpText('after', `
   Finds the symbol in the knowledge graph and prints its full connection
@@ -3085,8 +3128,7 @@ program
     $ code-intel inspect runPipeline
     $ code-intel inspect ApiClient --path ./frontend
 `)
-  .action(async (symbol: string, options: { path: string; json?: boolean }) => {
-    const { graph } = await loadOrAnalyzeWorkspace(options.path);
+  .action(async (symbol: string, options: { path: string; ref?: string; json?: boolean }) => withCliReadGraph(options.path, options.ref, options.json, async ({ graph, view }) => {
     const resolution = resolveSymbolTarget(graph, symbol);
     if (resolution.status === 'not-found') {
       if (options.json) console.log(JSON.stringify({ status: 'not-found', symbol, candidates: [] }, null, 2));
@@ -3119,7 +3161,8 @@ program
     const outgoing = [...graph.findEdgesFrom(node.id)];
     const callers = incoming.filter((e) => e.kind === 'calls');
     const callees = outgoing.filter((e) => e.kind === 'calls');
-    const programAnalysis = await tryInspectProgramAnalysis(node, options.path);
+    // Program analysis re-parses source from the working tree, which is not the selected ref's source.
+    const programAnalysis = view ? null : await tryInspectProgramAnalysis(node, options.path);
     if (options.json) {
       console.log(JSON.stringify({
         status: 'found', symbol: {
@@ -3129,6 +3172,7 @@ program
         callers: callers.map((edge) => graph.getNode(edge.source)).filter(Boolean),
         callees: callees.map((edge) => graph.getNode(edge.target)).filter(Boolean),
         ...(programAnalysis ? { programAnalysis } : {}),
+        ...(view ? { indexView: summarizeIndexView(view), programAnalysisBoundary: 'program analysis is unavailable for --ref (it reads working-tree source)' } : {}),
       }, null, 2));
       return;
     }
@@ -3163,7 +3207,7 @@ program
       }
     }
     console.log('');
-  });
+  }));
 
 // ─── 10. impact ──────────────────────────────────────────────────────────────
 program
@@ -3172,6 +3216,7 @@ program
   .argument('<symbol>', 'Symbol name to analyse')
   .option('-p, --path <path>', 'Path to the repository (default: current directory)', '.')
   .option('-d, --depth <n>', 'Maximum traversal depth (hops)', '5')
+  .option('--ref <ref>', 'Compute at a committed Git ref (branch/tag/SHA) via its semantic snapshot')
   .addHelpText('after', `
   Traverses the call graph upward from the target symbol, collecting every
   symbol that transitively depends on it via calls or imports.
@@ -3183,8 +3228,7 @@ program
     $ code-intel impact ApiClient --depth 3
     $ code-intel impact UserService --path ./backend
 `)
-  .action(async (symbol: string, options: { path: string; depth: string }) => {
-    const { graph } = await loadOrAnalyzeWorkspace(options.path);
+  .action(async (symbol: string, options: { path: string; depth: string; ref?: string }) => withCliReadGraph(options.path, options.ref, false, async ({ graph }) => {
     const maxHops = parseInt(options.depth, 10);
 
     const resolution = resolveSymbolTarget(graph, symbol);
@@ -3230,7 +3274,7 @@ program
       if (n) console.log(`  ${n.kind.padEnd(14)} ${n.name.padEnd(32)} ${n.filePath}`);
     }
     console.log('');
-  });
+  }));
 
 // ─── 10b. deprecated ─────────────────────────────────────────────────────────
 program
@@ -3277,6 +3321,186 @@ program
       }
     }
   });
+
+// ─── index: ref-aware and portable snapshot indexes ─────────────────────────
+const indexCmd = program
+  .command('index')
+  .description('List, export, import and pin ref snapshot indexes (never changes the current index)')
+  .addHelpText('after', `
+  Index maintenance (current index):
+    index cleanup [path] [--dry-run] [--keep N] [--stale-hours N] [--remove-legacy]
+    index unlock [path] [--force]
+`);
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GiB`;
+}
+
+function parseByteLimit(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const match = /^(\d+)([kmg]?)i?b?$/i.exec(value.trim());
+  if (!match) throw new Error(`invalid size ${JSON.stringify(value)} (e.g. 500m, 2g)`);
+  const unit = { '': 1, k: 1024, m: 1024 ** 2, g: 1024 ** 3 }[match[2]!.toLowerCase() as '' | 'k' | 'm' | 'g'];
+  return Number.parseInt(match[1]!, 10) * unit;
+}
+
+indexCmd
+  .command('refs')
+  .description('List cached ref snapshots with the local branches/tags that resolve to them')
+  .option('-p, --path <path>', 'Path to the repository (default: current directory)', '.')
+  .option('--json', 'Output machine-readable JSON')
+  .action((options: { path: string; json?: boolean }) => {
+    const entries = listIndexRefs(path.resolve(options.path));
+    if (options.json) {
+      console.log(JSON.stringify({ snapshots: entries }, null, 2));
+      return;
+    }
+    if (entries.length === 0) {
+      console.log('\n  No ref snapshots cached. Query with --ref, run `code-intel graph diff`, or `code-intel index import`.\n');
+      return;
+    }
+    console.log('');
+    for (const entry of entries) {
+      const flags = [
+        entry.capabilities?.privacyProfile ?? 'invalid',
+        entry.pinned ? 'pinned' : '',
+        entry.readers ? 'in-use' : '',
+        entry.valid ? '' : 'invalid',
+      ].filter(Boolean).join(', ');
+      console.log(`  ${entry.snapshotId.slice(0, 12)}  ${(entry.descriptor?.commit ?? '?').slice(0, 12)}  ${formatBytes(entry.sizeBytes).padStart(10)}  [${flags}]`);
+      if (entry.refs.length > 0) console.log(`                refs: ${entry.refs.join(', ')}`);
+    }
+    console.log('');
+  });
+
+indexCmd
+  .command('export')
+  .description('Export one committed ref as a portable .cidx index package')
+  .requiredOption('--ref <ref>', 'Committed Git ref (branch, tag or SHA) to export')
+  .requiredOption('-o, --output <file>', 'Output package path (e.g. service-main.cidx)')
+  .option('-p, --path <path>', 'Path to the repository (default: current directory)', '.')
+  .option('--privacy <profile>', 'full | metadata-only (strips source content; BM25 rebuilt names-only)', 'full')
+  .option('--no-vectors', 'Do not include the snapshot\'s vector index')
+  .option('--no-build', 'Fail instead of building a snapshot that is not cached')
+  .option('--force', 'Overwrite the output file if it exists')
+  .option('--max-bytes <size>', 'Maximum package payload (default 2g)')
+  .option('--json', 'Output machine-readable JSON')
+  .addHelpText('after', `
+  The package binds to this repository's identity (its origin URL) and the
+  ref's Git tree, and records analyzer/schema fingerprints, artifact hashes and
+  the privacy profile. Share the printed sha256 out of band and verify it on
+  import with --expect-sha256.
+
+  Examples:
+    $ code-intel index export --ref main --output service-main.cidx
+    $ code-intel index export --ref v2.3.0 -o release.cidx --privacy metadata-only
+`)
+  .action(async (options: { ref: string; output: string; path: string; privacy: string; vectors: boolean; build: boolean; force?: boolean; maxBytes?: string; json?: boolean }) => {
+    if (options.privacy !== 'full' && options.privacy !== 'metadata-only') {
+      console.error(`\n  Unknown privacy profile ${JSON.stringify(options.privacy)} (use full or metadata-only)\n`);
+      process.exitCode = 1;
+      return;
+    }
+    const maxBytes = parseByteLimit(options.maxBytes);
+    const result = await exportPortableIndex({
+      repoDir: path.resolve(options.path),
+      ref: options.ref,
+      outputPath: options.output,
+      privacyProfile: options.privacy,
+      includeVectors: options.vectors,
+      allowBuild: options.build,
+      overwrite: options.force === true,
+      ...(maxBytes ? { limits: { ...DEFAULT_PORTABLE_LIMITS, maxArtifactBytes: maxBytes, maxTotalBytes: maxBytes } } : {}),
+    });
+    if (options.json) {
+      console.log(JSON.stringify(result, null, 2));
+      if (result.status !== 'exported') process.exitCode = 1;
+      return;
+    }
+    if (result.status !== 'exported') {
+      console.error(`\n  Export failed (${result.code}): ${result.message}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    const caps = result.manifest.capabilities;
+    console.log(`\n  ✔  Exported ${options.ref} → ${result.outputPath}`);
+    console.log(`     Snapshot  : ${result.manifest.descriptor.snapshotId}`);
+    console.log(`     Commit    : ${result.manifest.descriptor.commit ?? '?'}`);
+    console.log(`     Privacy   : ${result.manifest.privacyProfile} (source content: ${caps.sourceContent ? 'yes' : 'no'}, bm25: ${caps.bm25Content}, vectors: ${caps.vector ? 'yes' : 'no'}, evidence: ${caps.evidence ? 'yes' : 'no'})`);
+    console.log(`     Size      : ${formatBytes(result.packageBytes)}`);
+    console.log(`     sha256    : ${result.packageSha256}\n`);
+  });
+
+indexCmd
+  .command('import')
+  .description('Validate and import a portable .cidx index package into the local snapshot cache')
+  .argument('<file>', 'Package to import (untrusted input: fully validated before use)')
+  .option('-p, --path <path>', 'Path to the target repository (default: current directory)', '.')
+  .option('--pin', 'Protect the imported snapshot from cache eviction')
+  .option('--expect-sha256 <digest>', 'Reject the package unless its sha256 equals this digest')
+  .option('--max-bytes <size>', 'Maximum package payload (default 2g)')
+  .option('--json', 'Output machine-readable JSON')
+  .addHelpText('after', `
+  Import never changes the current index or checkout: the snapshot becomes a
+  read source for --ref queries and graph diffs only. Packages from another
+  repository, an incompatible analyzer version, or with tampered artifacts are
+  rejected and nothing is published.
+
+  Examples:
+    $ code-intel index import service-main.cidx --pin
+    $ code-intel index import ci.cidx --expect-sha256 3b1f…
+`)
+  .action(async (file: string, options: { path: string; pin?: boolean; expectSha256?: string; maxBytes?: string; json?: boolean }) => {
+    const maxBytes = parseByteLimit(options.maxBytes);
+    const result = await importPortableIndex({
+      repoDir: path.resolve(options.path),
+      packagePath: file,
+      pin: options.pin === true,
+      expectedSha256: options.expectSha256,
+      ...(maxBytes ? { limits: { ...DEFAULT_PORTABLE_LIMITS, maxArtifactBytes: maxBytes, maxTotalBytes: maxBytes } } : {}),
+    });
+    if (options.json) {
+      console.log(JSON.stringify(result, null, 2));
+      if (result.status === 'rejected') process.exitCode = 1;
+      return;
+    }
+    if (result.status === 'rejected') {
+      console.error(`\n  Import rejected (${result.code}): ${result.message}`);
+      if (result.remediation) console.error(`  ${result.remediation}`);
+      console.error('');
+      process.exitCode = 1;
+      return;
+    }
+    console.log(`\n  ✔  ${result.status === 'imported' ? 'Imported' : 'Already present'}: snapshot ${result.snapshotId}`);
+    console.log(`     Commit    : ${result.manifest.descriptor.commit ?? '?'}`);
+    console.log(`     Privacy   : ${result.manifest.privacyProfile}${result.pinned ? ' (pinned)' : ''}`);
+    for (const warning of result.warnings) console.log(`     ! ${warning}`);
+    console.log('');
+  });
+
+for (const [name, description] of [
+  ['pin', 'Protect a cached snapshot (ref, snapshot ID or prefix) from eviction'],
+  ['unpin', 'Remove the local pin from a snapshot'],
+  ['remove', 'Delete a cached snapshot now (refused while a reader holds it)'],
+] as const) {
+  indexCmd
+    .command(`${name} <selector>`)
+    .description(description)
+    .option('-p, --path <path>', 'Path to the repository (default: current directory)', '.')
+    .option('--json', 'Output machine-readable JSON')
+    .action((selector: string, options: { path: string; json?: boolean }) => {
+      const repoDir = path.resolve(options.path);
+      const result = name === 'pin' ? pinIndex(repoDir, selector) : name === 'unpin' ? unpinIndex(repoDir, selector) : removeIndex(repoDir, selector);
+      const failed = 'error' in result || ('result' in result && result.result === 'in-use');
+      if (options.json) console.log(JSON.stringify(result, null, 2));
+      else if ('error' in result) console.error(`\n  ${result.error}\n`);
+      else console.log(`\n  ${name}: ${result.snapshotId}${'result' in result ? ` (${result.result})` : ''}${'wasPinned' in result && !result.wasPinned ? ' (was not pinned)' : ''}\n`);
+      if (failed) process.exitCode = 1;
+    });
+}
 
 // ─── graph ───────────────────────────────────────────────────────────────────
 const graphCmd = program

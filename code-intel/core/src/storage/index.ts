@@ -31,3 +31,7 @@ export type {
   ArtifactVerification,
   EvolutionAction,
 } from './index-generation.js';
+export { generationIndexView, snapshotIndexView, summarizeIndexView } from './index-view.js';
+export type { ReadIndexView, ReadIndexViewKind, IndexViewBoundary, IndexViewBoundaryKind, IndexViewSummary } from './index-view.js';
+export { resolveReadIndexView, withReadIndexView } from './index-view-resolver.js';
+export type { ResolveReadIndexViewRequest, ResolveReadIndexViewResult } from './index-view-resolver.js';

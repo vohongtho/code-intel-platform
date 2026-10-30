@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import path from 'node:path';
 import { Database, type SqliteDatabase } from '../shared/sqlite.js';
 import type { AnalysisBoundary, AnalysisCoverage } from '../shared/index.js';
@@ -179,7 +180,23 @@ function parseJson<T>(value: string | null): T | undefined {
   }
 }
 
+/**
+ * Request-scoped evidence source. A read served from a non-current index view
+ * (an alternate ref's semantic snapshot) must take relationship evidence from
+ * that same view, never from the repository's active generation. Readers keep
+ * calling `createEvidenceStore(repoDir)` unchanged; inside `runWithEvidenceDb`
+ * the override wins. `null` means the view has no evidence artifact: callers
+ * get an empty in-memory store rather than the active generation's records.
+ */
+const evidenceDbOverride = new AsyncLocalStorage<{ path: string | null }>();
+
+export function runWithEvidenceDb<T>(evidenceDbPath: string | null, fn: () => T): T {
+  return evidenceDbOverride.run({ path: evidenceDbPath }, fn);
+}
+
 export function getEvidenceDbPath(repoDir: string): string {
+  const override = evidenceDbOverride.getStore();
+  if (override) return override.path ?? ':memory:';
   const stagingDir = process.env['CODE_INTEL_INDEX_STAGING_DIR']?.trim();
   if (stagingDir) return path.join(path.resolve(stagingDir), EVIDENCE_DB_FILE);
   return resolvePublishedArtifactPath(repoDir, EVIDENCE_DB_FILE);
@@ -187,6 +204,7 @@ export function getEvidenceDbPath(repoDir: string): string {
 
 export function createEvidenceStore(repoDir: string): ResolutionEvidenceStore {
   const dbPath = getEvidenceDbPath(repoDir);
+  if (dbPath === ':memory:') return new SqliteResolutionEvidenceStore(dbPath);
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   return new SqliteResolutionEvidenceStore(dbPath);
 }

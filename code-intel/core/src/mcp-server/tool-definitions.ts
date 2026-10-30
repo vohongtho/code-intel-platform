@@ -25,14 +25,33 @@ const REPO_SELECTABLE_TOOL_NAMES = new Set([
   'suggest_tests', 'cluster_summary', 'deprecated_usage', 'complexity_hotspots', 'coverage_gaps', 'secrets', 'vulnerability_scan',
   'api_contract', 'api_impact', 'api_shape_check', 'api_drift', 'graph_diff', 'change_workflow', 'taint_trace',
 ]);
+/**
+ * Read-only, single-repo graph tools that can be served from an alternate committed
+ * ref's semantic snapshot. Excluded on purpose: tools that already compare refs
+ * (graph_diff, pr_impact, detect_changes, api_drift), tools that read the working
+ * tree or source files (taint_trace, secrets, vulnerability_scan, suggest_tests,
+ * coverage_gaps), cross-repo/group tools, and anything that writes.
+ */
+export const REF_SELECTABLE_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'overview', 'search', 'inspect', 'context', 'explore', 'blast_radius', 'file_symbols', 'find_path', 'list_exports',
+  'routes', 'clusters', 'flows', 'query', 'explain_relationship', 'similar_symbols', 'health_report', 'cluster_summary',
+  'deprecated_usage', 'complexity_hotspots', 'api_contract', 'api_impact', 'api_shape_check',
+]);
+const _refProp = {
+  ref: {
+    type: 'string' as const,
+    description: 'Optional committed Git ref (branch, tag, SHA) to read instead of the current index. Served from an isolated semantic snapshot (built on first use, then cached); never changes the checkout or current index. Omit for current behavior.',
+  },
+};
 const withRepoSelector = <T extends { name: string; inputSchema?: { type?: string; properties?: Record<string, unknown> } }>(tool: T): T => (
-  REPO_SELECTABLE_TOOL_NAMES.has(tool.name) && tool.inputSchema?.type === 'object'
+  (REPO_SELECTABLE_TOOL_NAMES.has(tool.name) || REF_SELECTABLE_TOOL_NAMES.has(tool.name)) && tool.inputSchema?.type === 'object'
     ? {
         ...tool,
         inputSchema: {
           ...tool.inputSchema,
           properties: {
-            ..._repoSelectorProps,
+            ...(REPO_SELECTABLE_TOOL_NAMES.has(tool.name) ? _repoSelectorProps : {}),
+            ...(REF_SELECTABLE_TOOL_NAMES.has(tool.name) ? _refProp : {}),
             ...(tool.inputSchema.properties ?? {}),
           },
         },
