@@ -1,5 +1,5 @@
 import express from 'express';
-import type { Request, Response, NextFunction } from 'express';
+import type { Request, Response, NextFunction, RequestHandler } from 'express';
 import compression from 'compression';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -1123,6 +1123,31 @@ export function createApp(
     return loadRegistry().find((r) => r.id === repoId)?.id ?? repoId;
   }
 
+  /** Repository IDs a group reads (same mapping as system-flows in workflow-routes.ts). */
+  function groupMemberRepoIds(group: { members: { repoId?: string; registryName: string }[] }): string[] {
+    const registry = loadRegistry();
+    return group.members.map((m) => m.repoId ?? registry.find((r) => r.name === m.registryName)?.id ?? m.registryName);
+  }
+
+  /**
+   * Group read routes expose every member repository, so a repo-scoped token must have
+   * access to all of them. An unknown group falls through to the handler's own 404.
+   */
+  const requireGroupScope: RequestHandler<{ name: string }> = (req, res, next) => {
+    const name = req.params.name;
+    let group: ReturnType<typeof loadGroup> = null;
+    try { group = name ? loadGroup(name) : null; } catch { group = null; }
+    if (group) {
+      try {
+        assertRepoScope(req, groupMemberRepoIds(group));
+      } catch (err) {
+        if (err instanceof AppError) { sendAppError(req as unknown as Request, res, err); return; }
+        throw err;
+      }
+    }
+    next();
+  };
+
   /**
    * Repositories a search body would read, resolved like executeSearchRequest does.
    * Unknown repos/groups resolve to nothing here; the search itself still answers 404.
@@ -1135,8 +1160,7 @@ export function createApp(
     const registry = loadRegistry();
     if (scope.type === 'group') {
       const group = loadGroup(scope.name);
-      if (!group) return [];
-      return group.members.map((m) => m.repoId ?? registry.find((r) => r.name === m.registryName)?.id ?? m.registryName);
+      return group ? groupMemberRepoIds(group) : [];
     }
     const entry = registry.find((r) => r.id === scope.repoId)
       ?? registry.find((r) => r.name === scope.repoId || r.path === scope.repoId);
@@ -1919,19 +1943,19 @@ export function createApp(
     res.json(groups.map((g) => ({ name: g.name, memberCount: g.members.length, lastSync: g.lastSync ?? null, createdAt: g.createdAt })));
   });
 
-  app.get('/api/v1/groups/:name', (req, res) => {
+  app.get('/api/v1/groups/:name', requireGroupScope, (req, res) => {
     const group = loadGroup(req.params.name);
     if (!group) { res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: 'Group not found' } }); return; }
     res.json(group);
   });
 
-  app.get('/api/v1/groups/:name/contracts', (req, res) => {
+  app.get('/api/v1/groups/:name/contracts', requireGroupScope, (req, res) => {
     const result = loadSyncResult(req.params.name);
     if (!result) { res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: 'No sync result. Run sync first.' } }); return; }
     res.json(result);
   });
 
-  app.get('/api/v1/groups/:name/drift', async (req, res) => {
+  app.get('/api/v1/groups/:name/drift', requireGroupScope, async (req, res) => {
     const baseRef = Array.isArray(req.query['base_ref']) ? req.query['base_ref'][0] : req.query['base_ref'];
     const headRef = Array.isArray(req.query['head_ref']) ? req.query['head_ref'][0] : req.query['head_ref'];
     if (!baseRef || !headRef) {
@@ -2051,7 +2075,7 @@ export function createApp(
     }
   });
 
-  app.post('/api/v1/groups/:name/sync', async (req, res) => {
+  app.post('/api/v1/groups/:name/sync', requireGroupScope, async (req, res) => {
     const group = loadGroup(req.params.name);
     if (!group) { res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: 'Group not found' } }); return; }
     try {
@@ -2067,7 +2091,7 @@ export function createApp(
     }
   });
 
-  app.post('/api/v1/groups/:name/search', requireToolScope('search'), async (req, res) => {
+  app.post('/api/v1/groups/:name/search', requireToolScope('search'), requireGroupScope, async (req, res) => {
     try {
       const groupName = Array.isArray(req.params.name) ? req.params.name[0] : req.params.name;
       const result = await executeSearchRequest({
@@ -2093,7 +2117,7 @@ export function createApp(
     }
   });
 
-  app.get('/api/v1/groups/:name/graph', async (req, res) => {
+  app.get('/api/v1/groups/:name/graph', requireGroupScope, async (req, res) => {
     const group = loadGroup(req.params.name);
     if (!group) { res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: 'Group not found' } }); return; }
     const registry = loadRegistry();
@@ -2113,7 +2137,7 @@ export function createApp(
     res.json({ nodes: [...mergedGraph.allNodes()], edges: [...mergedGraph.allEdges()] });
   });
 
-  app.get('/api/v1/groups/:name/topology', requireAuth, requireRole('viewer'), async (req: Request, res: Response) => {
+  app.get('/api/v1/groups/:name/topology', requireAuth, requireRole('viewer'), requireGroupScope, async (req: Request, res: Response) => {
     const groupName = req.params['name'] as string;
     const group = loadGroup(groupName);
     if (!group) { res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: 'Group not found' } }); return; }

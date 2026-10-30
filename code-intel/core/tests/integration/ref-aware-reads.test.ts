@@ -28,6 +28,7 @@ import { snapshotIndexView } from '../../src/storage/index-view.js';
 import { FULL_SNAPSHOT_CAPABILITIES } from '../../src/snapshots/types.js';
 import { getSnapshotsRoot, SNAPSHOT_READ_PINS_DIR } from '../../src/snapshots/paths.js';
 import { computeSemanticGraphDiff, summarizeSnapshotBuild } from '../../src/snapshots/service.js';
+import { saveGroup } from '../../src/multi-repo/group-registry.js';
 
 type Json = Record<string, any>;
 
@@ -394,6 +395,27 @@ describe('HTTP ref-aware reads', { timeout: 300_000 }, () => {
     // Unscoped viewers and analysts keep full access (unchanged behavior).
     assert.equal((await request('GET', '/api/v1/flows', viewer)).status, 200);
     assert.equal((await post('/api/v1/search', analyst, { query: 'currentOnly' })).status, 200);
+  });
+
+  it('group routes require every member repository to be in a scoped token\'s scope', async () => {
+    saveGroup({ name: 'scope-foreign', createdAt: new Date(0).toISOString(), members: [{ repoId: 'some-other-repo', registryName: 'other', groupPath: 'other' }] });
+    saveGroup({ name: 'scope-mixed', createdAt: new Date(0).toISOString(), members: [
+      { repoId: 'ref-aware', registryName: 'ref-aware', groupPath: 'self' },
+      { repoId: 'some-other-repo', registryName: 'other', groupPath: 'other' },
+    ] });
+    saveGroup({ name: 'scope-own', createdAt: new Date(0).toISOString(), members: [{ repoId: 'ref-aware', registryName: 'ref-aware', groupPath: 'self' }] });
+
+    const gets = (g: string) => [`/api/v1/groups/${g}`, `/api/v1/groups/${g}/contracts`, `/api/v1/groups/${g}/graph`, `/api/v1/groups/${g}/topology`, `/api/v1/groups/${g}/drift?base_ref=a&head_ref=b`];
+    for (const g of ['scope-foreign', 'scope-mixed']) {
+      for (const route of gets(g)) assert.equal((await request('GET', route, scopedSelf)).status, 403, route);
+      assert.equal((await post(`/api/v1/groups/${g}/search`, scopedSelf, { query: 'x' })).status, 403, `${g} search`);
+      assert.equal((await post(`/api/v1/groups/${g}/sync`, scopedSelf, {})).status, 403, `${g} sync`);
+      assert.equal((await post('/api/v1/search', scopedSelf, { query: 'x', scope: { type: 'group', name: g } })).status, 403, `${g} scoped search`);
+    }
+    for (const route of gets('scope-own')) assert.notEqual((await request('GET', route, scopedSelf)).status, 403, route);
+    assert.notEqual((await post('/api/v1/groups/scope-own/search', scopedSelf, { query: 'x' })).status, 403);
+    for (const route of gets('scope-foreign')) assert.notEqual((await request('GET', route, analyst)).status, 403, `analyst ${route}`);
+    assert.equal((await request('GET', '/api/v1/groups/no-such-group/graph', scopedSelf)).status, 404, 'unknown group stays 404');
   });
 
   it('a viewer cannot trigger a snapshot build', async () => {
