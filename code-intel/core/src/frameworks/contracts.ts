@@ -1,6 +1,7 @@
 import path from 'node:path';
 import type { Language } from '../shared/languages.js';
 import type { FactBundle } from '../semantic/fact-bundle.js';
+import type { TaintModel } from '../program-analysis/taint/model-schema.js';
 
 export type FrameworkDetectionStrength = 'weak' | 'medium' | 'strong';
 
@@ -40,12 +41,29 @@ export function workspaceRelativePath(workspaceRoot: string, filePath: string): 
 
 export interface FrameworkFactBundle extends FactBundle {}
 
+/**
+ * A declarative taint model fragment an adapter contributes (sources such
+ * as request inputs, framework-specific sinks/sanitizers). The taint
+ * engine consumes these through `program-analysis/taint/model-registry.ts`;
+ * an adapter never creates taint findings itself. `modelVersion` is the
+ * model's own `version` and, together with the adapter id/version, is part
+ * of the registry fingerprint, so changing either invalidates cached taint
+ * output.
+ */
+export interface FrameworkTaintContribution {
+  adapterId: string;
+  adapterVersion: string;
+  model: TaintModel;
+}
+
 export interface FrameworkAdapter {
   id: string;
   version: string;
   languages: readonly Language[];
   detect(view: RepositoryFactView): FrameworkDetection;
   extract(view: RepositoryFactView): FrameworkFactBundle;
+  /** Optional, pure, data-only: the adapter's taint model fragments. */
+  taintModels?(): readonly FrameworkTaintContribution[];
 }
 
 export interface FrameworkAdapterRegistration {

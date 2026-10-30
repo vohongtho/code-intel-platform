@@ -5239,6 +5239,68 @@ program
   });
 
 program
+  .command('taint-trace')
+  .description('Trace candidate source-to-sink taint paths using declarative models (built-in, framework, .code-intel/taint-models.json)')
+  .option('--symbol <selector>', 'Function/method to analyze (name or qualified kind:name@file:line); omit for a bounded scan')
+  .option('--source <selector>', 'Only findings from this source (model/matcher ref, matcher id, or model id)')
+  .option('--sink <selector>', 'Only findings into this sink (model/matcher ref, matcher id, model id, or category such as sql/command)')
+  .option('--no-interprocedural', 'Do not follow persisted call edges across functions')
+  .option('--interprocedural', 'Follow persisted call edges (default with --symbol; off for scans)')
+  .option('--max-findings <n>', 'Maximum findings returned (default: 50; totalFindings is exact)')
+  .option('--max-functions <n>', 'Scan mode: maximum functions analyzed (default: 200)')
+  .option('--verbose', 'Include propagation statement ids')
+  .option('--dir <path>', 'Repo path (default: current dir)')
+  .option('--format <fmt>', 'Output format: text|json (default: text)', 'text')
+  .action(async (opts: { symbol?: string; source?: string; sink?: string; interprocedural?: boolean; maxFindings?: string; maxFunctions?: string; verbose?: boolean; dir?: string; format?: string }, command: { getOptionValueSource?: (key: string) => string | undefined }) => {
+    const repoPath = path.resolve(opts.dir ?? '.');
+    const { graph } = await loadOrAnalyzeWorkspace(repoPath);
+    const { traceTaint } = await import('../query/taint-trace.js');
+    const positive = (value?: string) => {
+      const parsed = value ? Number.parseInt(value, 10) : NaN;
+      return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+    };
+    const interproceduralExplicit = command.getOptionValueSource?.('interprocedural') === 'cli';
+    const result = await traceTaint({
+      repoDir: repoPath,
+      graph,
+      symbol: opts.symbol,
+      source: opts.source,
+      sink: opts.sink,
+      ...(interproceduralExplicit ? { interprocedural: opts.interprocedural } : {}),
+      maxFindings: positive(opts.maxFindings),
+      maxFunctions: positive(opts.maxFunctions),
+      verbose: !!opts.verbose,
+    });
+
+    if ((opts.format ?? 'text').toLowerCase() === 'json') {
+      console.log(JSON.stringify(result, null, 2));
+      if (result.verdict === 'model-error' || result.verdict === 'ambiguous' || result.verdict === 'not-found') process.exitCode = result.verdict === 'ambiguous' ? AMBIGUOUS_SYMBOL_EXIT_CODE : 1;
+      return;
+    }
+    console.log('\n  ◈  Taint Trace\n');
+    console.log(`  verdict: ${result.verdict}`);
+    console.log(`  ${result.summary}`);
+    if (result.verdict === 'model-error') {
+      for (const item of result.models.diagnostics) console.log(`    ✗ ${item.origin} ${item.path}: ${item.message}`);
+      process.exitCode = 1;
+      return;
+    }
+    for (const candidate of result.candidates ?? []) console.log(`    ${candidate}`);
+    console.log(`  models: ${result.models.ids.join(', ') || '(none)'}  (project models: ${result.models.projectModels.status})`);
+    for (const finding of result.findings) {
+      console.log(`\n  [${finding.sink.category ?? 'sink'}] ${finding.source.modelId}/${finding.source.matcherId} → ${finding.sink.modelId}/${finding.sink.matcherId}  certainty: ${finding.certainty}${finding.interprocedural ? '  (interprocedural)' : ''}`);
+      console.log(`    source ${finding.source.filePath}:${finding.source.line ?? '?'}  →  sink ${finding.sink.filePath}:${finding.sink.line ?? '?'}  via ${finding.variable}`);
+      for (const hop of finding.path.hops) console.log(`    hop ${hop.callerFunctionId} → ${hop.calleeFunctionId} (${hop.transfer}, call ${hop.callCertainty}${hop.callComplete ? '' : ', incomplete'})`);
+      if (finding.sanitizers.note) console.log(`    note: ${finding.sanitizers.note}`);
+    }
+    if (result.truncated) for (const reason of result.truncationReasons) console.log(`\n  … truncated: ${reason}`);
+    console.log(`\n  coverage: ${result.coverage.complete ? 'complete' : 'partial'}  analyzed=${result.coverage.analyzedFunctions} skipped=${result.coverage.skippedFunctions}  interprocedural=${result.coverage.interprocedural.allowed ? 'on' : 'off'}`);
+    for (const note of result.coverage.notes) console.log(`    - ${note}`);
+    for (const boundary of result.coverage.boundaries.slice(0, 10)) console.log(`    · ${boundary}`);
+    console.log('');
+  });
+
+program
   .command('api-drift')
   .description('Compare API contracts between two separately indexed repo checkouts (base vs head)')
   .requiredOption('--base-dir <path>', 'Repo path for the base (before) state')

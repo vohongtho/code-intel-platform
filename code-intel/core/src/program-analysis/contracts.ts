@@ -12,8 +12,8 @@ import type { CapabilityState } from '../languages/capability-types.js';
 import type { ResolutionCertainty } from '../resolution/contracts.js';
 import { hashIdentityPayload } from '../identity/normalization.js';
 
-/** Bumped whenever lowering/analysis semantics change in a way that invalidates prior cached artifacts. */
-export const PROGRAM_ANALYSIS_VERSION = 'program-analysis-v1';
+/** Bumped whenever lowering/analysis semantics change in a way that invalidates prior cached artifacts. v2: declarations lower their initializer as the primary expression. */
+export const PROGRAM_ANALYSIS_VERSION = 'program-analysis-v2';
 
 export type ProgramAnalysisArtifactKind =
   | 'ir'
@@ -24,7 +24,8 @@ export type ProgramAnalysisArtifactKind =
   | 'def-use'
   | 'function-summary'
   | 'pdg'
-  | 'taint-findings';
+  | 'taint-findings'
+  | 'taint-summary';
 
 /**
  * Per-language, per-analysis-axis support. Kept independent from
@@ -40,6 +41,13 @@ export interface ProgramAnalysisCapabilityMatrix {
   functionSummary: CapabilityState;
   pdg: CapabilityState;
   taint: CapabilityState;
+  /**
+   * Cross-function taint through persisted call edges. Never better than
+   * `partial`: it is bounded by call-graph coverage (heuristic and legacy
+   * edges are not followed, receiver dispatch facts are not yet produced
+   * by the semantic adapters), independent of lowering quality.
+   */
+  interproceduralTaint: CapabilityState;
 }
 
 export interface ProgramAnalysisCapabilityDescriptor {
@@ -59,6 +67,8 @@ export interface ProgramAnalysisFingerprint {
   languageLoweringVersion: string;
   resolverVersion: string;
   semanticGraphFingerprint?: string;
+  /** `taintModelFingerprint` of the merged taint model registry (taint/model-registry.ts) a taint-bearing artifact was computed under; a model change mints a new cache key. */
+  taintModelFingerprint?: string;
 }
 
 export function isProgramAnalysisFingerprintCompatible(
@@ -70,7 +80,8 @@ export function isProgramAnalysisFingerprintCompatible(
     candidate.languageLoweringVersion === required.languageLoweringVersion &&
     candidate.resolverVersion === required.resolverVersion &&
     (required.semanticGraphFingerprint === undefined ||
-      candidate.semanticGraphFingerprint === required.semanticGraphFingerprint)
+      candidate.semanticGraphFingerprint === required.semanticGraphFingerprint) &&
+    (required.taintModelFingerprint === undefined || candidate.taintModelFingerprint === required.taintModelFingerprint)
   );
 }
 

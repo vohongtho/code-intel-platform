@@ -23,7 +23,7 @@ const REPO_SELECTABLE_TOOL_NAMES = new Set([
   'overview', 'search', 'context', 'blast_radius', 'file_symbols', 'find_path', 'list_exports', 'routes', 'clusters', 'flows',
   'detect_changes', 'query', 'raw_query', 'explain_relationship', 'pr_impact', 'similar_symbols', 'health_report',
   'suggest_tests', 'cluster_summary', 'deprecated_usage', 'complexity_hotspots', 'coverage_gaps', 'secrets', 'vulnerability_scan',
-  'api_contract', 'api_impact', 'api_shape_check', 'api_drift', 'graph_diff', 'change_workflow',
+  'api_contract', 'api_impact', 'api_shape_check', 'api_drift', 'graph_diff', 'change_workflow', 'taint_trace',
 ]);
 const withRepoSelector = <T extends { name: string; inputSchema?: { type?: string; properties?: Record<string, unknown> } }>(tool: T): T => (
   REPO_SELECTABLE_TOOL_NAMES.has(tool.name) && tool.inputSchema?.type === 'object'
@@ -532,6 +532,23 @@ export const MCP_TOOL_DEFINITIONS = [
         route_fact_id: { type: 'string', description: 'Exact route fact id from a prior api_contract/api_impact result' },
         route_node_id: { type: 'string', description: "The route's graph node id (as returned by inspect/routes/query)" },
         max_findings: { type: 'number', description: 'Maximum findings per route (default 100; totalFindings is always exact)' },
+        ..._tokenProp,
+      },
+    },
+  },
+  {
+    name: 'taint_trace',
+    description: 'Traces candidate source-to-sink taint paths (user input reaching SQL/command/code/path/XSS sinks) with declarative models: built-in runtime models, framework adapters, and the repo\'s .code-intel/taint-models.json. With `symbol`, follows persisted call edges across functions when the index is trusted (certainty bounded by each call edge). Returns model ids, source/sink, sanitizer evidence, path, certainty, coverage and truncation. A no-finding result is never a safety proof: verdict is no-findings-partial-coverage whenever language/model/interprocedural coverage is incomplete.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        symbol: { type: 'string', description: 'Function/method to analyze (name or qualified kind:name@file:line). Omit for a bounded scan of function nodes.' },
+        source: { type: 'string', description: 'Filter by source: model/matcher ref, matcher id, or model id' },
+        sink: { type: 'string', description: 'Filter by sink: model/matcher ref, matcher id, model id, or category (sql, command, code, path, xss, ssrf, deserialization, other)' },
+        interprocedural: { type: 'boolean', description: 'Follow persisted call edges (default true with symbol, false for scans)' },
+        max_findings: { type: 'number', description: 'Maximum findings (default 50; totalFindings is exact)' },
+        max_functions: { type: 'number', description: 'Scan mode: maximum functions analyzed (default 200)' },
+        verbose: { type: 'boolean', description: 'Include propagation statement ids' },
         ..._tokenProp,
       },
     },

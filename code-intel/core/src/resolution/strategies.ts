@@ -1,6 +1,8 @@
 import { createResolutionOutcome, type ResolutionCandidate, type ResolutionOutcome } from './contracts.js';
-import { DEFAULT_DISPATCH_CANDIDATE_LIMIT, noteFullWorkspaceTraversal, type ResolutionIndexes } from './indexes.js';
+import { noteFullWorkspaceTraversal, type ResolutionIndexes } from './indexes.js';
+import { dispatchToResolutionOutcome, resolveDispatch } from './dispatch.js';
 import type { DeclarationFact, ImportBindingFact, PublishedNameFact } from '../semantic/facts.js';
+import type { Language } from '../shared/languages.js';
 
 export interface ReferenceContext {
   referenceId: string;
@@ -10,6 +12,9 @@ export interface ReferenceContext {
   moduleRef?: string;
   localName?: string;
   receiverType?: DeclarationFact['type'];
+  /** Receiver expression text (`this`, `repo`, `new Foo()`), for receiver type-set inference. */
+  receiverText?: string;
+  language?: Language;
   dispatchLimit?: number;
   maxDepth?: number;
 }
@@ -130,60 +135,47 @@ export function resolveReceiverType(indexes: ResolutionIndexes, input: Reference
   return uniqueCandidates(results);
 }
 
+function hasReceiverEvidence(input: ReferenceContext): boolean {
+  return !!input.receiverType || !!input.receiverText;
+}
+
+/**
+ * Receiver dispatch through the shared receiver type-set engine
+ * (dispatch.ts): every runtime target the type/hierarchy/registration
+ * evidence permits, with explicit completeness. Null when there is no
+ * receiver evidence or no member could be found.
+ */
 export function resolveInheritanceDispatch(indexes: ResolutionIndexes, input: ReferenceContext): ResolutionOutcome | null {
-  const limit = input.dispatchLimit ?? DEFAULT_DISPATCH_CANDIDATE_LIMIT;
-  const typeNames = new Set<string>();
-  if (input.receiverType?.name) typeNames.add(input.receiverType.name);
-  if (input.receiverType?.text) typeNames.add(input.receiverType.text.trim());
-
-  const ownerIds = new Set<string>();
-  for (const typeName of typeNames) {
-    for (const decl of indexes.declarationsByTypeName.get(typeName) ?? []) ownerIds.add(decl.factId);
-    for (const [declId, heritageFacts] of indexes.heritageByDeclaration.entries()) {
-      if (heritageFacts.some((fact) => fact.target.name === typeName || fact.target.text === typeName)) ownerIds.add(declId);
-    }
-  }
-
-  const allCandidates: ResolutionCandidate[] = [];
-  for (const ownerId of ownerIds) {
-    for (const member of indexes.declarationsByOwnerRef.get(ownerId) ?? []) {
-      if (member.name !== input.name) continue;
-      allCandidates.push(candidate(member.factId, 'inheritance-dispatch', 0.88, [ownerId, member.factId]));
-    }
-  }
-  const unique = uniqueCandidates(allCandidates);
-  if (unique.length === 0) return null;
-
-  const truncated = unique.length > limit;
-  const candidates = truncated ? unique.slice(0, limit) : unique;
-  return createResolutionOutcome({
-    referenceId: input.referenceId,
-    certainty: truncated ? 'truncated' : candidates.length === 1 ? 'exact' : 'candidate-set',
-    candidates,
-    coverage: {
-      complete: !truncated,
-      totalKnownCandidates: unique.length,
-      emittedCandidates: candidates.length,
-      incompleteReasons: truncated ? ['dispatch-candidate-limit'] : [],
-    },
-    resolverVersion: '',
+  if (!hasReceiverEvidence(input)) return null;
+  const dispatch = resolveDispatch(indexes, {
+    callSiteId: input.referenceId,
+    language: input.language,
+    receiver: { text: input.receiverText ?? input.receiverType?.text ?? '', type: input.receiverType },
+    callerRef: input.ownerRef,
+    memberName: input.name,
+    dispatchLimit: input.dispatchLimit,
   });
+  return dispatch ? dispatchToResolutionOutcome(dispatch) : null;
 }
 
 export function resolveRegistrationDispatch(indexes: ResolutionIndexes, input: ReferenceContext): ResolutionCandidate[] {
-  const results: ResolutionCandidate[] = [];
-  for (const [subjectRef, registrations] of indexes.registrationsBySubject.entries()) {
-    if (!registrations.some((item) => item.targetText === input.name || item.registrationKind === input.name)) continue;
-    results.push(candidate(subjectRef, 'registration-dispatch', 0.8, registrations.map((item) => item.factId)));
+  const bySubject = new Map<string, string[]>();
+  for (const registration of indexes.registrationsByTarget.get(input.name) ?? []) {
+    if (!registration.subjectRef) continue;
+    const refs = bySubject.get(registration.subjectRef) ?? [];
+    refs.push(registration.factId);
+    bySubject.set(registration.subjectRef, refs);
   }
-  return results;
+  return [...bySubject.entries()].map(([subjectRef, refs]) => candidate(subjectRef, 'registration-dispatch', 0.8, [...new Set(refs)].sort()));
 }
 
 export function resolveReference(indexes: ResolutionIndexes, input: ReferenceContext): ResolutionOutcome {
+  // With receiver evidence, the dispatch engine owns receiver/member targets
+  // (static-type members of open interfaces are not runtime targets).
   const dispatchOutcome = resolveInheritanceDispatch(indexes, input);
   const candidates = uniqueCandidates([
     ...resolveLexicalDeclarations(indexes, input),
-    ...resolveReceiverType(indexes, input),
+    ...(dispatchOutcome ? [] : resolveReceiverType(indexes, input)),
     ...resolveQualifiedOwner(indexes, input),
     ...resolveImportBinding(indexes, input),
     ...resolvePublicSurface(indexes, input),
@@ -211,7 +203,9 @@ export function resolveReference(indexes: ResolutionIndexes, input: ReferenceCon
 
   return createResolutionOutcome({
     referenceId: input.referenceId,
-    certainty: dispatchOutcome?.certainty === 'truncated' ? 'truncated' : candidates.length === 1 ? 'exact' : 'candidate-set',
+    certainty: dispatchOutcome?.certainty === 'truncated'
+      ? 'truncated'
+      : candidates.length === 1 && (dispatchOutcome?.coverage.complete ?? true) ? 'exact' : 'candidate-set',
     candidates,
     coverage: {
       complete: dispatchOutcome ? dispatchOutcome.coverage.complete : true,

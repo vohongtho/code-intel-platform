@@ -274,6 +274,29 @@ export const aspnetCoreFrameworkAdapter: FrameworkAdapter = {
   id: 'aspnet-core',
   version: VERSION,
   languages: [Language.CSharp],
+  taintModels() {
+    return [{
+      adapterId: this.id,
+      adapterVersion: this.version,
+      model: {
+        schemaVersion: 1,
+        id: 'aspnet-core-request-input',
+        version: '1',
+        framework: 'aspnet-core',
+        languages: [Language.CSharp],
+        description: 'ASP.NET Core action parameters bound from the request by binding-source attributes.',
+        sources: [
+          { id: 'from-body', kind: 'annotation', annotation: 'FromBody' },
+          { id: 'from-form', kind: 'annotation', annotation: 'FromForm' },
+          { id: 'from-header', kind: 'annotation', annotation: 'FromHeader' },
+          { id: 'from-query', kind: 'annotation', annotation: 'FromQuery' },
+          { id: 'from-route', kind: 'annotation', annotation: 'FromRoute' },
+        ],
+        sinks: [],
+        sanitizers: [],
+      },
+    }];
+  },
   detect(view: RepositoryFactView) {
     return summarizeFrameworkDetection(detectSignals(view), this.id, this.version);
   },

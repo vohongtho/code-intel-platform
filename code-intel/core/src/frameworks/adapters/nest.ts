@@ -342,6 +342,28 @@ export const nestFrameworkAdapter: FrameworkAdapter = {
   id: 'nest',
   version: VERSION,
   languages: [Language.TypeScript],
+  taintModels() {
+    return [{
+      adapterId: this.id,
+      adapterVersion: this.version,
+      model: {
+        schemaVersion: 1,
+        id: 'nest-request-input',
+        version: '1',
+        framework: 'nest',
+        languages: [Language.TypeScript],
+        description: 'NestJS controller parameters bound from the request by parameter decorators.',
+        sources: [
+          { id: 'body-decorator', kind: 'annotation', annotation: 'Body' },
+          { id: 'headers-decorator', kind: 'annotation', annotation: 'Headers' },
+          { id: 'param-decorator', kind: 'annotation', annotation: 'Param' },
+          { id: 'query-decorator', kind: 'annotation', annotation: 'Query' },
+        ],
+        sinks: [],
+        sanitizers: [],
+      },
+    }];
+  },
   detect(view: RepositoryFactView) {
     return summarizeFrameworkDetection(detectSignals(view), this.id, this.version);
   },

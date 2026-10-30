@@ -96,6 +96,25 @@ export const goHttpFrameworkAdapter: FrameworkAdapter = {
   id: 'go-http',
   version: VERSION,
   languages: [Language.Go],
+  taintModels() {
+    return [{
+      adapterId: this.id,
+      adapterVersion: this.version,
+      model: {
+        schemaVersion: 1,
+        id: 'go-http-request-input',
+        version: '1',
+        framework: 'go-http',
+        languages: [Language.Go],
+        description: 'net/http handler request inputs (second handler parameter, `r *http.Request`).',
+        sources: [
+          { id: 'request-input', kind: 'framework-input', framework: 'go-http', accessPaths: ['Body', 'Cookie', 'Form', 'FormValue', 'Header', 'PostForm', 'PostFormValue', 'URL'], requestParameterIndex: 1 },
+        ],
+        sinks: [],
+        sanitizers: [],
+      },
+    }];
+  },
   detect(view: RepositoryFactView) {
     return summarizeFrameworkDetection(detectSignals(view), this.id, this.version);
   },

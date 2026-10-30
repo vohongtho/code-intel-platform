@@ -383,7 +383,7 @@ const GRAPH_BACKED_TOOLS = new Set([
   'overview', 'inspect', 'context', 'explore', 'blast_radius', 'file_symbols', 'find_path', 'list_exports', 'routes', 'clusters', 'flows',
   'detect_changes', 'query', 'raw_query', 'explain_relationship', 'pr_impact', 'similar_symbols', 'health_report',
   'suggest_tests', 'cluster_summary', 'deprecated_usage', 'complexity_hotspots', 'coverage_gaps', 'secrets', 'vulnerability_scan',
-  'api_contract', 'api_impact', 'api_shape_check', 'api_drift', 'graph_diff',
+  'api_contract', 'api_impact', 'api_shape_check', 'api_drift', 'graph_diff', 'taint_trace',
 ]);
 
 export async function dispatchTool(
@@ -1554,6 +1554,27 @@ export async function dispatchTool(
         };
         const maxFindings = a.max_findings as number | undefined;
         const result = getApiShapeCheck(graph, selector, activeRepoName, Number.isInteger(maxFindings) && maxFindings! > 0 ? { maxFindings } : {});
+        return { content: [{ type: 'text', text: compact(result) }] };
+      }
+
+      // ── taint_trace ────────────────────────────────────────────────────────
+      case 'taint_trace': {
+        if (!activeWorkspaceRoot) {
+          return { content: [{ type: 'text', text: compact({ error: 'taint_trace needs an indexed repository workspace; pass repo to select one' }) }], isError: true };
+        }
+        const { traceTaint } = await import('../query/taint-trace.js');
+        const positive = (value: unknown) => (Number.isInteger(value) && (value as number) > 0 ? (value as number) : undefined);
+        const result = await traceTaint({
+          repoDir: activeWorkspaceRoot,
+          graph,
+          symbol: a.symbol as string | undefined,
+          source: a.source as string | undefined,
+          sink: a.sink as string | undefined,
+          ...(typeof a.interprocedural === 'boolean' ? { interprocedural: a.interprocedural } : {}),
+          maxFindings: positive(a.max_findings),
+          maxFunctions: positive(a.max_functions),
+          verbose: a.verbose === true,
+        });
         return { content: [{ type: 'text', text: compact(result) }] };
       }
 

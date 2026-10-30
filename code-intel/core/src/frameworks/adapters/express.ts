@@ -78,6 +78,25 @@ export const expressFrameworkAdapter: FrameworkAdapter = {
   id: 'express',
   version: VERSION,
   languages: [Language.JavaScript, Language.TypeScript],
+  taintModels() {
+    return [{
+      adapterId: this.id,
+      adapterVersion: this.version,
+      model: {
+        schemaVersion: 1,
+        id: 'express-request-input',
+        version: '1',
+        framework: 'express',
+        languages: [Language.JavaScript, Language.TypeScript],
+        description: 'Express route handler request inputs (first handler parameter).',
+        sources: [
+          { id: 'request-input', kind: 'framework-input', framework: 'express', accessPaths: ['body', 'cookies', 'headers', 'params', 'query'], requestParameterIndex: 0 },
+        ],
+        sinks: [],
+        sanitizers: [],
+      },
+    }];
+  },
   detect(view: RepositoryFactView) {
     return summarizeFrameworkDetection(detectSignals(view), this.id, this.version);
   },

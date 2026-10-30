@@ -140,6 +140,35 @@ export const pythonWebFrameworkAdapter: FrameworkAdapter = {
   id: 'python-web',
   version: VERSION,
   languages: [Language.Python],
+  taintModels() {
+    return [{
+      adapterId: this.id,
+      adapterVersion: this.version,
+      model: {
+        schemaVersion: 1,
+        id: 'flask-request-input',
+        version: '1',
+        framework: 'flask',
+        languages: [Language.Python],
+        description: 'Flask request proxy inputs and template-string rendering.',
+        sources: [
+          { id: 'request-args', kind: 'field-read', path: 'request.args' },
+          { id: 'request-cookies', kind: 'field-read', path: 'request.cookies' },
+          { id: 'request-form', kind: 'field-read', path: 'request.form' },
+          { id: 'request-headers', kind: 'field-read', path: 'request.headers' },
+          { id: 'request-json', kind: 'field-read', path: 'request.json' },
+          { id: 'request-values', kind: 'field-read', path: 'request.values' },
+        ],
+        sinks: [
+          { id: 'render-template-string', kind: 'qualified-call', callee: 'render_template_string', category: 'code' },
+          { id: 'flask-render-template-string', kind: 'qualified-call', callee: 'flask.render_template_string', category: 'code' },
+        ],
+        sanitizers: [
+          { id: 'markupsafe-escape', kind: 'qualified-call', callee: 'markupsafe.escape', categories: ['xss'] },
+        ],
+      },
+    }];
+  },
   detect(view: RepositoryFactView) {
     return summarizeFrameworkDetection(detectSignals(view), this.id, this.version);
   },

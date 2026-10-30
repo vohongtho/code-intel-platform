@@ -1628,6 +1628,39 @@ export function createApp(
     }
   });
 
+  app.get('/api/v1/taint-trace', async (req, res) => {
+    try {
+      const repoId = req.query['repoId'] as string | undefined;
+      const g = await getGraphForRepoIdOrThrow(repoId);
+      const entry = repoId && repoId !== repoName ? loadRegistry().find((r) => r.id === repoId) : undefined;
+      const repoDir = entry?.path ?? workspaceRoot;
+      if (!repoDir) throw new AppError(ErrorCodes.NOT_FOUND, 'No repository path is available for taint-trace', 'Pass repoId of an indexed repository', 404);
+      const positive = (value: unknown) => {
+        const parsed = Number(value);
+        return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+      };
+      const interprocedural = req.query['interprocedural'];
+      const { traceTaint } = await import('../query/taint-trace.js');
+      res.json(await traceTaint({
+        repoDir,
+        graph: g,
+        symbol: req.query['symbol'] as string | undefined,
+        source: req.query['source'] as string | undefined,
+        sink: req.query['sink'] as string | undefined,
+        ...(interprocedural === 'true' || interprocedural === 'false' ? { interprocedural: interprocedural === 'true' } : {}),
+        maxFindings: positive(req.query['max_findings']),
+        maxFunctions: positive(req.query['max_functions']),
+        verbose: req.query['verbose'] === 'true',
+      }));
+    } catch (err) {
+      if (err instanceof AppError) {
+        res.status(err.statusCode).json({ error: { code: err.code, message: err.message, hint: err.hint, requestId: req.requestId, timestamp: new Date().toISOString() } });
+        return;
+      }
+      throw err;
+    }
+  });
+
   app.get('/api/v1/api-drift', async (req, res) => {
     try {
       const baseRepoId = req.query['base_repo_id'] as string | undefined;

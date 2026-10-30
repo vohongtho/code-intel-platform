@@ -7,9 +7,11 @@
  * all — so a language's capability across all seven axes is exactly the
  * quality of its lowering table (`lowering-tables.ts`), never
  * independently better or worse at one stage than another. That's why
- * every row below repeats the same state seven times rather than varying
+ * every row below repeats the same state for those seven axes rather than varying
  * axis by axis: it's an honest reflection of the architecture, not a
- * simplification.
+ * simplification. The eighth axis, `interproceduralTaint`, is the
+ * exception: it depends on persisted call-graph quality, not lowering,
+ * so it is `partial` wherever taint itself is available.
  *
  * States, and what backs each one:
  *  - 'supported': the lowering table's node types were confirmed against a
@@ -34,7 +36,8 @@ import type { ProgramAnalysisCapabilityDescriptor, ProgramAnalysisCapabilityMatr
 import { getLoweringTable } from './lowering-tables.js';
 
 function uniform(state: CapabilityState): ProgramAnalysisCapabilityMatrix {
-  return { ir: state, cfg: state, dominators: state, reachingDefinitions: state, functionSummary: state, pdg: state, taint: state };
+  const interproceduralTaint: CapabilityState = state === 'supported' || state === 'partial' ? 'partial' : state;
+  return { ir: state, cfg: state, dominators: state, reachingDefinitions: state, functionSummary: state, pdg: state, taint: state, interproceduralTaint };
 }
 
 const SUPPORTED = uniform('supported');

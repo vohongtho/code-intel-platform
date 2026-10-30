@@ -29,10 +29,21 @@ import type { ProgramDependenceGraph } from './pdg/contracts.js';
 import { buildFunctionSummary } from './summaries/build.js';
 import { FUNCTION_SUMMARY_VERSION, type FunctionSummary } from './summaries/contracts.js';
 import type { FunctionIr } from './ir/contracts.js';
+import type { ProgramAnalysisLimits } from './limits.js';
 import { MemoryProgramAnalysisCache } from './cache/memory-cache.js';
 import { getOrComputeArtifact } from './cache/get-or-compute.js';
+import { computeTaintFindings } from './taint/build.js';
+import type { TaintAnalysisResult, TaintCallResolver, TaintFunctionSummary } from './taint/contracts.js';
+import type { TaintModelRegistry } from './taint/model-registry.js';
+import type { TaintFunctionContext } from './taint/matching.js';
+import { buildTaintFunctionSummary } from './taint/summary.js';
 
 const sharedCache = new MemoryProgramAnalysisCache();
+
+/** Test hook: the process-wide program-analysis cache (stats/clear). */
+export function getSharedProgramAnalysisCache(): MemoryProgramAnalysisCache {
+  return sharedCache;
+}
 
 export type FunctionAnalysisCapability = 'supported' | 'not-applicable' | 'unsupported';
 
@@ -225,6 +236,107 @@ export async function analyzeFunctionDependence(request: FunctionAnalysisRequest
       });
     });
     return { capability: 'supported', ir, pdg, cacheHit };
+  } catch (err) {
+    return { capability: 'unsupported', reason: `internal error: ${err instanceof Error ? err.message : String(err)}`, cacheHit: false };
+  }
+}
+
+export interface FunctionTaintRequest extends FunctionAnalysisRequest {
+  registry: TaintModelRegistry;
+  context?: TaintFunctionContext;
+  /** Interprocedural mode. Results then depend on callee summaries and are not cached as a whole (summaries are). */
+  callResolver?: TaintCallResolver;
+  limits?: ProgramAnalysisLimits;
+}
+
+export interface FunctionTaintAnalysisResult {
+  capability: FunctionAnalysisCapability;
+  reason?: string;
+  result?: TaintAnalysisResult;
+  cacheHit: boolean;
+}
+
+interface LoweredFunction {
+  ir: FunctionIr;
+  bodyHash: string;
+  fingerprint: ProgramAnalysisFingerprint;
+  parameterNames: readonly string[];
+}
+
+async function lowerForTaint(request: FunctionTaintRequest): Promise<LoweredFunction | FunctionTaintAnalysisResult> {
+  const prepared = await prepareFunctionAnalysis(request);
+  if ('capability' in prepared) return { ...prepared, cacheHit: false };
+  const ir = lowerFunctionToIr({
+    bodyNode: prepared.bodyNode,
+    language: request.language,
+    functionId: request.canonicalFunctionId,
+    filePath: request.filePath,
+    parameterNames: prepared.parameterNames,
+    limits: request.limits,
+  });
+  const validation = validateFunctionIr(ir);
+  if (!validation.valid) {
+    return { capability: 'unsupported', reason: `lowered IR failed validation: ${validation.errors.slice(0, 3).join('; ')}`, cacheHit: false };
+  }
+  // The model fingerprint and the caller-supplied context both shape findings, so both are part of the cache identity.
+  const fingerprint: ProgramAnalysisFingerprint = {
+    ...prepared.fingerprint,
+    taintModelFingerprint: hashIdentityPayload({ model: request.registry.fingerprint, context: request.context ?? null, limits: request.limits ?? null }),
+  };
+  return { ir, bodyHash: prepared.bodyHash, fingerprint, parameterNames: prepared.parameterNames };
+}
+
+function dataflowFor(ir: FunctionIr, limits?: ProgramAnalysisLimits) {
+  const cfg = buildFunctionCfg(ir, limits);
+  const reachingDefinitions = computeReachingDefinitions(ir, cfg, limits);
+  const defUse = computeDefUseChains(ir, cfg, reachingDefinitions);
+  return { cfg, reachingDefinitions, defUse };
+}
+
+/**
+ * Taint findings for one function under a model registry. Intraprocedural
+ * results are cached under a key that includes the registry fingerprint,
+ * so a changed model (same source) misses the cache and recomputes.
+ */
+export async function analyzeFunctionTaint(request: FunctionTaintRequest): Promise<FunctionTaintAnalysisResult> {
+  try {
+    const lowered = await lowerForTaint(request);
+    if ('capability' in lowered) return lowered;
+    const compute = () => computeTaintFindings({ ir: lowered.ir, ...dataflowFor(lowered.ir, request.limits), registry: request.registry, context: request.context, callResolver: request.callResolver, limits: request.limits });
+    if (request.callResolver) return { capability: 'supported', result: compute(), cacheHit: false };
+    const key = { kind: 'taint-findings' as const, canonicalFunctionId: request.canonicalFunctionId, bodyHash: lowered.bodyHash, fingerprint: lowered.fingerprint };
+    const cacheHit = sharedCache.has(generateProgramAnalysisArtifactId(key));
+    return { capability: 'supported', result: getOrComputeArtifact(sharedCache, key, compute), cacheHit };
+  } catch (err) {
+    return { capability: 'unsupported', reason: `internal error: ${err instanceof Error ? err.message : String(err)}`, cacheHit: false };
+  }
+}
+
+export interface FunctionTaintSummaryResult {
+  capability: FunctionAnalysisCapability;
+  reason?: string;
+  summary?: TaintFunctionSummary;
+  cacheHit: boolean;
+}
+
+/** Parameter-to-sink/return taint summary. Cached (content + model + context keyed) only when computed without a call resolver. */
+export async function analyzeFunctionTaintSummary(request: FunctionTaintRequest): Promise<FunctionTaintSummaryResult> {
+  try {
+    const lowered = await lowerForTaint(request);
+    if ('capability' in lowered) return lowered;
+    const compute = () => buildTaintFunctionSummary({
+      ir: lowered.ir,
+      ...dataflowFor(lowered.ir, request.limits),
+      registry: request.registry,
+      context: request.context,
+      parameterNames: lowered.parameterNames,
+      callResolver: request.callResolver,
+      limits: request.limits,
+    });
+    if (request.callResolver) return { capability: 'supported', summary: compute(), cacheHit: false };
+    const key = { kind: 'taint-summary' as const, canonicalFunctionId: request.canonicalFunctionId, bodyHash: lowered.bodyHash, fingerprint: lowered.fingerprint };
+    const cacheHit = sharedCache.has(generateProgramAnalysisArtifactId(key));
+    return { capability: 'supported', summary: getOrComputeArtifact(sharedCache, key, compute), cacheHit };
   } catch (err) {
     return { capability: 'unsupported', reason: `internal error: ${err instanceof Error ? err.message : String(err)}`, cacheHit: false };
   }

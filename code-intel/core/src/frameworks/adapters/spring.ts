@@ -141,6 +141,29 @@ export const springFrameworkAdapter: FrameworkAdapter = {
   id: 'spring',
   version: VERSION,
   languages: [Language.Java],
+  taintModels() {
+    return [{
+      adapterId: this.id,
+      adapterVersion: this.version,
+      model: {
+        schemaVersion: 1,
+        id: 'spring-request-input',
+        version: '1',
+        framework: 'spring',
+        languages: [Language.Java],
+        description: 'Spring MVC handler parameters bound from the request by binding annotations.',
+        sources: [
+          { id: 'cookie-value', kind: 'annotation', annotation: 'CookieValue' },
+          { id: 'path-variable', kind: 'annotation', annotation: 'PathVariable' },
+          { id: 'request-body', kind: 'annotation', annotation: 'RequestBody' },
+          { id: 'request-header', kind: 'annotation', annotation: 'RequestHeader' },
+          { id: 'request-param', kind: 'annotation', annotation: 'RequestParam' },
+        ],
+        sinks: [],
+        sanitizers: [],
+      },
+    }];
+  },
   detect(view: RepositoryFactView) {
     return summarizeFrameworkDetection(detectSignals(view), this.id, this.version);
   },

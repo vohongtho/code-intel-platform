@@ -556,6 +556,26 @@ export const openApiSpec = {
         },
       },
     },
+    '/taint-trace': {
+      get: {
+        tags: ['Analysis'],
+        summary: 'Traces candidate source-to-sink taint paths with declarative models; a no-finding verdict is coverage-qualified, never a safety proof',
+        parameters: [
+          { name: 'repoId', in: 'query', schema: { type: 'string' } },
+          { name: 'symbol', in: 'query', description: 'Function/method selector (name or kind:name@file:line); omit for a bounded scan', schema: { type: 'string' } },
+          { name: 'source', in: 'query', description: 'Source filter: model/matcher ref, matcher id, or model id', schema: { type: 'string' } },
+          { name: 'sink', in: 'query', description: 'Sink filter: model/matcher ref, matcher id, model id, or category', schema: { type: 'string' } },
+          { name: 'interprocedural', in: 'query', description: 'Follow persisted call edges (default true with symbol, false for scans)', schema: { type: 'boolean' } },
+          { name: 'max_findings', in: 'query', description: 'Maximum findings (default 50)', schema: { type: 'integer', minimum: 1 } },
+          { name: 'max_functions', in: 'query', description: 'Scan mode: maximum functions analyzed (default 200)', schema: { type: 'integer', minimum: 1 } },
+          { name: 'verbose', in: 'query', description: 'Include propagation statement ids', schema: { type: 'boolean' } },
+        ],
+        responses: {
+          '200': { description: 'Taint trace result: verdict (findings|no-findings-complete|no-findings-partial-coverage|unsupported|not-found|ambiguous|model-error), models, findings, truncation and coverage', content: { 'application/json': { schema: { type: 'object' } } } },
+          '404': { description: 'Repo not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
     '/api-drift': {
       get: {
         tags: ['API Contracts'],

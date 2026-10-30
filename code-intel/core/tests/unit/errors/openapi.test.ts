@@ -214,6 +214,7 @@ describe('OpenAPI spec — every /api/v1/ route appears in paths', () => {
     { method: 'get',    path: '/api-contract' },
     { method: 'get',    path: '/api-impact' },
     { method: 'get',    path: '/api-drift' },
+    { method: 'get',    path: '/taint-trace' },
   ];
 
   const paths = openApiSpec.paths as Record<string, Record<string, unknown>>;
