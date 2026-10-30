@@ -1130,8 +1130,25 @@ export function createApp(
   }
 
   /**
-   * Group read routes expose every member repository, so a repo-scoped token must have
-   * access to all of them. An unknown group falls through to the handler's own 404.
+   * Repository IDs referenced by a group's saved sync result. It can outlive membership
+   * changes (a removed member's contracts stay until the next sync), so it is checked too.
+   */
+  function syncResultRepoIds(result: { contracts?: { repositoryId?: string; repoName: string }[]; links?: { providerRepo: string; consumerRepo: string }[] }): string[] {
+    const registry = loadRegistry();
+    const byName = (name: string) => registry.find((r) => r.name === name)?.id ?? name;
+    const ids = new Set<string>();
+    for (const contract of result.contracts ?? []) ids.add(contract.repositoryId ?? byName(contract.repoName));
+    for (const link of result.links ?? []) {
+      ids.add(byName(link.providerRepo));
+      ids.add(byName(link.consumerRepo));
+    }
+    return [...ids];
+  }
+
+  /**
+   * Group read routes expose every member repository, and every repository in the
+   * group's saved sync result, so a repo-scoped token must have access to all of them.
+   * An unknown group falls through to the handler's own 404.
    */
   const requireGroupScope: RequestHandler<{ name: string }> = (req, res, next) => {
     const name = req.params.name;
@@ -1139,7 +1156,9 @@ export function createApp(
     try { group = name ? loadGroup(name) : null; } catch { group = null; }
     if (group) {
       try {
-        assertRepoScope(req, groupMemberRepoIds(group));
+        let synced: string[] = [];
+        try { const result = loadSyncResult(group.name); synced = result ? syncResultRepoIds(result) : []; } catch { synced = []; }
+        assertRepoScope(req as unknown as Request, [...new Set([...groupMemberRepoIds(group), ...synced])]);
       } catch (err) {
         if (err instanceof AppError) { sendAppError(req as unknown as Request, res, err); return; }
         throw err;

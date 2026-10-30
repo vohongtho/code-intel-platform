@@ -28,7 +28,7 @@ import { snapshotIndexView } from '../../src/storage/index-view.js';
 import { FULL_SNAPSHOT_CAPABILITIES } from '../../src/snapshots/types.js';
 import { getSnapshotsRoot, SNAPSHOT_READ_PINS_DIR } from '../../src/snapshots/paths.js';
 import { computeSemanticGraphDiff, summarizeSnapshotBuild } from '../../src/snapshots/service.js';
-import { saveGroup } from '../../src/multi-repo/group-registry.js';
+import { saveGroup, saveSyncResult } from '../../src/multi-repo/group-registry.js';
 
 type Json = Record<string, any>;
 
@@ -416,6 +416,21 @@ describe('HTTP ref-aware reads', { timeout: 300_000 }, () => {
     assert.notEqual((await post('/api/v1/groups/scope-own/search', scopedSelf, { query: 'x' })).status, 403);
     for (const route of gets('scope-foreign')) assert.notEqual((await request('GET', route, analyst)).status, 403, `analyst ${route}`);
     assert.equal((await request('GET', '/api/v1/groups/no-such-group/graph', scopedSelf)).status, 404, 'unknown group stays 404');
+  });
+
+  it('a stale sync result cannot leak a former member repository to a scoped token', async () => {
+    // Group membership now covers only this repo, but the saved sync result still
+    // holds a contract from a repository that has since been removed.
+    saveGroup({ name: 'scope-stale', createdAt: new Date(0).toISOString(), members: [{ repoId: 'ref-aware', registryName: 'ref-aware', groupPath: 'self' }] });
+    saveSyncResult({
+      groupName: 'scope-stale', syncedAt: new Date(0).toISOString(), memberCount: 2, links: [],
+      contracts: [{ repoName: 'other', repoPath: '/other', repositoryId: 'some-other-repo', kind: 'export', name: 'secretFn', nodeId: 'n1', nodeKind: 'function', filePath: 'a.ts' }],
+    } as never);
+    for (const route of ['/api/v1/groups/scope-stale/contracts', '/api/v1/groups/scope-stale/topology']) {
+      const res = await request('GET', route, scopedSelf);
+      assert.equal(res.status, 403, `${route}: ${JSON.stringify(res.body)}`);
+      assert.notEqual((await request('GET', route, analyst)).status, 403, `analyst ${route}`);
+    }
   });
 
   it('a viewer cannot trigger a snapshot build', async () => {
