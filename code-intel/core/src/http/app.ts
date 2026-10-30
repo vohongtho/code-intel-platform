@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
 import { isLazyGraph } from '../graph/lazy-knowledge-graph.js';
 import { Bm25Index, getBm25DbPath } from '../search/bm25-index.js';
-import { executeSearchRequest, type SearchMode, type SearchScope } from '../search/execute-scoped-search.js';
+import { executeSearchRequest, normalizeSearchRequest, type SearchMode, type SearchScope } from '../search/execute-scoped-search.js';
 import { createScopedExploreSearch, ExploreRequestError, runExplore, type ExploreRequest } from '../query/explore.js';
 import { DbManager, getDbPath, getVectorDbPath } from '../storage/index.js';
 import { loadMetadata, shouldRebuildEmbeddings, type IndexMetadata } from '../storage/metadata.js';
@@ -27,7 +27,7 @@ import type { Contract } from '../multi-repo/types.js';
 import { createKnowledgeGraph } from '../graph/knowledge-graph.js';
 import { loadGraphFromDB } from '../multi-repo/graph-from-db.js';
 import { loadRegistry, findRepoByName } from '../storage/repo-registry.js';
-import { registerWorkflowRoutes } from './workflow-routes.js';
+import { hasRepoAccess, registerWorkflowRoutes } from './workflow-routes.js';
 import { computeSemanticGraphDiff, summarizeSnapshotBuild } from '../snapshots/service.js';
 import Logger from '../shared/logger.js';
 import { AppError, ErrorCodes } from '../errors/codes.js';
@@ -1101,6 +1101,48 @@ export function createApp(
     return value;
   }
 
+  // ── Repo scope for graph reads ──────────────────────────────────────────────
+  // Same rule as requireRepoAccess / hasRepoAccess, applied to the repository a
+  // request actually resolves to (selectors may be names, paths or groups).
+  function assertRepoScope(req: Request, repositoryIds: string[]): void {
+    if (!req.user) return;
+    const denied = repositoryIds.find((id) => !hasRepoAccess(req.user!, id));
+    if (denied !== undefined) {
+      const scoped = req.user.scopedRepos ?? [];
+      throw new AppError(ErrorCodes.FORBIDDEN, 'Token does not have access to this repository', `This token is scoped to: ${scoped.join(', ')}`, 403);
+    }
+  }
+
+  function defaultRepoId(): string {
+    return findRepoByName(repoName)?.id ?? repoName;
+  }
+
+  /** The repository a `repoId` query/body selector resolves to (default repo when absent). */
+  function resolveRepoIdSelector(repoId: string | undefined): string {
+    if (!repoId || repoId === repoName) return defaultRepoId();
+    return loadRegistry().find((r) => r.id === repoId)?.id ?? repoId;
+  }
+
+  /**
+   * Repositories a search body would read, resolved like executeSearchRequest does.
+   * Unknown repos/groups resolve to nothing here; the search itself still answers 404.
+   */
+  function searchTargetRepoIds(body: Record<string, unknown>): string[] {
+    const normalized = normalizeSearchRequest(body as Parameters<typeof normalizeSearchRequest>[0]);
+    if ('error' in normalized && normalized.error) return [];
+    const scope = (normalized as { scope?: SearchScope }).scope;
+    if (!scope) return [defaultRepoId()];
+    const registry = loadRegistry();
+    if (scope.type === 'group') {
+      const group = loadGroup(scope.name);
+      if (!group) return [];
+      return group.members.map((m) => m.repoId ?? registry.find((r) => r.name === m.registryName)?.id ?? m.registryName);
+    }
+    const entry = registry.find((r) => r.id === scope.repoId)
+      ?? registry.find((r) => r.name === scope.repoId || r.path === scope.repoId);
+    return [entry?.id ?? scope.repoId];
+  }
+
   interface RefRepoContext extends HttpRepoContext {
     view: ReadIndexView;
     repoDir: string;
@@ -1112,13 +1154,7 @@ export function createApp(
     if (wantsOther && !entry) throw new AppError(ErrorCodes.NOT_FOUND, `Repo "${repoSelector}" not found`, 'Use /api/v1/repos to list available repositories', 404);
     const repoDir = entry?.path ?? workspaceRoot;
     if (!repoDir) throw new AppError(ErrorCodes.NOT_FOUND, 'No repository selected for ref', 'Pass repoId', 404);
-    // Same rule as requireRepoAccess, applied to the *resolved* repository (the selector may
-    // be a name): admins/analysts see all repos; repo-scoped tokens only their own.
-    const targetRepoId = entry?.id ?? findRepoByName(repoName)?.id ?? repoName;
-    const scoped = req.user?.authMethod === 'token' ? req.user.scopedRepos : undefined;
-    if (req.user && req.user.role !== 'admin' && req.user.role !== 'analyst' && scoped && scoped.length > 0 && !scoped.includes(targetRepoId)) {
-      throw new AppError(ErrorCodes.FORBIDDEN, 'Token does not have access to this repository', `This token is scoped to: ${scoped.join(', ')}`, 403);
-    }
+    assertRepoScope(req, [entry?.id ?? defaultRepoId()]);
     const allowBuild = Boolean(req.user && meetsRole(req.user.role, 'analyst'));
     const resolution = await resolveReadIndexView({ repoDir, ref, allowBuild });
     if (!resolution.ok) {
@@ -1144,7 +1180,10 @@ export function createApp(
 
   /** Runs `fn` against the current graph (`ref` absent: unchanged behavior) or the ref's pinned view. */
   async function withRequestGraph<T>(req: Request, repoId: string | undefined, ref: string | undefined, fn: (g: KnowledgeGraph, view: ReadIndexView | undefined) => Promise<T>): Promise<T> {
-    if (ref === undefined) return fn(await getGraphForRepoIdOrThrow(repoId), undefined);
+    if (ref === undefined) {
+      assertRepoScope(req, [resolveRepoIdSelector(repoId)]);
+      return fn(await getGraphForRepoIdOrThrow(repoId), undefined);
+    }
     return withRefContext(req, repoId, ref, (ctx) => fn(ctx.graph, ctx.view));
   }
 
@@ -1264,6 +1303,7 @@ export function createApp(
       if (ref !== undefined && (scopeRepoId?.type === 'group' || typeof searchBody.group === 'string')) {
         throw new AppError(ErrorCodes.INVALID_REQUEST, 'ref cannot be combined with a group scope', 'Select one repository with scope.repoId', 400);
       }
+      if (ref === undefined) assertRepoScope(req, searchTargetRepoIds(searchBody as Record<string, unknown>));
       const result = ref === undefined
         ? await executeSearchRequest(searchBody, {
           repoName,
@@ -1390,6 +1430,7 @@ export function createApp(
   // ── Vector search ───────────────────────────────────────────────────────────
   app.post('/api/v1/vector-search', requireToolScope('search'), async (req, res) => {
     try {
+      assertRepoScope(req, searchTargetRepoIds(req.body as Record<string, unknown>));
       const result = await executeSearchRequest({ ...(req.body as Record<string, unknown>), mode: 'vector' } as { query?: string; limit?: number; mode?: SearchMode; scope?: SearchScope; repoId?: string; repo?: string; group?: string }, {
         repoName,
         workspaceRoot,
@@ -1404,6 +1445,7 @@ export function createApp(
       if (!('body' in result)) throw new Error('Invalid search result');
       res.json(result.body);
     } catch (err) {
+      if (err instanceof AppError) { sendAppError(req, res, err); return; }
       res.status(500).json({ error: { code: ErrorCodes.INTERNAL_ERROR, message: err instanceof Error ? err.message : String(err) } });
     }
   });

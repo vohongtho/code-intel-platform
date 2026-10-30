@@ -377,6 +377,25 @@ describe('HTTP ref-aware reads', { timeout: 300_000 }, () => {
     assert.equal(deniedExplore.status, 403);
   });
 
+  it('a repo-scoped token cannot read another repository\'s current index either', async () => {
+    for (const route of ['/api/v1/flows', '/api/v1/clusters', `/api/v1/nodes/${encodeURIComponent('cur')}`]) {
+      const denied = await request('GET', route, scopedOther);
+      assert.equal(denied.status, 403, `${route}: ${JSON.stringify(denied.body)}`);
+      const allowed = await request('GET', route, scopedSelf);
+      assert.equal(allowed.status, 200, `${route}: ${JSON.stringify(allowed.body)}`);
+    }
+    for (const route of ['/api/v1/search', '/api/v1/vector-search']) {
+      assert.equal((await post(route, scopedOther, { query: 'currentOnly' })).status, 403, route);
+      assert.equal((await post(route, scopedSelf, { query: 'currentOnly' })).status, 200, route);
+    }
+    assert.equal((await post('/api/v1/search', scopedOther, { query: 'x', scope: { type: 'group', name: 'no-such-group' } })).status, 404, 'unknown group is still 404');
+    assert.equal((await post('/api/v1/blast-radius', scopedOther, { target: 'currentOnly' })).status, 403);
+    assert.equal((await post('/api/v1/blast-radius', scopedSelf, { target: 'currentOnly' })).status, 200);
+    // Unscoped viewers and analysts keep full access (unchanged behavior).
+    assert.equal((await request('GET', '/api/v1/flows', viewer)).status, 200);
+    assert.equal((await post('/api/v1/search', analyst, { query: 'currentOnly' })).status, 200);
+  });
+
   it('a viewer cannot trigger a snapshot build', async () => {
     fs.writeFileSync(path.join(REPO, 'extra.ts'), 'export const gamma = 3;\n');
     git(['add', 'extra.ts'], REPO);
