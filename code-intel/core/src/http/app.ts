@@ -1112,6 +1112,13 @@ export function createApp(
     if (wantsOther && !entry) throw new AppError(ErrorCodes.NOT_FOUND, `Repo "${repoSelector}" not found`, 'Use /api/v1/repos to list available repositories', 404);
     const repoDir = entry?.path ?? workspaceRoot;
     if (!repoDir) throw new AppError(ErrorCodes.NOT_FOUND, 'No repository selected for ref', 'Pass repoId', 404);
+    // Same rule as requireRepoAccess, applied to the *resolved* repository (the selector may
+    // be a name): admins/analysts see all repos; repo-scoped tokens only their own.
+    const targetRepoId = entry?.id ?? findRepoByName(repoName)?.id ?? repoName;
+    const scoped = req.user?.authMethod === 'token' ? req.user.scopedRepos : undefined;
+    if (req.user && req.user.role !== 'admin' && req.user.role !== 'analyst' && scoped && scoped.length > 0 && !scoped.includes(targetRepoId)) {
+      throw new AppError(ErrorCodes.FORBIDDEN, 'Token does not have access to this repository', `This token is scoped to: ${scoped.join(', ')}`, 403);
+    }
     const allowBuild = Boolean(req.user && meetsRole(req.user.role, 'analyst'));
     const resolution = await resolveReadIndexView({ repoDir, ref, allowBuild });
     if (!resolution.ok) {

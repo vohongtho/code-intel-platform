@@ -240,6 +240,8 @@ describe('HTTP ref-aware reads', { timeout: 300_000 }, () => {
   let server: http.Server;
   let analyst = '';
   let viewer = '';
+  let scopedOther = '';
+  let scopedSelf = '';
   let previousUsersDbPath: string | undefined;
 
   function request(method: string, route: string, bearer: string, payload?: unknown, extraHeaders: Record<string, string> = {}): Promise<{ status: number; body: Json; setCookie: string[] }> {
@@ -273,6 +275,8 @@ describe('HTTP ref-aware reads', { timeout: 300_000 }, () => {
     const usersDb = new UsersDB(path.join(REPO, 'users.db'));
     analyst = usersDb.createToken('ref-analyst', 'analyst').rawToken;
     viewer = usersDb.createToken('ref-viewer', 'viewer').rawToken;
+    scopedOther = usersDb.createToken('ref-scoped-other', 'viewer', undefined, ['some-other-repo']).rawToken;
+    scopedSelf = usersDb.createToken('ref-scoped-self', 'viewer', undefined, ['ref-aware']).rawToken;
     // The served in-memory graph mirrors the current index (only `currentOnly`).
     const currentGraph = createKnowledgeGraph();
     currentGraph.addNode({ id: 'cur', kind: 'function', name: 'currentOnly', filePath: 'index.ts', startLine: 1 });
@@ -354,6 +358,23 @@ describe('HTTP ref-aware reads', { timeout: 300_000 }, () => {
 
     const pins = path.join(getSnapshotsRoot(REPO), SNAPSHOT_READ_PINS_DIR);
     assert.deepEqual(fs.existsSync(pins) ? fs.readdirSync(pins) : [], [], 'every HTTP read pin is released');
+  });
+
+  it('a repo-scoped token cannot read another repository at a ref', async () => {
+    // Cache the snapshot first, so a missing scope check would actually leak data (200), not 404.
+    assert.equal((await request('GET', `/api/v1/flows?ref=${head}`, analyst)).status, 200);
+    for (const route of [`/api/v1/flows?ref=${head}`, `/api/v1/clusters?ref=${head}`, `/api/v1/nodes/${encodeURIComponent('function:index.ts:betaHead')}?ref=${head}`]) {
+      const denied = await request('GET', route, scopedOther);
+      assert.equal(denied.status, 403, `${route}: ${JSON.stringify(denied.body)}`);
+      const allowed = await request('GET', route, scopedSelf);
+      assert.equal(allowed.status, 200, `${route}: ${JSON.stringify(allowed.body)}`);
+    }
+    const deniedSearch = await post('/api/v1/search', scopedOther, { query: 'betaHead', ref: head });
+    assert.equal(deniedSearch.status, 403);
+    const deniedBlast = await post('/api/v1/blast-radius', scopedOther, { target: 'alphaBase', ref: head });
+    assert.equal(deniedBlast.status, 403);
+    const deniedExplore = await post('/api/v1/explore', scopedOther, { task: 'x', ref: head });
+    assert.equal(deniedExplore.status, 403);
   });
 
   it('a viewer cannot trigger a snapshot build', async () => {
