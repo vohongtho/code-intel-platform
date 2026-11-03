@@ -99,7 +99,7 @@ code-intel taint-trace --source express-request-input --sink sql
 code-intel taint-trace --symbol run --format json
 ```
 
-The same service backs the MCP tool `taint_trace` and `GET /api/v1/taint-trace` (parameters `symbol`, `source`, `sink`, `interprocedural`, `max_findings`, `max_functions`, `verbose`). Without `--symbol`, it scans at most 200 function nodes, does not follow calls, and reports a truncation reason if functions were skipped.
+The same service backs the MCP tool `taint_trace` and `GET /api/v1/taint-trace` (parameters `symbol`, `source`, `sink`, `interprocedural`, `max_findings`, `max_functions`, `verbose`). Without `--symbol`, it scans at most 200 function nodes, does not follow calls, and reports a truncation reason if functions were skipped. Caller-supplied limits are clamped to 1,000 functions and 500 findings. The scan shares one `maxAnalysisTimeMsPerRequest` deadline across all functions, and once it passes, the remaining functions are reported as not analyzed.
 
 Verdicts:
 

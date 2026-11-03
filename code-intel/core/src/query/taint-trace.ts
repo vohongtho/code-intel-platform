@@ -28,11 +28,14 @@ import type { TaintModelDiagnostic } from '../program-analysis/taint/model-schem
 import type { TaintCallHop, TaintFinding } from '../program-analysis/taint/contracts.js';
 import { traceInterproceduralTaint } from '../program-analysis/taint/interprocedural.js';
 import type { InterproceduralGateResult } from '../program-analysis/semantic-graph-gate.js';
-import { DEFAULT_PROGRAM_ANALYSIS_LIMITS, type ProgramAnalysisLimits } from '../program-analysis/limits.js';
+import { DEFAULT_PROGRAM_ANALYSIS_LIMITS, isDeadlineExceeded, startDeadline, type ProgramAnalysisLimits } from '../program-analysis/limits.js';
 
 export const TAINT_TRACE_VERSION = 'taint-trace-v1';
 const DEFAULT_MAX_FINDINGS = 50;
 const DEFAULT_MAX_FUNCTIONS = 200;
+// Caller-supplied limits are clamped so one request cannot opt out of the bounds.
+const MAX_FINDINGS_CAP = 500;
+const MAX_FUNCTIONS_CAP = 1000;
 const FUNCTION_KINDS = new Set(['function', 'method', 'constructor']);
 
 export interface TaintTraceRequest {
@@ -192,7 +195,7 @@ function targetNodes(request: TaintTraceRequest): { nodes: CodeNode[]; error?: T
   const all = [...request.graph.allNodes()]
     .filter((node) => FUNCTION_KINDS.has(node.kind) && node.startLine !== undefined)
     .sort((a, b) => a.filePath.localeCompare(b.filePath) || (a.startLine ?? 0) - (b.startLine ?? 0) || a.id.localeCompare(b.id));
-  const max = request.maxFunctions ?? DEFAULT_MAX_FUNCTIONS;
+  const max = Math.min(request.maxFunctions ?? DEFAULT_MAX_FUNCTIONS, MAX_FUNCTIONS_CAP);
   return { nodes: all.slice(0, max), omitted: Math.max(0, all.length - max) };
 }
 
@@ -225,7 +228,14 @@ export async function traceTaint(request: TaintTraceRequest): Promise<TaintTrace
   const views: TaintTraceFindingView[] = [];
   if (omitted > 0) truncationReasons.add(`scan limited to ${nodes.length} functions (${omitted} more not analyzed; raise maxFunctions or pass a symbol)`);
 
-  for (const node of nodes) {
+  // Each root gets its own per-request budget, so the scan as a whole shares one deadline.
+  const limits = request.limits ?? DEFAULT_PROGRAM_ANALYSIS_LIMITS;
+  const scanDeadline = startDeadline(limits.maxAnalysisTimeMsPerRequest);
+  for (const [index, node] of nodes.entries()) {
+    if (index > 0 && isDeadlineExceeded(scanDeadline)) {
+      truncationReasons.add(`maxAnalysisTimeMsPerRequest (${limits.maxAnalysisTimeMsPerRequest}ms) reached; ${nodes.length - index} functions not analyzed`);
+      break;
+    }
     const language = detectLanguage(node.filePath);
     const capability: CapabilityState = language ? getProgramAnalysisCapability(language).capabilities.taint : 'unsupported';
     languages[language ?? 'unknown'] = capability;
@@ -243,7 +253,7 @@ export async function traceTaint(request: TaintTraceRequest): Promise<TaintTrace
       registry,
       interprocedural: interproceduralRequested,
       ...(request.gate ? { gate: request.gate } : {}),
-      limits: request.limits ?? DEFAULT_PROGRAM_ANALYSIS_LIMITS,
+      limits,
     });
     if (traced.capability !== 'supported' || !traced.result) {
       skippedFunctions += 1;
@@ -262,7 +272,7 @@ export async function traceTaint(request: TaintTraceRequest): Promise<TaintTrace
   }
 
   views.sort((a, b) => a.sink.filePath.localeCompare(b.sink.filePath) || (a.sink.line ?? 0) - (b.sink.line ?? 0) || a.id.localeCompare(b.id));
-  const maxFindings = request.maxFindings ?? DEFAULT_MAX_FINDINGS;
+  const maxFindings = Math.min(request.maxFindings ?? DEFAULT_MAX_FINDINGS, MAX_FINDINGS_CAP);
   if (views.length > maxFindings) truncationReasons.add(`findings limited to ${maxFindings} of ${views.length}`);
   if (!interproceduralRequested) notes.add('interprocedural propagation not requested: taint crossing call boundaries is not traced');
   if (unevaluated.size > 0) notes.add('some context-dependent matchers (framework inputs/annotations) could not be evaluated for the analyzed functions');

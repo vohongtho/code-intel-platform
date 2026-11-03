@@ -275,7 +275,7 @@ const IDENTIFIER_KEYWORDS = new Set(['true', 'false', 'null', 'undefined', 'None
  */
 export function identifierReads(text: string): string[] {
   const names = new Set<string>();
-  const source = text.slice(0, MAX_MATCH_TEXT).replace(/(["'`])(?:\\.|(?!\1).)*\1/g, '""');
+  const source = text.slice(0, MAX_MATCH_TEXT).replace(/(["'`])(?:\\[\s\S]|(?!\1)[^\\])*\1/g, '""');
   for (const match of source.matchAll(/[A-Za-z_$][\w$]*/g)) {
     const before = source.slice(Math.max(0, match.index! - 2), match.index!);
     if (/(\.|::|->)\s*$/.test(before) || /\.$/.test(before)) continue;

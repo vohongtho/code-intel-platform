@@ -12,7 +12,7 @@ import {
   type TaintModelSource,
 } from '../../../../src/program-analysis/taint/model-registry.js';
 import { loadProjectTaintModels, loadTaintModelRegistry, PROJECT_TAINT_MODELS_RELATIVE_PATH } from '../../../../src/program-analysis/taint/model-loader.js';
-import { callArgumentTexts, calleePath, leadingAccessPath } from '../../../../src/program-analysis/taint/matching.js';
+import { callArgumentTexts, calleePath, identifierReads, leadingAccessPath } from '../../../../src/program-analysis/taint/matching.js';
 import { loadFrameworkAdapters } from '../../../../src/frameworks/registry.js';
 import { Language } from '../../../../src/shared/languages.js';
 
@@ -206,5 +206,12 @@ describe('taint matcher text helpers', () => {
     assert.deepEqual(callArgumentTexts('f(a, g(b, c), "x,y")'), ['a', 'g(b, c)', '"x,y"']);
     assert.deepEqual(callArgumentTexts('f()'), []);
     assert.equal(callArgumentTexts('f(a, b'), undefined);
+  });
+
+  it('strips string literals in linear time, including unterminated escape runs', () => {
+    assert.deepEqual(identifierReads('a + "b\\"c" + d'), ['a', 'd']);
+    const started = Date.now();
+    identifierReads(`"${'\\'.repeat(2047)}`);
+    assert.ok(Date.now() - started < 500);
   });
 });

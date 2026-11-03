@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createKnowledgeGraph } from '../../../src/graph/knowledge-graph.js';
 import { traceTaint } from '../../../src/query/taint-trace.js';
+import { DEFAULT_PROGRAM_ANALYSIS_LIMITS } from '../../../src/program-analysis/limits.js';
 import type { InterproceduralGateResult } from '../../../src/program-analysis/semantic-graph-gate.js';
 
 const trusted: InterproceduralGateResult = { allowed: true, indexTrust: { trusted: true } as never };
@@ -133,5 +134,14 @@ describe('taint-trace service', () => {
     assert.equal(scan.truncated, true);
     assert.equal(scan.coverage.complete, false);
     assert.equal(scan.coverage.interprocedural.requested, false);
+  });
+
+  it('clamps caller limits and shares one deadline across the scan', async () => {
+    const dir = repo({ 'src/app.ts': APP });
+    const clamped = await traceTaint({ repoDir: dir, graph: graphFor(), gate: trusted, maxFunctions: Number.MAX_SAFE_INTEGER, maxFindings: Number.MAX_SAFE_INTEGER });
+    assert.ok(clamped.findings.length <= 500);
+    const expired = await traceTaint({ repoDir: dir, graph: graphFor(), gate: trusted, limits: { ...DEFAULT_PROGRAM_ANALYSIS_LIMITS, maxAnalysisTimeMsPerRequest: 0 } });
+    assert.equal(expired.truncated, true);
+    assert.ok(expired.truncationReasons.some((reason) => /functions not analyzed/.test(reason)), expired.truncationReasons.join('; '));
   });
 });
