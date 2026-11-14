@@ -26,6 +26,7 @@ describe('doctor --json', () => {
       'git',
       'config',
       'runtime-launcher',
+      'runtime-trust',
       'runtime-versions',
       'runtime-uninstall',
       'global-dir',

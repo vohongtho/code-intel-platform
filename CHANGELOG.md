@@ -4,7 +4,7 @@ All notable changes to this project are documented in this file.
 
 ---
 
-## [1.0.12] - 2026-09-22
+## [1.0.12] - Unreleased
 
 ### 🧪 Extensible taint models and receiver dispatch
 
@@ -59,6 +59,38 @@ All notable changes to this project are documented in this file.
 - Group names that could leave `~/.code-intel/groups/` (path separators, NUL, `.`, `..`) are rejected by the group registry; the workflow and system-flows endpoints return 400 for them. Before, `loadGroup('../x')` read, and on a parse failure renamed, a JSON file outside that directory.
 - Known limits: verification uses graph-level impact (no PDG); protocol facts are extracted from TypeScript/JavaScript only, and only from literal keys (computed topics or operation names stay unlinked); a source file ignored by `.codeintelignore` but tracked by Git reads as an unindexed change; calls are resolved only for callables the TypeScript semantic adapter declares (exported functions with an explicit return type), so local flows — and therefore exact system-flow segments — do not yet run through class methods.
 
+### 🌿 Ref-aware reads and portable indexes
+
+- Read tools take an optional `ref` (MCP: `search`, `inspect`, `context`, `explore`, `blast_radius`, `flows`, `query`, `api_contract`, `api_shape_check` and 13 others; HTTP: `ref` in the body of `POST /api/v1/search`, `/explore`, `/blast-radius`, `?ref=` on `GET /api/v1/nodes/{id}`, `/flows`, `/clusters`, `/graph/{repoId}/nodes`; CLI: `--ref` on `search`, `inspect`, `impact`, `explore`). The query is served from that ref's semantic snapshot, built on first use and cached. Without `ref`, behavior is unchanged.
+- A ref query never touches the checkout, `HEAD`, the Git index or the active generation, and never falls back to current-index results: an unknown ref returns `unknown-ref`, a failed build `snapshot-build-failed`. Every ref-served response carries an `indexView` (snapshot ID, resolved commit, cached/built, privacy profile, capability flags). On-demand snapshots skip embeddings, so `vector`/`hybrid` search at a ref reports `actualMode: "bm25"` with `VECTOR_INDEX_UNAVAILABLE`. Tools that compare refs or read working-tree source reject `ref` instead of ignoring it.
+- Each request holds a read pin on its snapshot; eviction and `index remove` skip pinned entries. Over HTTP only `analyst` and above can trigger a snapshot build; other roles get cached snapshots or a 404 with `boundary: "snapshot-not-built"`.
+- Added `code-intel index export|import|refs|pin|unpin|remove`. A `.cidx` package is a gzip'd ustar archive with a manifest and allowlisted artifacts. Import treats the package as untrusted: size, entry and decompression bounds; regular files with bare allowlisted names only; per-artifact SHA-256 checked before any database is opened; repository identity and analyzer fingerprints must match this installation; read-back validation; then one rename into the cache. Any failure publishes nothing. Manifest hashes do not prove who wrote a package, so pass `--expect-sha256` with a digest from a trusted channel when a package crosses a trust boundary.
+- `--privacy metadata-only` export drops symbol bodies and source-bearing metadata. It still reveals symbol names (including locals), file paths, line ranges and call/import structure. Reads against such a snapshot report a `missing-content` boundary.
+- The Web `/diff` page shows a "Compared indexes" panel from `baseSnapshot.indexView`/`headSnapshot.indexView` when the server sends them. Measured overhead of a cached-ref `search` on a ~1.6k-symbol fixture was 25–31 ms median against 0.5 ms for the current index, almost all of it per-request ref resolution. See `docs/ref-aware-portable-indexes.md`.
+
+### 🛠️ Safe refactoring and architecture guards
+
+- Added `code-intel refactor rename <selector> <newName>`. It resolves one canonical symbol (an ambiguous name exits 2 with the candidate selectors) and dry-runs by default, classifying each occurrence as `exact-definition`, `exact-semantic`, `candidate-text`, `generated` or `unsupported`. Only exact spans are ever edited. Overloads, declaration merging, name collisions, parse errors, generated files and unsupported occurrences make the plan non-applicable.
+- `--apply` re-plans against the working tree in memory, refuses a plan id other than `--expect-plan`, refuses dirty files without `--allow-dirty`, writes through same-directory temp files with rollback, and then re-analyzes to verify the new definition, removed old definition, resolved references, API compatibility and structural checks. A failed verification exits 1. Nothing is staged or committed.
+- Rename apply is enabled for TypeScript and JavaScript module-scope declarations and their ES-module imports, re-exports and namespace members. Members, locals, `.tsx`, CommonJS/dynamic imports and the other 12 languages are preview-only. Large files the tree-sitter grammar cannot fully parse block apply (in this repository: `cli/app.ts` and `http/app.ts`).
+- Added `code-intel check` (`--changed`, `--base <ref>`, `--fresh`, `--fail-on`, `--format sarif`, `--install-hook`). Rules: `architecture/policy-invalid`, `architecture/layer-violation`, `graph/new-import-cycle`, `api/breaking-change`, `risk/untested-change` and `refactor/verification-failed`. Layer enforcement needs an explicit `.code-intel/architecture-policy.json`; detected layers are advisory and never produce findings. Only exact evidence can produce an error. Output is deterministic, findings carry stable ids, and coverage is marked partial with reasons (no base, incomplete consumer coverage, truncation, stale index).
+- Read-only `rename_plan` and `structural_check` MCP tools and `POST /api/v1/refactor/rename-plan`, `POST /api/v1/structural-check`. Writing source stays a local CLI action. See `docs/safe-refactoring-and-architecture-guards.md`.
+
+### 🔏 Runtime trust and offline installation
+
+- Releases now publish `code-intel-runtime-index-v1.json` (version, tag, commit, per-target artifact names, sizes and hashes, expected repository/workflow identity) with a Sigstore attestation bundle per subject. The CLI verifies them offline with `@sigstore/verify@3.1.1` (Apache-2.0, pure JS, four packages, no network imports) against a pinned identity: `vohongtho/code-intel-platform`, `.github/workflows/publish.yml`, tag refs only. A valid signature from another repository or workflow is rejected.
+- Added `code-intel upgrade --bundle-dir <dir> [--offline] [--target <t>] [--trusted-root <file>]`. `--offline` resolves every file from the bundle directory and denies all network primitives for the transaction. Authenticity and integrity are verified before activation, and the current runtime is kept on any failure. `upgrade --archive … --checksum-file …` still works.
+- Archive members are validated before extraction, for both `upgrade` and the first-install script: absolute paths, traversal, unsafe links and special entries are rejected. Before this, `tar -xzf` ran before any member check.
+- Added `code-intel verify-install [--json]`; `doctor` reports the same trust state. States are `verified`, `legacy-checksum`, `unverified` and `invalid`. A v1.0.11 checksum-only runtime stays usable as `legacy-checksum` and is never relabeled `verified`. Each version keeps its own trust receipt, so rollback cannot borrow trust from another archive.
+- Each runtime archive ships `trust/sigstore-trusted-root.json`. If Sigstore rotates its signing keys after an installed runtime's root was pinned, offline verification fails closed with `ATTESTATION_INVALID`; supply a current root with `--trusted-root` or upgrade online. Verified end to end on linux-x64 only; the other three targets were built and inspected, not run.
+
+### 🔒 Security fixes
+
+- `POST /auth/logout` now revokes the server-side session. It used to clear only the browser cookie, so a copied session cookie, including a 12-hour remember-me cookie, kept authenticating until it expired, across server restarts.
+- Repo-scoped API tokens are enforced on current-index reads (`nodes/:id`, `flows`, `clusters`, `blast-radius`, `search` and the deprecated vector-search alias), on ref-pinned reads, and on group routes (`/groups/:name`, `/contracts`, `/drift`, `/graph`, `/topology`, `/search`, `/sync`). A group route requires scope over every current member and every repository the saved sync result still references. Before, a token limited to one repository could read another's graph by passing its `repoId`, name, path or group.
+- `taint-trace` clamps caller limits to 1,000 functions and 500 findings and shares one time budget across all scanned roots. String-literal stripping no longer backtracks exponentially on a run of backslashes.
+- Dependency remediation for advisories published after v1.0.11: `sharp` 0.35.5, `hono` 4.13.18, `@hono/node-server` 2.1.7, `brace-expansion` 5.0.13, `fast-uri` 3.1.9, `ip-address` 10.7.6, and Web `vitest` 4 (dev only). `npm audit --omit=dev` reports no high or critical findings; one moderate `minimatch` advisory remains because `minimatch` 11 drops the `makeRe` export the scan phase uses.
+
 ### 🐛 Analyzer fixes found while testing workflows
 
 - Framework adapters (Express, Fastify, NestJS, ASP.NET Core, Spring, Go HTTP, Python web, PHP/Ruby web, HTML, MCP SDK) and HTTP consumer adapters (fetch, Axios, Angular HttpClient) derived fact file paths with `filePath.replace(/^.*?code-intel-platform\//, '')`, which only produced a workspace-relative path for repositories under a directory named `code-intel-platform`. Elsewhere, their `contains` edges pointed at file nodes that do not exist, persistence dropped them, and atomic publication rejected the index as `graph.db collapsed`, so any repository with an Express route or a `fetch` call could not be indexed. Paths are now `path.relative(workspaceRoot, filePath)`.
@@ -68,6 +100,10 @@ All notable changes to this project are documented in this file.
 
 - Stable flow identity adds a producer fingerprint to generation metadata. Existing indexes without the compatible fingerprint are rebuilt rather than treated as fresh.
 - Existing `pr_impact` callers retain graph behavior by default. Select `precision: "pdg"` explicitly to evaluate dependence slicing; `auto` does not select PDG in this release.
+- `GROUP_CONTRACT_SCHEMA_VERSION` is `1.0.12`, so the first `group sync` after upgrading reports every contract as changed. Snapshots built by 1.0.11 compare protocol contracts as `unknown` with `legacy-schema` until rebuilt.
+- A `.cidx` package imports only into an installation whose analyzer fingerprints match the producer's. Re-export with the same Code Intel version you import with.
+- Runtimes installed from 1.0.11 archives report `legacy-checksum` in `verify-install` and `doctor`. They are not re-verified retroactively; a successful `upgrade --bundle-dir` to 1.0.12 records a `verified` receipt for that version. `upgrade --archive … --checksum-file …` still records `legacy-checksum`.
+- Logout now invalidates the session on the server. Scripts that reused a cookie after calling `/auth/logout` must log in again.
 
 ## [1.0.11] - 2026-09-08
 

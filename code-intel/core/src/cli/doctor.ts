@@ -14,6 +14,7 @@ import { resolveVectorRuntimeState } from '../search/vector-runtime-state.js';
 import { getVectorDbPath, loadMetadata } from '../storage/metadata.js';
 import { listInstalledRuntimeVersions, previewRuntimeUninstall } from './runtime-lifecycle.js';
 import { resolveStableCliCommand } from './runtime-command.js';
+import { inspectRuntimeTrust } from './runtime-trust.js';
 
 export interface DoctorCheck {
   id: string;
@@ -73,6 +74,31 @@ function runtimeCheck(scriptPath?: string): DoctorCheck {
       commitSha: runtime.manifest?.product?.commitSha,
     },
     remediation: nodeOk && entryOk ? undefined : 'Reinstall or rebuild the self-contained runtime bundle.',
+  };
+}
+
+function runtimeTrustCheck(scriptPath?: string): DoctorCheck {
+  const runtime = loadBundledRuntimeMetadata(scriptPath);
+  if (!runtime.bundled || !runtime.currentRoot) {
+    return { id: 'runtime-trust', status: 'warn', message: 'Authenticity not applicable outside bundled runtime', details: { authenticity: 'unverified' } };
+  }
+  const trust = inspectRuntimeTrust(runtime.currentRoot);
+  // Bounded on purpose: identity strings only, never certificates or bundle material.
+  return {
+    id: 'runtime-trust',
+    status: trust.authenticity === 'verified' ? 'pass' : trust.authenticity === 'invalid' ? 'fail' : 'warn',
+    message: `Runtime authenticity: ${trust.authenticity}`,
+    details: {
+      version: trust.version,
+      target: trust.target,
+      authenticity: trust.authenticity,
+      reason: trust.reason,
+      digest: trust.digest,
+      release: trust.release,
+    },
+    remediation: trust.authenticity === 'verified'
+      ? undefined
+      : 'Upgrade from an official release bundle: `code-intel upgrade --bundle-dir <dir>` (add --offline for air-gapped hosts).',
   };
 }
 
@@ -233,6 +259,7 @@ export async function collectDoctorChecks(options: { scriptPath?: string; repoDi
     gitCheck(),
     configCheck(),
     runtimeCheck(options.scriptPath),
+    runtimeTrustCheck(options.scriptPath),
     runtimeVersionsCheck(options.scriptPath),
     uninstallOwnershipCheck(options.scriptPath),
     writableCheck(),

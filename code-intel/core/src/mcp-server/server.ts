@@ -489,6 +489,7 @@ const GRAPH_BACKED_TOOLS = new Set([
   'detect_changes', 'query', 'raw_query', 'explain_relationship', 'pr_impact', 'similar_symbols', 'health_report',
   'suggest_tests', 'cluster_summary', 'deprecated_usage', 'complexity_hotspots', 'coverage_gaps', 'secrets', 'vulnerability_scan',
   'api_contract', 'api_impact', 'api_shape_check', 'api_drift', 'graph_diff', 'taint_trace',
+  'rename_plan', 'structural_check',
 ]);
 
 export async function dispatchTool(
@@ -1729,6 +1730,24 @@ export async function dispatchTool(
             content: [{ type: 'text', text: compact({ error: err instanceof Error ? err.message : String(err) }) }],
             isError: true,
           };
+        }
+      }
+
+      // ── rename_plan / structural_check (read-only; never write source) ─────
+      case 'rename_plan':
+      case 'structural_check': {
+        if (!activeWorkspaceRoot) {
+          return { content: [{ type: 'text', text: compact({ error: 'No repository workspace root available. Select a repo with repoId/repo.' }) }], isError: true };
+        }
+        const { GovernanceRequestError, planRenameReadOnly, structuralCheckReadOnly } = await import('../governance/service.js');
+        try {
+          const result = name === 'rename_plan'
+            ? await planRenameReadOnly({ graph, workspaceRoot: activeWorkspaceRoot, selector: a.selector, newName: a.newName, maxOccurrences: a.max_occurrences })
+            : await structuralCheckReadOnly({ graph, repoDir: activeWorkspaceRoot, changedFiles: a.changedFiles, baseRef: a.base_ref, headRef: a.head_ref, rules: a.rules, maxFindings: a.max_findings });
+          return { content: [{ type: 'text', text: compact(result) }] };
+        } catch (error) {
+          if (error instanceof GovernanceRequestError) return { content: [{ type: 'text', text: compact({ error: error.message }) }], isError: true };
+          throw error;
         }
       }
 

@@ -6,6 +6,7 @@ import path from 'node:path';
 import { spawnSync, spawn } from 'node:child_process';
 import { buildRuntimeBundle } from './distribution/build-runtime-bundle.mjs';
 import { installRuntime } from './distribution/install/install-runtime.mjs';
+import { buildRuntimeIndex, RUNTIME_INDEX_FILENAME } from './distribution/build-runtime-index.mjs';
 
 function makeFakeNodeRuntime(root) {
   const runtimeDir = path.join(root, 'node-vtest-linux-x64');
@@ -45,7 +46,7 @@ async function main() {
     archiveMtime: '2024-01-01T00:00:00.000Z',
   });
 
-  const installed = installRuntime({
+  const installed = await installRuntime({
     archive: bundle.archivePath,
     checksumFile: bundle.checksumPath,
     installRoot,
@@ -75,6 +76,24 @@ async function main() {
   const rollbackFail = spawnSync('/bin/sh', [launcher, 'upgrade', '--archive', bundle.archivePath, '--checksum', '0'.repeat(64)], { encoding: 'utf8', env, cwd: repoDir });
   if (rollbackFail.status === 0) throw new Error('expected failed upgrade to preserve existing runtime');
   const preserved = run('/bin/sh', [launcher, '--version'], { env });
+
+  // Checksum-installed runtimes are truthful: legacy-checksum, never verified.
+  const verifyInstall = spawnSync('/bin/sh', [launcher, 'verify-install', '--json'], { encoding: 'utf8', env, cwd: repoDir });
+  const trust = JSON.parse(verifyInstall.stdout);
+  if (trust.authenticity !== 'legacy-checksum') throw new Error(`expected legacy-checksum after checksum install, got ${verifyInstall.stdout}`);
+
+  // An offline bundle without its attestation must fail closed and leave the runtime alone.
+  const bundleDir = path.join(tmpDir, 'offline-bundle');
+  fs.mkdirSync(bundleDir);
+  for (const file of [bundle.archivePath, bundle.checksumPath, bundle.sbomPath, bundle.provenancePath]) {
+    fs.copyFileSync(file, path.join(bundleDir, path.basename(file)));
+  }
+  fs.writeFileSync(path.join(bundleDir, RUNTIME_INDEX_FILENAME), `${JSON.stringify(buildRuntimeIndex({ bundleDir, repository: 'vohongtho/code-intel-platform', workflow: '.github/workflows/publish.yml' }), null, 2)}\n`);
+  const offlineFail = spawnSync('/bin/sh', [launcher, 'upgrade', '--bundle-dir', bundleDir, '--offline', '--target', 'linux-x64'], { encoding: 'utf8', env, cwd: repoDir });
+  if (offlineFail.status === 0 || !/ATTESTATION_MISSING/.test(offlineFail.stderr + offlineFail.stdout)) {
+    throw new Error(`expected unattested offline bundle to fail closed: ${offlineFail.stderr}`);
+  }
+  const preservedAfterOffline = run('/bin/sh', [launcher, '--version'], { env });
   const uninstall = run('/bin/sh', [launcher, 'uninstall'], { env, cwd: repoDir });
 
   const result = {
@@ -85,6 +104,8 @@ async function main() {
     mcpProtocolVersion,
     serveHealthy,
     failedUpgradePreservedVersion: preserved.stdout.trim() === version.stdout.trim(),
+    checksumInstallAuthenticity: trust.authenticity,
+    unattestedOfflineBundleRejected: preservedAfterOffline.stdout.trim() === version.stdout.trim(),
     uninstallOutput: uninstall.stdout.trim(),
   };
 

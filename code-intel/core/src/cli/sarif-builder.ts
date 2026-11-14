@@ -5,6 +5,8 @@
  * the full CLI process.
  */
 import type { PRImpactResult } from '../query/pr-impact.js';
+import type { StructuralCheckResult } from '../governance/structural-check.js';
+import { STRUCTURAL_RULES } from '../governance/structural-check.js';
 
 export interface SARIFRegion {
   startLine: number;
@@ -32,6 +34,9 @@ export interface SARIFResult {
   level: 'error' | 'warning' | 'note';
   message: SARIFMessage;
   locations: SARIFLocation[];
+  /** Stable identity so code-scanning UIs track a finding across runs. */
+  partialFingerprints?: Record<string, string>;
+  properties?: Record<string, unknown>;
 }
 
 export interface SARIFShortDescription {
@@ -42,6 +47,7 @@ export interface SARIFRule {
   id: string;
   name: string;
   shortDescription: SARIFShortDescription;
+  defaultConfiguration?: { level: 'error' | 'warning' | 'note' };
 }
 
 export interface SARIFDriver {
@@ -57,6 +63,7 @@ export interface SARIFTool {
 export interface SARIFRun {
   tool: SARIFTool;
   results: SARIFResult[];
+  properties?: Record<string, unknown>;
 }
 
 export interface SARIFReport {
@@ -127,6 +134,66 @@ export function buildSARIF(result: PRImpactResult, version: string): SARIFReport
           },
         },
         results,
+      },
+    ],
+  };
+}
+
+const SARIF_SCHEMA = 'https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json';
+
+/**
+ * Build a SARIF 2.1.0 report from a structural check. Output order follows the
+ * (already deterministic) finding order; each result carries the finding id as
+ * a partial fingerprint plus certainty/introduced/evidence properties, and the
+ * run carries the check's coverage so a clean report with partial coverage is
+ * not mistaken for proof of safety.
+ */
+export function buildStructuralSARIF(result: StructuralCheckResult, version: string): SARIFReport {
+  const defaults: Record<string, 'error' | 'warning' | 'note'> = {
+    'architecture/policy-invalid': 'error',
+    'architecture/layer-violation': 'error',
+    'graph/new-import-cycle': 'warning',
+    'api/breaking-change': 'error',
+    'risk/untested-change': 'warning',
+    'refactor/verification-failed': 'error',
+  };
+  return {
+    $schema: SARIF_SCHEMA,
+    version: '2.1.0',
+    runs: [
+      {
+        tool: {
+          driver: {
+            name: 'code-intel',
+            version,
+            rules: STRUCTURAL_RULES.map((rule) => ({
+              id: rule.id,
+              name: rule.name,
+              shortDescription: { text: rule.description },
+              defaultConfiguration: { level: defaults[rule.id] ?? 'warning' },
+            })),
+          },
+        },
+        results: result.findings.map((finding) => ({
+          ruleId: finding.ruleId,
+          level: finding.severity,
+          message: { text: `${finding.message}. ${finding.hint}` },
+          locations: [{
+            physicalLocation: {
+              artifactLocation: { uri: finding.location.filePath },
+              region: { startLine: Math.max(1, finding.location.startLine ?? 1) },
+            },
+          }],
+          partialFingerprints: { 'codeIntelFindingId/v1': finding.id },
+          properties: { certainty: finding.certainty, introduced: finding.introduced, evidence: finding.evidence },
+        })),
+        properties: {
+          schemaVersion: result.schemaVersion,
+          coverage: result.coverage,
+          truncated: result.truncated,
+          totalFindings: result.totalFindings,
+          policy: result.policy,
+        },
       },
     ],
   };

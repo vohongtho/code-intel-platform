@@ -144,13 +144,16 @@ describe('persistent remembered session restart regression', () => {
     resetSessionStoreForTesting();
     resetUsersDBForTesting();
     const serverC = await startServer();
-    const statusAfterLogoutRestart = await rawRequest(serverC, {
-      method: 'GET',
-      path: '/auth/status',
-      headers: { Cookie: sessionCookie },
-    });
-    assert.equal(statusAfterLogoutRestart.status, 401);
-    await stopServer(serverC);
+    try {
+      const statusAfterLogoutRestart = await rawRequest(serverC, {
+        method: 'GET',
+        path: '/auth/status',
+        headers: { Cookie: sessionCookie },
+      });
+      assert.equal(statusAfterLogoutRestart.status, 401);
+    } finally {
+      await stopServer(serverC);
+    }
   });
 
   it('rejects an expired remembered cookie after restart', async () => {

@@ -24,6 +24,7 @@ const REPO_SELECTABLE_TOOL_NAMES = new Set([
   'detect_changes', 'query', 'raw_query', 'explain_relationship', 'pr_impact', 'similar_symbols', 'health_report',
   'suggest_tests', 'cluster_summary', 'deprecated_usage', 'complexity_hotspots', 'coverage_gaps', 'secrets', 'vulnerability_scan',
   'api_contract', 'api_impact', 'api_shape_check', 'api_drift', 'graph_diff', 'change_workflow', 'taint_trace',
+  'rename_plan', 'structural_check',
 ]);
 /**
  * Read-only, single-repo graph tools that can be served from an alternate committed
@@ -602,6 +603,35 @@ export const MCP_TOOL_DEFINITIONS = [
         ..._tokenProp,
       },
       required: ['base_ref', 'head_ref'],
+    },
+  },
+  {
+    name: 'rename_plan',
+    description: 'Read-only rename plan for ONE canonical symbol: exact definition/reference/import/export edits with source spans, candidate string/comment/config mentions that are never auto-edited, language capability (apply | preview-only | unsupported), boundaries that block apply, affected tests, and a plan id. A name shared by several symbols returns disambiguation candidates instead of guessing. Never writes files; apply locally with `code-intel refactor rename … --apply --expect-plan <planId>`.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        selector: { type: 'string', description: 'Symbol name or canonical selector kind:name@path[:line]' },
+        newName: { type: 'string', description: 'New identifier' },
+        max_occurrences: { type: 'number', description: 'Max occurrences returned (default: 200, max: 2000); totals are always reported' },
+        ..._tokenProp,
+      },
+      required: ['selector', 'newName'],
+    },
+  },
+  {
+    name: 'structural_check',
+    description: 'Read-only structural verdict for a change: explicit architecture-policy violations (.code-intel/architecture-policy.json; inferred layers are advisory only and never produce findings), newly introduced import cycles, breaking API-contract drift, and changed high-risk symbols without known tests. Each finding has rule id, severity, location, evidence, certainty and whether the change introduced it. Pass base_ref (and optional head_ref) to compare isolated snapshots, or changedFiles to check against the current index without a base.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        changedFiles: { type: 'array', items: { type: 'string' }, description: 'Repo-relative changed files (current-index mode, no base)' },
+        base_ref: { type: 'string', description: 'Base Git ref; enables new-vs-pre-existing classification and API drift' },
+        head_ref: { type: 'string', description: 'Head Git ref (default: HEAD); requires base_ref' },
+        rules: { type: 'array', items: { type: 'string' }, description: 'Rule ids to run (default: all)' },
+        max_findings: { type: 'number', description: 'Max findings returned (default: 200, max: 2000); totals are always reported' },
+        ..._tokenProp,
+      },
     },
   },
   {

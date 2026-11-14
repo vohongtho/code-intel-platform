@@ -378,6 +378,43 @@ describe('HTTP ref-aware reads', { timeout: 300_000 }, () => {
     assert.equal(deniedExplore.status, 403);
   });
 
+  it('rename-plan and structural-check are read-only and repo-scoped (HTTP + MCP)', async () => {
+    const before = repoState();
+    const indexText = fs.readFileSync(path.join(REPO, 'index.ts'), 'utf8');
+    for (const [route, payload] of [
+      ['/api/v1/refactor/rename-plan', { selector: 'currentOnly', newName: 'renamedOnly' }],
+      ['/api/v1/structural-check', { changedFiles: ['index.ts'] }],
+    ] as const) {
+      const denied = await post(route, scopedOther, payload);
+      assert.equal(denied.status, 403, `${route}: ${JSON.stringify(denied.body)}`);
+      const allowed = await post(route, scopedSelf, payload);
+      assert.equal(allowed.status, 200, `${route}: ${JSON.stringify(allowed.body)}`);
+    }
+    const plan = await post('/api/v1/refactor/rename-plan', analyst, { selector: 'currentOnly', newName: 'renamedOnly' });
+    assert.equal(plan.body.status, 'planned');
+    assert.equal(plan.body.readOnly, true);
+    assert.equal(typeof plan.body.occurrencesTotal, 'number');
+    assert.equal((await post('/api/v1/refactor/rename-plan', analyst, { selector: 42, newName: 'x' })).status, 400);
+    const check = await post('/api/v1/structural-check', analyst, { changedFiles: ['index.ts'] });
+    assert.equal(check.body.schemaVersion, 1);
+    assert.equal(check.body.coverage.complete, false, 'no base ⇒ partial coverage');
+    assert.equal((await post('/api/v1/structural-check', analyst, {})).status, 400);
+    assert.equal((await post('/api/v1/structural-check', analyst, { base_ref: 'no-such-ref' })).status, 422);
+
+    const mcpGraph = createKnowledgeGraph();
+    mcpGraph.addNode({ id: 'cur', kind: 'function', name: 'currentOnly', filePath: 'index.ts', startLine: 1 });
+    const mcpPlan = await dispatchTool('rename_plan', { selector: 'currentOnly', newName: 'renamedOnly' }, mcpGraph, 'ref-aware', REPO);
+    assert.notEqual(mcpPlan.isError, true, mcpPlan.content[0]?.text);
+    assert.equal(parse(mcpPlan).readOnly, true);
+    const mcpCheck = await dispatchTool('structural_check', { changedFiles: ['index.ts'] }, mcpGraph, 'ref-aware', REPO);
+    assert.notEqual(mcpCheck.isError, true, mcpCheck.content[0]?.text);
+    assert.equal(parse(mcpCheck).schemaVersion, 1);
+    assert.equal((await dispatchTool('structural_check', {}, mcpGraph, 'ref-aware', REPO)).isError, true);
+
+    assert.equal(fs.readFileSync(path.join(REPO, 'index.ts'), 'utf8'), indexText, 'no source write');
+    assert.deepEqual(repoState(), before);
+  });
+
   it('a repo-scoped token cannot read another repository\'s current index either', async () => {
     for (const route of ['/api/v1/flows', '/api/v1/clusters', `/api/v1/nodes/${encodeURIComponent('cur')}`]) {
       const denied = await request('GET', route, scopedOther);

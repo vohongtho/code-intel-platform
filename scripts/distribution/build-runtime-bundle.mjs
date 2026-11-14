@@ -12,6 +12,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..', '..');
 const DEFAULT_ARCHIVE_MTIME = '2024-01-01T00:00:00.000Z';
+// Sigstore trust anchor the installed runtime uses to authenticate the *next*
+// release (`upgrade --bundle-dir`). Refresh with refresh-sigstore-trusted-root.mjs.
+const DEFAULT_TRUSTED_ROOT = path.join(__dirname, 'trust', 'sigstore-public-good-trusted-root.json');
+const PINNED_TRUSTED_ROOT_RELPATH = path.join('trust', 'sigstore-trusted-root.json');
 
 const TARGETS = {
   'linux-x64': {
@@ -73,6 +77,7 @@ function parseArgs(argv) {
     skipArchive: argv.includes('--skip-archive'),
     skipNodeDownload: argv.includes('--skip-node-download'),
     nodeRuntimeDir: read('--node-runtime-dir'),
+    trustedRoot: read('--trusted-root') || DEFAULT_TRUSTED_ROOT,
     smokeTest: argv.includes('--smoke-test'),
     json: argv.includes('--json'),
   };
@@ -345,6 +350,8 @@ export async function buildRuntimeBundle(rawOptions = {}) {
   copyDir(nodeRuntimeDir, runtimeRoot);
   copyFiles(runtimeManifest.bundleInputs.files, appRoot);
   fs.writeFileSync(manifestPath, `${JSON.stringify(runtimeManifest, null, 2)}\n`, 'utf8');
+  mkdirp(path.join(versionRoot, path.dirname(PINNED_TRUSTED_ROOT_RELPATH)));
+  fs.copyFileSync(options.trustedRoot, path.join(versionRoot, PINNED_TRUSTED_ROOT_RELPATH));
 
   mkdirp(path.join(installRoot, 'versions'));
   copyDir(versionRoot, installedVersionRoot);

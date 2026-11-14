@@ -19,6 +19,7 @@ import {
 import { collectDoctorChecks } from './doctor.js';
 import {
   cleanupRuntimeVersions,
+  installRuntimeFromBundle,
   installRuntimeUpgrade,
   listInstalledRuntimeVersions,
   pinRuntimeVersion,
@@ -26,6 +27,8 @@ import {
   rollbackRuntimeVersion,
   uninstallRuntime,
 } from './runtime-lifecycle.js';
+import { loadBundledRuntimeMetadata } from './runtime-metadata.js';
+import { inspectRuntimeTrust } from './runtime-trust.js';
 
 function optionValue(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
@@ -183,10 +186,27 @@ function runRollback(args: string[]): void {
   process.stdout.write(`${JSON.stringify({ current: rolled.version }, null, 2)}\n`);
 }
 
-function runUpgrade(args: string[]): void {
+async function runUpgrade(args: string[]): Promise<void> {
   const archive = optionValue(args, '--archive');
-  if (!archive) throw new Error('Usage: code-intel upgrade --archive <path> [--checksum <sha256> | --checksum-file <path>] [--version <v>]');
-  const result = installRuntimeUpgrade({
+  const bundleDir = optionValue(args, '--bundle-dir');
+  if (bundleDir) {
+    if (archive) throw new Error('Use either --bundle-dir or --archive, not both.');
+    const result = await installRuntimeFromBundle({
+      bundleDir,
+      offline: args.includes('--offline'),
+      target: optionValue(args, '--target'),
+      trustedRoot: optionValue(args, '--trusted-root'),
+      installRoot: optionValue(args, '--install-root'),
+      tempRoot: optionValue(args, '--temp-root'),
+      skipPathCheck: args.includes('--skip-path-check'),
+      scriptPath: process.argv[1],
+    });
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
+  if (args.includes('--offline')) throw new Error('--offline requires --bundle-dir <dir>.');
+  if (!archive) throw new Error('Usage: code-intel upgrade --bundle-dir <dir> [--offline] [--target <t>] [--trusted-root <file>] | --archive <path> [--checksum <sha256> | --checksum-file <path>] [--version <v>]');
+  const result = await installRuntimeUpgrade({
     archive,
     checksum: optionValue(args, '--checksum'),
     checksumFile: optionValue(args, '--checksum-file'),
@@ -197,6 +217,25 @@ function runUpgrade(args: string[]): void {
     scriptPath: process.argv[1],
   });
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+}
+
+function runVerifyInstall(args: string[]): void {
+  const json = args.includes('--json');
+  const runtime = loadBundledRuntimeMetadata(process.argv[1]);
+  if (!runtime.bundled || !runtime.currentRoot) {
+    const result = { bundled: false, authenticity: 'unverified', reason: 'not running from a self-contained runtime' };
+    process.stdout.write(json ? `${JSON.stringify(result, null, 2)}\n` : `unverified: ${result.reason}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  const inspection = inspectRuntimeTrust(runtime.currentRoot);
+  if (json) {
+    process.stdout.write(`${JSON.stringify({ bundled: true, ...inspection }, null, 2)}\n`);
+  } else {
+    process.stdout.write(`${inspection.version} (${inspection.target ?? 'unknown target'}): ${inspection.authenticity} — ${inspection.reason}\n`);
+    if (inspection.release) process.stdout.write(`  signer: ${inspection.release.workflowIdentity}\n`);
+  }
+  process.exitCode = inspection.authenticity === 'invalid' ? 2 : inspection.authenticity === 'verified' ? 0 : 1;
 }
 
 function runCleanupVersions(args: string[]): void {
@@ -252,7 +291,11 @@ export async function runStandaloneCommand(argv: string[]): Promise<boolean> {
     return true;
   }
   if (command === 'upgrade') {
-    runUpgrade(args);
+    await runUpgrade(args);
+    return true;
+  }
+  if (command === 'verify-install') {
+    runVerifyInstall(args);
     return true;
   }
   if (command === 'rollback') {

@@ -48,6 +48,11 @@ describe('doctor runtime lifecycle checks', () => {
         assert.ok(Array.isArray((versions?.details as any).versions));
         assert.ok((versions?.details as any).versions.some((entry: any) => entry.version === '1.0.11'));
         assert.equal((uninstall?.details as any).dataRoot, dataRoot);
+        const trust = checks.find((check) => check.id === 'runtime-trust');
+        assert.equal(trust?.status, 'warn');
+        assert.equal((trust?.details as any).authenticity, 'legacy-checksum');
+        assert.equal((trust?.details as any).version, '1.0.11');
+        assert.equal(JSON.stringify(trust).includes('BEGIN CERTIFICATE'), false);
       } finally {
         if (previousGlobal === undefined) delete process.env.CODE_INTEL_GLOBAL_DIR;
         else process.env.CODE_INTEL_GLOBAL_DIR = previousGlobal;

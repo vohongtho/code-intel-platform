@@ -508,6 +508,53 @@ export const openApiSpec = {
         },
       },
     },
+    '/refactor/rename-plan': {
+      post: {
+        tags: ['Refactoring'],
+        summary: 'Read-only rename plan for one canonical symbol',
+        description: 'Resolves one canonical target (an ambiguous name returns disambiguation candidates), then lists exact edits with source spans, candidate string/comment/config mentions that are never auto-edited, the language capability (apply | preview-only | unsupported), boundaries that block apply, affected tests and a plan id. Never writes source: apply locally with `code-intel refactor rename --apply --expect-plan <planId>`.',
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { type: 'object', properties: {
+            selector: { type: 'string', description: 'Symbol name or canonical selector kind:name@path[:line]' },
+            newName: { type: 'string' },
+            repoId: { type: 'string' },
+            max_occurrences: { type: 'integer', default: 200, maximum: 2000 },
+          }, required: ['selector', 'newName'] } } },
+        },
+        responses: {
+          '200': { description: '`status` is planned, ambiguous (with candidates) or missing. Occurrence/edit lists are bounded; totals and `truncated` are always present.', content: { 'application/json': { schema: { type: 'object' } } } },
+          '400': { description: 'Invalid selector or newName', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '403': { description: 'Token lacks access to the repository or the rename_plan tool', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '404': { description: 'Repository not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
+    '/structural-check': {
+      post: {
+        tags: ['Governance'],
+        summary: 'Read-only structural check of a change',
+        description: 'Explicit architecture-policy violations (inferred layers are advisory only), newly introduced import cycles, breaking API-contract drift and changed high-risk symbols without known tests. With base_ref (optional head_ref, default HEAD) both sides come from isolated snapshots; building an uncached snapshot requires the analyst role. Otherwise changedFiles are checked against the current index without a base, and coverage says so.',
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { type: 'object', properties: {
+            changedFiles: { type: 'array', items: { type: 'string' } },
+            base_ref: { type: 'string' },
+            head_ref: { type: 'string' },
+            rules: { type: 'array', items: { type: 'string' } },
+            max_findings: { type: 'integer', default: 200, maximum: 2000 },
+            repoId: { type: 'string' },
+          } } } },
+        },
+        responses: {
+          '200': { description: 'StructuralCheckResult: findings (rule, severity, location, evidence, certainty, introduced, hint), per-rule status, advisory layers and coverage', content: { 'application/json': { schema: { type: 'object' } } } },
+          '400': { description: 'Invalid request', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '403': { description: 'Token lacks access to the repository or the structural_check tool', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '404': { description: 'Repository not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '422': { description: 'A ref could not be resolved or built into a trustworthy snapshot', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
     '/flows': {
       get: {
         tags: ['Graph'],

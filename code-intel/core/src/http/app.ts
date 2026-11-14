@@ -42,6 +42,9 @@ import {
   buildSessionCookie,
   clearSessionCookie,
   createSession,
+  deleteSession,
+  parseCookies,
+  SESSION_COOKIE_NAME,
   verifyPassword,
   countActiveSessions,
   meetsRole,
@@ -605,6 +608,10 @@ export function createApp(
   });
 
   app.post('/auth/logout', (req: Request, res: Response) => {
+    // Revoke the server-side session row; clearing the cookie alone leaves a
+    // copied cookie valid until it expires.
+    const rawSession = parseCookies(req.headers['cookie'] ?? '')[SESSION_COOKIE_NAME];
+    if (rawSession) deleteSession(rawSession);
     res.setHeader('Set-Cookie', clearSessionCookie());
     res.json({ message: 'Logged out successfully' });
   });
@@ -1692,6 +1699,52 @@ export function createApp(
       if (err instanceof AppError) { sendAppError(req, res, err); return; }
       throw err;
     }
+  });
+
+  // ── Rename plan / structural check (read-only; source writes stay CLI-only) ──
+  /** Repo a governance request reads: same id resolution as getGraphForRepoIdOrThrow, scope-checked first. */
+  async function governanceTarget(req: Request, repoId: string | undefined): Promise<{ graph: KnowledgeGraph; repoDir: string }> {
+    assertRepoScope(req, [resolveRepoIdSelector(repoId)]);
+    const other = repoId && repoId !== repoName ? loadRegistry().find((r) => r.id === repoId) : undefined;
+    const graphForRepo = await getGraphForRepoIdOrThrow(repoId);
+    const repoDir = other?.path ?? workspaceRoot;
+    if (!repoDir) throw new AppError(ErrorCodes.NOT_FOUND, 'No active repository', 'Pass repoId', 404);
+    return { graph: graphForRepo, repoDir };
+  }
+
+  async function sendGovernance(req: Request, res: Response, run: () => Promise<unknown>): Promise<void> {
+    const { GovernanceRequestError } = await import('../governance/service.js');
+    try {
+      res.json(await run());
+    } catch (err) {
+      if (err instanceof GovernanceRequestError) {
+        const code = err.status === 400 ? ErrorCodes.INVALID_REQUEST : err.status === 404 ? ErrorCodes.NOT_FOUND : ErrorCodes.ANALYSIS_FAILED;
+        res.status(err.status).json({ error: { code, message: err.message, requestId: req.requestId } });
+        return;
+      }
+      if (err instanceof AppError) { sendAppError(req, res, err); return; }
+      throw err;
+    }
+  }
+
+  app.post('/api/v1/refactor/rename-plan', requireToolScope('rename_plan'), async (req, res) => {
+    const body = (req.body ?? {}) as { selector?: unknown; newName?: unknown; repoId?: string; max_occurrences?: unknown };
+    await sendGovernance(req, res, async () => {
+      const { planRenameReadOnly } = await import('../governance/service.js');
+      const target = await governanceTarget(req, body.repoId);
+      return planRenameReadOnly({ graph: target.graph, workspaceRoot: target.repoDir, selector: body.selector, newName: body.newName, maxOccurrences: body.max_occurrences });
+    });
+  });
+
+  app.post('/api/v1/structural-check', requireToolScope('structural_check'), async (req, res) => {
+    const body = (req.body ?? {}) as { changedFiles?: unknown; base_ref?: unknown; head_ref?: unknown; rules?: unknown; max_findings?: unknown; repoId?: string };
+    await sendGovernance(req, res, async () => {
+      const { structuralCheckReadOnly } = await import('../governance/service.js');
+      const target = await governanceTarget(req, body.repoId);
+      // Building uncached ref snapshots runs analysis; reserve it for analysts, like ref reads.
+      const allowBuild = Boolean(req.user && meetsRole(req.user.role, 'analyst'));
+      return structuralCheckReadOnly({ graph: target.graph, repoDir: target.repoDir, changedFiles: body.changedFiles, baseRef: body.base_ref, headRef: body.head_ref, rules: body.rules, maxFindings: body.max_findings }, { allowBuild });
+    });
   });
 
   // ── Semantic graph diff ─────────────────────────────────────────────────────

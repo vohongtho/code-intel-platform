@@ -5323,6 +5323,76 @@ program
     }
   });
 
+// ─── check / refactor ─────────────────────────────────────────────────────────
+// `check`: one structural verdict (explicit architecture policy, new import cycles,
+// API drift, untested high-risk change) for local/CI/pre-commit use. `refactor rename`:
+// canonical-identity rename, dry-run by default; --apply edits exact spans only and
+// re-verifies semantically. Logic lives in governance-commands.ts.
+
+program
+  .command('check')
+  .description('Structural check of a change: architecture policy, new import cycles, API drift, untested high-risk changes')
+  .option('--changed', 'Check uncommitted working-tree changes (against HEAD, or --base)')
+  .option('--base <ref>', 'Base ref: enables new-vs-pre-existing classification and API drift')
+  .option('--head <ref>', 'Head ref when not using --changed (default: HEAD)')
+  .option('--format <fmt>', 'Output format: text|json|sarif (default: text)', 'text')
+  .option('--fail-on <level>', 'Exit 1 when a finding at/above this severity exists: error|warning|note|never (default: error)', 'error')
+  .option('--rules <ids>', 'Comma-separated rule ids to run (default: all)')
+  .option('--max-findings <n>', 'Maximum findings returned (default: 500; truncation is reported)')
+  .option('--fresh', 'With --changed: analyze the working tree in memory instead of using the current index')
+  .option('--install-hook', 'Opt-in: install a Git pre-commit hook running `check --changed` (never overwrites an existing hook)')
+  .option('--path <path>', 'Repo path (default: current dir)')
+  .addHelpText('after', `
+  Rules: architecture/policy-invalid, architecture/layer-violation, graph/new-import-cycle,
+         api/breaking-change, risk/untested-change, refactor/verification-failed
+
+  Layer rules come only from .code-intel/architecture-policy.json. Inferred layers are
+  shown as advisory suggestions and never fail the check.
+
+  Exit codes: 0 = pass, 1 = findings at/above --fail-on, 2 = check could not run.
+
+  Examples:
+    $ code-intel check --changed
+    $ code-intel check --base main --format sarif > code-intel.sarif
+    $ code-intel check --changed --base main --fail-on warning
+    $ code-intel check --install-hook
+`)
+  .action(async (opts: { changed?: boolean; base?: string; head?: string; format?: string; failOn?: string; rules?: string; maxFindings?: string; fresh?: boolean; installHook?: boolean; path?: string }) => {
+    const { runCheckCommand } = await import('./governance-commands.js');
+    process.exitCode = await runCheckCommand(opts, loadOrAnalyzeWorkspace, _pkg.version);
+  });
+
+const refactorCmd = program
+  .command('refactor')
+  .description('Safe, canonical-identity refactorings (dry-run by default)');
+
+refactorCmd
+  .command('rename <selector> <newName>')
+  .description('Rename one canonical symbol and its exact references; dry-run unless --apply')
+  .option('--dry-run', 'Plan only; no file is modified (default)')
+  .option('--apply', 'Write the exact edits, then re-analyze and verify')
+  .option('--allow-dirty', 'Allow applying when the files to edit have uncommitted changes')
+  .option('--expect-plan <planId>', 'With --apply: refuse unless the fresh plan matches this reviewed plan id')
+  .option('--format <fmt>', 'Output format: text|json (default: text)', 'text')
+  .option('--path <path>', 'Repo path (default: current dir)')
+  .addHelpText('after', `
+  The selector is a symbol name or a canonical selector (kind:name@path[:line]).
+  A name shared by several symbols is refused (exit 2) with disambiguation candidates.
+
+  Only exact definition/reference/import/export spans are edited, and only for
+  languages whose capability is "apply" (TypeScript/JavaScript module-scope
+  declarations today). Strings, comments, config and generated files are reported
+  as candidates and never edited. Nothing is staged or committed.
+
+  Examples:
+    $ code-intel refactor rename UserService AccountService
+    $ code-intel refactor rename class:UserService@src/user.ts AccountService --apply --expect-plan rename:v1:…
+`)
+  .action(async (selector: string, newName: string, opts: { dryRun?: boolean; apply?: boolean; allowDirty?: boolean; expectPlan?: string; format?: string; path?: string }) => {
+    const { runRenameCommand } = await import('./governance-commands.js');
+    process.exitCode = await runRenameCommand(selector, newName, opts, loadOrAnalyzeWorkspace);
+  });
+
 // ─── api-contract / api-impact / api-drift ────────────────────────────────────
 // Unique output vs `impact`/`pr-impact`: HTTP method/normalized-path/request-response
 // shape and statically-resolved fetch/Axios/Angular consumer matches with certainty —
@@ -5927,7 +5997,11 @@ program
 program
   .command('upgrade')
   .description('Activate a verified bundled runtime archive side-by-side')
-  .option('--archive <path>', 'Runtime archive produced by scripts/distribution/build-runtime-bundle.mjs')
+  .option('--bundle-dir <dir>', 'Release bundle directory (index, attestation, archive, sidecars); authenticity-verified')
+  .option('--offline', 'With --bundle-dir: deny all network access during verification and install')
+  .option('--target <target>', 'With --bundle-dir: runtime target (default: this platform)')
+  .option('--trusted-root <file>', 'With --bundle-dir: operator-supplied Sigstore trusted root instead of the pinned one')
+  .option('--archive <path>', 'Runtime archive produced by scripts/distribution/build-runtime-bundle.mjs (checksum-only)')
   .option('--checksum <sha256>', 'Expected SHA-256 for the archive')
   .option('--checksum-file <path>', 'Checksum file containing the archive hash')
   .option('--version <v>', 'Expected product version inside the archive')
@@ -5977,6 +6051,14 @@ versionCommand
   .description('Pin one installed bundled runtime version')
   .argument('<version>', 'Installed version to pin')
   .option('--install-root <path>', 'Override install root')
+  .action(() => {
+    // handled by standalone bootstrap before commander runs
+  });
+
+program
+  .command('verify-install')
+  .description('Report the installed runtime\'s integrity and authenticity state')
+  .option('--json', 'Emit machine-readable output')
   .action(() => {
     // handled by standalone bootstrap before commander runs
   });

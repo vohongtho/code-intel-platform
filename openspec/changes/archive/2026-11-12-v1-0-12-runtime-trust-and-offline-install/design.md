@@ -82,3 +82,12 @@ Malformed/oversized index, missing sidecar, wrong target, wrong digest, wrong si
 Unit: schema limits, identity policy, receipt migration, hashes and archive-member policy.
 Integration: archive traversal/link/special-entry rejection before extraction; offline valid/tampered/wrong identity; atomic preservation; old 1.0.11; zero-network verifier proof.
 Distribution: packaged verifier/runtime on all four targets.
+
+## Implementation decisions (recorded during apply)
+- Verifier: `@sigstore/verify@3.1.1` (+ `@sigstore/bundle`, `@sigstore/protobuf-specs`), offline only; audit and zero-network proof in `dependency-audit.md`.
+- Attested subject: `code-intel-runtime-index-v1.json`. Its attestation is exported as `code-intel-runtime-index-v1.sigstore.json`. The index pins archive/checksum/SBOM/provenance by size and SHA-256. The signer SAN must be `publish.yml@refs/tags/<index.release.tag>`.
+- Trust anchor: Sigstore public-good trusted root pinned at `<version>/trust/sigstore-trusted-root.json` in every runtime, refreshed at release time. It is never read from the bundle directory. `--trusted-root` is an explicit operator override recorded in the receipt.
+- Receipt: `<version>/trust-receipt.json`. It is honored only when its version/target match the manifest of the root it sits in, and a `verified` receipt must match the pinned identity policy. A runtime without a receipt but with a manifest reports `legacy-checksum` (every pre-1.0.12 installer required a checksum). A runtime without a manifest reports `unverified`, and a corrupt or mismatched receipt reports `invalid`.
+- Archive preflight: `src/cli/runtime-archive-preflight.ts` streams tar headers (ustar, GNU long names, pax) without writing files. Both `upgrade` and the bootstrap `install-runtime.mjs` use it, the latter via the built `dist/cli/runtime-archive-preflight.js`, and it fails closed if that file is absent. All checks and extraction run on a private 0700 copy of the archive.
+- Offline mode: every network primitive is denied for the whole transaction (`runWithNetworkDenied`), and the smoke test child runs with update checks disabled. Embedding-model caches are reported as `not-bundled` optional assets.
+- Scope boundary: the bootstrap installer `install-runtime.mjs` stays checksum-only (no previous trusted runtime exists to hold a pinned root). Authenticated installs start from the first upgrade performed by a ≥1.0.12 runtime, so a v1.0.11 → v1.0.12 move uses `--archive` and records `legacy-checksum`.

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -55,7 +55,8 @@ function readChecksumFile(checksumFile, expectedName) {
 
 function verifyArchiveChecksum(archivePath, opts) {
   const actual = sha256File(archivePath);
-  const expected = opts.checksum?.toLowerCase() || (opts.checksumFile ? readChecksumFile(opts.checksumFile, path.basename(archivePath)) : null);
+  const archiveName = opts.archiveName ?? path.basename(archivePath);
+  const expected = opts.checksum?.toLowerCase() || (opts.checksumFile ? readChecksumFile(opts.checksumFile, archiveName) : null);
   if (!expected) {
     throw new Error('Missing archive checksum. Provide --checksum or --checksum-file.');
   }
@@ -65,9 +66,20 @@ function verifyArchiveChecksum(archivePath, opts) {
   return actual;
 }
 
-function extractArchive(archivePath, tempRoot) {
-  const extractDir = fs.mkdtempSync(path.join(tempRoot, 'code-intel-install-'));
-  execFileSync('tar', ['-xzf', archivePath, '-C', extractDir], { stdio: 'inherit' });
+// Same member checks as `code-intel upgrade`, loaded from this checkout's core build.
+// Fail closed: an archive is never extracted without them.
+async function loadArchivePreflight() {
+  const modulePath = path.join(repoRoot, 'code-intel', 'core', 'dist', 'cli', 'runtime-archive-preflight.js');
+  if (!fs.existsSync(modulePath)) {
+    throw new Error(`Archive safety checks unavailable: ${modulePath} not found. Run \`npm run build:product\` first.`);
+  }
+  return (await import(pathToFileURL(modulePath).href)).preflightRuntimeArchive;
+}
+
+function extractArchive(archivePath, workDir) {
+  const extractDir = path.join(workDir, 'extract');
+  mkdirp(extractDir);
+  execFileSync('tar', ['-xzf', archivePath, '-C', extractDir, '--no-same-owner'], { stdio: 'inherit' });
   const entries = fs.readdirSync(extractDir, { withFileTypes: true }).filter((entry) => entry.isDirectory());
   if (entries.length !== 1) throw new Error(`Archive must contain exactly one top-level directory, found ${entries.length}`);
   return path.join(extractDir, entries[0].name);
@@ -155,25 +167,44 @@ function activateVersion(installRoot, version, stagedVersionRoot) {
   return liveVersionRoot;
 }
 
-export function installRuntime(rawOptions) {
+export async function installRuntime(rawOptions) {
   const opts = { ...parseArgs([]), ...rawOptions };
   if (!opts.archive) throw new Error('Missing required --archive <path>');
   const archivePath = path.resolve(opts.archive);
   if (!fs.existsSync(archivePath)) throw new Error(`Archive not found: ${archivePath}`);
 
   ensureUserWritable(opts.installRoot);
-  const archiveSha = verifyArchiveChecksum(archivePath, opts);
-  const extractedRoot = extractArchive(archivePath, opts.tempRoot);
-  const { manifestPath, manifest } = validateManifest(extractedRoot);
-  const version = manifest?.product?.version;
-  if (!version) throw new Error(`Manifest missing product.version: ${manifestPath}`);
+  const preflightRuntimeArchive = await loadArchivePreflight();
+  // mkdtemp is 0700: checks and extraction run on a private copy nobody else can swap.
+  const workDir = fs.mkdtempSync(path.join(opts.tempRoot, 'code-intel-install-'));
+  let stagedVersionRoot = null;
+  let archiveSha;
+  let manifestPath;
+  let version;
+  let versionOut;
+  try {
+    const privateArchive = path.join(workDir, 'runtime.tar.gz');
+    fs.copyFileSync(archivePath, privateArchive);
+    archiveSha = verifyArchiveChecksum(privateArchive, { ...opts, archiveName: path.basename(archivePath) });
+    await preflightRuntimeArchive(privateArchive);
+    const extractedRoot = extractArchive(privateArchive, workDir);
+    const validated = validateManifest(extractedRoot);
+    manifestPath = validated.manifestPath;
+    version = validated.manifest?.product?.version;
+    if (!version) throw new Error(`Manifest missing product.version: ${manifestPath}`);
 
-  const stagedVersionRoot = path.join(opts.installRoot, 'versions', `.staging-${version}-${process.pid}`);
-  rmrf(stagedVersionRoot);
-  mkdirp(path.dirname(stagedVersionRoot));
-  fs.renameSync(extractedRoot, stagedVersionRoot);
+    stagedVersionRoot = path.join(opts.installRoot, 'versions', `.staging-${version}-${process.pid}`);
+    rmrf(stagedVersionRoot);
+    mkdirp(path.dirname(stagedVersionRoot));
+    fs.renameSync(extractedRoot, stagedVersionRoot);
+    versionOut = smokeTest(stagedVersionRoot);
+  } catch (error) {
+    if (stagedVersionRoot) rmrf(stagedVersionRoot);
+    throw error;
+  } finally {
+    rmrf(workDir);
+  }
 
-  const versionOut = smokeTest(stagedVersionRoot);
   const liveVersionRoot = activateVersion(opts.installRoot, version, stagedVersionRoot);
   const launcherPath = writeStableLauncher(opts.installRoot);
   const conflicts = opts.skipPathCheck ? [] : detectPathConflicts(opts.installRoot);
@@ -191,16 +222,14 @@ export function installRuntime(rawOptions) {
   };
 }
 
-function main(argv) {
-  const result = installRuntime(parseArgs(argv));
+async function main(argv) {
+  const result = await installRuntime(parseArgs(argv));
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 }
 
 if (process.argv[1] === __filename) {
-  try {
-    main(process.argv.slice(2));
-  } catch (error) {
+  main(process.argv.slice(2)).catch((error) => {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exit(1);
-  }
+  });
 }
