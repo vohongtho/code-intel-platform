@@ -199,13 +199,14 @@ async function runUpgrade(args: string[]): Promise<void> {
       installRoot: optionValue(args, '--install-root'),
       tempRoot: optionValue(args, '--temp-root'),
       skipPathCheck: args.includes('--skip-path-check'),
+      allowDowngrade: args.includes('--allow-downgrade'),
       scriptPath: process.argv[1],
     });
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     return;
   }
   if (args.includes('--offline')) throw new Error('--offline requires --bundle-dir <dir>.');
-  if (!archive) throw new Error('Usage: code-intel upgrade --bundle-dir <dir> [--offline] [--target <t>] [--trusted-root <file>] | --archive <path> [--checksum <sha256> | --checksum-file <path>] [--version <v>]');
+  if (!archive) throw new Error('Usage: code-intel upgrade --bundle-dir <dir> [--offline] [--target <t>] [--trusted-root <file>] [--allow-downgrade] | --archive <path> [--checksum <sha256> | --checksum-file <path>] [--version <v>]');
   const result = await installRuntimeUpgrade({
     archive,
     checksum: optionValue(args, '--checksum'),

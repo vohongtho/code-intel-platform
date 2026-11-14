@@ -111,6 +111,8 @@ export interface RuntimeBundleUpgradeOptions {
   scriptPath?: string;
   /** Version of the running installer, checked against the index's minimumInstallerVersion. */
   installerVersion?: string;
+  /** Allow installing a release older than the running runtime. Off by default: a genuine but older signed bundle must not silently downgrade. */
+  allowDowngrade?: boolean;
   /** Test seam; production always uses the pinned Sigstore verifier. */
   attestationVerifier?: RuntimeIndexAttestationVerifier;
 }
@@ -565,6 +567,9 @@ export async function installRuntimeFromBundle(options: RuntimeBundleUpgradeOpti
     const installerVersion = options.installerVersion ?? loadBundledRuntimeMetadata(options.scriptPath).manifest?.product?.version;
     if (installerVersion && compareRuntimeVersions(installerVersion, index.minimumInstallerVersion) < 0) {
       throw new RuntimeTrustError('INSTALLER_TOO_OLD', `release ${index.release.tag} requires installer ${index.minimumInstallerVersion}; running ${installerVersion}`);
+    }
+    if (!options.allowDowngrade && installerVersion && compareRuntimeVersions(index.release.version, installerVersion) < 0) {
+      throw new RuntimeTrustError('DOWNGRADE_REFUSED', `release ${index.release.version} is older than the running runtime ${installerVersion}; use \`code-intel rollback\` or pass --allow-downgrade`);
     }
     const selected = selectRuntimeIndexTarget(index, options.target ?? `${process.platform}-${process.arch}`);
 

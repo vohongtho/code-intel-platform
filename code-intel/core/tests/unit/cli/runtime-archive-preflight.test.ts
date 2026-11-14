@@ -52,6 +52,11 @@ describe('runtime archive preflight', () => {
     ['parent traversal', [{ name: 'rt/' , type: '5' }, { name: 'rt/../../evil', data: 'x' }], /parent traversal/],
     ['symlink escaping the root', [{ name: 'rt/l', type: '2', linkname: '../../etc' }], /escapes/],
     ['absolute symlink target', [{ name: 'rt/l', type: '2', linkname: '/etc' }], /unsafe symlink/],
+    ['symlink escaping through another archive symlink', [
+      { name: 'rt/a/b/l1', type: '2', linkname: '../..' },
+      { name: 'rt/l2', type: '2', linkname: 'a/b/l1/../../outside' },
+    ], /escapes/],
+    ['symlink loop', [{ name: 'rt/x', type: '2', linkname: 'y' }, { name: 'rt/y', type: '2', linkname: 'x' }], /too many levels/],
     ['entry written through a symlink', [{ name: 'rt/d', type: '2', linkname: '.' }, { name: 'rt/d/x', data: 'x' }], /nested under symlink/],
     ['hard link outside the archive', [{ name: 'rt/h', type: '1', linkname: 'etc/passwd' }], /hard link/],
     ['character device', [{ name: 'rt/dev', type: '3' }], /unsupported entry type '3'/],

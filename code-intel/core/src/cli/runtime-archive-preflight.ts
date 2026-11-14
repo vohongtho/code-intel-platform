@@ -114,13 +114,38 @@ function within(root: string, candidate: string): boolean {
   return candidate === root || candidate.startsWith(`${root}/`);
 }
 
+const MAX_LINK_HOPS = 40;
+
+/**
+ * Resolve a symlink target the way the filesystem will after extraction:
+ * any segment that names another archive symlink is replaced by that link's
+ * target. Throws when resolution ever leaves the top-level directory.
+ */
+function resolveArchiveLink(name: string, symlinks: Map<string, string>, topLevel: string): void {
+  const stack = name.split('/').slice(0, -1);
+  const pending = symlinks.get(name)!.split('/').reverse();
+  let hops = 0;
+  while (pending.length > 0) {
+    const segment = pending.pop()!;
+    if (segment === '' || segment === '.') continue;
+    if (segment === '..') stack.pop();
+    else stack.push(segment);
+    if (stack.length === 0 || stack[0] !== topLevel) throw new ArchivePreflightError(`symlink ${name} escapes the archive root`);
+    const target = symlinks.get(stack.join('/'));
+    if (target === undefined) continue;
+    if (++hops > MAX_LINK_HOPS) throw new ArchivePreflightError(`symlink ${name} has too many levels of links`);
+    stack.pop();
+    for (const next of target.split('/').reverse()) pending.push(next);
+  }
+}
+
 export async function preflightRuntimeArchive(
   archivePath: string,
   limits: ArchivePreflightLimits = DEFAULT_ARCHIVE_PREFLIGHT_LIMITS,
 ): Promise<ArchivePreflightResult> {
   const names = new Set<string>();
   const regularFiles = new Set<string>();
-  const symlinks = new Set<string>();
+  const symlinks = new Map<string, string>();
   let topLevel: string | null = null;
   let entries = 0;
   let totalBytes = 0;
@@ -158,7 +183,7 @@ export async function preflightRuntimeArchive(
       if (resolved.startsWith('..') || !within(topLevel, resolved)) {
         throw new ArchivePreflightError(`symlink ${name} escapes the archive root`);
       }
-      symlinks.add(name);
+      symlinks.set(name, rawLink);
     } else if (type === '1') {
       const target = normalizeMember(rawLink, limits);
       if (!within(topLevel, target) || !regularFiles.has(target)) {
@@ -252,6 +277,11 @@ export async function preflightRuntimeArchive(
       slash = name.indexOf('/', slash + 1);
     }
   }
+
+  // The per-entry check above is lexical. A target that passes through another
+  // archive symlink (`a/b/l1 -> ../..`, then `l2 -> a/b/l1/../..`) resolves
+  // through that link on disk, so re-check every target against the archive's links.
+  for (const name of symlinks.keys()) resolveArchiveLink(name, symlinks, topLevel);
 
   return { topLevel, entries, totalBytes, symlinks: symlinks.size };
 }

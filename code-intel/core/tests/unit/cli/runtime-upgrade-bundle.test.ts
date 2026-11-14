@@ -113,6 +113,18 @@ function cleanup(f: Fixture) {
 }
 
 describe('authenticated offline runtime upgrade', () => {
+  it('refuses a genuine but older signed release unless --allow-downgrade is passed', async () => {
+    const f = setup();
+    try {
+      await assert.rejects(install(f, { installerVersion: '1.0.13' }), (error: unknown) => error instanceof RuntimeTrustError && error.code === 'DOWNGRADE_REFUSED');
+      assertUnchanged(f);
+      const result = await install(f, { installerVersion: '1.0.13', allowDowngrade: true });
+      assert.equal(result.version, '1.0.12');
+    } finally {
+      cleanup(f);
+    }
+  });
+
   it('installs a valid bundle with zero network calls and records a verified receipt', async () => {
     const f = setup();
     try {
