@@ -4,6 +4,7 @@ import type { FactBundle } from '../../semantic/fact-bundle.js';
 import { declaration } from '../../semantic/adapters/common.js';
 import { summarizeFrameworkDetection } from '../detection.js';
 import type { FrameworkAdapter, FrameworkDetectionSignal, RepositoryFactView } from '../contracts.js';
+import { workspaceRelativePath } from '../contracts.js';
 
 const VERSION = '0.1.0';
 
@@ -28,7 +29,7 @@ function extractFacts(view: RepositoryFactView): FactBundle['facts'] {
   for (const filePath of view.filePaths) {
     const source = view.fileCache.get(filePath) ?? '';
     if (!source) continue;
-    const relPath = filePath.replace(/^.*?code-intel-platform\//, '');
+    const relPath = workspaceRelativePath(view.workspaceRoot, filePath);
     const lines = source.split('\n');
 
     let controllerPrefix = '';
@@ -140,6 +141,29 @@ export const springFrameworkAdapter: FrameworkAdapter = {
   id: 'spring',
   version: VERSION,
   languages: [Language.Java],
+  taintModels() {
+    return [{
+      adapterId: this.id,
+      adapterVersion: this.version,
+      model: {
+        schemaVersion: 1,
+        id: 'spring-request-input',
+        version: '1',
+        framework: 'spring',
+        languages: [Language.Java],
+        description: 'Spring MVC handler parameters bound from the request by binding annotations.',
+        sources: [
+          { id: 'cookie-value', kind: 'annotation', annotation: 'CookieValue' },
+          { id: 'path-variable', kind: 'annotation', annotation: 'PathVariable' },
+          { id: 'request-body', kind: 'annotation', annotation: 'RequestBody' },
+          { id: 'request-header', kind: 'annotation', annotation: 'RequestHeader' },
+          { id: 'request-param', kind: 'annotation', annotation: 'RequestParam' },
+        ],
+        sinks: [],
+        sanitizers: [],
+      },
+    }];
+  },
   detect(view: RepositoryFactView) {
     return summarizeFrameworkDetection(detectSignals(view), this.id, this.version);
   },

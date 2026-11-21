@@ -129,7 +129,9 @@ function determineEvolution(metadata: IndexMetadata | null): EvolutionAction {
   if (metadata.graphVerification?.status === 'corrupt' || metadata.graphVerification?.status === 'collapsed') return 'reject-corrupt';
   if (metadata.evidenceVerification?.status === 'corrupt' || metadata.evidenceVerification?.status === 'collapsed') return 'reject-corrupt';
   if (isSemanticProducerIncompatible(metadata)) return 'full-reanalysis';
-  if (metadata.compatibilityReceipt && metadata.evolutionAction) return metadata.evolutionAction;
+  // A persisted `full-reanalysis` records that this generation was fully rebuilt
+  // under the receipt checked above, so it is current, not a pending request.
+  if (metadata.compatibilityReceipt && metadata.evolutionAction && metadata.evolutionAction !== 'full-reanalysis') return metadata.evolutionAction;
   if (metadata.schemaVersion === undefined || metadata.parser === 'regex') return 'metadata-migrate';
   // `isSemanticProducerIncompatible` (compatibility-receipt.ts) already
   // returned `full-reanalysis` above for both per-field fingerprint

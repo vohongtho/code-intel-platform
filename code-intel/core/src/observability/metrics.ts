@@ -95,3 +95,41 @@ export const activeSessionsTotal = new Gauge({
   help: 'Current number of active user sessions',
   registers: [metricsRegistry],
 });
+
+// ── Change workflows / system flows ─────────────────────────────────────────
+// Labels carry phases, outcomes and counts only — never task or source text.
+
+export const workflowPhaseTransitionsTotal = new Counter({
+  name: 'workflow_phase_transitions_total',
+  help: 'Change-workflow session phase transitions',
+  labelNames: ['from', 'to'] as const,
+  registers: [metricsRegistry],
+});
+
+export const workflowVerificationsTotal = new Counter({
+  name: 'workflow_verifications_total',
+  help: 'Change-workflow verification runs by outcome',
+  labelNames: ['outcome'] as const,
+  registers: [metricsRegistry],
+});
+
+export const workflowVerifyDurationSeconds = new Histogram({
+  name: 'workflow_verify_duration_seconds',
+  help: 'Change-workflow verification duration in seconds',
+  buckets: [0.1, 0.5, 1, 2, 5, 10, 30, 60],
+  registers: [metricsRegistry],
+});
+
+export const workflowSemanticDeltasTotal = new Counter({
+  name: 'workflow_semantic_deltas_total',
+  help: 'Planned conditions, satisfied conditions and unexpected changes observed by workflow verification',
+  labelNames: ['kind'] as const,
+  registers: [metricsRegistry],
+});
+
+export const systemFlowStitchTotal = new Counter({
+  name: 'system_flow_stitch_total',
+  help: 'System-flow stitching work: segments, repository hops, candidate continuations and cap hits',
+  labelNames: ['kind'] as const,
+  registers: [metricsRegistry],
+});

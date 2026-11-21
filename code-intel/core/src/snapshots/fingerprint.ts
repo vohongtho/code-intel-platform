@@ -9,6 +9,7 @@ export interface AnalyzerFingerprints {
   resolverFingerprint: string;
   graphSchemaFingerprint: string;
   contractFingerprint: string;
+  flowIdentityFingerprint: string;
 }
 
 /**
@@ -40,6 +41,7 @@ export function computeAnalyzerFingerprints(): AnalyzerFingerprints {
     // apiContractFingerprint is unconditionally computed by buildAnalyzerCompatibilityReceipt;
     // it's typed optional only because the receipt shape is shared with legacy manifests.
     contractFingerprint: receipt.apiContractFingerprint as string,
+    flowIdentityFingerprint: receipt.flowIdentityFingerprint,
   };
 }
 
@@ -56,6 +58,7 @@ export function computeSnapshotId(descriptor: Omit<SemanticSnapshotDescriptor, '
     resolverFingerprint: descriptor.resolverFingerprint,
     graphSchemaFingerprint: descriptor.graphSchemaFingerprint,
     contractFingerprint: descriptor.contractFingerprint ?? null,
+    flowIdentityFingerprint: descriptor.flowIdentityFingerprint,
   })).digest('hex');
 }
 
@@ -79,6 +82,7 @@ export function buildSnapshotDescriptor(input: {
     resolverFingerprint: analyzer.resolverFingerprint,
     graphSchemaFingerprint: analyzer.graphSchemaFingerprint,
     contractFingerprint: input.contractFingerprint ?? analyzer.contractFingerprint,
+    flowIdentityFingerprint: analyzer.flowIdentityFingerprint,
   };
   return {
     ...withoutId,

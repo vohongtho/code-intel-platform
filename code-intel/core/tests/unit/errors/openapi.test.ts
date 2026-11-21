@@ -179,8 +179,21 @@ describe('OpenAPI spec — every /api/v1/ route appears in paths', () => {
   const appRoutes: Array<{ method: string; path: string }> = [
     { method: 'get',    path: '/health' },
     { method: 'get',    path: '/repos' },
-    { method: 'get',    path: '/graph/{repo}' },
+    { method: 'get',    path: '/graph/{repoId}' },
+    { method: 'post',   path: '/graph/diff' },
+    { method: 'post',   path: '/refactor/rename-plan' },
+    { method: 'post',   path: '/structural-check' },
+    { method: 'get',    path: '/api-shape-check' },
+    { method: 'get',    path: '/groups/{name}/drift' },
     { method: 'post',   path: '/search' },
+    { method: 'post',   path: '/explore' },
+    { method: 'get',    path: '/workflows' },
+    { method: 'post',   path: '/workflows' },
+    { method: 'get',    path: '/workflows/{id}' },
+    { method: 'post',   path: '/workflows/{id}/checkpoint' },
+    { method: 'post',   path: '/workflows/{id}/verify' },
+    { method: 'post',   path: '/workflows/{id}/complete' },
+    { method: 'get',    path: '/groups/{name}/system-flows' },
     { method: 'post',   path: '/vector-search' },
     { method: 'get',    path: '/vector-status' },
     { method: 'get',    path: '/embeddings/models' },
@@ -206,6 +219,7 @@ describe('OpenAPI spec — every /api/v1/ route appears in paths', () => {
     { method: 'get',    path: '/api-contract' },
     { method: 'get',    path: '/api-impact' },
     { method: 'get',    path: '/api-drift' },
+    { method: 'get',    path: '/taint-trace' },
   ];
 
   const paths = openApiSpec.paths as Record<string, Record<string, unknown>>;

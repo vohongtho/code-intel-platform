@@ -9,6 +9,7 @@ import { createEvidenceStore, EVIDENCE_SCHEMA_VERSION } from '../../evidence/sto
 import { getSchemaDdlFingerprint } from '../../storage/schema.js';
 import { getAllLanguageModules } from '../../languages/registry.js';
 import { API_CONTRACT_SCHEMA_VERSION } from '../../semantic/api-contracts/types.js';
+import { FLOW_IDENTITY_VERSION } from '../../flow-detection/identity.js';
 
 export const resolvePhase: Phase = {
   name: 'resolve',
@@ -58,6 +59,7 @@ export const resolvePhase: Phase = {
       resolverFingerprint: context.resolverFingerprint,
       evidenceFingerprint: context.evidenceSchemaFingerprint,
       apiContractFingerprint: context.apiContractFingerprint,
+      flowIdentityFingerprint: FLOW_IDENTITY_VERSION,
     };
 
     const evidenceStore = createEvidenceStore(context.workspaceRoot);

@@ -1,4 +1,5 @@
 import type { RelationshipCertainty } from '../shared/index.js';
+import type { ContextRenderMode } from './render-policy.js';
 
 export type ContextDeliveryMode = 'full' | 'window' | 'pointer' | 'omitted';
 
@@ -20,6 +21,13 @@ export interface ContextAllocationReceipt {
   deliveredTokens: number;
   deliveryMode: ContextDeliveryMode;
   omissionReason?: ContextOmissionReason;
+  /** Render mode actually applied (present only when a render plan drove the entry). */
+  renderMode?: ContextRenderMode;
+  renderReason?: string;
+  /** Capability boundary recorded when a requested mode degraded. */
+  renderBoundary?: string;
+  /** True when body detail was deliberately left out (skeleton/signature). */
+  bodyOmitted?: boolean;
 }
 
 export interface ContextOmission {

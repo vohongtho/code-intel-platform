@@ -1,10 +1,16 @@
-import type { DeclarationFact, FactId, HeritageFact, ImportBindingFact, PublishedNameFact, RegistrationFact, SemanticFact, TypeReferenceFact } from '../semantic/facts.js';
+import type { DeclarationFact, DependencyBindingFact, FactId, HeritageFact, ImportBindingFact, PublishedNameFact, RegistrationFact, SemanticFact, TypeReferenceFact } from '../semantic/facts.js';
 
 export const DEFAULT_DISPATCH_CANDIDATE_LIMIT = 8;
 
 export interface ResolutionInstrumentation {
   indexBuildCount: number;
   fullWorkspaceTraversalCount: number;
+  /** Receiver type-set inferences actually computed (cache misses). */
+  receiverTypeInferenceCount?: number;
+  /** Receiver type-set requests served from the per-index cache. */
+  receiverTypeCacheHitCount?: number;
+  /** Prepared-index lookups made while expanding hierarchies/members for dispatch — scales with hierarchy size, never with workspace size. */
+  dispatchIndexLookupCount?: number;
 }
 
 export interface ResolutionIndexes {
@@ -17,6 +23,12 @@ export interface ResolutionIndexes {
   publishedNamesByModule: ReadonlyMap<string, readonly PublishedNameFact[]>;
   heritageByDeclaration: ReadonlyMap<string, readonly HeritageFact[]>;
   registrationsBySubject: ReadonlyMap<string, readonly RegistrationFact[]>;
+  /** Registration facts keyed by `targetText` and by `registrationKind` (registration dispatch lookup by name). */
+  registrationsByTarget: ReadonlyMap<string, readonly RegistrationFact[]>;
+  /** Reverse heritage: supertype name/text -> heritage facts of the declarations that extend/implement/embed it. */
+  subtypesByTypeName: ReadonlyMap<string, readonly HeritageFact[]>;
+  /** DI bindings keyed by contract type name. */
+  dependencyBindingsByContract: ReadonlyMap<string, readonly DependencyBindingFact[]>;
   instrumentation: ResolutionInstrumentation;
   facts: readonly SemanticFact[];
 }
@@ -35,6 +47,9 @@ export function createResolutionInstrumentation(): ResolutionInstrumentation {
   return {
     indexBuildCount: 0,
     fullWorkspaceTraversalCount: 0,
+    receiverTypeInferenceCount: 0,
+    receiverTypeCacheHitCount: 0,
+    dispatchIndexLookupCount: 0,
   };
 }
 
@@ -63,6 +78,9 @@ export function buildResolutionIndexes(facts: readonly SemanticFact[], instrumen
   const publishedNamesByModule = new Map<string, PublishedNameFact[]>();
   const heritageByDeclaration = new Map<string, HeritageFact[]>();
   const registrationsBySubject = new Map<string, RegistrationFact[]>();
+  const registrationsByTarget = new Map<string, RegistrationFact[]>();
+  const subtypesByTypeName = new Map<string, HeritageFact[]>();
+  const dependencyBindingsByContract = new Map<string, DependencyBindingFact[]>();
 
   for (const fact of facts) {
     if ('declarationKind' in fact && 'name' in fact && 'anchors' in fact) {
@@ -82,11 +100,21 @@ export function buildResolutionIndexes(facts: readonly SemanticFact[], instrumen
       continue;
     }
     if ('heritageKind' in fact && 'target' in fact) {
-      if (fact.declarationRef) append(heritageByDeclaration, fact.declarationRef, fact);
+      if (fact.declarationRef) {
+        append(heritageByDeclaration, fact.declarationRef, fact);
+        for (const key of new Set([fact.target.name, fact.target.text.trim()].filter((item): item is string => !!item))) append(subtypesByTypeName, key, fact);
+      }
       continue;
     }
     if ('registrationKind' in fact && 'targetText' in fact && !('bindingKind' in fact)) {
-      if (fact.subjectRef) append(registrationsBySubject, fact.subjectRef, fact);
+      if (fact.subjectRef) {
+        append(registrationsBySubject, fact.subjectRef, fact);
+        for (const key of new Set([fact.targetText, fact.registrationKind])) append(registrationsByTarget, key, fact);
+      }
+      continue;
+    }
+    if ('bindingKind' in fact && !('sourceModule' in fact) && 'contractRef' in fact && fact.contractRef) {
+      append(dependencyBindingsByContract, fact.contractRef, fact);
     }
   }
 
@@ -100,6 +128,9 @@ export function buildResolutionIndexes(facts: readonly SemanticFact[], instrumen
     publishedNamesByModule: freezeBuckets(publishedNamesByModule),
     heritageByDeclaration: freezeBuckets(heritageByDeclaration),
     registrationsBySubject: freezeBuckets(registrationsBySubject),
+    registrationsByTarget: freezeBuckets(registrationsByTarget),
+    subtypesByTypeName: freezeBuckets(subtypesByTypeName),
+    dependencyBindingsByContract: freezeBuckets(dependencyBindingsByContract),
     instrumentation,
     facts: Object.freeze([...facts]),
   };
@@ -107,4 +138,8 @@ export function buildResolutionIndexes(facts: readonly SemanticFact[], instrumen
 
 export function noteFullWorkspaceTraversal(indexes: ResolutionIndexes): void {
   indexes.instrumentation.fullWorkspaceTraversalCount += 1;
+}
+
+export function noteDispatchIndexLookup(indexes: ResolutionIndexes, count = 1): void {
+  indexes.instrumentation.dispatchIndexLookupCount = (indexes.instrumentation.dispatchIndexLookupCount ?? 0) + count;
 }

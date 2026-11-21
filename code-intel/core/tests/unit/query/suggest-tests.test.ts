@@ -206,4 +206,68 @@ describe('suggestTests', () => {
     assert.equal(r.coverage?.complete, false);
     assert.ok(r.coverage?.incompleteReasons.includes('analysis-limit'));
   });
+
+  it('classifies one-hop test evidence as direct without a false negative', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: 'target', kind: 'function', name: 'target', filePath: 'src/target.ts' });
+    graph.addNode({ id: 'test', kind: 'function', name: 'target test', filePath: 'src/target.test.ts' });
+    graph.addEdge({ id: 'direct', source: 'test', target: 'target', kind: 'calls', certainty: 'exact' });
+
+    const result = suggestTests(graph, 'target') as SuggestTestsResult;
+    assert.deepEqual(result.testEvidence.map((item) => item.kind), ['direct']);
+    assert.equal(result.testEvidence[0]?.filePath, 'src/target.test.ts');
+  });
+
+  it('classifies exact multi-hop test evidence as transitive', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: 'target', kind: 'function', name: 'target', filePath: 'src/target.ts' });
+    graph.addNode({ id: 'caller', kind: 'function', name: 'caller', filePath: 'src/caller.ts' });
+    graph.addNode({ id: 'test', kind: 'function', name: 'caller test', filePath: 'src/caller.test.ts' });
+    graph.addEdge({ id: 'e1', source: 'test', target: 'caller', kind: 'calls', certainty: 'exact' });
+    graph.addEdge({ id: 'e2', source: 'caller', target: 'target', kind: 'calls', certainty: 'exact' });
+
+    const result = suggestTests(graph, 'target') as SuggestTestsResult;
+    assert.deepEqual(result.testEvidence.map((item) => item.kind), ['transitive']);
+  });
+
+  it('classifies ambiguous relationship evidence as candidate', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: 'target', kind: 'function', name: 'target', filePath: 'src/target.ts' });
+    graph.addNode({ id: 'test', kind: 'function', name: 'target test', filePath: 'src/target.test.ts' });
+    graph.addEdge({ id: 'candidate', source: 'test', target: 'target', kind: 'calls', certainty: 'candidate' });
+
+    const result = suggestTests(graph, 'target') as SuggestTestsResult;
+    assert.deepEqual(result.testEvidence.map((item) => item.kind), ['candidate']);
+  });
+
+  it('ranks a test reaching a stable affected flow as affected-flow', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: 'target', identityId: 'canonical:target', kind: 'function', name: 'target', filePath: 'src/target.ts' });
+    graph.addNode({ id: 'entry', identityId: 'canonical:entry', kind: 'function', name: 'entry', filePath: 'src/entry.ts' });
+    graph.addNode({
+      id: 'flow:stable',
+      kind: 'flow',
+      name: 'stable flow',
+      filePath: 'src/entry.ts',
+      metadata: { stepCanonicalIds: ['canonical:entry', 'canonical:target'] },
+    });
+    graph.addNode({ id: 'test', kind: 'function', name: 'entry test', filePath: 'src/entry.test.ts' });
+    graph.addEdge({ id: 'step-entry', source: 'entry', target: 'flow:stable', kind: 'step_of' });
+    graph.addEdge({ id: 'step-target', source: 'target', target: 'flow:stable', kind: 'step_of' });
+    graph.addEdge({ id: 'test-entry', source: 'test', target: 'entry', kind: 'calls', certainty: 'exact' });
+
+    const result = suggestTests(graph, 'target') as SuggestTestsResult;
+    assert.deepEqual(result.testEvidence.map((item) => item.kind), ['affected-flow']);
+  });
+
+  it('returns unknown coverage instead of a definitive missing-test claim', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({ id: 'target', kind: 'function', name: 'target', filePath: 'src/target.ts' });
+
+    const result = suggestTests(graph, 'target') as SuggestTestsResult;
+    assert.deepEqual(result.testEvidence.map((item) => item.kind), ['unknown']);
+    assert.equal(result.missingTestFinding?.definitive, false);
+    assert.equal(result.existingTests.length, 0);
+    assert.ok(result.suggestedCases.length > 0, 'generic suggested cases remain separate from discovered evidence');
+  });
 });

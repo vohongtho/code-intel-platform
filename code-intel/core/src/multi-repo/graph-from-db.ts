@@ -7,6 +7,7 @@ import { createKnowledgeGraph, type KnowledgeGraph } from '../graph/knowledge-gr
 import { DbManager } from '../storage/db-manager.js';
 import { ALL_NODE_TABLES, NODE_TABLE_MAP } from '../storage/schema.js';
 import type { CodeNode, CodeEdge, NodeKind, EdgeKind } from '../shared/index.js';
+import { unescapeNewlines } from '../storage/csv-writer.js';
 
 // Reverse map: tableName → NodeKind
 const TABLE_TO_KIND: Record<string, NodeKind> = Object.fromEntries(
@@ -22,7 +23,7 @@ function parseRow(row: Record<string, unknown>, kind: NodeKind): CodeNode {
     startLine: row['start_line'] != null ? Number(row['start_line']) : undefined,
     endLine: row['end_line'] != null ? Number(row['end_line']) : undefined,
     exported: row['exported'] != null ? Boolean(row['exported']) : undefined,
-    content: row['content'] ? String(row['content']) : undefined,
+    content: row['content'] ? unescapeNewlines(String(row['content'])) : undefined,
     identityId: row['identity_id'] ? String(row['identity_id']) : undefined,
     legacyIds: row['legacy_ids'] ? (() => {
       try { return JSON.parse(String(row['legacy_ids'])) as string[]; } catch { return undefined; }

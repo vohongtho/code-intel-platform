@@ -5,6 +5,7 @@ import { declaration } from '../../semantic/adapters/common.js';
 import { buildHttpProducerFacts, composeRoutePrefix, parseInlineObjectKeys } from '../../semantic/api-contracts/index.js';
 import { summarizeFrameworkDetection } from '../detection.js';
 import type { FrameworkAdapter, FrameworkDetectionSignal, RepositoryFactView } from '../contracts.js';
+import { workspaceRelativePath } from '../contracts.js';
 
 const VERSION = '0.2.0';
 
@@ -102,7 +103,7 @@ function extractFacts(view: RepositoryFactView): FactBundle['facts'] {
   for (const filePath of view.filePaths) {
     const source = view.fileCache.get(filePath) ?? '';
     if (!source) continue;
-    const relPath = filePath.replace(/^.*?code-intel-platform\//, '');
+    const relPath = workspaceRelativePath(view.workspaceRoot, filePath);
     const lines = source.split('\n');
 
     let pendingControllerPath: string | undefined;
@@ -341,6 +342,28 @@ export const nestFrameworkAdapter: FrameworkAdapter = {
   id: 'nest',
   version: VERSION,
   languages: [Language.TypeScript],
+  taintModels() {
+    return [{
+      adapterId: this.id,
+      adapterVersion: this.version,
+      model: {
+        schemaVersion: 1,
+        id: 'nest-request-input',
+        version: '1',
+        framework: 'nest',
+        languages: [Language.TypeScript],
+        description: 'NestJS controller parameters bound from the request by parameter decorators.',
+        sources: [
+          { id: 'body-decorator', kind: 'annotation', annotation: 'Body' },
+          { id: 'headers-decorator', kind: 'annotation', annotation: 'Headers' },
+          { id: 'param-decorator', kind: 'annotation', annotation: 'Param' },
+          { id: 'query-decorator', kind: 'annotation', annotation: 'Query' },
+        ],
+        sinks: [],
+        sanitizers: [],
+      },
+    }];
+  },
   detect(view: RepositoryFactView) {
     return summarizeFrameworkDetection(detectSignals(view), this.id, this.version);
   },

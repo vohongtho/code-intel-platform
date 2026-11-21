@@ -14,7 +14,8 @@
  *   • Chars      — response size (proxy for token cost)
  *
  * Usage:
- *   node eval/run-agent-bench.mjs [--json]
+ *   node eval/run-agent-bench.mjs [--json] [--explore]
+ *     (--explore additionally runs the paired baseline-vs-Explore cases)
  */
 
 import { execSync, spawnSync } from 'node:child_process';
@@ -197,4 +198,9 @@ if (jsonOut) {
   };
   fs.writeFileSync(out, JSON.stringify(summary, null, 2));
   console.log(`  Results: ${out}\n`);
+}
+
+// Paired baseline-vs-Explore cases (openspec v1-0-12-adaptive-agent-exploration).
+if (process.argv.includes('--explore')) {
+  await import('./run-explore-bench.mjs');
 }

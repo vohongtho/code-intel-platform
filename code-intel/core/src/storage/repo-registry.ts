@@ -13,12 +13,19 @@ export interface RepoEntry {
 
 type LegacyRepoEntry = Omit<RepoEntry, 'id'> & { id?: string };
 
-const GLOBAL_DIR = path.join(os.homedir(), '.code-intel');
-const REPOS_FILE = path.join(GLOBAL_DIR, 'repos.json');
+// Resolved per call, not at import: the home directory can change after this module
+// loads (tests redirect HOME to keep the user's real registry untouched).
+function globalDir(): string {
+  return path.join(os.homedir(), '.code-intel');
+}
+
+function reposFile(): string {
+  return path.join(globalDir(), 'repos.json');
+}
 
 function readRegistryFile(): LegacyRepoEntry[] {
   try {
-    const data = fs.readFileSync(REPOS_FILE, 'utf-8');
+    const data = fs.readFileSync(reposFile(), 'utf-8');
     const parsed = JSON.parse(data) as unknown;
     return Array.isArray(parsed) ? parsed as LegacyRepoEntry[] : [];
   } catch {
@@ -98,8 +105,8 @@ export function loadRegistry(): RepoEntry[] {
 
 export function saveRegistry(entries: RepoEntry[]): void {
   validateRegistry(entries);
-  fs.mkdirSync(GLOBAL_DIR, { recursive: true });
-  fs.writeFileSync(REPOS_FILE, JSON.stringify(entries, null, 2));
+  fs.mkdirSync(globalDir(), { recursive: true });
+  fs.writeFileSync(reposFile(), JSON.stringify(entries, null, 2));
 }
 
 export function findRepoById(id: string, entries = loadRegistry()): RepoEntry | undefined {

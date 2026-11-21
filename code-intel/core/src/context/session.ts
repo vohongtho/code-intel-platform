@@ -12,6 +12,8 @@ export interface ServedArtifactRecord {
   deliveredRanges?: readonly SourceRange[];
   deliveredBytes: number;
   callIndex: number;
+  /** Selected index/snapshot identity the source was delivered from (absent for legacy callers). */
+  indexIdentity?: string;
 }
 
 export function contentFingerprint(content: string | undefined): string {
@@ -38,7 +40,24 @@ export class ContextDeliverySession {
     return this.records.get(artifactIdentity);
   }
 
-  record(artifactIdentity: string, contentFingerprint: string, deliveredBytes: number, ranges?: readonly SourceRange[]): void {
+  /**
+   * A pointer-only reference is valid only when canonical identity, content
+   * fingerprint and selected index identity all still match.
+   */
+  isFresh(artifactIdentity: string, fingerprint: string, indexIdentity?: string): boolean {
+    const record = this.records.get(artifactIdentity);
+    return record !== undefined
+      && record.contentFingerprint === fingerprint
+      && record.indexIdentity === indexIdentity;
+  }
+
+  record(
+    artifactIdentity: string,
+    contentFingerprint: string,
+    deliveredBytes: number,
+    ranges?: readonly SourceRange[],
+    indexIdentity?: string,
+  ): void {
     this.records.set(artifactIdentity, {
       workspaceIdentity: this.workspaceIdentity,
       artifactIdentity,
@@ -46,6 +65,7 @@ export class ContextDeliverySession {
       deliveredRanges: ranges,
       deliveredBytes,
       callIndex: this.callIndex,
+      indexIdentity,
     });
   }
 }

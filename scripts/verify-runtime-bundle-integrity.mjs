@@ -89,6 +89,9 @@ for (const archiveName of archives) {
       ['Core package.json', '/app/code-intel/core/package.json'],
       ['Web UI index.html', '/app/code-intel/core/dist/web/index.html'],
       ['Shared dist', '/app/code-intel/shared/dist/index.js'],
+      ['pinned Sigstore trusted root', '/trust/sigstore-trusted-root.json'],
+      ['offline attestation verifier', '/node_modules/@sigstore/verify/package.json'],
+      ['runtime trust module', '/app/code-intel/core/dist/cli/runtime-trust.js'],
     ];
     for (const [label, suffix] of requiredSuffixes) {
       if (!entries.some((e) => e.endsWith(suffix))) failures.push(`${archiveName}: missing ${label} (expected a path ending in "${suffix}")`);

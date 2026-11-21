@@ -7,7 +7,7 @@ import { DbManager } from '../storage/db-manager.js';
 import { loadGraphFromDB } from '../multi-repo/graph-from-db.js';
 import { Bm25Index } from '../search/bm25-index.js';
 import { VectorIndex } from '../search/vector-index.js';
-import { SqliteResolutionEvidenceStore } from '../evidence/store.js';
+import { Database } from '../shared/sqlite.js';
 import type { IndexMetadata } from '../storage/metadata.js';
 import {
   GitMaterializationError,
@@ -19,7 +19,8 @@ import {
 import { buildSnapshotDescriptor } from './fingerprint.js';
 import { createWorktreeDir } from './paths.js';
 import { computeContentFingerprints, writeContentFingerprints } from './content-fingerprints.js';
-import type { PhaseMetric, SnapshotBoundary, SnapshotBuildRequest, SnapshotBuildResult, SnapshotPhaseDurations } from './types.js';
+import { extractProtocolSnapshot, writeProtocolSnapshot } from '../multi-repo/protocol-contracts.js';
+import type { PhaseMetric, SnapshotBoundary, SnapshotBuildRequest, SnapshotBuildResult, SnapshotCapabilities, SnapshotPhaseDurations } from './types.js';
 
 function phaseMetric(startedAt: number, startRss: number): PhaseMetric {
   return { durationMs: Date.now() - startedAt, rssDeltaBytes: process.memoryUsage().rss - startRss };
@@ -109,7 +110,12 @@ function runAnalyzeChild(worktreeDir: string, stagingDir: string): { status: num
  * `IndexGeneration` + ambient `CODE_INTEL_INDEX_STAGING_DIR`, so it is safe to
  * call from a shared server process without touching `process.env`.
  */
-export async function verifySnapshotReadBack(stagingDir: string, metadata: IndexMetadata): Promise<{ ok: true } | { ok: false; reason: string }> {
+export async function verifySnapshotReadBack(
+  stagingDir: string,
+  metadata: IndexMetadata,
+  /** Declared by a portable import; a package that intentionally omits BM25 must not fail read-back for it. */
+  capabilities?: Pick<SnapshotCapabilities, 'bm25'>,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
   const graphDbPath = path.join(stagingDir, 'graph.db');
   const bm25DbPath = path.join(stagingDir, 'bm25.db');
   const vectorDbPath = path.join(stagingDir, 'vector.db');
@@ -130,19 +136,23 @@ export async function verifySnapshotReadBack(stagingDir: string, metadata: Index
     return { ok: false, reason: `graph read-back (${graphPersisted}) smaller than produced (${graphProduced})` };
   }
 
-  const bm25 = new Bm25Index(bm25DbPath);
-  const bm25Receipt = bm25.getReadBackReceipt();
-  // Not compared against metadata.bm25Verification.producedCount: that count
-  // is derived from total graph node count, but nodes without text content
-  // (e.g. `cluster`/`flow` synthetic nodes) are never BM25-indexed, so a
-  // graph containing any of those legitimately has fewer BM25 documents than
-  // graph nodes — comparing the two produces false "collapsed" positives
-  // (confirmed independently: plain `code-intel analyze` hits the same
-  // mismatch on a fixture small enough to produce exactly one cluster). What
-  // actually indicates real data loss is an index that read back empty while
-  // the graph clearly has indexable content.
-  if (bm25Receipt.docCount === 0 && graphPersisted > 0) {
-    return { ok: false, reason: 'bm25 read-back is empty but the graph has content' };
+  if (capabilities?.bm25 === false) {
+    if (fs.existsSync(bm25DbPath)) return { ok: false, reason: 'bm25 artifact present but declared absent' };
+  } else {
+    const bm25 = new Bm25Index(bm25DbPath);
+    const bm25Receipt = bm25.getReadBackReceipt();
+    // Not compared against metadata.bm25Verification.producedCount: that count
+    // is derived from total graph node count, but nodes without text content
+    // (e.g. `cluster`/`flow` synthetic nodes) are never BM25-indexed, so a
+    // graph containing any of those legitimately has fewer BM25 documents than
+    // graph nodes — comparing the two produces false "collapsed" positives
+    // (confirmed independently: plain `code-intel analyze` hits the same
+    // mismatch on a fixture small enough to produce exactly one cluster). What
+    // actually indicates real data loss is an index that read back empty while
+    // the graph clearly has indexable content.
+    if (bm25Receipt.docCount === 0 && graphPersisted > 0) {
+      return { ok: false, reason: 'bm25 read-back is empty but the graph has content' };
+    }
   }
 
   if (metadata.embeddings?.enabled && metadata.embeddings.status === 'ready' && fs.existsSync(vectorDbPath)) {
@@ -159,11 +169,14 @@ export async function verifySnapshotReadBack(stagingDir: string, metadata: Index
   if (fs.existsSync(evidenceDbPath)) {
     const expected = metadata.evidenceVerification?.producedCount ?? 0;
     if (expected > 0) {
-      const evidenceStore = new SqliteResolutionEvidenceStore(evidenceDbPath);
+      // Read-only: verification must never rewrite an artifact it is judging (a portable
+      // import's bytes were hash-verified before this point and must stay that way).
+      const evidenceDb = new Database(evidenceDbPath, { readonly: true, fileMustExist: true });
       try {
-        if (evidenceStore.count() < expected) return { ok: false, reason: 'evidence read-back failed' };
+        const row = evidenceDb.prepare('SELECT COUNT(*) AS count FROM resolution_evidence').get() as { count: number } | undefined;
+        if ((row?.count ?? 0) < expected) return { ok: false, reason: 'evidence read-back failed' };
       } finally {
-        evidenceStore.close();
+        evidenceDb.close();
       }
     }
   }
@@ -178,9 +191,9 @@ export async function verifySnapshotReadBack(stagingDir: string, metadata: Index
  * a fingerprinting problem degrades the diff's accuracy rather than failing
  * the whole snapshot build.
  */
-async function tryWriteContentFingerprints(worktreeDir: string, stagingDir: string): Promise<string | null> {
+async function tryWriteContentFingerprints(worktreeDir: string, stagingDir: string): Promise<{ fingerprintError: string | null; protocolError: string | null }> {
+  const graph = createKnowledgeGraph();
   try {
-    const graph = createKnowledgeGraph();
     const db = new DbManager(path.join(stagingDir, 'graph.db'), true);
     await db.init();
     try {
@@ -189,9 +202,18 @@ async function tryWriteContentFingerprints(worktreeDir: string, stagingDir: stri
       db.close();
     }
     writeContentFingerprints(stagingDir, computeContentFingerprints(worktreeDir, graph));
-    return null;
   } catch (error) {
-    return error instanceof Error ? error.message : String(error);
+    return { fingerprintError: error instanceof Error ? error.message : String(error), protocolError: null };
+  }
+  // Protocol contracts (GraphQL/protobuf schemas, client operations, gRPC binding sites) are
+  // parsed now, while the ref's source still exists. A missing sidecar later reads as
+  // `legacy-schema` for GraphQL/gRPC drift, so a failure here is a boundary, not a build failure.
+  // The service label is assigned by the reader (registry name), never baked in here.
+  try {
+    writeProtocolSnapshot(stagingDir, extractProtocolSnapshot({ rootDir: worktreeDir, service: '', graph }));
+    return { fingerprintError: null, protocolError: null };
+  } catch (error) {
+    return { fingerprintError: null, protocolError: error instanceof Error ? error.message : String(error) };
   }
 }
 
@@ -346,8 +368,11 @@ export async function buildIsolatedSnapshot(
 
     const fingerprintingStarted = Date.now();
     const fingerprintingStartRss = process.memoryUsage().rss;
-    const fingerprintingError = await tryWriteContentFingerprints(worktreeDir, stagingDir);
+    const { fingerprintError: fingerprintingError, protocolError } = await tryWriteContentFingerprints(worktreeDir, stagingDir);
     phases.fingerprinting = phaseMetric(fingerprintingStarted, fingerprintingStartRss);
+    if (protocolError) {
+      boundaries.push({ kind: 'readback-failed', message: `protocol contract extraction failed (non-fatal): ${protocolError}` });
+    }
     if (fingerprintingError) {
       // Content fingerprints are an accuracy improvement for body-edit and
       // rename/move detection, not a correctness requirement for the diff to

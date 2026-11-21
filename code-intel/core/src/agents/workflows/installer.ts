@@ -98,13 +98,30 @@ function readSharedGuide(): string {
   return cachedSharedGuide;
 }
 
+let cachedChangeSessionGuide: string | null = null;
+function readChangeSessionGuide(): string {
+  if (cachedChangeSessionGuide !== null) return cachedChangeSessionGuide;
+  const raw = fs.readFileSync(path.join(WORKFLOW_ASSETS_ROOT, 'assets/_change-session-guide.md'), 'utf-8');
+  cachedChangeSessionGuide = raw
+    .replace(/^<!-- code-intel:workflow-change-session-fragment -->\n?/, '')
+    .replace(/\n?<!-- \/code-intel:workflow-change-session-fragment -->\s*$/, '')
+    .trim();
+  return cachedChangeSessionGuide;
+}
+
+/** Workflows that declare the `change_workflow` capability get the change-session fragment. */
+export function declaresChangeSession(manifest: WorkflowManifest): boolean {
+  return [...manifest.requiredTools, ...manifest.optionalTools].some((req) => req.tool === 'change_workflow');
+}
+
 interface RenderedParts {
   frontmatter: string[];
   body: string;
 }
 
 function renderParts(manifest: WorkflowManifest, target: WorkflowTarget, body: string, sharedGuide: string): RenderedParts {
-  const composedBody = [`# ${manifest.title}`, '', body, '', sharedGuide, ''].join('\n');
+  const sessionGuide = declaresChangeSession(manifest) ? ['', readChangeSessionGuide()] : [];
+  const composedBody = [`# ${manifest.title}`, '', body, ...sessionGuide, '', sharedGuide, ''].join('\n');
   if (target.renderer === 'claude-skill') {
     return {
       frontmatter: ['---', `name: code-intel-workflow-${manifest.id}`, `description: ${yamlString(manifest.summary)}`, '---'],

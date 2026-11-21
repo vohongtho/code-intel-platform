@@ -11,6 +11,7 @@ import {
 } from '../../semantic/api-contracts/index.js';
 import { summarizeFrameworkDetection } from '../detection.js';
 import type { FrameworkAdapter, FrameworkDetectionSignal, RepositoryFactView } from '../contracts.js';
+import { workspaceRelativePath } from '../contracts.js';
 
 const VERSION = '0.2.0';
 
@@ -92,7 +93,7 @@ export const fastifyFrameworkAdapter: FrameworkAdapter = {
     for (const filePath of view.filePaths) {
       const source = view.fileCache.get(filePath) ?? '';
       if (!source) continue;
-      const relPath = filePath.replace(/^.*?code-intel-platform\//, '');
+      const relPath = workspaceRelativePath(view.workspaceRoot, filePath);
       const lines = source.split('\n');
       const pluginRanges = buildPluginPrefixRanges(lines);
       // `app.get(...)` alone is not fastify-distinctive — Express uses the identical shape.

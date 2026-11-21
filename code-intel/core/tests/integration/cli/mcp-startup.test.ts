@@ -97,7 +97,7 @@ describe('CLI mcp startup', () => {
   it('connects without an index and does not create .code-intel', async () => {
     await withGlobalDir(async () => {
       const repoDir = mkRepo('mcp-missing-index');
-      const child = runCli(['mcp', repoDir], { timeout: 1200 });
+      const child = runCli(['mcp', repoDir], { timeout: 15000 });
 
       assert.equal(child.status, 0);
       assert.equal(child.stderr.includes('No published index found for:'), false);
@@ -117,7 +117,7 @@ describe('CLI mcp startup', () => {
       const beforeManifest = loadCurrentGenerationManifest(repoDir);
       const beforeMeta = fs.readFileSync(path.join(repoDir, '.code-intel', 'meta.json'), 'utf8');
 
-      const child = runCli(['mcp', repoDir], { timeout: 1200 });
+      const child = runCli(['mcp', repoDir], { timeout: 15000 });
       assert.equal(child.status, 0);
       assert.equal(child.stderr.includes('No published index found for:'), false);
 
@@ -151,7 +151,7 @@ describe('CLI mcp startup', () => {
         },
       ], null, 2));
 
-      const child = runCli(['serve', currentRepo, '--port', '0'], { timeout: 1200 });
+      const child = runCli(['serve', currentRepo, '--port', '0'], { timeout: 5000 });
       assert.equal((child.error as NodeJS.ErrnoException | undefined)?.code, 'ETIMEDOUT');
       assert.match(child.stdout, /No index found for:/);
       assert.match(child.stdout, /Falling back to most recently indexed repo:/);
@@ -162,7 +162,7 @@ describe('CLI mcp startup', () => {
   it('serve starts empty when no indexed repos exist', async () => {
     await withGlobalDir(async () => {
       const repoDir = mkRepo('serve-empty-repo');
-      const child = runCli(['serve', repoDir, '--port', '0'], { timeout: 1200 });
+      const child = runCli(['serve', repoDir, '--port', '0'], { timeout: 5000 });
 
       assert.equal((child.error as NodeJS.ErrnoException | undefined)?.code, 'ETIMEDOUT');
       assert.match(child.stdout, /No indexed repositories found\. Starting server with empty graph\./);

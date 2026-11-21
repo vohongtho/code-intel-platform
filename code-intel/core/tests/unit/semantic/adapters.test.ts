@@ -89,6 +89,28 @@ describe('language fact adapters', () => {
     assert.ok(reexport && 'publicName' in reexport && reexport.publicName === 'PublicFoo');
   });
 
+  it('extracts ordinary TypeScript call sites with their enclosing caller', () => {
+    const adapter = getLanguageFactAdapter(Language.TypeScript);
+    const bundle = adapter.extract({
+      language: Language.TypeScript,
+      filePath: 'index.ts',
+      workspaceRoot: '/repo',
+      source: [
+        'export function main(): number {',
+        '  return service();',
+        '}',
+        'export function service(): number {',
+        '  return 1;',
+        '}',
+      ].join('\n'),
+    });
+
+    const call = bundle.facts.find((fact) => 'calleeText' in fact && fact.calleeText === 'service');
+    assert.ok(call && 'callerRef' in call);
+    assert.equal(call.callerRef, 'decl:main');
+    assert.equal(call.sourceRange.startLine, 2);
+  });
+
   it('captures JS alias imports and re-exports for fixture-style resolution cases', () => {
     const adapter = getLanguageFactAdapter(Language.JavaScript);
     const bundle = adapter.extract({

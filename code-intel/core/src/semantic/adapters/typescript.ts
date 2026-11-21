@@ -1,11 +1,50 @@
 import { Language } from '../../shared/languages.js';
 import type { FactDiagnostic } from '../diagnostics.js';
 import { createFactBundle, FACT_SCHEMA_VERSION, type FactBundle } from '../fact-bundle.js';
-import { TRAITS, callableType, declaration, declarationFragment, genericType, importBinding, published, reference, typeRef, visibility } from './common.js';
+import { TRAITS, callSite, callableType, declaration, declarationFragment, genericType, importBinding, published, reference, typeRef, visibility } from './common.js';
 import type { AdapterExtractionContext, AdapterValidationResult, LanguageFactAdapter } from './adapter.js';
 import { getLanguageCapabilityDescriptor } from '../../languages/capability-registry.js';
 
 const descriptor = getLanguageCapabilityDescriptor(Language.TypeScript);
+
+const NON_CALL_KEYWORDS = new Set(['catch', 'for', 'if', 'switch', 'while']);
+
+function extractCallSites(context: AdapterExtractionContext): FactBundle['facts'] {
+  const facts = [] as FactBundle['facts'][number][];
+  const lines = context.source.split('\n');
+  let braceDepth = 0;
+  let caller: { ref: string; bodyDepth: number } | undefined;
+
+  for (const [index, line] of lines.entries()) {
+    const lineNumber = index + 1;
+    const declarationMatch = line.match(/^\s*export\s+function\s+(\w+)\s*\(/);
+    if (declarationMatch && line.includes('{')) {
+      caller = { ref: `decl:${declarationMatch[1]}`, bodyDepth: braceDepth + 1 };
+    } else if (caller) {
+      const callPattern = /\b([A-Za-z_$][\w$]*)\s*\(/g;
+      for (const match of line.matchAll(callPattern)) {
+        const calleeText = match[1]!;
+        const startColumn = match.index!;
+        const preceding = line.slice(0, startColumn);
+        if (NON_CALL_KEYWORDS.has(calleeText) || /(?:new|function)\s*$/.test(preceding) || preceding.endsWith('.')) continue;
+        facts.push(callSite(
+          `call:${caller.ref}:${lineNumber}:${startColumn}:${calleeText}`,
+          Language.TypeScript,
+          context.filePath,
+          lineNumber,
+          startColumn,
+          calleeText,
+          caller.ref,
+        ));
+      }
+    }
+
+    braceDepth += (line.match(/\{/g) ?? []).length - (line.match(/\}/g) ?? []).length;
+    if (caller && braceDepth < caller.bodyDepth) caller = undefined;
+  }
+
+  return facts;
+}
 
 function extract(context: AdapterExtractionContext): FactBundle {
   const facts = [] as FactBundle['facts'][number][];
@@ -125,6 +164,8 @@ function extract(context: AdapterExtractionContext): FactBundle {
       continue;
     }
   }
+
+  facts.push(...extractCallSites(context));
 
   return createFactBundle({
     schema: { version: FACT_SCHEMA_VERSION, language: Language.TypeScript, adapterId: descriptor.adapterId },

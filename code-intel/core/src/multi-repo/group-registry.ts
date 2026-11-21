@@ -10,11 +10,23 @@ import type { AnalysisCoverage } from '../shared/index.js';
 import { GROUP_CONTRACT_SCHEMA_VERSION } from './contract-fingerprint.js';
 import { findRepoById, findRepoByName, loadRegistry } from '../storage/repo-registry.js';
 
-const GROUPS_DIR = path.join(os.homedir(), '.code-intel', 'groups');
+// Resolved per call, not at import: the home directory can change after this module
+// loads (tests redirect HOME to keep the user's real groups untouched).
+function groupsDir(): string {
+  return path.join(os.homedir(), '.code-intel', 'groups');
+}
+
 const GROUP_STATE_SCHEMA_VERSION = GROUP_CONTRACT_SCHEMA_VERSION;
 
+/** Group names become file names under groupsDir(); anything that could leave that directory is rejected. */
+export function isSafeGroupName(name: string): boolean {
+  return typeof name === 'string' && name.length > 0 && name.length <= 255
+    && !/[/\\\0]/.test(name) && name !== '.' && name !== '..' && path.basename(name) === name;
+}
+
 function groupFile(name: string): string {
-  return path.join(GROUPS_DIR, `${name}.json`);
+  if (!isSafeGroupName(name)) throw new Error(`Invalid group name: ${JSON.stringify(name)}`);
+  return path.join(groupsDir(), `${name}.json`);
 }
 
 function backupPath(filePath: string): string {
@@ -88,6 +100,7 @@ function quarantineUnreadable(filePath: string): void {
 }
 
 export function loadGroup(name: string): RepoGroup | null {
+  if (!isSafeGroupName(name)) return null;
   const filePath = groupFile(name);
   const raw = readJsonFile<RepoGroup>(filePath);
   if (!isGroupShape(raw)) {
@@ -100,16 +113,16 @@ export function loadGroup(name: string): RepoGroup | null {
 }
 
 export function saveGroup(group: RepoGroup): void {
-  fs.mkdirSync(GROUPS_DIR, { recursive: true });
+  fs.mkdirSync(groupsDir(), { recursive: true });
   fs.writeFileSync(groupFile(group.name), JSON.stringify(normalizeGroup(group), null, 2) + '\n');
 }
 
 export function listGroups(): RepoGroup[] {
   const groups: RepoGroup[] = [];
   try {
-    for (const file of fs.readdirSync(GROUPS_DIR)) {
+    for (const file of fs.readdirSync(groupsDir())) {
       if (!file.endsWith('.json') || file.endsWith('.sync.json')) continue;
-      const g = readJsonFile<RepoGroup>(path.join(GROUPS_DIR, file));
+      const g = readJsonFile<RepoGroup>(path.join(groupsDir(), file));
       if (!g) continue;
       groups.push(normalizeGroup(g));
     }
@@ -118,13 +131,14 @@ export function listGroups(): RepoGroup[] {
 }
 
 export function deleteGroup(name: string): void {
+  if (!isSafeGroupName(name)) return;
   try { fs.unlinkSync(groupFile(name)); } catch { /* ignore */ }
   // also remove sync artifact
-  try { fs.unlinkSync(path.join(GROUPS_DIR, `${name}.sync.json`)); } catch { /* ignore */ }
+  try { fs.unlinkSync(path.join(groupsDir(), `${name}.sync.json`)); } catch { /* ignore */ }
 }
 
 export function groupExists(name: string): boolean {
-  return fs.existsSync(groupFile(name));
+  return isSafeGroupName(name) && fs.existsSync(groupFile(name));
 }
 
 /** Add or update a member (by groupPath). Returns the updated group. */
@@ -197,11 +211,11 @@ function normalizeSyncResult(result: GroupSyncResult): GroupSyncResult {
 }
 
 function syncResultFile(groupName: string): string {
-  return path.join(GROUPS_DIR, `${groupName}.sync.json`);
+  return path.join(groupsDir(), `${groupName}.sync.json`);
 }
 
 export function saveSyncResult(result: GroupSyncResult): void {
-  fs.mkdirSync(GROUPS_DIR, { recursive: true });
+  fs.mkdirSync(groupsDir(), { recursive: true });
   fs.writeFileSync(
     syncResultFile(result.groupName),
     JSON.stringify(normalizeSyncResult(result), null, 2) + '\n',

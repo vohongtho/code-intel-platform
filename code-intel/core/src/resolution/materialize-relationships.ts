@@ -252,6 +252,8 @@ export function materializeSemanticRelationships(args: {
       moduleRef: isImportBindingFact(fact) ? fact.sourceModule : undefined,
       localName: isImportBindingFact(fact) ? fact.localName : undefined,
       receiverType: isCallSiteFact(fact) || isReferenceFact(fact) ? fact.receiver?.type : undefined,
+      receiverText: isCallSiteFact(fact) || isReferenceFact(fact) ? fact.receiver?.text : undefined,
+      language: fact.language,
     });
     const normalizedOutcome: ResolutionOutcome = { ...outcome, resolverVersion };
 

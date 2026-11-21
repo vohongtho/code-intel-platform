@@ -79,11 +79,12 @@ describe('computePRImpact', () => {
     assert.equal(sym!.risk, 'HIGH', `expected HIGH risk, got ${sym!.risk}`);
   });
 
-  it('assigns LOW risk to a leaf function with no callers', () => {
+  it('reports UNKNOWN (not LOW) for a leaf with no callers: absence is not proof of safety', () => {
     const result = computePRImpact(graph, ['src/util/date.ts'], 5);
     const sym = result.changedSymbols.find((s) => s.name === 'formatDate');
     assert.ok(sym !== undefined, 'formatDate should be in changedSymbols');
-    assert.equal(sym!.risk, 'LOW', `expected LOW risk, got ${sym!.risk}`);
+    assert.equal(sym!.risk, 'UNKNOWN', `expected UNKNOWN risk, got ${sym!.risk}`);
+    assert.equal(result.riskSummary.UNKNOWN, 1);
   });
 
   it('assigns MEDIUM risk to a symbol with 10–50 callers in blast radius', () => {

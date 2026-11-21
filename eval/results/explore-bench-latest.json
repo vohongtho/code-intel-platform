@@ -1,0 +1,427 @@
+{
+  "benchmark": "explore-paired",
+  "maxTokens": 6000,
+  "runs": 5,
+  "gateBaseline": "tools+reads",
+  "toolsOnlyCorrectnessPct": 56,
+  "medianReductionVsToolsOnlyPct": 3.5,
+  "gates": {
+    "medianTokenReductionPct": {
+      "value": 33,
+      "threshold": 25,
+      "pass": true
+    },
+    "correctnessRegressionPp": {
+      "value": 0,
+      "threshold": 2,
+      "pass": true
+    },
+    "noToolErrors": {
+      "value": "none",
+      "pass": true
+    }
+  },
+  "pass": true,
+  "skeletonCapabilityMatrix": [
+    {
+      "language": "typescript",
+      "status": "supported",
+      "nodeKinds": [
+        "function",
+        "method",
+        "constructor"
+      ],
+      "preserves": [
+        "declaration",
+        "if/for/while/try headings",
+        "call statements",
+        "return",
+        "throw"
+      ],
+      "fallback": "none"
+    },
+    {
+      "language": "javascript",
+      "status": "supported",
+      "nodeKinds": [
+        "function",
+        "method",
+        "constructor"
+      ],
+      "preserves": [
+        "declaration",
+        "if/for/while/try headings",
+        "call statements",
+        "return",
+        "throw"
+      ],
+      "fallback": "none"
+    },
+    {
+      "language": "python",
+      "status": "supported",
+      "nodeKinds": [
+        "function",
+        "method",
+        "constructor"
+      ],
+      "preserves": [
+        "declaration",
+        "decorators",
+        "if/for/while/try/with headings",
+        "call statements",
+        "return",
+        "raise"
+      ],
+      "fallback": "none"
+    },
+    {
+      "language": "java",
+      "status": "supported",
+      "nodeKinds": [
+        "function",
+        "method",
+        "constructor"
+      ],
+      "preserves": [
+        "declaration",
+        "if/for/while/try headings",
+        "call statements",
+        "return",
+        "throw"
+      ],
+      "fallback": "none"
+    },
+    {
+      "language": "go",
+      "status": "unsupported",
+      "nodeKinds": [],
+      "preserves": [],
+      "fallback": "snippet-or-signature"
+    },
+    {
+      "language": "c",
+      "status": "unsupported",
+      "nodeKinds": [],
+      "preserves": [],
+      "fallback": "snippet-or-signature"
+    },
+    {
+      "language": "cpp",
+      "status": "unsupported",
+      "nodeKinds": [],
+      "preserves": [],
+      "fallback": "snippet-or-signature"
+    },
+    {
+      "language": "csharp",
+      "status": "unsupported",
+      "nodeKinds": [],
+      "preserves": [],
+      "fallback": "snippet-or-signature"
+    },
+    {
+      "language": "rust",
+      "status": "unsupported",
+      "nodeKinds": [],
+      "preserves": [],
+      "fallback": "snippet-or-signature"
+    },
+    {
+      "language": "php",
+      "status": "unsupported",
+      "nodeKinds": [],
+      "preserves": [],
+      "fallback": "snippet-or-signature"
+    },
+    {
+      "language": "kotlin",
+      "status": "unsupported",
+      "nodeKinds": [],
+      "preserves": [],
+      "fallback": "snippet-or-signature"
+    },
+    {
+      "language": "ruby",
+      "status": "unsupported",
+      "nodeKinds": [],
+      "preserves": [],
+      "fallback": "snippet-or-signature"
+    },
+    {
+      "language": "swift",
+      "status": "unsupported",
+      "nodeKinds": [],
+      "preserves": [],
+      "fallback": "snippet-or-signature"
+    },
+    {
+      "language": "dart",
+      "status": "unsupported",
+      "nodeKinds": [],
+      "preserves": [],
+      "fallback": "snippet-or-signature"
+    },
+    {
+      "language": "html",
+      "status": "unsupported",
+      "nodeKinds": [],
+      "preserves": [],
+      "fallback": "snippet-or-signature"
+    }
+  ],
+  "rows": [
+    {
+      "id": "understand-order-flow",
+      "intent": "understand",
+      "toolsOnly": {
+        "steps": 5,
+        "tokens": 1292,
+        "correctnessPct": 75,
+        "errors": 0
+      },
+      "baseline": {
+        "steps": 8,
+        "tokens": 1827,
+        "correctnessPct": 100,
+        "errors": 0
+      },
+      "explore": {
+        "steps": 1,
+        "tokens": 1189,
+        "correctnessPct": 100,
+        "errors": 0,
+        "renderModes": {
+          "full": 1,
+          "snippet": 3,
+          "signature": 0,
+          "skeleton": 5,
+          "reference": 0
+        },
+        "skeletonFallbacks": 0,
+        "hydratedNodes": 9,
+        "omissions": 0,
+        "graphLookups": 4,
+        "degraded": [
+          "search: VECTOR_INDEX_UNAVAILABLE — bm25 used",
+          "ref: alternate-ref views unavailable — using current index"
+        ],
+        "medianRerankMs": 0,
+        "medianRenderMs": 4,
+        "medianTotalMs": 6
+      },
+      "tokenReductionPct": 35,
+      "tokenReductionVsToolsOnlyPct": 8
+    },
+    {
+      "id": "change-add-step",
+      "intent": "change",
+      "toolsOnly": {
+        "steps": 5,
+        "tokens": 1232,
+        "correctnessPct": 75,
+        "errors": 0
+      },
+      "baseline": {
+        "steps": 8,
+        "tokens": 1804,
+        "correctnessPct": 100,
+        "errors": 0
+      },
+      "explore": {
+        "steps": 1,
+        "tokens": 1240,
+        "correctnessPct": 100,
+        "errors": 0,
+        "renderModes": {
+          "full": 1,
+          "snippet": 3,
+          "signature": 0,
+          "skeleton": 5,
+          "reference": 0
+        },
+        "skeletonFallbacks": 0,
+        "hydratedNodes": 9,
+        "omissions": 0,
+        "graphLookups": 4,
+        "degraded": [
+          "search: VECTOR_INDEX_UNAVAILABLE — bm25 used",
+          "ref: alternate-ref views unavailable — using current index"
+        ],
+        "medianRerankMs": 0,
+        "medianRenderMs": 3,
+        "medianTotalMs": 5
+      },
+      "tokenReductionPct": 31,
+      "tokenReductionVsToolsOnlyPct": -1
+    },
+    {
+      "id": "debug-charge",
+      "intent": "debug",
+      "toolsOnly": {
+        "steps": 5,
+        "tokens": 1234,
+        "correctnessPct": 33,
+        "errors": 0
+      },
+      "baseline": {
+        "steps": 8,
+        "tokens": 1763,
+        "correctnessPct": 100,
+        "errors": 0
+      },
+      "explore": {
+        "steps": 1,
+        "tokens": 1241,
+        "correctnessPct": 100,
+        "errors": 0,
+        "renderModes": {
+          "full": 1,
+          "snippet": 3,
+          "signature": 0,
+          "skeleton": 5,
+          "reference": 0
+        },
+        "skeletonFallbacks": 0,
+        "hydratedNodes": 9,
+        "omissions": 0,
+        "graphLookups": 6,
+        "degraded": [
+          "search: VECTOR_INDEX_UNAVAILABLE — bm25 used",
+          "ref: alternate-ref views unavailable — using current index"
+        ],
+        "medianRerankMs": 0,
+        "medianRenderMs": 3,
+        "medianTotalMs": 4
+      },
+      "tokenReductionPct": 30,
+      "tokenReductionVsToolsOnlyPct": -1
+    },
+    {
+      "id": "review-notify",
+      "intent": "review",
+      "toolsOnly": {
+        "steps": 5,
+        "tokens": 1291,
+        "correctnessPct": 0,
+        "errors": 0
+      },
+      "baseline": {
+        "steps": 8,
+        "tokens": 1863,
+        "correctnessPct": 100,
+        "errors": 0
+      },
+      "explore": {
+        "steps": 1,
+        "tokens": 1275,
+        "correctnessPct": 100,
+        "errors": 0,
+        "renderModes": {
+          "full": 1,
+          "snippet": 3,
+          "signature": 0,
+          "skeleton": 5,
+          "reference": 0
+        },
+        "skeletonFallbacks": 0,
+        "hydratedNodes": 9,
+        "omissions": 0,
+        "graphLookups": 4,
+        "degraded": [
+          "search: VECTOR_INDEX_UNAVAILABLE — bm25 used",
+          "ref: alternate-ref views unavailable — using current index"
+        ],
+        "medianRerankMs": 0,
+        "medianRenderMs": 3,
+        "medianTotalMs": 3
+      },
+      "tokenReductionPct": 32,
+      "tokenReductionVsToolsOnlyPct": 1
+    },
+    {
+      "id": "understand-billing",
+      "intent": "understand",
+      "toolsOnly": {
+        "steps": 5,
+        "tokens": 1287,
+        "correctnessPct": 50,
+        "errors": 0
+      },
+      "baseline": {
+        "steps": 8,
+        "tokens": 1832,
+        "correctnessPct": 100,
+        "errors": 0
+      },
+      "explore": {
+        "steps": 1,
+        "tokens": 1215,
+        "correctnessPct": 100,
+        "errors": 0,
+        "renderModes": {
+          "full": 1,
+          "snippet": 3,
+          "signature": 0,
+          "skeleton": 5,
+          "reference": 0
+        },
+        "skeletonFallbacks": 0,
+        "hydratedNodes": 9,
+        "omissions": 0,
+        "graphLookups": 4,
+        "degraded": [
+          "search: VECTOR_INDEX_UNAVAILABLE — bm25 used",
+          "ref: alternate-ref views unavailable — using current index"
+        ],
+        "medianRerankMs": 0,
+        "medianRenderMs": 3,
+        "medianTotalMs": 3
+      },
+      "tokenReductionPct": 34,
+      "tokenReductionVsToolsOnlyPct": 6
+    },
+    {
+      "id": "debug-ledger",
+      "intent": "debug",
+      "toolsOnly": {
+        "steps": 5,
+        "tokens": 1231,
+        "correctnessPct": 100,
+        "errors": 0
+      },
+      "baseline": {
+        "steps": 8,
+        "tokens": 1751,
+        "correctnessPct": 100,
+        "errors": 0
+      },
+      "explore": {
+        "steps": 1,
+        "tokens": 1137,
+        "correctnessPct": 100,
+        "errors": 0,
+        "renderModes": {
+          "full": 1,
+          "snippet": 3,
+          "signature": 0,
+          "skeleton": 5,
+          "reference": 0
+        },
+        "skeletonFallbacks": 0,
+        "hydratedNodes": 9,
+        "omissions": 0,
+        "graphLookups": 6,
+        "degraded": [
+          "search: VECTOR_INDEX_UNAVAILABLE — bm25 used",
+          "ref: alternate-ref views unavailable — using current index"
+        ],
+        "medianRerankMs": 0,
+        "medianRenderMs": 3,
+        "medianTotalMs": 3
+      },
+      "tokenReductionPct": 35,
+      "tokenReductionVsToolsOnlyPct": 8
+    }
+  ]
+}

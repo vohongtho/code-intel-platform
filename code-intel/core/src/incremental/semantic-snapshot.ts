@@ -173,7 +173,8 @@ function identityPayload(fact: SemanticFact, kind: SemanticFactKind): unknown {
       const f = fact as HttpConsumerFact;
       return {
         clientLibrary: f.clientLibrary, method: f.method, url: f.url, requestShapeRef: f.requestShapeRef,
-        consumedKeys: f.consumedKeys, expectedResponseShapeSymbolRef: f.expectedResponseShapeSymbolRef, coverage: f.coverage,
+        consumedKeys: f.consumedKeys, consumedPaths: f.consumedPaths?.map((p) => ({ path: p.path, optional: p.optional, wholeValueUse: p.wholeValueUse ?? false })),
+        consumedPathCoverage: f.consumedPathCoverage, expectedResponseShapeSymbolRef: f.expectedResponseShapeSymbolRef, coverage: f.coverage,
       };
     }
   }

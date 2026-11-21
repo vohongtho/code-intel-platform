@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { buildTarGz } from '../cli/runtime-fixtures.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -43,9 +45,9 @@ async function loadBuildRuntimeBundle(): Promise<(options: Record<string, unknow
   return mod.buildRuntimeBundle;
 }
 
-async function loadInstallRuntime(): Promise<(options: Record<string, unknown>) => InstallRuntimeResult> {
+async function loadInstallRuntime(): Promise<(options: Record<string, unknown>) => Promise<InstallRuntimeResult>> {
   const mod = await import(`${pathToFileURL(path.join(repoRoot, 'scripts/distribution/install/install-runtime.mjs')).href}?t=${Date.now()}`) as {
-    installRuntime: (options: Record<string, unknown>) => InstallRuntimeResult;
+    installRuntime: (options: Record<string, unknown>) => Promise<InstallRuntimeResult>;
   };
   return mod.installRuntime;
 }
@@ -71,7 +73,7 @@ describe('install-runtime', () => {
         archiveMtime: '2024-01-01T00:00:00.000Z',
       });
       const installRoot = path.join(tmpDir, 'install-root-target');
-      const result = installRuntime({
+      const result = await installRuntime({
         archive: bundle.archivePath,
         checksumFile: bundle.checksumPath,
         installRoot,
@@ -99,19 +101,34 @@ describe('install-runtime', () => {
         archiveMtime: '2024-01-01T00:00:00.000Z',
       });
       const installRoot = path.join(tmpDir, 'install-root-target');
-      const first = installRuntime({
+      const first = await installRuntime({
         archive: bundle.archivePath,
         checksumFile: bundle.checksumPath,
         installRoot,
       });
       assert.match(first.versionOutput, new RegExp(`^${first.version}(?: .+)?$`));
-      assert.throws(() => installRuntime({
+      await assert.rejects(installRuntime({
         archive: bundle.archivePath,
         checksum: '0'.repeat(64),
         installRoot,
       }), /Checksum mismatch/);
       const currentTarget = fs.readlinkSync(path.join(installRoot, 'current'));
       assert.match(currentTarget, new RegExp(first.version.replace('.', '\\.')));
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a checksum-valid archive with unsafe entries before extracting anything', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'install-runtime-'));
+    try {
+      const installRuntime = await loadInstallRuntime();
+      const archive = path.join(tmpDir, 'evil.tar.gz');
+      fs.writeFileSync(archive, buildTarGz([{ name: 'rt/runtime-manifest.json', data: '{}' }, { name: 'rt/../../escaped', data: 'x' }]));
+      const checksum = crypto.createHash('sha256').update(fs.readFileSync(archive)).digest('hex');
+      await assert.rejects(installRuntime({ archive, checksum, installRoot: path.join(tmpDir, 'install-root'), tempRoot: tmpDir }), /ARCHIVE_UNSAFE: parent traversal/);
+      assert.equal(fs.existsSync(path.join(tmpDir, '..', 'escaped')), false);
+      assert.equal(fs.readdirSync(tmpDir).some((name) => name.startsWith('code-intel-install-')), false);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -133,7 +150,7 @@ describe('install-runtime', () => {
       fs.mkdirSync(conflictDir, { recursive: true });
       const conflictExe = path.join(conflictDir, process.platform === 'win32' ? 'code-intel.cmd' : 'code-intel');
       fs.writeFileSync(conflictExe, '#!/bin/sh\necho conflict\n', { mode: 0o755 });
-      const result = installRuntime({
+      const result = await installRuntime({
         archive: bundle.archivePath,
         checksumFile: bundle.checksumPath,
         installRoot: path.join(tmpDir, 'install-root-target'),

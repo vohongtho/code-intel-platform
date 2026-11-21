@@ -10,6 +10,11 @@ import { getIndexDir, safeGenerationId } from '../storage/index-generation.js';
  *   <repoDir>/.code-intel/snapshots/<snapshotId>/          finished, validated cache entries
  *   <repoDir>/.code-intel/snapshots/.staging-<buildId>/    in-flight builds (never a valid cache hit)
  *   <repoDir>/.code-intel/snapshots/.locks/<snapshotId>.lock  per-fingerprint build coordination
+ *   <repoDir>/.code-intel/snapshots/.read-pins/<snapshotId>/<pinId>.json  live readers (block eviction)
+ *   <repoDir>/.code-intel/snapshots/.pinned/<snapshotId>.json  local "keep" marker (import --pin)
+ *
+ * Read pins and local pins live outside the entry directory on purpose: they are
+ * machine-local lifecycle state, never part of the content-derived snapshot identity.
  *
  * This tree lives under the real repository's `.code-intel/` directory (so it is
  * repository-managed data, cleaned up by the same conventions as the rest of the
@@ -21,6 +26,14 @@ export const SNAPSHOTS_DIR = 'snapshots';
 export const SNAPSHOT_STAGING_PREFIX = '.staging-';
 export const SNAPSHOT_LOCKS_DIR = '.locks';
 export const SNAPSHOT_METADATA_FILE = 'snapshot.json';
+export const SNAPSHOT_READ_PINS_DIR = '.read-pins';
+export const SNAPSHOT_LOCAL_PINS_DIR = '.pinned';
+/**
+ * Present only in entries published by a portable import (see export-import.ts):
+ * the privacy profile and capability flags the package declared. Absence means a
+ * locally-built entry with every capability its artifacts provide.
+ */
+export const SNAPSHOT_CAPABILITIES_FILE = 'capabilities.json';
 
 export function getSnapshotsRoot(repoDir: string): string {
   return path.join(getIndexDir(repoDir), SNAPSHOTS_DIR);
@@ -44,6 +57,16 @@ export function getSnapshotStagingDir(repoDir: string, buildId: string): string 
 export function getSnapshotLockPath(repoDir: string, snapshotId: string): string {
   if (!isSafeSnapshotId(snapshotId)) throw new Error(`Invalid snapshot ID: ${snapshotId}`);
   return path.join(getSnapshotsRoot(repoDir), SNAPSHOT_LOCKS_DIR, `${snapshotId}.lock`);
+}
+
+export function getSnapshotReadPinsDir(repoDir: string, snapshotId: string): string {
+  if (!isSafeSnapshotId(snapshotId)) throw new Error(`Invalid snapshot ID: ${snapshotId}`);
+  return path.join(getSnapshotsRoot(repoDir), SNAPSHOT_READ_PINS_DIR, snapshotId);
+}
+
+export function getSnapshotLocalPinPath(repoDir: string, snapshotId: string): string {
+  if (!isSafeSnapshotId(snapshotId)) throw new Error(`Invalid snapshot ID: ${snapshotId}`);
+  return path.join(getSnapshotsRoot(repoDir), SNAPSHOT_LOCAL_PINS_DIR, `${snapshotId}.json`);
 }
 
 export function getSnapshotArtifactPath(

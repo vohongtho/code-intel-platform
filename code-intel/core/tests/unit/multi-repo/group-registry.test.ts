@@ -1,5 +1,6 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { GROUP_CONTRACT_SCHEMA_VERSION } from '../../../src/multi-repo/contract-fingerprint.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -269,7 +270,7 @@ describe('saveSyncResult + loadSyncResult', () => {
     assert.ok(loaded !== null);
     assert.equal(loaded!.groupName, groupName);
     assert.equal(loaded!.memberCount, 3);
-    assert.equal(loaded!.schemaVersion, '1.0.11');
+    assert.equal(loaded!.schemaVersion, GROUP_CONTRACT_SCHEMA_VERSION);
   });
 
   it('loads legacy sync state conservatively', () => {

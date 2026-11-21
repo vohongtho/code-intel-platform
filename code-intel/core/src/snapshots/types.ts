@@ -6,7 +6,7 @@ import type { AnalysisBoundaryKind, AnalysisCoverage, RelationshipCertainty } fr
  * Bump whenever the descriptor shape, fingerprint formula, or cache layout changes
  * in a way that makes previously-cached entries unsafe to reuse.
  */
-export const SNAPSHOT_SCHEMA_VERSION = 1;
+export const SNAPSHOT_SCHEMA_VERSION = 2;
 
 /**
  * Identifies one independently-analyzed semantic state of a repository at a Git
@@ -27,6 +27,7 @@ export interface SemanticSnapshotDescriptor {
   resolverFingerprint: string;
   graphSchemaFingerprint: string;
   contractFingerprint?: string;
+  flowIdentityFingerprint: string;
   /** Metadata only — excluded from `snapshotId` and from cache-key equality. */
   createdAt: string;
 }
@@ -190,15 +191,10 @@ export interface FlowDelta {
 }
 
 /**
- * Both flow and cluster node IDs (pipeline/phases/flow-phase.ts,
- * cluster-phase.ts) are generated from an accumulating per-run enumeration
- * index rather than a fingerprint of their membership, so the same logical
- * flow/cluster is not guaranteed to get the same ID across two independent
- * analysis runs — even of the identical commit — whenever unrelated entry
- * points or directories elsewhere shift that count. Diffing them by ID today
- * would fabricate spurious added/removed deltas. Until that upstream ID
- * scheme is content-derived, both sections always report `supported: false`
- * rather than a diff a caller could mistake for a real one.
+ * Unsupported diff sections preserve explicit boundaries. Flow diff is
+ * supported only when both snapshots carry the current stable flow producer
+ * fingerprint; cluster diff remains unsupported because cluster identity is
+ * still based on per-run enumeration.
  */
 export interface UnsupportedDiffSection {
   supported: false;
@@ -218,6 +214,37 @@ export interface SemanticGraphDiff {
   clusters: ClusterDiffSection;
   coverage: AnalysisCoverage;
 }
+
+export type PortablePrivacyProfile = 'full' | 'metadata-only';
+
+/**
+ * What one snapshot view can actually answer. Locally-built entries carry every
+ * capability their artifacts provide; entries published by a portable import carry
+ * exactly what the package's manifest declared after its privacy profile was applied
+ * (see export-import.ts). Source-dependent readers must check `sourceContent` and
+ * report a boundary rather than reaching for the working tree.
+ */
+export interface SnapshotCapabilities {
+  privacyProfile: PortablePrivacyProfile;
+  /** Indexed symbol bodies/snippets are present in graph.db. */
+  sourceContent: boolean;
+  bm25: boolean;
+  /** `names-only` when BM25 was rebuilt from a content-stripped graph. */
+  bm25Content: 'full' | 'names-only' | 'none';
+  vector: boolean;
+  evidence: boolean;
+  protocolContracts: boolean;
+}
+
+export const FULL_SNAPSHOT_CAPABILITIES: SnapshotCapabilities = Object.freeze({
+  privacyProfile: 'full',
+  sourceContent: true,
+  bm25: true,
+  bm25Content: 'full',
+  vector: false,
+  evidence: true,
+  protocolContracts: true,
+}) as SnapshotCapabilities;
 
 export interface CacheEntryMetadata {
   schemaVersion: number;

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { installWorkflows, planWorkflowInstall } from '../../../../src/agents/workflows/installer.js';
+import { getWorkflowManifest } from '../../../../src/agents/workflows/registry.js';
 
 function tmpDir(): string {
   const dir = path.join(os.tmpdir(), `workflow-installer-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -25,7 +26,7 @@ describe('installWorkflows', () => {
     assert.ok(fs.existsSync(absPath));
     const content = fs.readFileSync(absPath, 'utf-8');
     assert.match(content, /^---\nname: code-intel-workflow-explore/);
-    assert.match(content, /<!-- code-intel:workflow-fingerprint sha256=[0-9a-f]{64} contentVersion=1 -->/);
+    assert.match(content, new RegExp(`<!-- code-intel:workflow-fingerprint sha256=[0-9a-f]{64} contentVersion=${getWorkflowManifest('explore')!.contentVersion} -->`));
     assert.match(content, /## Evidence rules/);
   });
 

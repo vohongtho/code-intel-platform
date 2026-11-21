@@ -252,6 +252,8 @@ function projectHttpConsumerFacts(
           url: fact.url,
           requestShapeRef: fact.requestShapeRef,
           consumedKeys: fact.consumedKeys,
+          consumedPaths: fact.consumedPaths,
+          consumedPathCoverage: fact.consumedPathCoverage,
           expectedResponseShapeSymbolRef: fact.expectedResponseShapeSymbolRef,
           coverage: fact.coverage,
           frameworkEvidence: fact.frameworkEvidence,

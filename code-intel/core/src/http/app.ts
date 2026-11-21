@@ -1,5 +1,5 @@
 import express from 'express';
-import type { Request, Response, NextFunction } from 'express';
+import type { Request, Response, NextFunction, RequestHandler } from 'express';
 import compression from 'compression';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -11,7 +11,8 @@ import { fileURLToPath } from 'node:url';
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
 import { isLazyGraph } from '../graph/lazy-knowledge-graph.js';
 import { Bm25Index, getBm25DbPath } from '../search/bm25-index.js';
-import { executeSearchRequest, type SearchMode, type SearchScope } from '../search/execute-scoped-search.js';
+import { executeSearchRequest, normalizeSearchRequest, type SearchMode, type SearchScope } from '../search/execute-scoped-search.js';
+import { createScopedExploreSearch, ExploreRequestError, runExplore, type ExploreRequest } from '../query/explore.js';
 import { DbManager, getDbPath, getVectorDbPath } from '../storage/index.js';
 import { loadMetadata, shouldRebuildEmbeddings, type IndexMetadata } from '../storage/metadata.js';
 import { resolveIndexSnapshot, type IndexSnapshot } from '../storage/index-snapshot.js';
@@ -26,7 +27,8 @@ import type { Contract } from '../multi-repo/types.js';
 import { createKnowledgeGraph } from '../graph/knowledge-graph.js';
 import { loadGraphFromDB } from '../multi-repo/graph-from-db.js';
 import { loadRegistry, findRepoByName } from '../storage/repo-registry.js';
-import { computeSemanticGraphDiff } from '../snapshots/service.js';
+import { hasRepoAccess, registerWorkflowRoutes } from './workflow-routes.js';
+import { computeSemanticGraphDiff, summarizeSnapshotBuild } from '../snapshots/service.js';
 import Logger from '../shared/logger.js';
 import { AppError, ErrorCodes } from '../errors/codes.js';
 import type { CountGroup, GQLResult, GQLResultKind, QueryScope, ResolvedQueryScope } from 'code-intel-shared';
@@ -40,9 +42,17 @@ import {
   buildSessionCookie,
   clearSessionCookie,
   createSession,
+  deleteSession,
+  parseCookies,
+  SESSION_COOKIE_NAME,
   verifyPassword,
   countActiveSessions,
+  meetsRole,
 } from '../auth/middleware.js';
+import { resolveReadIndexView } from '../storage/index-view-resolver.js';
+import { summarizeIndexView, type IndexViewBoundary, type IndexViewBoundaryKind, type ReadIndexView } from '../storage/index-view.js';
+import { loadIndexViewArtifacts } from '../storage/index-view-loader.js';
+import { runWithEvidenceDb } from '../evidence/store.js';
 import { getOrCreateUsersDB } from '../auth/users-db.js';
 import type { Role } from '../auth/users-db.js';
 import { getOrCreateJobsDB } from '../jobs/jobs-db.js';
@@ -75,7 +85,7 @@ import {
 import { withSpan, isTracingEnabled } from '../observability/tracing.js';
 import { openApiSpec } from './openapi.js';
 import { computeBlastRadiusWithTrust } from '../mcp-server/blast-radius-trust.js';
-import { getApiContract, getApiDrift, getApiImpact, type RouteSelector } from '../semantic/api-contracts/index.js';
+import { getApiContract, getApiDrift, getApiImpact, getApiShapeCheck, normalizeRoutePath, type RouteSelector } from '../semantic/api-contracts/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -598,6 +608,10 @@ export function createApp(
   });
 
   app.post('/auth/logout', (req: Request, res: Response) => {
+    // Revoke the server-side session row; clearing the cookie alone leaves a
+    // copied cookie valid until it expires.
+    const rawSession = parseCookies(req.headers['cookie'] ?? '')[SESSION_COOKIE_NAME];
+    if (rawSession) deleteSession(rawSession);
     res.setHeader('Set-Cookie', clearSessionCookie());
     res.json({ message: 'Logged out successfully' });
   });
@@ -1062,6 +1076,184 @@ export function createApp(
   }
 
 
+  // ── Ref-pinned index views ──────────────────────────────────────────────────
+  // `ref` selects a committed Git ref's semantic snapshot instead of the current
+  // index. One view is resolved per request, held by a read pin until the
+  // response is produced, and all artifacts (graph/BM25/vectors/evidence) come
+  // from it. Building a missing snapshot runs Git + a full analysis, so only
+  // analyst+ may trigger it; other callers are served cached/imported snapshots
+  // and otherwise get `snapshot-not-built`.
+  class IndexViewHttpError extends AppError {
+    constructor(readonly boundary: IndexViewBoundary, code: string, hint: string, status: number) {
+      super(code, boundary.message, hint, status);
+    }
+  }
+
+  const VIEW_BOUNDARY_HTTP: Record<IndexViewBoundaryKind, { code: string; status: number; hint: string }> = {
+    'unknown-ref': { code: ErrorCodes.NOT_FOUND, status: 404, hint: 'Pass an existing branch, tag or commit SHA' },
+    'snapshot-not-built': { code: ErrorCodes.INDEX_NOT_FOUND, status: 404, hint: 'Ask an analyst to query this ref once, or import a portable index (code-intel index import)' },
+    'snapshot-build-failed': { code: ErrorCodes.ANALYSIS_FAILED, status: 500, hint: 'Snapshot analysis failed; see server logs' },
+    'snapshot-unsupported': { code: ErrorCodes.INVALID_REQUEST, status: 400, hint: 'Only committed refs are supported' },
+    'missing-index': { code: ErrorCodes.INDEX_NOT_FOUND, status: 404, hint: 'Run code-intel analyze for that repository and retry' },
+    'missing-content': { code: ErrorCodes.INVALID_REQUEST, status: 400, hint: 'The selected index carries no source content' },
+    'missing-vector': { code: ErrorCodes.INVALID_REQUEST, status: 400, hint: 'The selected index has no vectors' },
+    'missing-evidence': { code: ErrorCodes.INVALID_REQUEST, status: 400, hint: 'The selected index has no evidence' },
+  };
+
+  function readRefParam(value: unknown): string | undefined {
+    if (value === undefined) return undefined;
+    if (typeof value !== 'string' || value.trim() === '') {
+      throw new AppError(ErrorCodes.INVALID_REQUEST, 'ref must be a non-empty string', 'Pass a branch, tag or commit SHA', 400);
+    }
+    return value;
+  }
+
+  // ── Repo scope for graph reads ──────────────────────────────────────────────
+  // Same rule as requireRepoAccess / hasRepoAccess, applied to the repository a
+  // request actually resolves to (selectors may be names, paths or groups).
+  function assertRepoScope(req: Request, repositoryIds: string[]): void {
+    if (!req.user) return;
+    const denied = repositoryIds.find((id) => !hasRepoAccess(req.user!, id));
+    if (denied !== undefined) {
+      const scoped = req.user.scopedRepos ?? [];
+      throw new AppError(ErrorCodes.FORBIDDEN, 'Token does not have access to this repository', `This token is scoped to: ${scoped.join(', ')}`, 403);
+    }
+  }
+
+  function defaultRepoId(): string {
+    return findRepoByName(repoName)?.id ?? repoName;
+  }
+
+  /** The repository a `repoId` query/body selector resolves to (default repo when absent). */
+  function resolveRepoIdSelector(repoId: string | undefined): string {
+    if (!repoId || repoId === repoName) return defaultRepoId();
+    return loadRegistry().find((r) => r.id === repoId)?.id ?? repoId;
+  }
+
+  /** Repository IDs a group reads (same mapping as system-flows in workflow-routes.ts). */
+  function groupMemberRepoIds(group: { members: { repoId?: string; registryName: string }[] }): string[] {
+    const registry = loadRegistry();
+    return group.members.map((m) => m.repoId ?? registry.find((r) => r.name === m.registryName)?.id ?? m.registryName);
+  }
+
+  /**
+   * Repository IDs referenced by a group's saved sync result. It can outlive membership
+   * changes (a removed member's contracts stay until the next sync), so it is checked too.
+   */
+  function syncResultRepoIds(result: { contracts?: { repositoryId?: string; repoName: string }[]; links?: { providerRepo: string; consumerRepo: string }[] }): string[] {
+    const registry = loadRegistry();
+    const byName = (name: string) => registry.find((r) => r.name === name)?.id ?? name;
+    const ids = new Set<string>();
+    for (const contract of result.contracts ?? []) ids.add(contract.repositoryId ?? byName(contract.repoName));
+    for (const link of result.links ?? []) {
+      ids.add(byName(link.providerRepo));
+      ids.add(byName(link.consumerRepo));
+    }
+    return [...ids];
+  }
+
+  /**
+   * Group read routes expose every member repository, and every repository in the
+   * group's saved sync result, so a repo-scoped token must have access to all of them.
+   * An unknown group falls through to the handler's own 404.
+   */
+  const requireGroupScope: RequestHandler<{ name: string }> = (req, res, next) => {
+    const name = req.params.name;
+    let group: ReturnType<typeof loadGroup> = null;
+    try { group = name ? loadGroup(name) : null; } catch { group = null; }
+    if (group) {
+      try {
+        let synced: string[] = [];
+        try { const result = loadSyncResult(group.name); synced = result ? syncResultRepoIds(result) : []; } catch { synced = []; }
+        assertRepoScope(req as unknown as Request, [...new Set([...groupMemberRepoIds(group), ...synced])]);
+      } catch (err) {
+        if (err instanceof AppError) { sendAppError(req as unknown as Request, res, err); return; }
+        throw err;
+      }
+    }
+    next();
+  };
+
+  /**
+   * Repositories a search body would read, resolved like executeSearchRequest does.
+   * Unknown repos/groups resolve to nothing here; the search itself still answers 404.
+   */
+  function searchTargetRepoIds(body: Record<string, unknown>): string[] {
+    const normalized = normalizeSearchRequest(body as Parameters<typeof normalizeSearchRequest>[0]);
+    if ('error' in normalized && normalized.error) return [];
+    const scope = (normalized as { scope?: SearchScope }).scope;
+    if (!scope) return [defaultRepoId()];
+    const registry = loadRegistry();
+    if (scope.type === 'group') {
+      const group = loadGroup(scope.name);
+      return group ? groupMemberRepoIds(group) : [];
+    }
+    const entry = registry.find((r) => r.id === scope.repoId)
+      ?? registry.find((r) => r.name === scope.repoId || r.path === scope.repoId);
+    return [entry?.id ?? scope.repoId];
+  }
+
+  interface RefRepoContext extends HttpRepoContext {
+    view: ReadIndexView;
+    repoDir: string;
+  }
+
+  async function withRefContext<T>(req: Request, repoSelector: string | undefined, ref: string, fn: (ctx: RefRepoContext) => Promise<T>): Promise<T> {
+    const wantsOther = Boolean(repoSelector && repoSelector !== repoName);
+    const entry = wantsOther ? loadRegistry().find((r) => r.id === repoSelector || r.name === repoSelector) : undefined;
+    if (wantsOther && !entry) throw new AppError(ErrorCodes.NOT_FOUND, `Repo "${repoSelector}" not found`, 'Use /api/v1/repos to list available repositories', 404);
+    const repoDir = entry?.path ?? workspaceRoot;
+    if (!repoDir) throw new AppError(ErrorCodes.NOT_FOUND, 'No repository selected for ref', 'Pass repoId', 404);
+    assertRepoScope(req, [entry?.id ?? defaultRepoId()]);
+    const allowBuild = Boolean(req.user && meetsRole(req.user.role, 'analyst'));
+    const resolution = await resolveReadIndexView({ repoDir, ref, allowBuild });
+    if (!resolution.ok) {
+      const mapped = VIEW_BOUNDARY_HTTP[resolution.boundary.kind];
+      throw new IndexViewHttpError(resolution.boundary, mapped.code, mapped.hint, mapped.status);
+    }
+    const view = resolution.view;
+    try {
+      const loaded = await loadIndexViewArtifacts(view);
+      return await runWithEvidenceDb(view.evidenceDbPath ?? null, () => fn({
+        graph: loaded.graph,
+        snapshot: null,
+        metadata: loaded.metadata,
+        bm25Index: loaded.bm25Index,
+        vectorDbPath: view.vectorDbPath,
+        view,
+        repoDir,
+      }));
+    } finally {
+      view.release();
+    }
+  }
+
+  /** Runs `fn` against the current graph (`ref` absent: unchanged behavior) or the ref's pinned view. */
+  async function withRequestGraph<T>(req: Request, repoId: string | undefined, ref: string | undefined, fn: (g: KnowledgeGraph, view: ReadIndexView | undefined) => Promise<T>): Promise<T> {
+    if (ref === undefined) {
+      assertRepoScope(req, [resolveRepoIdSelector(repoId)]);
+      return fn(await getGraphForRepoIdOrThrow(repoId), undefined);
+    }
+    return withRefContext(req, repoId, ref, (ctx) => fn(ctx.graph, ctx.view));
+  }
+
+  function indexViewField(view: ReadIndexView | undefined): { indexView?: ReturnType<typeof summarizeIndexView> } {
+    return view ? { indexView: summarizeIndexView(view) } : {};
+  }
+
+  function sendAppError(req: Request, res: Response, err: AppError): void {
+    res.status(err.statusCode).json({
+      error: {
+        code: err.code,
+        message: err.message,
+        hint: err.hint,
+        ...(err instanceof IndexViewHttpError ? { boundary: err.boundary.kind } : {}),
+        requestId: req.requestId,
+        timestamp: new Date().toISOString(),
+      },
+    });
+  }
+
   // ── Graph download ──────────────────────────────────────────────────────────
   app.get('/api/v1/graph/:repoId', requireRepoAccess((req) => {
     const p = req.params['repoId'];
@@ -1098,6 +1290,22 @@ export function createApp(
     const requestedRepo = decodeURIComponent(Array.isArray(rawRepoId) ? (rawRepoId[0] ?? '') : (rawRepoId ?? ''));
     const limit = Math.min(parseInt((req.query['limit'] as string | undefined) ?? '200', 10), 1000);
     const offset = Math.max(parseInt((req.query['offset'] as string | undefined) ?? '0', 10), 0);
+
+    let ref: string | undefined;
+    try {
+      ref = readRefParam(req.query['ref']);
+      if (ref !== undefined) {
+        await withRefContext(req, requestedRepo, ref, async (ctx) => {
+          const all = [...ctx.graph.allNodes()];
+          const nodes = all.slice(offset, offset + limit);
+          res.json({ nodes, offset, limit, total: all.length, hasMore: offset + nodes.length < all.length, ...indexViewField(ctx.view) });
+        });
+        return;
+      }
+    } catch (err) {
+      if (err instanceof AppError) { sendAppError(req, res, err); return; }
+      throw err;
+    }
 
     const g = requestedRepo === repoName ? graph : await loadRepoGraph(requestedRepo);
     if (!g) {
@@ -1139,13 +1347,29 @@ export function createApp(
   // ── Search ──────────────────────────────────────────────────────────────────
   app.post('/api/v1/search', requireToolScope('search'), async (req, res) => {
     try {
-      const result = await executeSearchRequest(req.body as { query?: string; limit?: number; mode?: SearchMode; scope?: SearchScope; repoId?: string; repo?: string; group?: string }, {
-        repoName,
-        workspaceRoot,
-        ensureBm25Index,
-        getGraphForRepo,
-        getRepoSearchContext,
-      });
+      const searchBody = req.body as { query?: string; limit?: number; mode?: SearchMode; scope?: SearchScope; repoId?: string; repo?: string; group?: string; ref?: unknown };
+      const ref = readRefParam(searchBody.ref);
+      const scopeRepoId = (searchBody.scope as { type?: string; repoId?: string } | undefined);
+      if (ref !== undefined && (scopeRepoId?.type === 'group' || typeof searchBody.group === 'string')) {
+        throw new AppError(ErrorCodes.INVALID_REQUEST, 'ref cannot be combined with a group scope', 'Select one repository with scope.repoId', 400);
+      }
+      if (ref === undefined) assertRepoScope(req, searchTargetRepoIds(searchBody as Record<string, unknown>));
+      const result = ref === undefined
+        ? await executeSearchRequest(searchBody, {
+          repoName,
+          workspaceRoot,
+          ensureBm25Index,
+          getGraphForRepo,
+          getRepoSearchContext,
+        })
+        : await withRefContext(req, scopeRepoId?.repoId ?? searchBody.repoId ?? searchBody.repo, ref, (ctx) => executeSearchRequest(searchBody, {
+          repoName,
+          workspaceRoot,
+          // Isolated view: no fallback to the active generation's BM25/vectors.
+          ensureBm25Index: () => null,
+          getGraphForRepo: async () => ctx.graph,
+          getRepoSearchContext: async () => ({ graph: ctx.graph, bm25Index: ctx.bm25Index, vectorDbPath: ctx.vectorDbPath, metadata: ctx.metadata, indexView: ctx.view }),
+        }));
       if ('error' in result && result.error) {
         res.status(result.error.status).json({ error: { code: result.error.status === 404 ? ErrorCodes.NOT_FOUND : ErrorCodes.INVALID_REQUEST, message: result.error.message, hint: result.error.hint } });
         return;
@@ -1153,13 +1377,110 @@ export function createApp(
       if (!('body' in result)) throw new Error('Invalid search result');
       res.json(result.body);
     } catch (err) {
+      if (err instanceof AppError) { sendAppError(req, res, err); return; }
       res.status(500).json({ error: { code: ErrorCodes.INTERNAL_ERROR, message: err instanceof Error ? err.message : String(err) } });
     }
   });
 
+  // ── Explore ─────────────────────────────────────────────────────────────────
+  // Stateless transport over the shared orchestrator: no per-connection delivery
+  // session, so responses never contain session pointer references.
+  // Repo-scoped tokens may only explore their repos; scope.repoId and repoId must not disagree,
+  // so the authorized repo and the explored repo are always the same one.
+  // Selectors are validated before authorization: a present selector must be a non-empty string, so the
+  // value requireRepoAccess checks is exactly the value the handler resolves (no ''/non-string fallthrough).
+  const validateExploreSelectors = (req: Request, res: Response, next: NextFunction): void => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const scope = body.scope;
+    if (scope !== undefined && (scope === null || typeof scope !== 'object' || Array.isArray(scope))) {
+      res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: 'scope must be an object' } });
+      return;
+    }
+    const scopeRepoId = (scope as { repoId?: unknown } | undefined)?.repoId;
+    for (const [label, value] of [['scope.repoId', scopeRepoId], ['repoId', body.repoId]] as const) {
+      if (value !== undefined && (typeof value !== 'string' || value.length === 0)) {
+        res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: `${label} must be a non-empty string` } });
+        return;
+      }
+    }
+    if (scopeRepoId !== undefined && body.repoId !== undefined && scopeRepoId !== body.repoId) {
+      res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: 'scope.repoId and repoId disagree', hint: 'Pass one repository selector.' } });
+      return;
+    }
+    next();
+  };
+  app.post('/api/v1/explore', requireToolScope('explore'), validateExploreSelectors, requireRepoAccess((req) => {
+    const body = (req.body ?? {}) as { scope?: { repoId?: string }; repoId?: string };
+    return body.scope?.repoId ?? body.repoId ?? findRepoByName(repoName)?.id ?? repoName;
+  }), async (req, res) => {
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const scope = body.scope as { type?: string; repoId?: string } | undefined;
+      if (scope?.type === 'group' || typeof body.group === 'string') {
+        res.status(400).json({ error: { code: ErrorCodes.INVALID_REQUEST, message: 'Group scope is not supported by explore', hint: 'Use a repo scope: { "scope": { "type": "repo", "repoId": "..." } }' } });
+        return;
+      }
+      const requestedRepoId = (scope?.repoId ?? body.repoId) as string | undefined;
+      const ref = readRefParam(body.ref);
+      const request: ExploreRequest = {
+        task: body.task as string,
+        intent: body.intent as ExploreRequest['intent'],
+        maxTokens: (body.max_tokens ?? body.maxTokens) as number | undefined,
+        compression: body.compression as ExploreRequest['compression'],
+        explainRanking: (body.explain_ranking ?? body.explainRanking) === true,
+        seeds: body.seeds as number | undefined,
+      };
+      if (ref !== undefined) {
+        const pinned = await withRefContext(req, requestedRepoId, ref, async (ctx) => {
+          const viewContext = { graph: ctx.graph, bm25Index: ctx.bm25Index, vectorDbPath: ctx.vectorDbPath, metadata: ctx.metadata, indexView: ctx.view };
+          const explored = await runExplore(request, {
+            graph: ctx.graph,
+            search: createScopedExploreSearch(
+              {},
+              { repoName, workspaceRoot: ctx.repoDir, ensureBm25Index: () => null, getGraphForRepo: async () => ctx.graph, getRepoSearchContext: async () => viewContext },
+            ),
+            repoDir: ctx.repoDir,
+            repoName,
+            indexIdentity: ctx.view.identity,
+            hydrateSource: false,
+            sourceContentAvailable: ctx.view.capabilities.sourceContent,
+          });
+          return { ...explored, ...indexViewField(ctx.view) };
+        });
+        res.json(pinned);
+        return;
+      }
+      const searchContext = await getRepoSearchContext(requestedRepoId && requestedRepoId !== repoName ? requestedRepoId : undefined);
+      const result = await runExplore(request, {
+        graph: searchContext.graph,
+        search: createScopedExploreSearch(
+          { scope: body.scope as SearchScope | undefined, repoId: body.repoId as string | undefined },
+          { repoName, workspaceRoot, ensureBm25Index, getGraphForRepo, getRepoSearchContext },
+        ),
+        repoDir: workspaceRoot,
+        repoName,
+        indexIdentity: searchContext.snapshot?.generationId,
+      });
+      res.json(result);
+    } catch (err) {
+      if (err instanceof ExploreRequestError) {
+        res.status(err.status).json({ error: { code: err.status === 404 ? ErrorCodes.NOT_FOUND : ErrorCodes.INVALID_REQUEST, message: err.message, hint: err.hint } });
+        return;
+      }
+      if (err instanceof AppError) {
+        res.status(err.statusCode).json({ error: { code: err.code, message: err.message, hint: err.hint } });
+        return;
+      }
+      res.status(500).json({ error: { code: ErrorCodes.INTERNAL_ERROR, message: err instanceof Error ? err.message : String(err) } });
+    }
+  });
+
+  registerWorkflowRoutes(app, { repoName, workspaceRoot });
+
   // ── Vector search ───────────────────────────────────────────────────────────
   app.post('/api/v1/vector-search', requireToolScope('search'), async (req, res) => {
     try {
+      assertRepoScope(req, searchTargetRepoIds(req.body as Record<string, unknown>));
       const result = await executeSearchRequest({ ...(req.body as Record<string, unknown>), mode: 'vector' } as { query?: string; limit?: number; mode?: SearchMode; scope?: SearchScope; repoId?: string; repo?: string; group?: string }, {
         repoName,
         workspaceRoot,
@@ -1174,6 +1495,7 @@ export function createApp(
       if (!('body' in result)) throw new Error('Invalid search result');
       res.json(result.body);
     } catch (err) {
+      if (err instanceof AppError) { sendAppError(req, res, err); return; }
       res.status(500).json({ error: { code: ErrorCodes.INTERNAL_ERROR, message: err instanceof Error ? err.message : String(err) } });
     }
   });
@@ -1283,7 +1605,7 @@ export function createApp(
   app.get('/api/v1/nodes/:id', async (req, res) => {
     try {
       const nodeId = decodeURIComponent(req.params.id);
-      const g = await getGraphForRepoIdOrThrow(req.query['repoId'] as string | undefined);
+      await withRequestGraph(req, req.query['repoId'] as string | undefined, readRefParam(req.query['ref']), async (g, view) => {
     // In lazy mode, fall through to DB if node is not in LRU cache
     const node = isLazyGraph(g)
       ? await g.getNodeAsync(nodeId)
@@ -1318,12 +1640,11 @@ export function createApp(
         implementsEdges: await Promise.all(outgoing.filter((e) => e.kind === 'implements').map(async (e) => ({ id: e.target, name: await resolveName(e.target) }))),
         members: await Promise.all(outgoing.filter((e) => e.kind === 'has_member').map(async (e) => ({ id: e.target, name: await resolveName(e.target), kind: await resolveKind(e.target) }))),
         cluster: (await Promise.all(incoming.filter((e) => e.kind === 'belongs_to').map(async (e) => resolveName(e.target))))[0],
+        ...indexViewField(view),
+      });
       });
     } catch (err) {
-      if (err instanceof AppError) {
-        res.status(err.statusCode).json({ error: { code: err.code, message: err.message, hint: err.hint, requestId: req.requestId, timestamp: new Date().toISOString() } });
-        return;
-      }
+      if (err instanceof AppError) { sendAppError(req, res, err); return; }
       throw err;
     }
   });
@@ -1331,8 +1652,8 @@ export function createApp(
   // ── Blast radius ────────────────────────────────────────────────────────────
   app.post('/api/v1/blast-radius', async (req, res) => {
     try {
-      const { target, direction = 'both', max_hops = 5, repoId } = req.body as { target?: string; direction?: string; max_hops?: number; repoId?: string };
-      const g = await getGraphForRepoIdOrThrow(repoId);
+      const { target, direction = 'both', max_hops = 5, repoId, ref: rawRef } = req.body as { target?: string; direction?: string; max_hops?: number; repoId?: string; ref?: unknown };
+      await withRequestGraph(req, repoId, readRefParam(rawRef), async (g, view) => {
     let targetNode = null;
     if (isLazyGraph(g) && target) {
       // Lazy mode: search by ID first (fast), then stream all nodes if needed
@@ -1353,7 +1674,7 @@ export function createApp(
     }
     const registry = loadRegistry();
     const repoDir = repoId
-      ? registry.find((entry) => entry.id === repoId)?.path
+      ? registry.find((entry) => entry.id === repoId || (view !== undefined && entry.name === repoId))?.path
       : workspaceRoot;
     const result = computeBlastRadiusWithTrust({
       graph: g,
@@ -1371,14 +1692,59 @@ export function createApp(
         coverage: result.trust.coverage,
         boundaries: result.trust.boundaries,
         affected: result.affected.filter((a) => a.depth > 0),
+        ...indexViewField(view),
+      });
       });
     } catch (err) {
-      if (err instanceof AppError) {
-        res.status(err.statusCode).json({ error: { code: err.code, message: err.message, hint: err.hint, requestId: req.requestId, timestamp: new Date().toISOString() } });
-        return;
-      }
+      if (err instanceof AppError) { sendAppError(req, res, err); return; }
       throw err;
     }
+  });
+
+  // ── Rename plan / structural check (read-only; source writes stay CLI-only) ──
+  /** Repo a governance request reads: same id resolution as getGraphForRepoIdOrThrow, scope-checked first. */
+  async function governanceTarget(req: Request, repoId: string | undefined): Promise<{ graph: KnowledgeGraph; repoDir: string }> {
+    assertRepoScope(req, [resolveRepoIdSelector(repoId)]);
+    const other = repoId && repoId !== repoName ? loadRegistry().find((r) => r.id === repoId) : undefined;
+    const graphForRepo = await getGraphForRepoIdOrThrow(repoId);
+    const repoDir = other?.path ?? workspaceRoot;
+    if (!repoDir) throw new AppError(ErrorCodes.NOT_FOUND, 'No active repository', 'Pass repoId', 404);
+    return { graph: graphForRepo, repoDir };
+  }
+
+  async function sendGovernance(req: Request, res: Response, run: () => Promise<unknown>): Promise<void> {
+    const { GovernanceRequestError } = await import('../governance/service.js');
+    try {
+      res.json(await run());
+    } catch (err) {
+      if (err instanceof GovernanceRequestError) {
+        const code = err.status === 400 ? ErrorCodes.INVALID_REQUEST : err.status === 404 ? ErrorCodes.NOT_FOUND : ErrorCodes.ANALYSIS_FAILED;
+        res.status(err.status).json({ error: { code, message: err.message, requestId: req.requestId } });
+        return;
+      }
+      if (err instanceof AppError) { sendAppError(req, res, err); return; }
+      throw err;
+    }
+  }
+
+  app.post('/api/v1/refactor/rename-plan', requireToolScope('rename_plan'), async (req, res) => {
+    const body = (req.body ?? {}) as { selector?: unknown; newName?: unknown; repoId?: string; max_occurrences?: unknown };
+    await sendGovernance(req, res, async () => {
+      const { planRenameReadOnly } = await import('../governance/service.js');
+      const target = await governanceTarget(req, body.repoId);
+      return planRenameReadOnly({ graph: target.graph, workspaceRoot: target.repoDir, selector: body.selector, newName: body.newName, maxOccurrences: body.max_occurrences });
+    });
+  });
+
+  app.post('/api/v1/structural-check', requireToolScope('structural_check'), async (req, res) => {
+    const body = (req.body ?? {}) as { changedFiles?: unknown; base_ref?: unknown; head_ref?: unknown; rules?: unknown; max_findings?: unknown; repoId?: string };
+    await sendGovernance(req, res, async () => {
+      const { structuralCheckReadOnly } = await import('../governance/service.js');
+      const target = await governanceTarget(req, body.repoId);
+      // Building uncached ref snapshots runs analysis; reserve it for analysts, like ref reads.
+      const allowBuild = Boolean(req.user && meetsRole(req.user.role, 'analyst'));
+      return structuralCheckReadOnly({ graph: target.graph, repoDir: target.repoDir, changedFiles: body.changedFiles, baseRef: body.base_ref, headRef: body.head_ref, rules: body.rules, maxFindings: body.max_findings }, { allowBuild });
+    });
   });
 
   // ── Semantic graph diff ─────────────────────────────────────────────────────
@@ -1416,8 +1782,8 @@ export function createApp(
       if (!diff) {
         res.status(422).json({
           error: { code: ErrorCodes.ANALYSIS_FAILED, message: 'Semantic graph diff unavailable for one or both refs', requestId: req.requestId },
-          baseSnapshot: { status: base.status, boundaries: base.boundaries, error: base.error },
-          headSnapshot: { status: head.status, boundaries: head.boundaries, error: head.error },
+          baseSnapshot: { status: base.status, boundaries: base.boundaries, error: base.error, indexView: summarizeSnapshotBuild(base, base_ref) },
+          headSnapshot: { status: head.status, boundaries: head.boundaries, error: head.error, indexView: summarizeSnapshotBuild(head, head_ref) },
         });
         return;
       }
@@ -1444,8 +1810,8 @@ export function createApp(
         relationshipsOffset: rOffset,
         relationshipsLimit: rLimit,
         relationshipsHasMore: rOffset + rLimit < diff.relationships.length,
-        baseSnapshot: { status: base.status, fromCache: base.fromCache, boundaries: base.boundaries },
-        headSnapshot: { status: head.status, fromCache: head.fromCache, boundaries: head.boundaries },
+        baseSnapshot: { status: base.status, fromCache: base.fromCache, boundaries: base.boundaries, indexView: summarizeSnapshotBuild(base, base_ref) },
+        headSnapshot: { status: head.status, fromCache: head.fromCache, boundaries: head.boundaries, indexView: summarizeSnapshotBuild(head, head_ref) },
       });
     } catch (err) {
       if (err instanceof AppError) {
@@ -1459,17 +1825,15 @@ export function createApp(
   // ── Flows ───────────────────────────────────────────────────────────────────
   app.get('/api/v1/flows', async (req, res) => {
     try {
-      const g = await getGraphForRepoIdOrThrow(req.query['repoId'] as string | undefined);
-    const flows: { id: string; name: string; steps: unknown }[] = [];
-    for (const node of g.allNodes()) {
-      if (node.kind === 'flow') flows.push({ id: node.id, name: node.name, steps: node.metadata?.steps });
-    }
-      res.json({ flows });
+      await withRequestGraph(req, req.query['repoId'] as string | undefined, readRefParam(req.query['ref']), async (g, view) => {
+        const flows: { id: string; name: string; steps: unknown }[] = [];
+        for (const node of g.allNodes()) {
+          if (node.kind === 'flow') flows.push({ id: node.id, name: node.name, steps: node.metadata?.steps });
+        }
+        res.json({ flows, ...indexViewField(view) });
+      });
     } catch (err) {
-      if (err instanceof AppError) {
-        res.status(err.statusCode).json({ error: { code: err.code, message: err.message, hint: err.hint, requestId: req.requestId, timestamp: new Date().toISOString() } });
-        return;
-      }
+      if (err instanceof AppError) { sendAppError(req, res, err); return; }
       throw err;
     }
   });
@@ -1477,17 +1841,15 @@ export function createApp(
   // ── Clusters ────────────────────────────────────────────────────────────────
   app.get('/api/v1/clusters', async (req, res) => {
     try {
-      const g = await getGraphForRepoIdOrThrow(req.query['repoId'] as string | undefined);
-    const clusters: { id: string; name: string; memberCount: number }[] = [];
-    for (const node of g.allNodes()) {
-      if (node.kind === 'cluster') clusters.push({ id: node.id, name: node.name, memberCount: (node.metadata?.memberCount as number) ?? 0 });
-    }
-      res.json({ clusters });
+      await withRequestGraph(req, req.query['repoId'] as string | undefined, readRefParam(req.query['ref']), async (g, view) => {
+        const clusters: { id: string; name: string; memberCount: number }[] = [];
+        for (const node of g.allNodes()) {
+          if (node.kind === 'cluster') clusters.push({ id: node.id, name: node.name, memberCount: (node.metadata?.memberCount as number) ?? 0 });
+        }
+        res.json({ clusters, ...indexViewField(view) });
+      });
     } catch (err) {
-      if (err instanceof AppError) {
-        res.status(err.statusCode).json({ error: { code: err.code, message: err.message, hint: err.hint, requestId: req.requestId, timestamp: new Date().toISOString() } });
-        return;
-      }
+      if (err instanceof AppError) { sendAppError(req, res, err); return; }
       throw err;
     }
   });
@@ -1522,6 +1884,60 @@ export function createApp(
         routeNodeId: req.query['route_node_id'] as string | undefined,
       };
       res.json(getApiImpact(g, selector));
+    } catch (err) {
+      if (err instanceof AppError) {
+        res.status(err.statusCode).json({ error: { code: err.code, message: err.message, hint: err.hint, requestId: req.requestId, timestamp: new Date().toISOString() } });
+        return;
+      }
+      throw err;
+    }
+  });
+
+  app.get('/api/v1/api-shape-check', async (req, res) => {
+    try {
+      const g = await getGraphForRepoIdOrThrow(req.query['repoId'] as string | undefined);
+      const rawPath = req.query['path'] as string | undefined;
+      const selector: RouteSelector = {
+        method: req.query['method'] as string | undefined,
+        normalizedPath: rawPath ? normalizeRoutePath(rawPath).normalizedPath : undefined,
+        routeFactId: req.query['route_fact_id'] as string | undefined,
+        routeNodeId: req.query['route_node_id'] as string | undefined,
+      };
+      const maxFindings = Number(req.query['max_findings']);
+      res.json(getApiShapeCheck(g, selector, 'local', Number.isInteger(maxFindings) && maxFindings > 0 ? { maxFindings } : {}));
+    } catch (err) {
+      if (err instanceof AppError) {
+        res.status(err.statusCode).json({ error: { code: err.code, message: err.message, hint: err.hint, requestId: req.requestId, timestamp: new Date().toISOString() } });
+        return;
+      }
+      throw err;
+    }
+  });
+
+  app.get('/api/v1/taint-trace', async (req, res) => {
+    try {
+      const repoId = req.query['repoId'] as string | undefined;
+      const g = await getGraphForRepoIdOrThrow(repoId);
+      const entry = repoId && repoId !== repoName ? loadRegistry().find((r) => r.id === repoId) : undefined;
+      const repoDir = entry?.path ?? workspaceRoot;
+      if (!repoDir) throw new AppError(ErrorCodes.NOT_FOUND, 'No repository path is available for taint-trace', 'Pass repoId of an indexed repository', 404);
+      const positive = (value: unknown) => {
+        const parsed = Number(value);
+        return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+      };
+      const interprocedural = req.query['interprocedural'];
+      const { traceTaint } = await import('../query/taint-trace.js');
+      res.json(await traceTaint({
+        repoDir,
+        graph: g,
+        symbol: req.query['symbol'] as string | undefined,
+        source: req.query['source'] as string | undefined,
+        sink: req.query['sink'] as string | undefined,
+        ...(interprocedural === 'true' || interprocedural === 'false' ? { interprocedural: interprocedural === 'true' } : {}),
+        maxFindings: positive(req.query['max_findings']),
+        maxFunctions: positive(req.query['max_functions']),
+        verbose: req.query['verbose'] === 'true',
+      }));
     } catch (err) {
       if (err instanceof AppError) {
         res.status(err.statusCode).json({ error: { code: err.code, message: err.message, hint: err.hint, requestId: req.requestId, timestamp: new Date().toISOString() } });
@@ -1599,19 +2015,19 @@ export function createApp(
     res.json(groups.map((g) => ({ name: g.name, memberCount: g.members.length, lastSync: g.lastSync ?? null, createdAt: g.createdAt })));
   });
 
-  app.get('/api/v1/groups/:name', (req, res) => {
+  app.get('/api/v1/groups/:name', requireGroupScope, (req, res) => {
     const group = loadGroup(req.params.name);
     if (!group) { res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: 'Group not found' } }); return; }
     res.json(group);
   });
 
-  app.get('/api/v1/groups/:name/contracts', (req, res) => {
+  app.get('/api/v1/groups/:name/contracts', requireGroupScope, (req, res) => {
     const result = loadSyncResult(req.params.name);
     if (!result) { res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: 'No sync result. Run sync first.' } }); return; }
     res.json(result);
   });
 
-  app.get('/api/v1/groups/:name/drift', async (req, res) => {
+  app.get('/api/v1/groups/:name/drift', requireGroupScope, async (req, res) => {
     const baseRef = Array.isArray(req.query['base_ref']) ? req.query['base_ref'][0] : req.query['base_ref'];
     const headRef = Array.isArray(req.query['head_ref']) ? req.query['head_ref'][0] : req.query['head_ref'];
     if (!baseRef || !headRef) {
@@ -1731,7 +2147,7 @@ export function createApp(
     }
   });
 
-  app.post('/api/v1/groups/:name/sync', async (req, res) => {
+  app.post('/api/v1/groups/:name/sync', requireGroupScope, async (req, res) => {
     const group = loadGroup(req.params.name);
     if (!group) { res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: 'Group not found' } }); return; }
     try {
@@ -1747,7 +2163,7 @@ export function createApp(
     }
   });
 
-  app.post('/api/v1/groups/:name/search', requireToolScope('search'), async (req, res) => {
+  app.post('/api/v1/groups/:name/search', requireToolScope('search'), requireGroupScope, async (req, res) => {
     try {
       const groupName = Array.isArray(req.params.name) ? req.params.name[0] : req.params.name;
       const result = await executeSearchRequest({
@@ -1773,7 +2189,7 @@ export function createApp(
     }
   });
 
-  app.get('/api/v1/groups/:name/graph', async (req, res) => {
+  app.get('/api/v1/groups/:name/graph', requireGroupScope, async (req, res) => {
     const group = loadGroup(req.params.name);
     if (!group) { res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: 'Group not found' } }); return; }
     const registry = loadRegistry();
@@ -1793,7 +2209,7 @@ export function createApp(
     res.json({ nodes: [...mergedGraph.allNodes()], edges: [...mergedGraph.allEdges()] });
   });
 
-  app.get('/api/v1/groups/:name/topology', requireAuth, requireRole('viewer'), async (req: Request, res: Response) => {
+  app.get('/api/v1/groups/:name/topology', requireAuth, requireRole('viewer'), requireGroupScope, async (req: Request, res: Response) => {
     const groupName = req.params['name'] as string;
     const group = loadGroup(groupName);
     if (!group) { res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: 'Group not found' } }); return; }

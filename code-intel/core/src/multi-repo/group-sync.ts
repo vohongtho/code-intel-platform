@@ -7,15 +7,17 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import type { CodeNode } from '../shared/index.js';
-import type { RepoGroup, Contract, ContractLink, GroupSyncResult, GroupContractVersion, ContractRole } from './types.js';
+import type { RepoGroup, Contract, ContractLink, GroupSyncResult, GroupContractVersion, ContractRole, LinkKind } from './types.js';
 import { findRepoById, loadRegistry } from '../storage/repo-registry.js';
 import { DbManager } from '../storage/db-manager.js';
 import { createKnowledgeGraph, type KnowledgeGraph } from '../graph/knowledge-graph.js';
 import { loadGraphFromDB } from './graph-from-db.js';
 import Logger from '../shared/logger.js';
 import { parseOpenAPIContracts } from './schema-parsers/openapi-parser.js';
-import { parseGraphQLContracts } from './schema-parsers/graphql-parser.js';
-import { parseProtoContracts } from './schema-parsers/proto-parser.js';
+import { extractProtocolFacts, type ProtocolFact, type ProtocolKind } from './protocol-facts.js';
+import { buildProtocolConsumerRefs, extractProtocolSnapshot, graphqlContracts, grpcContracts, readProtocolSources, type ProtocolMemberSnapshot } from './protocol-contracts.js';
+import { GRAPHQL_BINDING_CAPABILITIES, GRPC_BINDING_CAPABILITIES } from '../semantic/protocol-contracts/grpc-bindings.js';
+import { buildSymbolSpanIndex } from './symbol-spans.js';
 import { computeContractSimilarity } from './type-similarity.js';
 import { collectGraphFacts, matchApiContracts, routeFactFromNode, type ScopedFact } from '../semantic/api-contracts/index.js';
 import type { HttpConsumerFact, HttpRouteFact } from '../semantic/api-contracts/types.js';
@@ -212,12 +214,86 @@ function matchRouteConsumersViaFacts(memberGraphs: ReadonlyArray<{ repoId: strin
   return links;
 }
 
+const PROTOCOL_LINK_KIND: Record<ProtocolKind, LinkKind> = {
+  event: 'event-topic-match',
+  graphql: 'graphql-operation-match',
+  grpc: 'grpc-method-match',
+};
+
+function protocolContract(fact: ProtocolFact, member: { repoId: string; repoName: string; repoPath: string; snapshotId: string }): Contract {
+  const anchor = `${fact.protocol}:${fact.key}@${fact.filePath}:${fact.line}`;
+  return enrichContract({
+    repoName: member.repoName,
+    repoPath: member.repoPath,
+    repositoryId: member.repoId,
+    kind: fact.protocol,
+    name: fact.key,
+    nodeId: fact.symbolId ?? anchor,
+    nodeKind: `protocol:${fact.role}`,
+    filePath: fact.filePath,
+    sourceCanonicalId: `${fact.protocol}:${fact.role}:${fact.key}:${fact.symbolId ?? anchor}`,
+    role: fact.role === 'provider' ? 'producer' : 'consumer',
+    certainty: fact.symbolId ? 'exact' : 'heuristic',
+  }, member.repoId, member.snapshotId);
+}
+
+/**
+ * Cross-repository protocol links: a provider fact and a consumer fact in different members
+ * with the same literal protocol key. Exact only when both endpoint symbols resolved; an
+ * unresolved endpoint yields a heuristic link without a consumer contract ID, which the consumer
+ * index skips and the system-flow stitcher reports as a candidate.
+ */
+export function matchProtocolFacts(members: ReadonlyArray<{ repoId: string; repoName: string; repoPath: string; snapshotId: string; facts: readonly ProtocolFact[] }>): { contracts: Contract[]; links: ContractLink[] } {
+  type Entry = { fact: ProtocolFact; contract: Contract; repoId: string };
+  const contracts: Contract[] = [];
+  const providers = new Map<string, Entry[]>();
+  const consumers = new Map<string, Entry[]>();
+  for (const member of members) {
+    for (const fact of member.facts) {
+      const contract = protocolContract(fact, member);
+      contracts.push(contract);
+      const bucket = fact.role === 'provider' ? providers : consumers;
+      const bucketKey = `${fact.protocol} ${fact.key}`;
+      bucket.set(bucketKey, [...(bucket.get(bucketKey) ?? []), { fact, contract, repoId: member.repoId }]);
+    }
+  }
+  const links: ContractLink[] = [];
+  for (const [bucketKey, providerList] of [...providers.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    for (const provider of providerList) {
+      for (const consumer of consumers.get(bucketKey) ?? []) {
+        if (consumer.repoId === provider.repoId) continue;
+        const exact = Boolean(provider.fact.symbolId && consumer.fact.symbolId);
+        links.push({
+          providerRepo: provider.repoId,
+          providerContract: provider.fact.key,
+          consumerRepo: consumer.repoId,
+          consumerContract: `${consumer.fact.filePath}:${consumer.fact.line}`,
+          matchKind: PROTOCOL_LINK_KIND[provider.fact.protocol],
+          confidence: exact ? 1 : 0.5,
+          providerContractId: provider.contract.contractId,
+          ...(exact ? { consumerContractId: consumer.contract.contractId } : {}),
+          providerSourceCanonicalId: provider.fact.symbolId,
+          consumerSourceCanonicalId: consumer.fact.symbolId,
+          certainty: exact ? 'exact' : 'heuristic',
+          coverage: exact
+            ? fullCoverage()
+            : { complete: false, examinedCount: 1, incompleteReasons: [provider.fact.unresolvedReason ?? consumer.fact.unresolvedReason ?? 'endpoint symbol unresolved'] },
+        });
+      }
+    }
+  }
+  return { contracts, links };
+}
+
 function matchContracts(allContracts: Contract[]): ContractLink[] {
   const links: ContractLink[] = [];
 
   // Group contracts by repo. Route contracts are excluded here — they're matched separately
-  // by matchRouteConsumersViaFacts using real method/path/consumer evidence, not name equality.
-  const nonRouteContracts = allContracts.filter((c) => c.kind !== 'route');
+  // by matchRouteConsumersViaFacts using real method/path/consumer evidence, not name equality —
+  // and so are protocol-fact contracts (matched by literal protocol key in matchProtocolFacts) and
+  // schema-backed GraphQL/gRPC contracts (consumers keyed by canonical identity in
+  // protocol-contracts.ts#buildProtocolConsumerRefs).
+  const nonRouteContracts = allContracts.filter((c) => c.kind !== 'route' && !c.nodeKind.startsWith('protocol:') && !c.protocol);
   const byRepo = new Map<string, Contract[]>();
   for (const c of nonRouteContracts) {
     const arr = byRepo.get(c.repoName) ?? [];
@@ -339,6 +415,9 @@ export async function syncGroup(group: RepoGroup): Promise<GroupSyncResult> {
   const contractVersions: GroupContractVersion[] = [];
   const memberGraphs: Array<{ repoId: string; graph: KnowledgeGraph }> = [];
   const memberFacts: Array<{ repoId: string; repositoryName: string; facts: ReturnType<typeof collectGraphFacts> }> = [];
+  const protocolMembers: Array<{ repoId: string; repoName: string; repoPath: string; snapshotId: string; facts: ProtocolFact[] }> = [];
+  const protocolSnapshots: ProtocolMemberSnapshot[] = [];
+  const protocolCoverage: NonNullable<GroupSyncResult['protocolCoverage']> = {};
 
   for (const member of group.members) {
     // Resolve the actual repo path from the registry
@@ -376,12 +455,17 @@ export async function syncGroup(group: RepoGroup): Promise<GroupSyncResult> {
       repositoryId: regEntry.id,
     }));
 
-    // Schema-file contracts (OpenAPI, GraphQL, Protobuf)
-    const [openapiContracts, graphqlContracts, protoContracts] = await Promise.all([
-      parseOpenAPIContracts(regEntry.path).catch(() => []),
-      parseGraphQLContracts(regEntry.path).catch(() => []),
-      parseProtoContracts(regEntry.path).catch(() => []),
-    ]);
+    // Schema-file contracts. OpenAPI stays flat; GraphQL/protobuf use the versioned rich model
+    // (one contract per GraphQL type / proto service, message and enum) — see protocol-contracts.ts.
+    const openapiContracts = await parseOpenAPIContracts(regEntry.path).catch(() => []);
+    const sources = readProtocolSources(regEntry.path, graph);
+    const protocolSnapshot = extractProtocolSnapshot({ rootDir: regEntry.path, service: regEntry.name, graph });
+    protocolSnapshots.push({ repoId: regEntry.id, repoName: regEntry.name, snapshot: protocolSnapshot });
+    protocolCoverage[regEntry.id] = {
+      graphql: [...protocolSnapshot.graphql.boundaries, ...(protocolSnapshot.graphql.schema?.coverage.boundaryReasons ?? [])].sort(),
+      grpc: [...protocolSnapshot.grpc.boundaries, ...protocolSnapshot.grpc.files.flatMap((file) => file.coverage.boundaryReasons.map((reason) => `${file.filePath}:${reason}`))].sort(),
+    };
+    const protocolMember = { repoName: regEntry.name, repoPath: regEntry.path, repositoryId: regEntry.id, snapshotId };
 
     for (const c of openapiContracts) {
       contracts.push(enrichContract({
@@ -398,39 +482,25 @@ export async function syncGroup(group: RepoGroup): Promise<GroupSyncResult> {
         sourceCanonicalId: `openapi:${c.method}:${c.path}`,
       }, regEntry.id, snapshotId));
     }
-    for (const c of graphqlContracts) {
-      contracts.push(enrichContract({
-        repoName: regEntry.name,
-        repoPath: regEntry.path,
-        repositoryId: regEntry.id,
-        kind: 'graphql',
-        name: c.name,
-        nodeId: `graphql:${c.name}`,
-        nodeKind: 'graphql',
-        filePath: c.filePath,
-        sourceCanonicalId: `graphql:${c.operation}:${c.name}`,
-      }, regEntry.id, snapshotId));
-    }
-    for (const c of protoContracts) {
-      contracts.push(enrichContract({
-        repoName: regEntry.name,
-        repoPath: regEntry.path,
-        repositoryId: regEntry.id,
-        kind: 'grpc',
-        name: c.name,
-        nodeId: `grpc:${c.serviceName}:${c.rpcName}`,
-        nodeKind: 'grpc',
-        filePath: c.filePath,
-        sourceCanonicalId: `grpc:${c.serviceName}:${c.rpcName}`,
-      }, regEntry.id, snapshotId));
-    }
+    contracts.push(...graphqlContracts(protocolSnapshot, protocolMember), ...grpcContracts(protocolSnapshot, protocolMember));
+
+    protocolMembers.push({
+      repoId: regEntry.id,
+      repoName: regEntry.name,
+      repoPath: regEntry.path,
+      snapshotId,
+      facts: extractProtocolFacts(sources, buildSymbolSpanIndex(graph)),
+    });
 
     Logger.info(`  ✓ ${regEntry.name} (${member.groupPath}): ${contracts.length} contracts`);
     allContracts.push(...contracts);
     contractVersions.push(...contracts.map((contract) => versionFromContract(contract, regEntry.id)));
   }
 
-  const links = [...matchContracts(allContracts), ...matchRouteConsumersViaFacts(memberGraphs)];
+  const protocol = matchProtocolFacts(protocolMembers);
+  allContracts.push(...protocol.contracts);
+  contractVersions.push(...protocol.contracts.map((contract) => versionFromContract(contract, contract.repositoryId!)));
+  const links = [...matchContracts(allContracts), ...matchRouteConsumersViaFacts(memberGraphs), ...protocol.links];
 
   return {
     groupName: group.name,
@@ -441,6 +511,13 @@ export async function syncGroup(group: RepoGroup): Promise<GroupSyncResult> {
     schemaVersion: GROUP_CONTRACT_SCHEMA_VERSION,
     contractVersions,
     changedContractIds: computeChangedContractIds(contractVersions, previousVersions),
-    consumerIndex: buildContractConsumerIndex({ contracts: allContracts, links, memberFacts }),
+    consumerIndex: buildContractConsumerIndex({
+      contracts: allContracts,
+      links,
+      memberFacts,
+      protocolConsumers: buildProtocolConsumerRefs(allContracts, protocolSnapshots),
+    }),
+    protocolCapabilities: [...GRAPHQL_BINDING_CAPABILITIES, ...GRPC_BINDING_CAPABILITIES],
+    protocolCoverage,
   };
 }

@@ -4,6 +4,7 @@ import type { FactBundle } from '../../semantic/fact-bundle.js';
 import { declaration } from '../../semantic/adapters/common.js';
 import { summarizeFrameworkDetection } from '../detection.js';
 import type { FrameworkAdapter, FrameworkDetectionSignal, RepositoryFactView } from '../contracts.js';
+import { workspaceRelativePath } from '../contracts.js';
 
 const VERSION = '0.1.0';
 
@@ -31,7 +32,7 @@ function extractFacts(view: RepositoryFactView): FactBundle['facts'] {
   for (const filePath of view.filePaths) {
     const source = view.fileCache.get(filePath) ?? '';
     if (!source) continue;
-    const relPath = filePath.replace(/^.*?code-intel-platform\//, '');
+    const relPath = workspaceRelativePath(view.workspaceRoot, filePath);
     const lines = source.split('\n');
 
     for (const [index, line] of lines.entries()) {
@@ -95,6 +96,25 @@ export const goHttpFrameworkAdapter: FrameworkAdapter = {
   id: 'go-http',
   version: VERSION,
   languages: [Language.Go],
+  taintModels() {
+    return [{
+      adapterId: this.id,
+      adapterVersion: this.version,
+      model: {
+        schemaVersion: 1,
+        id: 'go-http-request-input',
+        version: '1',
+        framework: 'go-http',
+        languages: [Language.Go],
+        description: 'net/http handler request inputs (second handler parameter, `r *http.Request`).',
+        sources: [
+          { id: 'request-input', kind: 'framework-input', framework: 'go-http', accessPaths: ['Body', 'Cookie', 'Form', 'FormValue', 'Header', 'PostForm', 'PostFormValue', 'URL'], requestParameterIndex: 1 },
+        ],
+        sinks: [],
+        sanitizers: [],
+      },
+    }];
+  },
   detect(view: RepositoryFactView) {
     return summarizeFrameworkDetection(detectSignals(view), this.id, this.version);
   },

@@ -34,6 +34,12 @@ import Logger from '../shared/logger.js';
 import { createKnowledgeGraph } from '../graph/knowledge-graph.js';
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
 import { LazyKnowledgeGraph } from '../graph/lazy-knowledge-graph.js';
+import { resolveReadIndexView } from '../storage/index-view-resolver.js';
+import { summarizeIndexView, type ReadIndexView } from '../storage/index-view.js';
+import { loadIndexViewArtifacts } from '../storage/index-view-loader.js';
+import { runWithEvidenceDb } from '../evidence/store.js';
+import { exportPortableIndex, importPortableIndex, listIndexRefs, pinIndex, removeIndex, unpinIndex } from '../snapshots/export-import.js';
+import { DEFAULT_PORTABLE_LIMITS } from '../snapshots/portable-format.js';
 import { runPipeline } from '../pipeline/orchestrator.js';
 import {
   scanPhase,
@@ -49,6 +55,9 @@ import {
 import { startHttpServer } from '../http/app.js';
 import { startMcpStdio } from '../mcp-server/server.js';
 import { textSearch } from '../search/text-search.js';
+import { ExploreRequestError, runExplore, type ExploreRequest } from '../query/explore.js';
+import { compactSessionView, runChangeWorkflowAction, workflowErrorPayload } from '../agents/workflows/session-service.js';
+import { getGroupSystemFlows, querySystemFlows } from '../multi-repo/system-flows/service.js';
 import { resolveEmbeddingUpdatePlan } from '../search/embedding-update-plan.js';
 import { EMBEDDING_MODELS, getDefaultEmbeddingModel, getEmbeddingModel, normalizeEmbeddingModelId } from '../search/embedding-model-registry.js';
 import type { PipelineContext } from '../pipeline/types.js';
@@ -56,7 +65,7 @@ import { saveMetadata, loadMetadata, getDbPath, getVectorDbPath, loadAgentTarget
 import { API_CONTRACT_SCHEMA_VERSION } from '../semantic/api-contracts/types.js';
 import { buildAnalyzerCompatibilityReceipt, buildFrameworkFingerprint, CURRENT_IDENTITY_FINGERPRINT } from '../pipeline/compatibility-receipt.js';
 import { computeSemanticGraphDiff } from '../snapshots/service.js';
-import { listChangedFilesBetweenRefs } from '../snapshots/git-materializer.js';
+import { getUnifiedDiffBetweenRefs, listChangedFilesBetweenRefs } from '../snapshots/git-materializer.js';
 import { resolveIndexSnapshot } from '../storage/index-snapshot.js';
 import { writeContextFiles } from './context-writer.js';
 import { installWorkflows, planWorkflowInstall } from '../agents/workflows/installer.js';
@@ -501,12 +510,17 @@ async function analyzeWorkspace(targetPath: string, options?: {
   const loadedConfig = loadConfig();
   const configuredEmbeddingModelId = normalizeEmbeddingModelId(loadedConfig?.embeddings.model ?? getDefaultEmbeddingModel().id);
   const runtimeEmbeddingMetadata = buildEmbeddingMetadata('ready', configuredEmbeddingModelId);
-  const embeddingMode = resolveEmbeddingMode({
+  const resolvedEmbeddingMode = resolveEmbeddingMode({
     explicitEnable: options?.embeddings,
     explicitSkip: options?.skipEmbeddings,
     metadata: previousMetadata,
     hasLegacyVectorDb: !previousMetadata?.embeddings && fs.existsSync(vectorDbPath),
   });
+  // The atomic parent forwards a remembered preference as `--embeddings` (see
+  // atomic-analyze.ts); keep its provenance so the user sees where it came from.
+  const embeddingMode = resolvedEmbeddingMode.source === 'explicit' && process.env['CODE_INTEL_EMBEDDINGS_REMEMBERED'] === '1'
+    ? { ...resolvedEmbeddingMode, source: 'metadata' as const }
+    : resolvedEmbeddingMode;
   const graph = createKnowledgeGraph();
   let activeGraph: KnowledgeGraph = graph;
 
@@ -628,7 +642,9 @@ async function analyzeWorkspace(targetPath: string, options?: {
         );
         detectedChangedFiles = decision.changedExistingFiles ?? [];
         detectedDeletedFiles = decision.deletedFiles ?? [];
-        detectedChangeSetKnown = true;
+        // Only a decision that reports its change set makes it known; an absent list
+        // (no comparable history) must force full vector work, never read as "no changes".
+        detectedChangeSetKnown = decision.changedExistingFiles !== undefined;
         if (decision.incremental) {
           const dbPath = getDbPath(workspaceRoot);
           if (fs.existsSync(dbPath)) {
@@ -2737,6 +2753,40 @@ async function loadOrAnalyzeWorkspace(targetPath: string) {
   return analyzeWorkspace(targetPath, { silent: true });
 }
 
+/**
+ * Read-only commands with `--ref`: serve the command from that committed ref's
+ * semantic snapshot (built on first use, then cached) instead of the working
+ * tree's index. Never analyzes or mutates the current index; an unknown ref or a
+ * failed build exits non-zero instead of falling back to current state.
+ */
+async function withCliReadGraph(
+  targetPath: string,
+  ref: string | undefined,
+  json: boolean | undefined,
+  fn: (ctx: { graph: KnowledgeGraph; workspaceRoot: string; repoName: string; view?: ReadIndexView }) => Promise<void>,
+): Promise<void> {
+  if (ref === undefined) {
+    await fn(await loadOrAnalyzeWorkspace(targetPath));
+    return;
+  }
+  const workspaceRoot = path.resolve(targetPath);
+  const resolution = await resolveReadIndexView({ repoDir: workspaceRoot, ref });
+  if (!resolution.ok) {
+    if (json) console.log(JSON.stringify({ error: resolution.boundary.message, boundary: resolution.boundary.kind, ref }, null, 2));
+    else console.error(`\n  ${resolution.boundary.kind}: ${resolution.boundary.message}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  const view = resolution.view;
+  try {
+    const loaded = await loadIndexViewArtifacts(view);
+    if (!json) console.error(`  Index view: ref ${ref} → snapshot ${view.identity.slice(0, 12)} (${view.resolution}${view.capabilities.sourceContent ? '' : ', no source content'})`);
+    await runWithEvidenceDb(view.evidenceDbPath ?? null, () => fn({ graph: loaded.graph, workspaceRoot, repoName: path.basename(workspaceRoot), view }));
+  } finally {
+    view.release();
+  }
+}
+
 repoCmd.addHelpText('after', `
   Stable repo management commands:
     list                      List indexed repos with IDs
@@ -2759,6 +2809,7 @@ program
   .argument('<query>', 'Search query (name, kind, or partial match)')
   .option('-l, --limit <n>', 'Maximum number of results', '20')
   .option('-p, --path <path>', 'Path to the repository (default: current directory)', '.')
+  .option('--ref <ref>', 'Search a committed Git ref (branch/tag/SHA) via its semantic snapshot instead of the current index')
   .option('--json', 'Output machine-readable JSON')
   .addHelpText('after', `
   Runs BM25 text search across all indexed symbols — functions, classes,
@@ -2768,20 +2819,20 @@ program
     $ code-intel search "handleRequest"
     $ code-intel search "auth" --limit 10
     $ code-intel search "UserService" --path ./backend
+    $ code-intel search "UserService" --ref main
 
   Note:
     The HTTP API now uses canonical scoped search via POST /api/v1/search.
     Legacy /api/v1/vector-search and /api/v1/groups/:name/search remain
     compatibility adapters during migration.
 `)
-  .action(async (query: string, options: { limit: string; path: string; json?: boolean }) => {
-    const { graph } = await loadOrAnalyzeWorkspace(options.path);
+  .action(async (query: string, options: { limit: string; path: string; ref?: string; json?: boolean }) => withCliReadGraph(options.path, options.ref, options.json, async ({ graph, view }) => {
     const results = textSearch(graph, query, parseInt(options.limit, 10)).map((result) => {
       const node = graph.getNode(result.nodeId);
       return { ...result, selector: node ? formatSymbolTarget(node) : undefined };
     });
     if (options.json) {
-      console.log(JSON.stringify({ query, results }, null, 2));
+      console.log(JSON.stringify({ query, results, ...(view ? { indexView: summarizeIndexView(view) } : {}) }, null, 2));
       return;
     }
     if (results.length === 0) {
@@ -2794,6 +2845,223 @@ program
       if (r.selector) console.log(`  ${''.padEnd(14)} ${r.selector}`);
     }
     console.log('');
+  }));
+
+// ─── explore ─────────────────────────────────────────────────────────────────
+program
+  .command('explore')
+  .description('Task-oriented exploration: search, rerank, bounded expansion and a token-budgeted context in one call')
+  .argument('<task>', 'What you are trying to understand, debug, change, review, secure, or integrate')
+  .option('--intent <intent>', 'understand | debug | change | review | security | api | auto', 'auto')
+  .option('--max-tokens <n>', 'Hard token budget for the returned context (128-6000)', '6000')
+  .option('--compression <mode>', 'auto | none | aggressive', 'auto')
+  .option('--seeds <n>', 'Seed symbols to expand (1-8)', '5')
+  .option('--explain-ranking', 'Include top rerank contributions per seed')
+  .option('-p, --path <path>', 'Path to the repository (default: current directory)', '.')
+  .option('--ref <ref>', 'Explore a committed Git ref (branch/tag/SHA) via its semantic snapshot')
+  .option('--json', 'Output machine-readable JSON')
+  .addHelpText('after', `
+  Intent only changes allocation and orchestration, never semantic truth.
+  Missing evidence is reported as a boundary, not as proof that nothing exists.
+
+  Examples:
+    $ code-intel explore "how does login reach session persistence?"
+    $ code-intel explore "what must change to add MFA?" --intent change --max-tokens 6000
+`)
+  .action(async (task: string, options: { intent: string; maxTokens: string; compression: string; seeds: string; explainRanking?: boolean; path: string; ref?: string; json?: boolean }) => withCliReadGraph(options.path, options.ref, options.json, async ({ graph, workspaceRoot, repoName, view }) => {
+    const request: ExploreRequest = {
+      task,
+      intent: options.intent as ExploreRequest['intent'],
+      maxTokens: Number.parseInt(options.maxTokens, 10),
+      compression: options.compression as ExploreRequest['compression'],
+      explainRanking: options.explainRanking === true,
+      seeds: Number.parseInt(options.seeds, 10),
+    };
+    try {
+      const result = await runExplore(request, {
+        graph,
+        // Same BM25 text search the `search` command uses; vector/hybrid retrieval is the server path.
+        search: async (query, limit) => ({
+          hits: textSearch(graph, query, limit).map((hit) => ({ nodeId: hit.nodeId, name: hit.name, kind: hit.kind, filePath: hit.filePath, score: hit.score })),
+          actualMode: 'bm25',
+          vectorReady: false,
+        }),
+        repoDir: workspaceRoot,
+        repoName,
+        ...(view ? { indexIdentity: view.identity, hydrateSource: false, sourceContentAvailable: view.capabilities.sourceContent } : {}),
+      });
+      if (options.json) {
+        console.log(JSON.stringify(view ? { ...result, indexView: summarizeIndexView(view) } : result, null, 2));
+        return;
+      }
+      console.log(`\n  Explore (${result.intent}, ${result.intentSource}) — ${result.seeds.length} seed(s), ${result.counters.tokensDelivered}/${result.maxTokens} tokens, certainty: ${result.certainty}\n`);
+      for (const seed of result.seeds) console.log(`  ${String(seed.rank).padStart(2)}. ${seed.kind.padEnd(10)} ${seed.symbol}  ${seed.filePath}${seed.startLine ? ':' + seed.startLine : ''}`);
+      for (const block of [result.context.summary, result.context.logic, result.context.relation, result.context.focusCode]) {
+        if (block) console.log(`\n${block}`);
+      }
+      const modes = Object.entries(result.counters.renderModes).filter(([, count]) => count > 0).map(([mode, count]) => `${mode}:${count}`).join(' ');
+      console.log(`\n  Render modes: ${modes || 'none'}`);
+      for (const note of result.capabilities.degraded) console.log(`  ! ${note}`);
+      console.log('');
+    } catch (err) {
+      if (err instanceof ExploreRequestError) {
+        console.error(`\n  ${err.message}${err.hint ? ` — ${err.hint}` : ''}\n`);
+        process.exitCode = 1;
+        return;
+      }
+      throw err;
+    }
+  }));
+
+// ─── workflow: resumable graph-verified change sessions ─────────────────────
+const workflowCmd = program
+  .command('workflow')
+  .description('Resumable change sessions: plan, edit externally, analyze, verify expected-vs-actual, complete')
+  .addHelpText('after', `
+  Code Intel never edits source and never stages, commits or pushes. You (or
+  your agent) edit files, run \`code-intel analyze\`, then verify. A stale index
+  reports reindex-required; unknown/partial evidence is never "satisfied".
+
+  Examples:
+    $ code-intel workflow start --task "add idempotency to payment capture" --target capturePayment
+    $ code-intel workflow status <session>
+    $ code-intel analyze && code-intel workflow verify <session>
+    $ code-intel workflow start --task "rename customerId to accountId" --group commerce
+    $ code-intel workflow complete <session>
+`);
+
+interface WorkflowCliOptions {
+  path: string;
+  group?: string;
+  json?: boolean;
+  full?: boolean;
+  revision?: string;
+}
+
+function workflowCliBase(opts: WorkflowCliOptions) {
+  return {
+    scope: opts.group ? 'group' as const : 'repo' as const,
+    repoDir: path.resolve(opts.path),
+    groupName: opts.group,
+    expectedRevision: opts.revision !== undefined ? Number.parseInt(opts.revision, 10) : undefined,
+    full: opts.full === true,
+  };
+}
+
+function printWorkflowResult(result: unknown, opts: WorkflowCliOptions): void {
+  if (opts.json || opts.full) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  const view = result as ReturnType<typeof compactSessionView> & { sessions?: Array<{ id: string; phase: string; revision: number; updatedAt: string }> };
+  if (view.sessions) {
+    if (view.sessions.length === 0) console.log('\n  No workflow sessions.\n');
+    for (const session of view.sessions) console.log(`  ${session.id}  ${session.phase.padEnd(17)} r${session.revision}  ${session.updatedAt}`);
+    return;
+  }
+  console.log(`\n  Session ${view.sessionId}  phase: ${view.phase}  revision: ${view.revision}`);
+  for (const step of view.plan.steps) {
+    console.log(`  [${step.category}] ${step.title}  (${step.certainty}; ${step.expected.length} condition(s))`);
+    for (const boundary of step.boundaries) console.log(`      ! ${boundary}`);
+  }
+  if (view.plan.truncated) console.log(`  … ${view.plan.totalSteps} steps total`);
+  for (const repo of view.repositories ?? []) console.log(`  repo ${repo.repositoryId}: ${repo.state}${repo.reasons.length ? ` (${repo.reasons.slice(0, 3).join('; ')})` : ''}`);
+  if (view.verification) {
+    const v = view.verification;
+    console.log(`\n  Verification: ${v.outcome}  satisfied ${v.counts.satisfied}/${v.counts.plannedConditions}  unexpected ${v.counts.unexpectedChanges}`);
+    for (const condition of v.conditions.filter((c) => c.status !== 'satisfied')) console.log(`    ${condition.status.padEnd(19)} ${condition.kind}: ${condition.reason}`);
+    for (const lens of v.lenses.filter((l) => l.status !== 'pass')) console.log(`    lens ${lens.lensId}: ${lens.status}${lens.reducedGuarantee ? ` — ${lens.reducedGuarantee}` : ''}`);
+    for (const boundary of v.boundaries) console.log(`    ! ${boundary}`);
+  }
+  for (const missing of view.capabilities.unavailable) console.log(`  ~ ${missing.capability}: ${missing.reducedGuarantee}`);
+  if (view.commitPlan) {
+    console.log(`\n  Suggested commits (not executed):`);
+    for (const group of view.commitPlan.groups) console.log(`    ${group.order}. ${group.title}  [${group.files.join(', ')}]`);
+  }
+  console.log(`\n  Next: ${view.next}\n`);
+}
+
+async function runWorkflowCli(input: Parameters<typeof runChangeWorkflowAction>[0], opts: WorkflowCliOptions): Promise<void> {
+  try {
+    printWorkflowResult(await runChangeWorkflowAction(input), opts);
+  } catch (err) {
+    const payload = workflowErrorPayload(err);
+    if (opts.json) console.log(JSON.stringify(payload, null, 2));
+    else console.error(`\n  ✗  ${payload.error}${payload.code ? ` (${payload.code})` : ''}\n`);
+    process.exitCode = 1;
+  }
+}
+
+const withWorkflowScopeOptions = (cmd: Command) => cmd
+  .option('-p, --path <path>', 'Repository path (default: current directory)', '.')
+  .option('--group <name>', 'Repository group (group-scoped session)')
+  .option('--json', 'Output the compact JSON view')
+  .option('--full', 'Output the full session JSON');
+
+withWorkflowScopeOptions(workflowCmd
+  .command('start')
+  .description('Pin the current trusted index as the baseline and plan the change')
+  .requiredOption('--task <text>', 'What you intend to change')
+  .option('--target <symbol...>', 'Symbol names or canonical node IDs that must change (unique matches become required steps)')
+  .option('--fingerprint-only', 'Store only a fingerprint of the task text, not a summary'))
+  .action(async (opts: WorkflowCliOptions & { task: string; target?: string[]; fingerprintOnly?: boolean }) => {
+    await runWorkflowCli({ action: 'start', ...workflowCliBase(opts), task: opts.task, targets: opts.target, taskRetention: opts.fingerprintOnly ? 'fingerprint-only' : 'summary' }, opts);
+  });
+
+withWorkflowScopeOptions(workflowCmd
+  .command('status <session>')
+  .description('Show phase/plan/freshness; moves to reindex-required when source changed since analysis'))
+  .action(async (session: string, opts: WorkflowCliOptions) => {
+    await runWorkflowCli({ action: 'status', ...workflowCliBase(opts), sessionId: session }, opts);
+  });
+
+withWorkflowScopeOptions(workflowCmd
+  .command('checkpoint <session>')
+  .description('Record a note, declare expected conditions, add lenses, or mark that files were edited')
+  .option('--note <text>', 'Short note')
+  .option('--conditions <json>', 'JSON array of expected conditions to add')
+  .option('--remove-condition <id...>', 'Condition IDs to remove')
+  .option('--step <id>', 'Plan step to attach conditions/lenses to')
+  .option('--lens <id...>', 'Additional review lenses: architecture | api | tests | security | change-risk | scope')
+  .option('--edited', 'Files were edited; move to reindex-required')
+  .option('--revision <n>', 'Expected session revision (optimistic concurrency)'))
+  .action(async (session: string, opts: WorkflowCliOptions & { note?: string; conditions?: string; removeCondition?: string[]; step?: string; lens?: string[]; edited?: boolean }) => {
+    let conditions: Array<Record<string, unknown>> | undefined;
+    if (opts.conditions) {
+      try {
+        const parsed = JSON.parse(opts.conditions) as unknown;
+        if (!Array.isArray(parsed)) throw new Error('expected a JSON array');
+        conditions = parsed as Array<Record<string, unknown>>;
+      } catch (err) {
+        console.error(`\n  ✗  --conditions must be a JSON array: ${err instanceof Error ? err.message : String(err)}\n`);
+        process.exitCode = 1;
+        return;
+      }
+    }
+    await runWorkflowCli({ action: 'checkpoint', ...workflowCliBase(opts), sessionId: session, note: opts.note, conditions, removeConditionIds: opts.removeCondition, stepId: opts.step, lenses: opts.lens, edited: opts.edited }, opts);
+  });
+
+withWorkflowScopeOptions(workflowCmd
+  .command('verify <session>')
+  .description('Verify expected-vs-actual semantic changes against the pinned baseline (requires a current index)')
+  .option('--revision <n>', 'Expected session revision (optimistic concurrency)'))
+  .action(async (session: string, opts: WorkflowCliOptions) => {
+    await runWorkflowCli({ action: 'verify', ...workflowCliBase(opts), sessionId: session }, opts);
+  });
+
+withWorkflowScopeOptions(workflowCmd
+  .command('complete <session>')
+  .description('Complete a verified session and print a suggested commit plan (never executed)')
+  .option('--revision <n>', 'Expected session revision (optimistic concurrency)'))
+  .action(async (session: string, opts: WorkflowCliOptions) => {
+    await runWorkflowCli({ action: 'complete', ...workflowCliBase(opts), sessionId: session }, opts);
+  });
+
+withWorkflowScopeOptions(workflowCmd
+  .command('list')
+  .description('List workflow sessions for this repository (or --group)'))
+  .action(async (opts: WorkflowCliOptions) => {
+    await runWorkflowCli({ action: 'list', ...workflowCliBase(opts) }, opts);
   });
 
 // ─── inspect: optional program-analysis evidence ─────────────────────────────
@@ -2855,6 +3123,7 @@ program
   .description('Inspect a symbol — show callers, callees, file location, and export status')
   .argument('<symbol>', 'Symbol name or qualified selector to inspect')
   .option('-p, --path <path>', 'Path to the repository (default: current directory)', '.')
+  .option('--ref <ref>', 'Inspect at a committed Git ref (branch/tag/SHA) via its semantic snapshot')
   .option('--json', 'Output machine-readable JSON')
   .addHelpText('after', `
   Finds the symbol in the knowledge graph and prints its full connection
@@ -2866,8 +3135,7 @@ program
     $ code-intel inspect runPipeline
     $ code-intel inspect ApiClient --path ./frontend
 `)
-  .action(async (symbol: string, options: { path: string; json?: boolean }) => {
-    const { graph } = await loadOrAnalyzeWorkspace(options.path);
+  .action(async (symbol: string, options: { path: string; ref?: string; json?: boolean }) => withCliReadGraph(options.path, options.ref, options.json, async ({ graph, view }) => {
     const resolution = resolveSymbolTarget(graph, symbol);
     if (resolution.status === 'not-found') {
       if (options.json) console.log(JSON.stringify({ status: 'not-found', symbol, candidates: [] }, null, 2));
@@ -2900,7 +3168,8 @@ program
     const outgoing = [...graph.findEdgesFrom(node.id)];
     const callers = incoming.filter((e) => e.kind === 'calls');
     const callees = outgoing.filter((e) => e.kind === 'calls');
-    const programAnalysis = await tryInspectProgramAnalysis(node, options.path);
+    // Program analysis re-parses source from the working tree, which is not the selected ref's source.
+    const programAnalysis = view ? null : await tryInspectProgramAnalysis(node, options.path);
     if (options.json) {
       console.log(JSON.stringify({
         status: 'found', symbol: {
@@ -2910,6 +3179,7 @@ program
         callers: callers.map((edge) => graph.getNode(edge.source)).filter(Boolean),
         callees: callees.map((edge) => graph.getNode(edge.target)).filter(Boolean),
         ...(programAnalysis ? { programAnalysis } : {}),
+        ...(view ? { indexView: summarizeIndexView(view), programAnalysisBoundary: 'program analysis is unavailable for --ref (it reads working-tree source)' } : {}),
       }, null, 2));
       return;
     }
@@ -2944,7 +3214,7 @@ program
       }
     }
     console.log('');
-  });
+  }));
 
 // ─── 10. impact ──────────────────────────────────────────────────────────────
 program
@@ -2953,6 +3223,7 @@ program
   .argument('<symbol>', 'Symbol name to analyse')
   .option('-p, --path <path>', 'Path to the repository (default: current directory)', '.')
   .option('-d, --depth <n>', 'Maximum traversal depth (hops)', '5')
+  .option('--ref <ref>', 'Compute at a committed Git ref (branch/tag/SHA) via its semantic snapshot')
   .addHelpText('after', `
   Traverses the call graph upward from the target symbol, collecting every
   symbol that transitively depends on it via calls or imports.
@@ -2964,8 +3235,7 @@ program
     $ code-intel impact ApiClient --depth 3
     $ code-intel impact UserService --path ./backend
 `)
-  .action(async (symbol: string, options: { path: string; depth: string }) => {
-    const { graph } = await loadOrAnalyzeWorkspace(options.path);
+  .action(async (symbol: string, options: { path: string; depth: string; ref?: string }) => withCliReadGraph(options.path, options.ref, false, async ({ graph }) => {
     const maxHops = parseInt(options.depth, 10);
 
     const resolution = resolveSymbolTarget(graph, symbol);
@@ -3011,7 +3281,7 @@ program
       if (n) console.log(`  ${n.kind.padEnd(14)} ${n.name.padEnd(32)} ${n.filePath}`);
     }
     console.log('');
-  });
+  }));
 
 // ─── 10b. deprecated ─────────────────────────────────────────────────────────
 program
@@ -3058,6 +3328,186 @@ program
       }
     }
   });
+
+// ─── index: ref-aware and portable snapshot indexes ─────────────────────────
+const indexCmd = program
+  .command('index')
+  .description('List, export, import and pin ref snapshot indexes (never changes the current index)')
+  .addHelpText('after', `
+  Index maintenance (current index):
+    index cleanup [path] [--dry-run] [--keep N] [--stale-hours N] [--remove-legacy]
+    index unlock [path] [--force]
+`);
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GiB`;
+}
+
+function parseByteLimit(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const match = /^(\d+)([kmg]?)i?b?$/i.exec(value.trim());
+  if (!match) throw new Error(`invalid size ${JSON.stringify(value)} (e.g. 500m, 2g)`);
+  const unit = { '': 1, k: 1024, m: 1024 ** 2, g: 1024 ** 3 }[match[2]!.toLowerCase() as '' | 'k' | 'm' | 'g'];
+  return Number.parseInt(match[1]!, 10) * unit;
+}
+
+indexCmd
+  .command('refs')
+  .description('List cached ref snapshots with the local branches/tags that resolve to them')
+  .option('-p, --path <path>', 'Path to the repository (default: current directory)', '.')
+  .option('--json', 'Output machine-readable JSON')
+  .action((options: { path: string; json?: boolean }) => {
+    const entries = listIndexRefs(path.resolve(options.path));
+    if (options.json) {
+      console.log(JSON.stringify({ snapshots: entries }, null, 2));
+      return;
+    }
+    if (entries.length === 0) {
+      console.log('\n  No ref snapshots cached. Query with --ref, run `code-intel graph diff`, or `code-intel index import`.\n');
+      return;
+    }
+    console.log('');
+    for (const entry of entries) {
+      const flags = [
+        entry.capabilities?.privacyProfile ?? 'invalid',
+        entry.pinned ? 'pinned' : '',
+        entry.readers ? 'in-use' : '',
+        entry.valid ? '' : 'invalid',
+      ].filter(Boolean).join(', ');
+      console.log(`  ${entry.snapshotId.slice(0, 12)}  ${(entry.descriptor?.commit ?? '?').slice(0, 12)}  ${formatBytes(entry.sizeBytes).padStart(10)}  [${flags}]`);
+      if (entry.refs.length > 0) console.log(`                refs: ${entry.refs.join(', ')}`);
+    }
+    console.log('');
+  });
+
+indexCmd
+  .command('export')
+  .description('Export one committed ref as a portable .cidx index package')
+  .requiredOption('--ref <ref>', 'Committed Git ref (branch, tag or SHA) to export')
+  .requiredOption('-o, --output <file>', 'Output package path (e.g. service-main.cidx)')
+  .option('-p, --path <path>', 'Path to the repository (default: current directory)', '.')
+  .option('--privacy <profile>', 'full | metadata-only (strips source content; BM25 rebuilt names-only)', 'full')
+  .option('--no-vectors', 'Do not include the snapshot\'s vector index')
+  .option('--no-build', 'Fail instead of building a snapshot that is not cached')
+  .option('--force', 'Overwrite the output file if it exists')
+  .option('--max-bytes <size>', 'Maximum package payload (default 2g)')
+  .option('--json', 'Output machine-readable JSON')
+  .addHelpText('after', `
+  The package binds to this repository's identity (its origin URL) and the
+  ref's Git tree, and records analyzer/schema fingerprints, artifact hashes and
+  the privacy profile. Share the printed sha256 out of band and verify it on
+  import with --expect-sha256.
+
+  Examples:
+    $ code-intel index export --ref main --output service-main.cidx
+    $ code-intel index export --ref v2.3.0 -o release.cidx --privacy metadata-only
+`)
+  .action(async (options: { ref: string; output: string; path: string; privacy: string; vectors: boolean; build: boolean; force?: boolean; maxBytes?: string; json?: boolean }) => {
+    if (options.privacy !== 'full' && options.privacy !== 'metadata-only') {
+      console.error(`\n  Unknown privacy profile ${JSON.stringify(options.privacy)} (use full or metadata-only)\n`);
+      process.exitCode = 1;
+      return;
+    }
+    const maxBytes = parseByteLimit(options.maxBytes);
+    const result = await exportPortableIndex({
+      repoDir: path.resolve(options.path),
+      ref: options.ref,
+      outputPath: options.output,
+      privacyProfile: options.privacy,
+      includeVectors: options.vectors,
+      allowBuild: options.build,
+      overwrite: options.force === true,
+      ...(maxBytes ? { limits: { ...DEFAULT_PORTABLE_LIMITS, maxArtifactBytes: maxBytes, maxTotalBytes: maxBytes } } : {}),
+    });
+    if (options.json) {
+      console.log(JSON.stringify(result, null, 2));
+      if (result.status !== 'exported') process.exitCode = 1;
+      return;
+    }
+    if (result.status !== 'exported') {
+      console.error(`\n  Export failed (${result.code}): ${result.message}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    const caps = result.manifest.capabilities;
+    console.log(`\n  ✔  Exported ${options.ref} → ${result.outputPath}`);
+    console.log(`     Snapshot  : ${result.manifest.descriptor.snapshotId}`);
+    console.log(`     Commit    : ${result.manifest.descriptor.commit ?? '?'}`);
+    console.log(`     Privacy   : ${result.manifest.privacyProfile} (source content: ${caps.sourceContent ? 'yes' : 'no'}, bm25: ${caps.bm25Content}, vectors: ${caps.vector ? 'yes' : 'no'}, evidence: ${caps.evidence ? 'yes' : 'no'})`);
+    console.log(`     Size      : ${formatBytes(result.packageBytes)}`);
+    console.log(`     sha256    : ${result.packageSha256}\n`);
+  });
+
+indexCmd
+  .command('import')
+  .description('Validate and import a portable .cidx index package into the local snapshot cache')
+  .argument('<file>', 'Package to import (untrusted input: fully validated before use)')
+  .option('-p, --path <path>', 'Path to the target repository (default: current directory)', '.')
+  .option('--pin', 'Protect the imported snapshot from cache eviction')
+  .option('--expect-sha256 <digest>', 'Reject the package unless its sha256 equals this digest')
+  .option('--max-bytes <size>', 'Maximum package payload (default 2g)')
+  .option('--json', 'Output machine-readable JSON')
+  .addHelpText('after', `
+  Import never changes the current index or checkout: the snapshot becomes a
+  read source for --ref queries and graph diffs only. Packages from another
+  repository, an incompatible analyzer version, or with tampered artifacts are
+  rejected and nothing is published.
+
+  Examples:
+    $ code-intel index import service-main.cidx --pin
+    $ code-intel index import ci.cidx --expect-sha256 3b1f…
+`)
+  .action(async (file: string, options: { path: string; pin?: boolean; expectSha256?: string; maxBytes?: string; json?: boolean }) => {
+    const maxBytes = parseByteLimit(options.maxBytes);
+    const result = await importPortableIndex({
+      repoDir: path.resolve(options.path),
+      packagePath: file,
+      pin: options.pin === true,
+      expectedSha256: options.expectSha256,
+      ...(maxBytes ? { limits: { ...DEFAULT_PORTABLE_LIMITS, maxArtifactBytes: maxBytes, maxTotalBytes: maxBytes } } : {}),
+    });
+    if (options.json) {
+      console.log(JSON.stringify(result, null, 2));
+      if (result.status === 'rejected') process.exitCode = 1;
+      return;
+    }
+    if (result.status === 'rejected') {
+      console.error(`\n  Import rejected (${result.code}): ${result.message}`);
+      if (result.remediation) console.error(`  ${result.remediation}`);
+      console.error('');
+      process.exitCode = 1;
+      return;
+    }
+    console.log(`\n  ✔  ${result.status === 'imported' ? 'Imported' : 'Already present'}: snapshot ${result.snapshotId}`);
+    console.log(`     Commit    : ${result.manifest.descriptor.commit ?? '?'}`);
+    console.log(`     Privacy   : ${result.manifest.privacyProfile}${result.pinned ? ' (pinned)' : ''}`);
+    for (const warning of result.warnings) console.log(`     ! ${warning}`);
+    console.log('');
+  });
+
+for (const [name, description] of [
+  ['pin', 'Protect a cached snapshot (ref, snapshot ID or prefix) from eviction'],
+  ['unpin', 'Remove the local pin from a snapshot'],
+  ['remove', 'Delete a cached snapshot now (refused while a reader holds it)'],
+] as const) {
+  indexCmd
+    .command(`${name} <selector>`)
+    .description(description)
+    .option('-p, --path <path>', 'Path to the repository (default: current directory)', '.')
+    .option('--json', 'Output machine-readable JSON')
+    .action((selector: string, options: { path: string; json?: boolean }) => {
+      const repoDir = path.resolve(options.path);
+      const result = name === 'pin' ? pinIndex(repoDir, selector) : name === 'unpin' ? unpinIndex(repoDir, selector) : removeIndex(repoDir, selector);
+      const failed = 'error' in result || ('result' in result && result.result === 'in-use');
+      if (options.json) console.log(JSON.stringify(result, null, 2));
+      else if ('error' in result) console.error(`\n  ${result.error}\n`);
+      else console.log(`\n  ${name}: ${result.snapshotId}${'result' in result ? ` (${result.result})` : ''}${'wasPinned' in result && !result.wasPinned ? ' (was not pinned)' : ''}\n`);
+      if (failed) process.exitCode = 1;
+    });
+}
 
 // ─── graph ───────────────────────────────────────────────────────────────────
 const graphCmd = program
@@ -3500,6 +3950,57 @@ groupCmd
     }
   });
 
+// group flows <name>
+groupCmd
+  .command('flows <name>')
+  .description('Cross-repository system flows: stable local flows stitched across exact contract boundaries')
+  .option('--symbol <canonicalId>', 'Filter by canonical symbol ID in any segment')
+  .option('--contract <contractId>', 'Filter by boundary contract ID')
+  .option('--repo-id <repositoryId>', 'Filter by member repository ID')
+  .option('-l, --limit <n>', 'Max flows (default 20, max 100)')
+  .option('--offset <n>', 'Pagination offset')
+  .option('--no-cache', 'Rebuild instead of using the fingerprinted cache')
+  .option('--json', 'Output raw JSON')
+  .addHelpText('after', `
+  Only evidence-backed contract links (HTTP route facts) produce exact
+  continuations; name-only matches and partial coverage are listed as
+  candidates. System flows are static traces, not runtime traces.
+`)
+  .action(async (name: string, opts: { symbol?: string; contract?: string; repoId?: string; limit?: string; offset?: string; cache?: boolean; json?: boolean }) => {
+    if (!loadGroup(name)) {
+      console.error(`\n  ✗  Group "${name}" not found.\n`);
+      process.exit(1);
+    }
+    try {
+      const { result, cache } = await getGroupSystemFlows(name, { allowCache: opts.cache !== false });
+      const page = querySystemFlows(result, {
+        symbolId: opts.symbol,
+        contractId: opts.contract,
+        repositoryId: opts.repoId,
+        limit: opts.limit ? Number.parseInt(opts.limit, 10) : undefined,
+        offset: opts.offset ? Number.parseInt(opts.offset, 10) : undefined,
+      });
+      if (opts.json) {
+        console.log(JSON.stringify({ groupName: name, ...page, cacheHit: cache.hit }, null, 2));
+        return;
+      }
+      console.log(`\n  System flows for ${name}: ${page.total} exact, ${page.candidatesTotal} candidate continuation(s)${cache.hit ? ' (cached)' : ''}\n`);
+      for (const flow of page.flows) {
+        console.log(`  ${flow.id}  ${flow.certainty}`);
+        for (const segment of flow.segments) {
+          console.log(`    ${segment.repositoryId}: ${segment.entrySymbolId}${segment.exitSymbolId ? ` → ${segment.exitSymbolId}` : ''}`);
+          if (segment.boundaryToNext) console.log(`      ⇢ ${segment.boundaryToNext.kind} ${segment.boundaryToNext.contractId} (${segment.boundaryToNext.evidence})`);
+        }
+      }
+      if (page.truncated) console.log(`\n  … more results; use --offset ${page.offset + page.limit}`);
+      for (const boundary of page.boundaries) console.log(`  ! ${boundary.kind}: ${boundary.message}`);
+      console.log('');
+    } catch (err) {
+      console.error(`\n  ✗  ${err instanceof Error ? err.message : String(err)}\n`);
+      process.exitCode = 1;
+    }
+  });
+
 // group drift <name>
 groupCmd
   .command('drift <name>')
@@ -3510,6 +4011,7 @@ groupCmd
   .option('--repo <repo>', 'Restrict analysis to one member repo, by registry name')
   .option('-l, --limit <n>', 'Presentation limit for returned findings; analysis still computes total findings')
   .option('--no-cache', 'Force a full rebuild of both snapshots, ignoring any cached entry')
+  .option('--system-flows', 'Also list system flows crossing non-compatible changed contracts (current published indexes)')
   .option('--json', 'Output raw JSON instead of a human-readable summary')
   .addHelpText('after', `
   Compares each member repo's contracts (HTTP routes, shared schemas, events)
@@ -3522,7 +4024,7 @@ groupCmd
     $ code-intel group drift my-platform --base main --head HEAD --kind schema
     $ code-intel group drift my-platform --base main --head HEAD --repo auth-service --json
 `)
-  .action(async (name: string, opts: { base: string; head: string; kind?: string; repo?: string; limit?: string; cache?: boolean; json?: boolean }) => {
+  .action(async (name: string, opts: { base: string; head: string; kind?: string; repo?: string; limit?: string; cache?: boolean; systemFlows?: boolean; json?: boolean }) => {
     if (!loadGroup(name)) {
       console.error(`\n  ✗  Group "${name}" not found.\n`);
       process.exit(1);
@@ -3547,6 +4049,7 @@ groupCmd
         repositoryId,
         limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
         allowCache: opts.cache !== false,
+        includeSystemFlows: opts.systemFlows === true,
       });
 
       if (opts.json) {
@@ -4692,6 +5195,7 @@ program
   .option('--head <ref>', 'Head git ref (default: HEAD)', 'HEAD')
   .option('--fail-on <level>', 'Exit code 1 if this risk level found: HIGH|MEDIUM', '')
   .option('--format <fmt>', 'Output format: text|json|sarif (default: text)', 'text')
+  .option('--precision <mode>', 'Impact precision: graph|pdg|auto (default: graph)', 'graph')
   .option('--path <path>', 'Repo path (default: current dir)')
   .addHelpText('after', `
   Computes the blast radius for files changed between two git refs.
@@ -4707,6 +5211,7 @@ program
     head: string;
     failOn: string;
     format: string;
+    precision: string;
     path?: string;
   }) => {
     const repoPath = path.resolve(opts.path ?? '.');
@@ -4733,8 +5238,19 @@ program
     const { graph } = await loadOrAnalyzeWorkspace(repoPath);
 
     // 3. Compute PR impact
-    const { computePRImpact } = await import('../query/pr-impact.js');
-    const result = computePRImpact(graph, changedFiles, 5);
+    const precision = opts.precision.toLowerCase();
+    if (!['graph', 'pdg', 'auto'].includes(precision)) {
+      console.error('\n  ✗  --precision must be graph, pdg, or auto\n');
+      process.exitCode = 1;
+      return;
+    }
+    const { computePRImpactWithPrecision, parseDiffChangedLineRanges } = await import('../query/pr-impact.js');
+    const unifiedDiff = getUnifiedDiffBetweenRefs(repoPath, opts.base, opts.head);
+    const result = await computePRImpactWithPrecision(graph, changedFiles, 5, {
+      repoDir: repoPath,
+      precision: precision as 'graph' | 'pdg' | 'auto',
+      changedRanges: parseDiffChangedLineRanges(unifiedDiff),
+    });
 
     // 4. Output based on --format
     const fmt = (opts.format ?? 'text').toLowerCase();
@@ -4805,6 +5321,76 @@ program
     } else if (failOn === 'MEDIUM' && (result.riskSummary.HIGH > 0 || result.riskSummary.MEDIUM > 0)) {
       process.exit(1);
     }
+  });
+
+// ─── check / refactor ─────────────────────────────────────────────────────────
+// `check`: one structural verdict (explicit architecture policy, new import cycles,
+// API drift, untested high-risk change) for local/CI/pre-commit use. `refactor rename`:
+// canonical-identity rename, dry-run by default; --apply edits exact spans only and
+// re-verifies semantically. Logic lives in governance-commands.ts.
+
+program
+  .command('check')
+  .description('Structural check of a change: architecture policy, new import cycles, API drift, untested high-risk changes')
+  .option('--changed', 'Check uncommitted working-tree changes (against HEAD, or --base)')
+  .option('--base <ref>', 'Base ref: enables new-vs-pre-existing classification and API drift')
+  .option('--head <ref>', 'Head ref when not using --changed (default: HEAD)')
+  .option('--format <fmt>', 'Output format: text|json|sarif (default: text)', 'text')
+  .option('--fail-on <level>', 'Exit 1 when a finding at/above this severity exists: error|warning|note|never (default: error)', 'error')
+  .option('--rules <ids>', 'Comma-separated rule ids to run (default: all)')
+  .option('--max-findings <n>', 'Maximum findings returned (default: 500; truncation is reported)')
+  .option('--fresh', 'With --changed: analyze the working tree in memory instead of using the current index')
+  .option('--install-hook', 'Opt-in: install a Git pre-commit hook running `check --changed` (never overwrites an existing hook)')
+  .option('--path <path>', 'Repo path (default: current dir)')
+  .addHelpText('after', `
+  Rules: architecture/policy-invalid, architecture/layer-violation, graph/new-import-cycle,
+         api/breaking-change, risk/untested-change, refactor/verification-failed
+
+  Layer rules come only from .code-intel/architecture-policy.json. Inferred layers are
+  shown as advisory suggestions and never fail the check.
+
+  Exit codes: 0 = pass, 1 = findings at/above --fail-on, 2 = check could not run.
+
+  Examples:
+    $ code-intel check --changed
+    $ code-intel check --base main --format sarif > code-intel.sarif
+    $ code-intel check --changed --base main --fail-on warning
+    $ code-intel check --install-hook
+`)
+  .action(async (opts: { changed?: boolean; base?: string; head?: string; format?: string; failOn?: string; rules?: string; maxFindings?: string; fresh?: boolean; installHook?: boolean; path?: string }) => {
+    const { runCheckCommand } = await import('./governance-commands.js');
+    process.exitCode = await runCheckCommand(opts, loadOrAnalyzeWorkspace, _pkg.version);
+  });
+
+const refactorCmd = program
+  .command('refactor')
+  .description('Safe, canonical-identity refactorings (dry-run by default)');
+
+refactorCmd
+  .command('rename <selector> <newName>')
+  .description('Rename one canonical symbol and its exact references; dry-run unless --apply')
+  .option('--dry-run', 'Plan only; no file is modified (default)')
+  .option('--apply', 'Write the exact edits, then re-analyze and verify')
+  .option('--allow-dirty', 'Allow applying when the files to edit have uncommitted changes')
+  .option('--expect-plan <planId>', 'With --apply: refuse unless the fresh plan matches this reviewed plan id')
+  .option('--format <fmt>', 'Output format: text|json (default: text)', 'text')
+  .option('--path <path>', 'Repo path (default: current dir)')
+  .addHelpText('after', `
+  The selector is a symbol name or a canonical selector (kind:name@path[:line]).
+  A name shared by several symbols is refused (exit 2) with disambiguation candidates.
+
+  Only exact definition/reference/import/export spans are edited, and only for
+  languages whose capability is "apply" (TypeScript/JavaScript module-scope
+  declarations today). Strings, comments, config and generated files are reported
+  as candidates and never edited. Nothing is staged or committed.
+
+  Examples:
+    $ code-intel refactor rename UserService AccountService
+    $ code-intel refactor rename class:UserService@src/user.ts AccountService --apply --expect-plan rename:v1:…
+`)
+  .action(async (selector: string, newName: string, opts: { dryRun?: boolean; apply?: boolean; allowDirty?: boolean; expectPlan?: string; format?: string; path?: string }) => {
+    const { runRenameCommand } = await import('./governance-commands.js');
+    process.exitCode = await runRenameCommand(selector, newName, opts, loadOrAnalyzeWorkspace);
   });
 
 // ─── api-contract / api-impact / api-drift ────────────────────────────────────
@@ -4906,6 +5492,113 @@ program
     }
     console.log('');
     if (opts.verbose) printApiMatchInstrumentation(instrumentation);
+  });
+
+program
+  .command('api-shape-check')
+  .description('Check the response fields each consumer reads (nested paths) against the route\'s response shapes')
+  .option('--method <method>', 'HTTP method, e.g. GET, POST (omit to match any method)')
+  .option('--path <path>', 'Route path in framework or normalized spelling, e.g. /users/:id or /users/{}')
+  .option('--route-path <path>', 'Normalized route path, e.g. /users/{} (alias of --path)')
+  .option('--route-fact-id <id>', 'Exact route fact id from a prior api-contract/api-impact result')
+  .option('--max-findings <n>', 'Maximum findings per route (default: 100)')
+  .option('--dir <path>', 'Repo path (default: current dir)')
+  .option('--format <fmt>', 'Output format: text|json (default: text)', 'text')
+  .action(async (opts: { method?: string; path?: string; routePath?: string; routeFactId?: string; maxFindings?: string; dir?: string; format?: string }) => {
+    const repoPath = path.resolve(opts.dir ?? '.');
+    const { graph } = await loadOrAnalyzeWorkspace(repoPath);
+    const { getApiShapeCheck, normalizeRoutePath } = await import('../semantic/api-contracts/index.js');
+    const rawPath = opts.path ?? opts.routePath;
+    const maxFindings = opts.maxFindings ? Number.parseInt(opts.maxFindings, 10) : undefined;
+    const result = getApiShapeCheck(
+      graph,
+      { method: opts.method, normalizedPath: rawPath ? normalizeRoutePath(rawPath).normalizedPath : undefined, routeFactId: opts.routeFactId },
+      'local',
+      maxFindings && maxFindings > 0 ? { maxFindings } : {},
+    );
+
+    if ((opts.format ?? 'text').toLowerCase() === 'json') {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+    if (result.length === 0) {
+      console.log('\n  No matching route contract found.\n');
+      return;
+    }
+    console.log('\n  ◈  API Shape Check\n');
+    for (const entry of result) {
+      const check = entry.shapeCheck;
+      console.log(`  ${entry.route.method} ${entry.route.path}  verdict: ${check.verdict.toUpperCase()}`);
+      console.log(`    consumers: ${check.consumerCount}  producer coverage: ${formatApiCoverage(check.producerCoverage)}  consumer coverage: ${formatApiCoverage(check.consumerCoverage)}`);
+      for (const finding of check.findings) {
+        console.log(`    [${finding.verdict.toUpperCase()}] ${finding.path}${finding.optional ? ' (optional)' : ''}  ${finding.evidence[0] ?? ''}`);
+        if (finding.verdict !== 'compatible') console.log(`      ${finding.reason}`);
+      }
+      if (check.truncated) console.log(`    … ${check.totalFindings - check.findings.length} more finding(s); raise --max-findings`);
+      console.log('');
+    }
+  });
+
+program
+  .command('taint-trace')
+  .description('Trace candidate source-to-sink taint paths using declarative models (built-in, framework, .code-intel/taint-models.json)')
+  .option('--symbol <selector>', 'Function/method to analyze (name or qualified kind:name@file:line); omit for a bounded scan')
+  .option('--source <selector>', 'Only findings from this source (model/matcher ref, matcher id, or model id)')
+  .option('--sink <selector>', 'Only findings into this sink (model/matcher ref, matcher id, model id, or category such as sql/command)')
+  .option('--no-interprocedural', 'Do not follow persisted call edges across functions')
+  .option('--interprocedural', 'Follow persisted call edges (default with --symbol; off for scans)')
+  .option('--max-findings <n>', 'Maximum findings returned (default: 50; totalFindings is exact)')
+  .option('--max-functions <n>', 'Scan mode: maximum functions analyzed (default: 200)')
+  .option('--verbose', 'Include propagation statement ids')
+  .option('--dir <path>', 'Repo path (default: current dir)')
+  .option('--format <fmt>', 'Output format: text|json (default: text)', 'text')
+  .action(async (opts: { symbol?: string; source?: string; sink?: string; interprocedural?: boolean; maxFindings?: string; maxFunctions?: string; verbose?: boolean; dir?: string; format?: string }, command: { getOptionValueSource?: (key: string) => string | undefined }) => {
+    const repoPath = path.resolve(opts.dir ?? '.');
+    const { graph } = await loadOrAnalyzeWorkspace(repoPath);
+    const { traceTaint } = await import('../query/taint-trace.js');
+    const positive = (value?: string) => {
+      const parsed = value ? Number.parseInt(value, 10) : NaN;
+      return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+    };
+    const interproceduralExplicit = command.getOptionValueSource?.('interprocedural') === 'cli';
+    const result = await traceTaint({
+      repoDir: repoPath,
+      graph,
+      symbol: opts.symbol,
+      source: opts.source,
+      sink: opts.sink,
+      ...(interproceduralExplicit ? { interprocedural: opts.interprocedural } : {}),
+      maxFindings: positive(opts.maxFindings),
+      maxFunctions: positive(opts.maxFunctions),
+      verbose: !!opts.verbose,
+    });
+
+    if ((opts.format ?? 'text').toLowerCase() === 'json') {
+      console.log(JSON.stringify(result, null, 2));
+      if (result.verdict === 'model-error' || result.verdict === 'ambiguous' || result.verdict === 'not-found') process.exitCode = result.verdict === 'ambiguous' ? AMBIGUOUS_SYMBOL_EXIT_CODE : 1;
+      return;
+    }
+    console.log('\n  ◈  Taint Trace\n');
+    console.log(`  verdict: ${result.verdict}`);
+    console.log(`  ${result.summary}`);
+    if (result.verdict === 'model-error') {
+      for (const item of result.models.diagnostics) console.log(`    ✗ ${item.origin} ${item.path}: ${item.message}`);
+      process.exitCode = 1;
+      return;
+    }
+    for (const candidate of result.candidates ?? []) console.log(`    ${candidate}`);
+    console.log(`  models: ${result.models.ids.join(', ') || '(none)'}  (project models: ${result.models.projectModels.status})`);
+    for (const finding of result.findings) {
+      console.log(`\n  [${finding.sink.category ?? 'sink'}] ${finding.source.modelId}/${finding.source.matcherId} → ${finding.sink.modelId}/${finding.sink.matcherId}  certainty: ${finding.certainty}${finding.interprocedural ? '  (interprocedural)' : ''}`);
+      console.log(`    source ${finding.source.filePath}:${finding.source.line ?? '?'}  →  sink ${finding.sink.filePath}:${finding.sink.line ?? '?'}  via ${finding.variable}`);
+      for (const hop of finding.path.hops) console.log(`    hop ${hop.callerFunctionId} → ${hop.calleeFunctionId} (${hop.transfer}, call ${hop.callCertainty}${hop.callComplete ? '' : ', incomplete'})`);
+      if (finding.sanitizers.note) console.log(`    note: ${finding.sanitizers.note}`);
+    }
+    if (result.truncated) for (const reason of result.truncationReasons) console.log(`\n  … truncated: ${reason}`);
+    console.log(`\n  coverage: ${result.coverage.complete ? 'complete' : 'partial'}  analyzed=${result.coverage.analyzedFunctions} skipped=${result.coverage.skippedFunctions}  interprocedural=${result.coverage.interprocedural.allowed ? 'on' : 'off'}`);
+    for (const note of result.coverage.notes) console.log(`    - ${note}`);
+    for (const boundary of result.coverage.boundaries.slice(0, 10)) console.log(`    · ${boundary}`);
+    console.log('');
   });
 
 program
@@ -5304,7 +5997,11 @@ program
 program
   .command('upgrade')
   .description('Activate a verified bundled runtime archive side-by-side')
-  .option('--archive <path>', 'Runtime archive produced by scripts/distribution/build-runtime-bundle.mjs')
+  .option('--bundle-dir <dir>', 'Release bundle directory (index, attestation, archive, sidecars); authenticity-verified')
+  .option('--offline', 'With --bundle-dir: deny all network access during verification and install')
+  .option('--target <target>', 'With --bundle-dir: runtime target (default: this platform)')
+  .option('--trusted-root <file>', 'With --bundle-dir: operator-supplied Sigstore trusted root instead of the pinned one')
+  .option('--archive <path>', 'Runtime archive produced by scripts/distribution/build-runtime-bundle.mjs (checksum-only)')
   .option('--checksum <sha256>', 'Expected SHA-256 for the archive')
   .option('--checksum-file <path>', 'Checksum file containing the archive hash')
   .option('--version <v>', 'Expected product version inside the archive')
@@ -5354,6 +6051,14 @@ versionCommand
   .description('Pin one installed bundled runtime version')
   .argument('<version>', 'Installed version to pin')
   .option('--install-root <path>', 'Override install root')
+  .action(() => {
+    // handled by standalone bootstrap before commander runs
+  });
+
+program
+  .command('verify-install')
+  .description('Report the installed runtime\'s integrity and authenticity state')
+  .option('--json', 'Emit machine-readable output')
   .action(() => {
     // handled by standalone bootstrap before commander runs
   });

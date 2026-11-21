@@ -90,6 +90,24 @@ export default defineConfig([
     treeshake: true,
     splitting: false,
   },
+  // Runtime trust entries — imported by release scripts and the bootstrap installer
+  // (scripts/distribution/install/install-runtime.mjs, scripts/verify-runtime-release-assets.mjs)
+  // so archive preflight and attestation checks have a single implementation.
+  {
+    entry: {
+      'cli/runtime-archive-preflight': 'src/cli/runtime-archive-preflight.ts',
+      'cli/runtime-bundle-index': 'src/cli/runtime-bundle-index.ts',
+      'cli/runtime-trust': 'src/cli/runtime-trust.ts',
+    },
+    format: ['esm'],
+    outDir: 'dist',
+    dts: false,
+    sourcemap: true,
+    clean: false,
+    external: [/^node:/],
+    treeshake: true,
+    splitting: false,
+  },
   // Workflow validation entry — dist/agents/workflows/validate-cli.js (tiny binary,
   // run at build time by scripts in package.json's `build` script). Same minimal
   // self-contained bundling pattern as cli/hook: no OTel, no DB, no graph.

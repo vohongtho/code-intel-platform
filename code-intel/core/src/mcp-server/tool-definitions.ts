@@ -23,16 +23,36 @@ const REPO_SELECTABLE_TOOL_NAMES = new Set([
   'overview', 'search', 'context', 'blast_radius', 'file_symbols', 'find_path', 'list_exports', 'routes', 'clusters', 'flows',
   'detect_changes', 'query', 'raw_query', 'explain_relationship', 'pr_impact', 'similar_symbols', 'health_report',
   'suggest_tests', 'cluster_summary', 'deprecated_usage', 'complexity_hotspots', 'coverage_gaps', 'secrets', 'vulnerability_scan',
-  'api_contract', 'api_impact', 'api_drift', 'graph_diff',
+  'api_contract', 'api_impact', 'api_shape_check', 'api_drift', 'graph_diff', 'change_workflow', 'taint_trace',
+  'rename_plan', 'structural_check',
 ]);
+/**
+ * Read-only, single-repo graph tools that can be served from an alternate committed
+ * ref's semantic snapshot. Excluded on purpose: tools that already compare refs
+ * (graph_diff, pr_impact, detect_changes, api_drift), tools that read the working
+ * tree or source files (taint_trace, secrets, vulnerability_scan, suggest_tests,
+ * coverage_gaps), cross-repo/group tools, and anything that writes.
+ */
+export const REF_SELECTABLE_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'overview', 'search', 'inspect', 'context', 'explore', 'blast_radius', 'file_symbols', 'find_path', 'list_exports',
+  'routes', 'clusters', 'flows', 'query', 'explain_relationship', 'similar_symbols', 'health_report', 'cluster_summary',
+  'deprecated_usage', 'complexity_hotspots', 'api_contract', 'api_impact', 'api_shape_check',
+]);
+const _refProp = {
+  ref: {
+    type: 'string' as const,
+    description: 'Optional committed Git ref (branch, tag, SHA) to read instead of the current index. Served from an isolated semantic snapshot (built on first use, then cached); never changes the checkout or current index. Omit for current behavior.',
+  },
+};
 const withRepoSelector = <T extends { name: string; inputSchema?: { type?: string; properties?: Record<string, unknown> } }>(tool: T): T => (
-  REPO_SELECTABLE_TOOL_NAMES.has(tool.name) && tool.inputSchema?.type === 'object'
+  (REPO_SELECTABLE_TOOL_NAMES.has(tool.name) || REF_SELECTABLE_TOOL_NAMES.has(tool.name)) && tool.inputSchema?.type === 'object'
     ? {
         ...tool,
         inputSchema: {
           ...tool.inputSchema,
           properties: {
-            ..._repoSelectorProps,
+            ...(REPO_SELECTABLE_TOOL_NAMES.has(tool.name) ? _repoSelectorProps : {}),
+            ...(REF_SELECTABLE_TOOL_NAMES.has(tool.name) ? _refProp : {}),
             ...(tool.inputSchema.properties ?? {}),
           },
         },
@@ -135,6 +155,31 @@ export const MCP_TOOL_DEFINITIONS = [
         ..._tokenProp,
       },
       required: ['symbols'],
+    },
+  },
+  {
+    name: 'explore',
+    description: 'Task-oriented exploration in one call: scoped search, graph-aware rerank, bounded intent expansion (impact/API/tests/security), and a token-budgeted context document with per-symbol render modes (full/snippet/signature/skeleton/reference). Specialized tools stay independently callable; absence of evidence is reported as a coverage boundary, never as proof.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        task: { type: 'string', description: 'What you are trying to understand, debug, change, review, secure, or integrate' },
+        intent: {
+          type: 'string',
+          enum: ['auto', 'understand', 'debug', 'change', 'review', 'security', 'api'],
+          description: 'Allocation/orchestration hint (default: auto-detected from the task). Never changes semantic truth.',
+        },
+        max_tokens: { type: 'number', description: 'Max total tokens for the returned context (default: 6000, server max: 6000)' },
+        compression: {
+          type: 'string',
+          enum: ['auto', 'none', 'aggressive'],
+          description: 'Source render policy: auto (default), none (no skeleton/signature compression), aggressive',
+        },
+        explain_ranking: { type: 'boolean', description: 'Include top rerank contributions per seed (default: false)' },
+        seeds: { type: 'number', description: 'Number of seed symbols to expand (1-8, default 5)' },
+        ..._tokenProp,
+      },
+      required: ['task'],
     },
   },
   {
@@ -374,6 +419,50 @@ export const MCP_TOOL_DEFINITIONS = [
       required: ['name'],
     },
   },
+  {
+    name: 'system_flows',
+    description: 'Read-only cross-repository system flows for a group: stable local flows stitched across exact provider/consumer contract boundaries (HTTP route facts; never name-only matches). Candidate continuations are listed separately. Static traces over published indexes, not runtime traces; bounded pagination with coverage/truncation fields.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        name: { type: 'string', description: 'Group name' },
+        symbol_id: { type: 'string', description: 'Filter: canonical symbol ID that appears in any segment' },
+        contract_id: { type: 'string', description: 'Filter: contract ID crossed at a boundary' },
+        repository_id: { type: 'string', description: 'Filter: member repository ID' },
+        limit: { type: 'number', description: 'Max flows to return (default 20, max 100)' },
+        offset: { type: 'number', description: 'Pagination offset (default 0)' },
+        ..._tokenProp,
+      },
+      required: ['name'],
+    },
+  },
+
+  // ── Change workflows ──────────────────────────────────────────────────
+  {
+    name: 'change_workflow',
+    description: 'Resumable, graph-verified change session: start (pin baseline + plan required/candidate/optional/blocked steps), status, checkpoint (declare expectations / mark edited), verify (expected-vs-actual after you edit files and run `code-intel analyze`), complete (suggested commit plan only). Never edits source or touches Git; stale indexes report reindex-required; unknown/partial evidence never counts as satisfied.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        action: { type: 'string', enum: ['start', 'status', 'checkpoint', 'verify', 'complete', 'list'], description: 'Workflow action' },
+        session_id: { type: 'string', description: 'Session ID (wf_…); required except for start/list' },
+        task: { type: 'string', description: 'start: what you intend to change' },
+        scope: { type: 'string', enum: ['repo', 'group'], description: 'start/lookup scope (default repo = the selected repository)' },
+        group: { type: 'string', description: 'Group name when scope is group' },
+        targets: { type: 'array', items: { type: 'string' }, description: 'start: symbol names or canonical node IDs that must change (unique matches become required steps)' },
+        task_retention: { type: 'string', enum: ['summary', 'fingerprint-only'], description: 'start: keep a truncated task summary (default) or only its fingerprint' },
+        expected_revision: { type: 'number', description: 'Optimistic concurrency: the session revision you last saw; a stale revision is rejected' },
+        note: { type: 'string', description: 'checkpoint: short note' },
+        conditions: { type: 'array', items: { type: 'object' }, description: 'checkpoint: expected conditions to add, e.g. {"kind":"contract-expected-breaking","contractId":"…"}' },
+        remove_condition_ids: { type: 'array', items: { type: 'string' }, description: 'checkpoint: condition IDs to remove (e.g. to restate a target after a signature change)' },
+        step_id: { type: 'string', description: 'checkpoint: plan step to attach conditions/lenses to' },
+        lenses: { type: 'array', items: { type: 'string', enum: ['architecture', 'api', 'tests', 'security', 'change-risk', 'scope'] }, description: 'checkpoint: additional review lenses' },
+        edited: { type: 'boolean', description: 'checkpoint: you edited files; move to reindex-required' },
+        ..._tokenProp,
+      },
+      required: ['action'],
+    },
+  },
 
   // ── Reasoning / analysis tools ────────────────────────────────────────
   {
@@ -407,6 +496,11 @@ export const MCP_TOOL_DEFINITIONS = [
         maxHops: {
           type: 'number',
           description: 'Maximum BFS depth for blast radius (default: 2, max: 10)',
+        },
+        precision: {
+          type: 'string',
+          enum: ['graph', 'pdg', 'auto'],
+          description: 'Impact precision. Default graph preserves existing behavior; pdg explicitly attempts statement slicing; auto remains graph until the evaluation gate passes.',
         },
         analysisMode: {
           type: 'string',
@@ -448,6 +542,38 @@ export const MCP_TOOL_DEFINITIONS = [
     },
   },
   {
+    name: 'api_shape_check',
+    description: 'Checks the response fields each statically resolved consumer reads (nested paths such as user.profile.displayName or items[].price, through destructuring, optional chaining and local aliases) against the route\'s success response shapes. Verdict is breaking only for exact reads of fields a complete producer shape lacks; it is compatible only when producer and consumer coverage are both complete — otherwise unknown.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        method: { type: 'string', description: 'HTTP method, e.g. GET, POST (omit to match any method)' },
+        path: { type: 'string', description: 'Route path in framework (/users/:id) or normalized (/users/{}) spelling' },
+        route_fact_id: { type: 'string', description: 'Exact route fact id from a prior api_contract/api_impact result' },
+        route_node_id: { type: 'string', description: "The route's graph node id (as returned by inspect/routes/query)" },
+        max_findings: { type: 'number', description: 'Maximum findings per route (default 100; totalFindings is always exact)' },
+        ..._tokenProp,
+      },
+    },
+  },
+  {
+    name: 'taint_trace',
+    description: 'Traces candidate source-to-sink taint paths (user input reaching SQL/command/code/path/XSS sinks) with declarative models: built-in runtime models, framework adapters, and the repo\'s .code-intel/taint-models.json. With `symbol`, follows persisted call edges across functions when the index is trusted (certainty bounded by each call edge). Returns model ids, source/sink, sanitizer evidence, path, certainty, coverage and truncation. A no-finding result is never a safety proof: verdict is no-findings-partial-coverage whenever language/model/interprocedural coverage is incomplete.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        symbol: { type: 'string', description: 'Function/method to analyze (name or qualified kind:name@file:line). Omit for a bounded scan of function nodes.' },
+        source: { type: 'string', description: 'Filter by source: model/matcher ref, matcher id, or model id' },
+        sink: { type: 'string', description: 'Filter by sink: model/matcher ref, matcher id, model id, or category (sql, command, code, path, xss, ssrf, deserialization, other)' },
+        interprocedural: { type: 'boolean', description: 'Follow persisted call edges (default true with symbol, false for scans)' },
+        max_findings: { type: 'number', description: 'Maximum findings (default 50; totalFindings is exact)' },
+        max_functions: { type: 'number', description: 'Scan mode: maximum functions analyzed (default 200)' },
+        verbose: { type: 'boolean', description: 'Include propagation statement ids' },
+        ..._tokenProp,
+      },
+    },
+  },
+  {
     name: 'api_drift',
     description: 'Compares API contracts between two separately indexed repositories (base vs head) and reports compatibility findings (compatible/potentially-breaking/breaking/unknown) with consumer evidence and coverage. Both sides must already be indexed and registered (see the `repos` tool) — this does not perform git branch/ref diffing.',
     inputSchema: {
@@ -477,6 +603,35 @@ export const MCP_TOOL_DEFINITIONS = [
         ..._tokenProp,
       },
       required: ['base_ref', 'head_ref'],
+    },
+  },
+  {
+    name: 'rename_plan',
+    description: 'Read-only rename plan for ONE canonical symbol: exact definition/reference/import/export edits with source spans, candidate string/comment/config mentions that are never auto-edited, language capability (apply | preview-only | unsupported), boundaries that block apply, affected tests, and a plan id. A name shared by several symbols returns disambiguation candidates instead of guessing. Never writes files; apply locally with `code-intel refactor rename … --apply --expect-plan <planId>`.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        selector: { type: 'string', description: 'Symbol name or canonical selector kind:name@path[:line]' },
+        newName: { type: 'string', description: 'New identifier' },
+        max_occurrences: { type: 'number', description: 'Max occurrences returned (default: 200, max: 2000); totals are always reported' },
+        ..._tokenProp,
+      },
+      required: ['selector', 'newName'],
+    },
+  },
+  {
+    name: 'structural_check',
+    description: 'Read-only structural verdict for a change: explicit architecture-policy violations (.code-intel/architecture-policy.json; inferred layers are advisory only and never produce findings), newly introduced import cycles, breaking API-contract drift, and changed high-risk symbols without known tests. Each finding has rule id, severity, location, evidence, certainty and whether the change introduced it. Pass base_ref (and optional head_ref) to compare isolated snapshots, or changedFiles to check against the current index without a base.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        changedFiles: { type: 'array', items: { type: 'string' }, description: 'Repo-relative changed files (current-index mode, no base)' },
+        base_ref: { type: 'string', description: 'Base Git ref; enables new-vs-pre-existing classification and API drift' },
+        head_ref: { type: 'string', description: 'Head Git ref (default: HEAD); requires base_ref' },
+        rules: { type: 'array', items: { type: 'string' }, description: 'Rule ids to run (default: all)' },
+        max_findings: { type: 'number', description: 'Max findings returned (default: 200, max: 2000); totals are always reported' },
+        ..._tokenProp,
+      },
     },
   },
   {

@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "benchmark": "pdg-mutation",
+  "supportedLanguages": [
+    "typescript"
+  ],
+  "cases": [
+    {
+      "id": "tax-rate-body-edit",
+      "description": "Change the tax calculation while keeping valid TypeScript.",
+      "language": "typescript",
+      "expectedImpactedSymbols": [
+        "calculateTotal"
+      ],
+      "graph": {
+        "predictedSymbols": [
+          "calculateTotal",
+          "formatTotal",
+          "pricing.ts"
+        ],
+        "truePositives": 1,
+        "falsePositives": 2,
+        "falseNegatives": 0,
+        "precision": 0.3333333333333333,
+        "recall": 1
+      },
+      "pdg": {
+        "predictedSymbols": [
+          "calculateTotal",
+          "formatTotal",
+          "pricing.ts"
+        ],
+        "truePositives": 1,
+        "falsePositives": 2,
+        "falseNegatives": 0,
+        "precision": 0.3333333333333333,
+        "recall": 1
+      },
+      "deterministic": {
+        "graph": true,
+        "pdg": true
+      }
+    },
+    {
+      "id": "formatting-body-edit",
+      "description": "Change formatting behavior while keeping valid TypeScript.",
+      "language": "typescript",
+      "expectedImpactedSymbols": [
+        "formatTotal"
+      ],
+      "graph": {
+        "predictedSymbols": [
+          "calculateTotal",
+          "formatTotal",
+          "pricing.ts"
+        ],
+        "truePositives": 1,
+        "falsePositives": 2,
+        "falseNegatives": 0,
+        "precision": 0.3333333333333333,
+        "recall": 1
+      },
+      "pdg": {
+        "predictedSymbols": [
+          "calculateTotal",
+          "formatTotal",
+          "pricing.ts"
+        ],
+        "truePositives": 1,
+        "falsePositives": 2,
+        "falseNegatives": 0,
+        "precision": 0.3333333333333333,
+        "recall": 1
+      },
+      "deterministic": {
+        "graph": true,
+        "pdg": true
+      }
+    }
+  ],
+  "summary": {
+    "graph": {
+      "precision": 0.333333,
+      "recall": 1
+    },
+    "pdg": {
+      "precision": 0.333333,
+      "recall": 1
+    },
+    "relativePrecisionImprovement": 0,
+    "recallRegressionPercentagePoints": 0,
+    "deterministic": true
+  },
+  "gate": {
+    "maximumRecallRegressionPercentagePoints": 2,
+    "minimumRelativePrecisionImprovement": 0.1,
+    "passed": false,
+    "autoPrecision": "graph"
+  }
+}

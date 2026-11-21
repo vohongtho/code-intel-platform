@@ -5,3 +5,6 @@ export * from './producer-common.js';
 export * from './matcher.js';
 export * from './compatibility.js';
 export * from './service.js';
+export * from './shape-check.js';
+export { ARRAY_ELEMENT_SEGMENT, ACCESS_PATH_LIMITS, formatAccessPath, parseAccessPath, trackAccessPaths } from './consumers/access-paths.js';
+export type { AccessPathResult, AccessPathRoot, ConsumerAccessPath } from './consumers/access-paths.js';

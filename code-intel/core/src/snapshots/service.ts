@@ -2,10 +2,15 @@ import { type KnowledgeGraph } from '../graph/knowledge-graph.js';
 import { loadGraphSnapshotFromDbPath } from '../multi-repo/graph-from-db.js';
 import { getApiDrift } from '../semantic/api-contracts/service.js';
 import { detectRenamedFiles } from './git-materializer.js';
-import { DEFAULT_SNAPSHOT_CACHE_POLICY, getOrBuildSnapshot, type SnapshotCachePolicy } from './cache.js';
-import { diffEntitiesWithContinuity, diffRelationships } from './graph-diff.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { DEFAULT_SNAPSHOT_CACHE_POLICY, getOrBuildSnapshot, readSnapshotCapabilities, type SnapshotCachePolicy } from './cache.js';
+import type { IndexViewSummary } from '../storage/index-view.js';
+import type { IndexMetadata } from '../storage/metadata.js';
+import { diffEntitiesWithContinuity, diffFlows, diffRelationships } from './graph-diff.js';
 import { normalizeGraphForDiff } from './normalizer.js';
 import { readContentFingerprints } from './content-fingerprints.js';
+import { FLOW_IDENTITY_VERSION } from '../flow-detection/identity.js';
 import type { PhaseMetric, SemanticGraphDiff, SnapshotBoundary, SnapshotBuildRequest, SnapshotBuildResult } from './types.js';
 
 /** Wall-clock time/memory spent computing the diff itself, once both snapshots are usable — see `PhaseMetric`. */
@@ -38,6 +43,31 @@ export interface GraphDiffResponse {
   head: SnapshotBuildResult;
   /** Only present when a diff was actually computed (both sides usable). */
   phases?: GraphDiffPhaseDurations;
+}
+
+/**
+ * The selected-index identity of one diff side, in the same compact shape ref-aware
+ * read tools return (`indexView`), so a client can show *which* immutable views were
+ * compared (and whether one lacks source content) without re-deriving anything.
+ * Undefined when the side produced no usable snapshot.
+ */
+export function summarizeSnapshotBuild(result: SnapshotBuildResult, ref: string): IndexViewSummary | undefined {
+  if (!result.artifactsDir || !result.descriptor || (result.status !== 'built' && result.status !== 'cached')) return undefined;
+  let metadata: IndexMetadata | null = null;
+  try { metadata = JSON.parse(fs.readFileSync(path.join(result.artifactsDir, 'meta.json'), 'utf8')) as IndexMetadata; } catch { /* derived below */ }
+  const capabilities = readSnapshotCapabilities(result.artifactsDir, metadata);
+  if (!capabilities) return undefined;
+  return {
+    kind: 'semantic-snapshot',
+    identity: result.descriptor.snapshotId,
+    ref,
+    ...(result.descriptor.commit ? { commit: result.descriptor.commit } : {}),
+    gitTree: result.descriptor.gitTree,
+    resolution: result.fromCache ? 'cached' : 'built',
+    privacyProfile: capabilities.privacyProfile,
+    capabilities: { sourceContent: capabilities.sourceContent, bm25: capabilities.bm25, vector: capabilities.vector, evidence: capabilities.evidence },
+    ...(capabilities.sourceContent ? {} : { boundaries: [{ kind: 'missing-content' as const, message: `Snapshot was imported with privacy profile '${capabilities.privacyProfile}'; indexed source content is unavailable.` }] }),
+  };
 }
 
 function phaseMetric(startedAt: number, startRss: number): PhaseMetric {
@@ -107,6 +137,11 @@ export async function computeSemanticGraphDiff(request: GraphDiffRequest): Promi
   const diffStartRss = process.memoryUsage().rss;
   const nodes = diffEntitiesWithContinuity(baseNormalized, headNormalized, renamedFiles);
   const relationships = diffRelationships(baseNormalized, headNormalized);
+  const stableFlowIdentity = base.descriptor.flowIdentityFingerprint === FLOW_IDENTITY_VERSION
+    && head.descriptor.flowIdentityFingerprint === FLOW_IDENTITY_VERSION;
+  const flows: SemanticGraphDiff['flows'] = stableFlowIdentity
+    ? { supported: true, deltas: diffFlows(baseNormalized, headNormalized) }
+    : { supported: false, reason: 'Flow diff requires snapshots produced with the current stable flow identity version.' };
   const diffPhase = phaseMetric(diffStarted, diffStartRss);
 
   const contractsStarted = Date.now();
@@ -131,7 +166,7 @@ export async function computeSemanticGraphDiff(request: GraphDiffRequest): Promi
     nodes,
     relationships,
     contracts,
-    flows: { supported: false, reason: 'Flow node identity (pipeline/phases/flow-phase.ts) is a per-run enumeration index, not a content fingerprint, so it is not guaranteed stable across independent analysis runs.' },
+    flows,
     clusters: { supported: false, reason: 'Cluster node identity (pipeline/phases/cluster-phase.ts) is a per-run enumeration index, not a content fingerprint, so it is not guaranteed stable across independent analysis runs.' },
     coverage: {
       complete: incompleteReasons.length === 0,

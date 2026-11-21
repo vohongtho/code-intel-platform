@@ -130,10 +130,30 @@ export const openApiSpec = {
           },
         ],
       },
+      IndexViewSummary: {
+        type: 'object',
+        description: 'Identity of the immutable index a ref-served response was read from.',
+        properties: {
+          kind: { type: 'string', enum: ['generation', 'semantic-snapshot'] },
+          identity: { type: 'string', description: 'Snapshot ID (content-derived) or generation ID' },
+          ref: { type: 'string' },
+          commit: { type: 'string' },
+          gitTree: { type: 'string' },
+          resolution: { type: 'string', enum: ['active', 'cached', 'built'] },
+          privacyProfile: { type: 'string', enum: ['full', 'metadata-only'] },
+          capabilities: {
+            type: 'object',
+            properties: { sourceContent: { type: 'boolean' }, bm25: { type: 'boolean' }, vector: { type: 'boolean' }, evidence: { type: 'boolean' } },
+          },
+          boundaries: { type: 'array', items: { type: 'object', properties: { kind: { type: 'string' }, message: { type: 'string' } } } },
+        },
+        required: ['kind', 'identity', 'resolution', 'privacyProfile', 'capabilities'],
+      },
       SearchRequest: {
         type: 'object',
         properties: {
           query: { type: 'string', description: 'Search query' },
+          ref: { type: 'string', description: "Optional committed Git ref (branch, tag or SHA). Serves the request from that ref's isolated semantic snapshot instead of the current index; never falls back to current state. Building an uncached snapshot requires the analyst role. Cannot be combined with a group scope." },
           limit: { type: 'integer', default: 20 },
           mode: { type: 'string', enum: ['bm25', 'vector', 'hybrid'], default: 'hybrid', description: 'Malformed explicit scope fails closed with 400; unknown explicit repo/group targets return 404.' },
           scope: { '$ref': '#/components/schemas/SearchScope' },
@@ -148,6 +168,7 @@ export const openApiSpec = {
         properties: {
           results: { type: 'array', items: { '$ref': '#/components/schemas/CodeNode' } },
           searchMode: { type: 'string', enum: ['bm25', 'vector', 'hybrid'] },
+          indexView: { '$ref': '#/components/schemas/IndexViewSummary' },
           scope: { '$ref': '#/components/schemas/ResolvedSearchScope' },
           deprecated: { type: 'boolean' },
           deprecation: { type: 'string' },
@@ -158,6 +179,42 @@ export const openApiSpec = {
           hasMore: { type: 'boolean' },
         },
         required: ['results', 'searchMode'],
+      },
+      ExploreRequest: {
+        type: 'object',
+        properties: {
+          task: { type: 'string', description: 'What you are trying to understand, debug, change, review, secure, or integrate' },
+          ref: { type: 'string', description: "Optional committed Git ref (branch, tag or SHA). Serves the request from that ref's isolated semantic snapshot instead of the current index; never falls back to current state. Building an uncached snapshot requires the analyst role. Working-tree source hydration is disabled at a ref." },
+          intent: { type: 'string', enum: ['auto', 'understand', 'debug', 'change', 'review', 'security', 'api'], description: 'Allocation/orchestration hint; never changes semantic truth. Default: detected from the task.' },
+          max_tokens: { type: 'integer', minimum: 128, maximum: 6000, description: 'Hard token budget for the returned context (clamped to 128-6000, default 6000)' },
+          compression: { type: 'string', enum: ['auto', 'none', 'aggressive'], default: 'auto' },
+          explain_ranking: { type: 'boolean', default: false, description: 'Include top rerank contributions per seed' },
+          seeds: { type: 'integer', minimum: 1, maximum: 8, default: 5 },
+          scope: { type: 'object', description: 'Repo scope only: { type: "repo", repoId }. Group scope is rejected.' },
+          repoId: { type: 'string' },
+        },
+        required: ['task'],
+      },
+      ExploreResponse: {
+        type: 'object',
+        description: 'Bounded exploration result. Absence of evidence is reported through certainty, coverage, boundaries and capabilities.degraded, never as proof.',
+        properties: {
+          task: { type: 'string' },
+          intent: { type: 'string', enum: ['understand', 'debug', 'change', 'review', 'security', 'api'] },
+          intentSource: { type: 'string', enum: ['requested', 'detected'] },
+          maxTokens: { type: 'integer' },
+          seeds: { type: 'array', items: { type: 'object' } },
+          evidence: { type: 'object' },
+          context: { type: 'object', description: 'summary/logic/relation/focusCode blocks, blockTokens, renderDecisions (full|snippet|signature|skeleton|reference) and omitted receipts' },
+          certainty: { type: 'string', enum: ['exact', 'lower-bound', 'heuristic', 'truncated', 'unavailable'] },
+          coverage: { '$ref': '#/components/schemas/AnalysisCoverage' },
+          boundaries: { type: 'array', items: { type: 'object' } },
+          capabilities: { type: 'object' },
+          counters: { type: 'object', description: 'Counts and token totals only; no raw source or task text' },
+          durationsMs: { type: 'object' },
+          ranking: { type: 'array', items: { type: 'object' }, description: 'Only when explain_ranking is true' },
+        },
+        required: ['task', 'intent', 'seeds', 'context', 'certainty', 'capabilities', 'counters'],
       },
       AnalysisCoverage: {
         type: 'object',
@@ -258,6 +315,111 @@ export const openApiSpec = {
         },
       },
     },
+    '/explore': {
+      post: {
+        tags: ['Search'],
+        summary: 'Task-oriented exploration (search + rerank + bounded expansion + budgeted context)',
+        requestBody: { required: true, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ExploreRequest' } } } },
+        responses: {
+          '200': { description: 'Exploration result', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ExploreResponse' } } } },
+          '400': { description: 'Missing task, invalid intent/compression, or group scope', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '404': { description: 'Repo not found or not indexed', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
+    '/workflows': {
+      get: {
+        tags: ['Workflows'],
+        summary: 'List change-workflow sessions in a repo or group scope that the caller may access (owner or admin)',
+        parameters: [
+          { name: 'repoId', in: 'query', required: false, schema: { type: 'string' } },
+          { name: 'group', in: 'query', required: false, schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': { description: 'Visible sessions', content: { 'application/json': { schema: { type: 'object' } } } },
+          '403': { description: 'No access to a repository in scope', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+      post: {
+        tags: ['Workflows'],
+        summary: 'Start a change session (pins the current trusted index; caller becomes the owner; analyst role)',
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['task'], properties: {
+          task: { type: 'string' },
+          targets: { type: 'array', items: { type: 'string' } },
+          repoId: { type: 'string' },
+          scope: { type: 'string', enum: ['repo', 'group'] },
+          group: { type: 'string' },
+          task_retention: { type: 'string', enum: ['summary', 'fingerprint-only'] },
+        } } } } },
+        responses: {
+          '201': { description: 'Compact session view', content: { 'application/json': { schema: { type: 'object' } } } },
+          '403': { description: 'Role or repository access insufficient', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '409': { description: 'Index not trusted/current (run analyze first)', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
+    '/workflows/{id}': {
+      get: {
+        tags: ['Workflows'],
+        summary: 'Session status (owner or admin); moves to reindex-required when source changed',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'repoId', in: 'query', required: false, schema: { type: 'string' } },
+          { name: 'group', in: 'query', required: false, schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': { description: 'Compact session view', content: { 'application/json': { schema: { type: 'object' } } } },
+          '403': { description: 'Not the owner, or no access to a repository in the session', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '404': { description: 'Session not found in this scope', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
+    ...Object.fromEntries((['checkpoint', 'verify', 'complete'] as const).map((action) => [`/workflows/{id}/${action}`, {
+      post: {
+        tags: ['Workflows'],
+        summary: action === 'checkpoint'
+          ? 'Record note / expected conditions / lenses / edited flag (owner or admin; analyst role)'
+          : action === 'verify'
+            ? 'Expected-vs-actual verification against the pinned baseline (owner or admin; analyst role)'
+            : 'Complete a passed session and return a suggested commit plan (never executed)',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: false, content: { 'application/json': { schema: { type: 'object', properties: {
+          repoId: { type: 'string' },
+          group: { type: 'string' },
+          expected_revision: { type: 'number' },
+          note: { type: 'string' },
+          conditions: { type: 'array', items: { type: 'object' } },
+          remove_condition_ids: { type: 'array', items: { type: 'string' } },
+          step_id: { type: 'string' },
+          lenses: { type: 'array', items: { type: 'string' } },
+          edited: { type: 'boolean' },
+        } } } } },
+        responses: {
+          '200': { description: 'Compact session view', content: { 'application/json': { schema: { type: 'object' } } } },
+          '403': { description: 'Not the owner, role too low, or no repository access', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '409': { description: 'Revision conflict or invalid phase transition', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    }])),
+    '/groups/{name}/system-flows': {
+      get: {
+        tags: ['Groups'],
+        summary: 'Read-only cross-repository system flows (requires access to every member repository)',
+        parameters: [
+          { name: 'name', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'symbol_id', in: 'query', required: false, schema: { type: 'string' } },
+          { name: 'contract_id', in: 'query', required: false, schema: { type: 'string' } },
+          { name: 'repository_id', in: 'query', required: false, schema: { type: 'string' } },
+          { name: 'limit', in: 'query', required: false, schema: { type: 'integer', maximum: 100 } },
+          { name: 'offset', in: 'query', required: false, schema: { type: 'integer' } },
+        ],
+        responses: {
+          '200': { description: 'Paged system flows, candidates, coverage and boundaries', content: { 'application/json': { schema: { type: 'object' } } } },
+          '403': { description: 'No access to a member repository', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '404': { description: 'Group not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
     '/vector-search': {
       post: {
         tags: ['Search'],
@@ -276,7 +438,7 @@ export const openApiSpec = {
       get: {
         tags: ['Nodes'],
         summary: 'Get detailed information about a symbol node',
-        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }, { name: 'repoId', in: 'query', schema: { type: 'string' } }, { name: 'ref', in: 'query', description: "Optional committed Git ref (branch, tag or SHA). Serves the request from that ref's isolated semantic snapshot instead of the current index; never falls back to current state. Building an uncached snapshot requires the analyst role.", schema: { type: 'string' } }],
         responses: {
           '200': { description: 'Node detail', content: { 'application/json': { schema: { type: 'object' } } } },
           '404': { description: 'Node not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
@@ -298,6 +460,7 @@ export const openApiSpec = {
                   direction: { type: 'string', enum: ['callers', 'callees', 'both'], default: 'both' },
                   max_hops: { type: 'integer', default: 5 },
                   repoId: { type: 'string' },
+                  ref: { type: 'string', description: "Optional committed Git ref (branch, tag or SHA). Serves the request from that ref's isolated semantic snapshot instead of the current index; never falls back to current state. Building an uncached snapshot requires the analyst role." },
                 },
                 required: ['target'],
               },
@@ -338,10 +501,57 @@ export const openApiSpec = {
           },
         },
         responses: {
-          '200': { description: 'Semantic graph diff, paginated node/relationship delta lists, and coverage', content: { 'application/json': { schema: { type: 'object' } } } },
+          '200': { description: 'Semantic graph diff, paginated node/relationship delta lists, and coverage. baseSnapshot/headSnapshot carry an IndexViewSummary (`indexView`) for each usable side.', content: { 'application/json': { schema: { type: 'object' } } } },
           '400': { description: 'Missing base_ref/head_ref', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
           '404': { description: 'Repository not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
           '422': { description: 'One or both refs could not be built into a trustworthy snapshot', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
+    '/refactor/rename-plan': {
+      post: {
+        tags: ['Refactoring'],
+        summary: 'Read-only rename plan for one canonical symbol',
+        description: 'Resolves one canonical target (an ambiguous name returns disambiguation candidates), then lists exact edits with source spans, candidate string/comment/config mentions that are never auto-edited, the language capability (apply | preview-only | unsupported), boundaries that block apply, affected tests and a plan id. Never writes source: apply locally with `code-intel refactor rename --apply --expect-plan <planId>`.',
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { type: 'object', properties: {
+            selector: { type: 'string', description: 'Symbol name or canonical selector kind:name@path[:line]' },
+            newName: { type: 'string' },
+            repoId: { type: 'string' },
+            max_occurrences: { type: 'integer', default: 200, maximum: 2000 },
+          }, required: ['selector', 'newName'] } } },
+        },
+        responses: {
+          '200': { description: '`status` is planned, ambiguous (with candidates) or missing. Occurrence/edit lists are bounded; totals and `truncated` are always present.', content: { 'application/json': { schema: { type: 'object' } } } },
+          '400': { description: 'Invalid selector or newName', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '403': { description: 'Token lacks access to the repository or the rename_plan tool', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '404': { description: 'Repository not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
+    '/structural-check': {
+      post: {
+        tags: ['Governance'],
+        summary: 'Read-only structural check of a change',
+        description: 'Explicit architecture-policy violations (inferred layers are advisory only), newly introduced import cycles, breaking API-contract drift and changed high-risk symbols without known tests. With base_ref (optional head_ref, default HEAD) both sides come from isolated snapshots; building an uncached snapshot requires the analyst role. Otherwise changedFiles are checked against the current index without a base, and coverage says so.',
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { type: 'object', properties: {
+            changedFiles: { type: 'array', items: { type: 'string' } },
+            base_ref: { type: 'string' },
+            head_ref: { type: 'string' },
+            rules: { type: 'array', items: { type: 'string' } },
+            max_findings: { type: 'integer', default: 200, maximum: 2000 },
+            repoId: { type: 'string' },
+          } } } },
+        },
+        responses: {
+          '200': { description: 'StructuralCheckResult: findings (rule, severity, location, evidence, certainty, introduced, hint), per-rule status, advisory layers and coverage', content: { 'application/json': { schema: { type: 'object' } } } },
+          '400': { description: 'Invalid request', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '403': { description: 'Token lacks access to the repository or the structural_check tool', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '404': { description: 'Repository not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+          '422': { description: 'A ref could not be resolved or built into a trustworthy snapshot', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
         },
       },
     },
@@ -349,7 +559,7 @@ export const openApiSpec = {
       get: {
         tags: ['Graph'],
         summary: 'List execution flows detected in the graph',
-        parameters: [{ name: 'repoId', in: 'query', schema: { type: 'string' } }],
+        parameters: [{ name: 'repoId', in: 'query', schema: { type: 'string' } }, { name: 'ref', in: 'query', description: "Optional committed Git ref (branch, tag or SHA). Serves the request from that ref's isolated semantic snapshot instead of the current index; never falls back to current state. Building an uncached snapshot requires the analyst role.", schema: { type: 'string' } }],
         responses: {
           '200': { description: 'List of flows', content: { 'application/json': { schema: { type: 'object' } } } },
         },
@@ -359,7 +569,7 @@ export const openApiSpec = {
       get: {
         tags: ['Graph'],
         summary: 'List community clusters detected in the graph',
-        parameters: [{ name: 'repoId', in: 'query', schema: { type: 'string' } }],
+        parameters: [{ name: 'repoId', in: 'query', schema: { type: 'string' } }, { name: 'ref', in: 'query', description: "Optional committed Git ref (branch, tag or SHA). Serves the request from that ref's isolated semantic snapshot instead of the current index; never falls back to current state. Building an uncached snapshot requires the analyst role.", schema: { type: 'string' } }],
         responses: {
           '200': { description: 'List of clusters', content: { 'application/json': { schema: { type: 'object' } } } },
         },
@@ -394,6 +604,44 @@ export const openApiSpec = {
         ],
         responses: {
           '200': { description: 'Routes and consumers affected', content: { 'application/json': { schema: { type: 'object' } } } },
+          '404': { description: 'Repo not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
+    '/api-shape-check': {
+      get: {
+        tags: ['API Contracts'],
+        summary: 'Checks the response fields each statically resolved consumer reads (nested paths) against the route\'s success response shapes',
+        parameters: [
+          { name: 'repoId', in: 'query', schema: { type: 'string' } },
+          { name: 'method', in: 'query', description: 'HTTP method, e.g. GET, POST (omit to match any method)', schema: { type: 'string' } },
+          { name: 'path', in: 'query', description: 'Route path in framework (/users/:id) or normalized (/users/{}) spelling', schema: { type: 'string' } },
+          { name: 'route_fact_id', in: 'query', description: 'Exact route fact id from a prior api-contract/api-impact result', schema: { type: 'string' } },
+          { name: 'route_node_id', in: 'query', description: 'The route\'s graph node id', schema: { type: 'string' } },
+          { name: 'max_findings', in: 'query', description: 'Maximum findings per route (default 100; totalFindings is always exact)', schema: { type: 'integer', minimum: 1 } },
+        ],
+        responses: {
+          '200': { description: 'One shape-check result per matching route (verdict compatible|breaking|unknown, per-path findings, producer/consumer coverage)', content: { 'application/json': { schema: { type: 'array' } } } },
+          '404': { description: 'Repo not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
+    '/taint-trace': {
+      get: {
+        tags: ['Analysis'],
+        summary: 'Traces candidate source-to-sink taint paths with declarative models; a no-finding verdict is coverage-qualified, never a safety proof',
+        parameters: [
+          { name: 'repoId', in: 'query', schema: { type: 'string' } },
+          { name: 'symbol', in: 'query', description: 'Function/method selector (name or kind:name@file:line); omit for a bounded scan', schema: { type: 'string' } },
+          { name: 'source', in: 'query', description: 'Source filter: model/matcher ref, matcher id, or model id', schema: { type: 'string' } },
+          { name: 'sink', in: 'query', description: 'Sink filter: model/matcher ref, matcher id, model id, or category', schema: { type: 'string' } },
+          { name: 'interprocedural', in: 'query', description: 'Follow persisted call edges (default true with symbol, false for scans)', schema: { type: 'boolean' } },
+          { name: 'max_findings', in: 'query', description: 'Maximum findings (default 50)', schema: { type: 'integer', minimum: 1 } },
+          { name: 'max_functions', in: 'query', description: 'Scan mode: maximum functions analyzed (default 200)', schema: { type: 'integer', minimum: 1 } },
+          { name: 'verbose', in: 'query', description: 'Include propagation statement ids', schema: { type: 'boolean' } },
+        ],
+        responses: {
+          '200': { description: 'Taint trace result: verdict (findings|no-findings-complete|no-findings-partial-coverage|unsupported|not-found|ambiguous|model-error), models, findings, truncation and coverage', content: { 'application/json': { schema: { type: 'object' } } } },
           '404': { description: 'Repo not found', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
         },
       },

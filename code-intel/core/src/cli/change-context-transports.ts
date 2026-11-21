@@ -4,8 +4,8 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { KnowledgeGraph } from '../graph/knowledge-graph.js';
-import { buildChangeContext } from '../query/change-context.js';
-import { parseDiffFiles } from '../query/pr-impact.js';
+import { buildChangeContextWithPrecision } from '../query/change-context.js';
+import { parseDiffChangedLineRanges, parseDiffFiles, type PRImpactPrecision } from '../query/pr-impact.js';
 import { verifyIndexTrust } from '../storage/index-trust.js';
 
 export interface ChangeContextTransportDeps {
@@ -38,6 +38,7 @@ export const changeContextOpenApi = {
                   maxHops: { type: 'number', minimum: 1, maximum: 10 },
                   maxTokens: { type: 'number', minimum: 128, maximum: 6000 },
                   maxChangedSymbols: { type: 'number', minimum: 1, maximum: 100 },
+                  precision: { type: 'string', enum: ['graph', 'pdg', 'auto'] },
                 },
               },
             },
@@ -60,12 +61,16 @@ function normalizeChangedFiles(value: unknown, diff: unknown): string[] {
   return [...new Set(files.map((file) => file.trim()).filter(Boolean))].sort();
 }
 
-function changeContextFromInput(repoDir: string, graph: KnowledgeGraph, input: Record<string, unknown>) {
+async function changeContextFromInput(repoDir: string, graph: KnowledgeGraph, input: Record<string, unknown>) {
   const changedFiles = normalizeChangedFiles(input['changedFiles'], input['diff']);
   if (changedFiles.length === 0) throw new Error('Supply changedFiles or diff');
-  return buildChangeContext(graph, {
+  const precision = (input['precision'] ?? 'graph') as PRImpactPrecision;
+  if (!['graph', 'pdg', 'auto'].includes(precision)) throw new Error('precision must be graph, pdg, or auto');
+  return buildChangeContextWithPrecision(graph, {
     repoDir,
     changedFiles,
+    precision,
+    changedRanges: typeof input['diff'] === 'string' ? parseDiffChangedLineRanges(input['diff']) : undefined,
     maxHops: typeof input['maxHops'] === 'number' ? input['maxHops'] : undefined,
     maxTokens: typeof input['maxTokens'] === 'number' ? input['maxTokens'] : undefined,
     maxChangedSymbols: typeof input['maxChangedSymbols'] === 'number' ? input['maxChangedSymbols'] : undefined,
@@ -91,6 +96,7 @@ export async function startChangeContextMcp(deps: ChangeContextTransportDeps): P
             maxHops: { type: 'number' },
             maxTokens: { type: 'number' },
             maxChangedSymbols: { type: 'number' },
+            precision: { type: 'string', enum: ['graph', 'pdg', 'auto'] },
           },
         },
       },
@@ -105,7 +111,7 @@ export async function startChangeContextMcp(deps: ChangeContextTransportDeps): P
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     try {
       if (request.params.name === 'change_context') {
-        const result = changeContextFromInput(deps.repoDir, deps.graph, (request.params.arguments ?? {}) as Record<string, unknown>);
+        const result = await changeContextFromInput(deps.repoDir, deps.graph, (request.params.arguments ?? {}) as Record<string, unknown>);
         return { content: [{ type: 'text', text: JSON.stringify(result) }] };
       }
       if (request.params.name === 'index_status') {
@@ -131,9 +137,9 @@ export function startChangeContextHttp(
   app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'code-intel-change-context', version: '1.0.8' }));
   app.get('/openapi.json', (_req, res) => res.json(changeContextOpenApi));
   app.get('/api/v1/index-status', (_req, res) => res.json(verifyIndexTrust(deps.repoDir)));
-  app.post('/api/v1/change-context', (req, res) => {
+  app.post('/api/v1/change-context', async (req, res) => {
     try {
-      res.json(changeContextFromInput(deps.repoDir, deps.graph, req.body as Record<string, unknown>));
+      res.json(await changeContextFromInput(deps.repoDir, deps.graph, req.body as Record<string, unknown>));
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }

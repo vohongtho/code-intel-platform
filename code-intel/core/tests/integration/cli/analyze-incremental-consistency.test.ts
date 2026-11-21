@@ -80,13 +80,27 @@ describe('CLI analyze incremental consistency', () => {
       '',
     ].join('\n'));
 
-    const dbPathNew = `${getDbPath(repoDir)}.new`;
-    fs.mkdirSync(dbPathNew, { recursive: true });
-
-    const second = runAnalyze(repoDir);
+    const generationsDir = path.join(repoDir, '.code-intel', 'generations');
+    const currentPath = path.join(repoDir, '.code-intel', 'current.json');
+    const pointerBefore = fs.readFileSync(currentPath, 'utf8');
+    fs.chmodSync(generationsDir, 0o555);
+    let second: ReturnType<typeof spawnSync>;
+    try {
+      second = spawnSync(process.execPath, [CLI_MAIN, 'analyze', repoDir, '--skip-git', '--skip-agents-md'], {
+        cwd: CORE_ROOT,
+        encoding: 'utf8',
+        env: { ...process.env, NODE_ENV: 'test' },
+        timeout: 120000,
+      });
+    } finally {
+      fs.chmodSync(generationsDir, 0o755);
+    }
     const secondMeta = loadMetadata(repoDir)!;
 
-    assert.match(second.stderr, /DB persist failed/);
+    assert.notEqual(second.status, 0, 'a storage failure must fail the run, not publish a partial index');
+    assert.match(`${second.stdout}${second.stderr}`, /EACCES|permission denied/i);
+    assert.equal(fs.readFileSync(currentPath, 'utf8'), pointerBefore, 'published pointer unchanged');
+    assert.deepEqual(fs.readdirSync(generationsDir).filter((name) => name.startsWith('.staging-')), [], 'no staging left behind');
     assert.equal(secondMeta.indexVersion, firstMeta.indexVersion);
     assert.equal(secondMeta.stats.nodes, firstMeta.stats.nodes);
     assert.equal(secondMeta.stats.edges, firstMeta.stats.edges);

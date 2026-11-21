@@ -1,102 +1,132 @@
-# Project Context — Code Intelligence Platform
+# Project Context — Code Intelligence Platform v1.0.12
 
 ## Product
 
-Code Intelligence Platform statically analyzes repositories, persists a code knowledge graph, and exposes that intelligence through CLI, HTTP, Web, and MCP. Search combines BM25 with optional vector retrieval. Change/impact/context tools consume the persisted graph and derived indexes.
+Code Intelligence Platform statically analyzes repositories, persists evidence-backed semantic graphs, and exposes code/change intelligence through CLI, HTTP, Web, and MCP. It combines symbol/call/import/inheritance graphs, framework facts, API contracts, semantic snapshots, multi-repository contracts, search, agent workflows, and a separate program-analysis layer.
 
-## Production baseline
+## Exact planning baseline
 
-The v1.0.11 branch is created from the exact published v1.0.10 source tag:
+The v1.0.12 branch was created from:
 
 ```text
-v1.0.10
-52dfda4c1dd78b7667cc8a10606ade65a7807d90
+main
+20e46e8a251eaf52772388a5ef67b4fa290f934f
+2026-09-21
 ```
 
-v1.0.10 already includes Generation V2 atomic staging/publication, analysis serialization, pinned index snapshots, requested/actual search-mode reporting, vector-runtime compatibility checks, embedding model selection, final context token-budget enforcement, agent-aware setup, persistent Remember-me sessions, and pinned HTTP index-version metadata. v1.0.11 SHALL extend those implementations rather than re-create them.
+The package version at this baseline is 1.0.11. v1.0.12 planning therefore treats all released 1.0.11 capabilities and any mainline fixes present at the baseline SHA as existing brownfield behavior.
 
-## v1.0.11 objective
+## What already exists
 
-The release focuses on the semantic core. A user must receive better graph correctness by upgrading the package, without learning new required commands or changing the normal workflow.
+### Semantic graph and evidence
 
-The release program SHALL establish:
+- canonical identity and legacy IDs;
+- evidence-backed relationship certainty, strategy, resolver version and ambiguity;
+- framework semantic adapters;
+- compact/lazy graph implementations;
+- clusters, execution flows, vulnerability nodes and test relationships.
 
-1. A tested semantic capability baseline for all 15 advertised languages.
-2. One semantic fact source shared by parsing, graph projection, resolution, and incremental invalidation.
-3. Canonical symbol/call-site identity that preserves overloads, nested declarations, and declaration fragments.
-4. Evidence-based, language-aware cross-file and dynamic-dispatch resolution.
-5. Relationship certainty/coverage so missing evidence is not misreported as safe absence.
-6. Dependency-aware incremental re-resolution that converges to a fresh full build.
-7. Generation V2 semantic read-back verification and derived analyzer compatibility fingerprints.
-8. Better evidence selection in the existing context workflow.
+### Search and context
 
-Advanced CFG/def-use/PDG/taint work is designed only after the above graph-truth foundations are measurable.
+- BM25, vector search and hybrid RRF;
+- embedding model registry/fingerprints;
+- structured context blocks with hard token budgets;
+- adaptive snippets, signature-only low-relevance rendering, trust-ranked evidence;
+- cross-block dedup and session-aware source delivery.
 
-## Current production architecture
+### Change intelligence
 
-### Analysis
+- textual PR impact and blast radius;
+- suggested tests and coverage gaps;
+- immutable semantic snapshots for committed Git refs;
+- semantic graph diff with conservative rename/move correlation;
+- optional API-contract deltas;
+- cross-repository contract drift over synchronized groups.
 
-`code-intel/core/src/pipeline/orchestrator.ts` runs the established phase pipeline. Parsing is owned by `pipeline/phases/parse-phase.ts`; relationship resolution is owned by `pipeline/phases/resolve-phase.ts`.
+### API intelligence
 
-Production parsing currently runs Tree-sitter query extraction where a query is registered, then falls back to regex when Tree-sitter does not yield data. HTML has a bundled grammar but is not wired into the production query map.
+- normalized HTTP route/request/response/consumer facts;
+- producer↔consumer matching by method + normalized path;
+- response-key evidence for supported frontend consumers;
+- compatibility classification;
+- GraphQL and protobuf/gRPC extraction hooks in multi-repo contract sync, but drift remains incomplete/unknown.
 
-Production relationship resolution currently builds one global `name -> nodeId` map plus one per-file name map. It extracts imports/calls/heritage from source-line regexes and selects same-file name matches before one global name match. `receiverText` is extracted for calls but is not authoritative target-selection evidence.
+### Program analysis
 
-### Identity
+- universal IR;
+- CFG construction and validation;
+- dominators/control dependence;
+- reaching definitions and def/use;
+- function summaries;
+- PDG construction;
+- bounded taint;
+- language capability registry and resource-limit semantics.
 
-`graph/id-generator.ts` currently creates node IDs as `kind:filePath:qualifiedName` and edge IDs as `kind:source->target`. Production Tree-sitter extraction currently passes a simple declaration name to the node-ID helper and deduplicates definitions by `kind:name` within a file.
+The advanced layer is not yet broadly connected to PR impact, MCP, HTTP, or Web surfaces.
 
-### Persistence
+### Runtime and release
 
-Generation V2 owns staging and immutable publication. A reader pins graph/BM25/vector/metadata through one `IndexSnapshot`. This model remains authoritative for v1.0.11.
+- self-contained runtime bundles for Linux/macOS x64/arm64;
+- version pin/upgrade/rollback/uninstall;
+- checksum, SBOM and provenance sidecars;
+- GitHub artifact attestations;
+- keyless cosign signing for Docker images;
+- doctor/index trust/runtime verification.
 
-LadybugDB relationship storage currently persists `kind`, `weight`, and `label`; it does not persist resolution certainty, call-site identity, strategy, ambiguity, or evidence references.
+The remaining runtime gap is authenticity verification of the downloadable runtime archive itself from inside Code Intel and a complete offline bundle workflow.
 
-### Incremental behavior
+## v1.0.12 product direction
 
-v1.0.10 deliberately chooses a full graph/BM25 rebuild for non-zero source changes because dependency-closure re-resolution is not yet available. This correctness gate SHALL remain the fallback until dependency-aware incremental output proves equivalent to fresh full analysis.
+v1.0.12 focuses on **verified change intelligence** rather than adding another parallel graph engine. The release should make Code Intel capable of answering, with explicit evidence and boundaries:
 
-### Retrieval and context
+> What will this change affect across statements, symbols, flows, APIs, repositories and tests, and what context does an AI agent need to change it safely?
 
-Search requested/actual mode and vector readiness are already corrected in v1.0.10. Context final token-budget enforcement is already corrected. v1.0.11 context work focuses on canonical seed selection, trust-aware evidence allocation, omission/coverage reporting, and optional session-aware source deduplication.
+The eight implementation programs are:
 
-## Supported languages
+1. adaptive agent exploration;
+2. runtime trust and offline installation;
+3. ref-aware portable indexes;
+4. safe refactoring and architecture guards;
+5. change-risk and test intelligence;
+6. API/protocol contract intelligence;
+7. extensible taint and dispatch;
+8. agentic cross-repository change workflows.
 
-The advertised set is TypeScript, JavaScript, Python, Java, Go, C, C++, C#, Rust, PHP, Kotlin, Ruby, Swift, Dart, and HTML. Support SHALL be expressed per semantic capability as `supported`, `partial`, `not-applicable`, or `unsupported`; grammar availability alone is not sufficient proof.
+See `openspec/changes/v1-0-12-release-program/proposal.md` for the complete F01–F22 mapping.
+
+## Architectural guardrail
+
+Keep two analysis layers:
+
+```text
+semantic graph: repository / symbol / API / flow / contract / test
+                         |
+                         | stable symbol + call-site identity
+                         v
+program analysis: function IR / CFG / dataflow / PDG / taint
+```
+
+Do not flood the main graph with every statement/basic block merely to expose PDG features. Project focused slices and evidence upward when a query needs them.
 
 ## Compatibility policy
 
-- Existing required CLI commands remain operational.
-- Existing MCP tool names and required arguments remain operational.
-- Existing HTTP routes remain operational.
-- Existing Web workflows remain operational.
-- New trust/capability fields are additive.
-- Semantic migrations are automatic through ordinary analysis planning and Generation V2 staging.
-- No public `migrate-resolver`, `build-cfg`, or equivalent mandatory command is introduced.
-- Legacy selectors continue to work when unambiguous; ambiguous legacy selectors must not silently select one candidate as exact.
+- Existing current-repository queries require no new arguments.
+- Ref-aware queries are additive.
+- Existing workflow assets remain installable.
+- Existing graph/API/contract response fields remain valid; new fields are additive unless a spec explicitly versions a contract.
+- Existing Generation V2 remains the authoritative active-index publication model.
+- Semantic snapshots remain the authoritative alternate-ref materialization model.
+- Unsupported advanced capability returns a bounded/unknown result rather than a fabricated exact result.
 
-## Repository commands
+## Definition of done for a v1.0.12 change
 
-```bash
-npm run build
-npm run typecheck --workspace=code-intel/core
-npm run test --workspace=code-intel/core
-npm run test:e2e --workspace=code-intel/core
-npm run test:all --workspace=code-intel/core
-npm run validate:dist --workspace=code-intel/core
-```
-
-## v1.0.11 definition of done
-
-A semantic-core change is complete only when:
-
-1. `openspec validate` passes for the change.
+1. OpenSpec validation passes.
 2. Focused unit/integration/e2e tests pass.
-3. All 15 language release rows are produced and no accepted capability regresses.
-4. Ambiguous or unsupported semantics do not become confidently wrong edges.
-5. Full and incremental normalized semantic snapshots converge for applicable changes.
-6. Serial/parallel analysis produces deterministic normalized semantics.
-7. Production-path persistence is reopened and verified after successful and failed publication.
-8. Resolver scalability guards include structural traversal/index-build counters, not timing alone.
-9. Existing public workflows require no new mandatory command/config/tool.
-10. Packed npm layout and release validation continue to pass.
+3. Compatibility and migration behavior is tested.
+4. Persisted artifacts are reopened when persistence is involved.
+5. Agent/MCP outputs are bounded and deterministic.
+6. Relevant 15-language capability rows are produced.
+7. Security and license review passes for any new dependency.
+8. Performance/evaluation thresholds in the change design pass.
+9. Existing v1.0.11 workflows remain operational.
+10. Build/package/runtime release validation passes on the final release candidate.

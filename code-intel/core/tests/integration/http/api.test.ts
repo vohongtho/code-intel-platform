@@ -637,6 +637,7 @@ describe('HTTP API — protected routes require auth', () => {
     { method: 'GET', path: '/api/v1/repos' },
     { method: 'GET', path: '/api/v1/embeddings/models' },
     { method: 'POST', path: '/api/v1/search', body: { query: 'test' } },
+    { method: 'POST', path: '/api/v1/explore', body: { task: 'test' } },
     { method: 'GET', path: '/api/v1/flows' },
     { method: 'GET', path: '/api/v1/clusters' },
     { method: 'GET', path: '/api/v1/groups' },

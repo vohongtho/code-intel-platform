@@ -1,6 +1,7 @@
 import type { Language } from '../../shared/languages.js';
 import type { SemanticAnchors, SourceRange } from '../anchors.js';
 import type {
+  CallSiteFact,
   DeclarationFact,
   DeclarationFragmentFact,
   HeritageFact,
@@ -178,6 +179,25 @@ export function reference(
     sourceRange: lineRange(filePath, lineNumber, targetText),
     targetText,
     operation,
+  };
+}
+
+export function callSite(
+  factId: string,
+  language: Language,
+  filePath: string,
+  lineNumber: number,
+  startColumn: number,
+  calleeText: string,
+  callerRef?: string,
+): CallSiteFact {
+  return {
+    factId,
+    language,
+    filePath,
+    sourceRange: lineRange(filePath, lineNumber, calleeText, startColumn),
+    callerRef,
+    calleeText,
   };
 }
 

@@ -168,24 +168,25 @@ describe('decideIncremental', () => {
     assert.ok(result.fallbackReason?.includes('no previous commit hash'));
   });
 
-  it('uses mtime fallback when mtimes are available and no git', () => {
+  it('detects mtime changes without git and reports them with the correctness-first fallback', () => {
     // Store mtimes for all but file0
     const snap = buildMtimeSnapshot(files.slice(1), tmpDir);
     const result = decideIncremental(tmpDir, files, undefined, snap);
-    assert.equal(result.incremental, true);
-    // file0 has no stored mtime → should be in changedFiles
-    assert.ok(result.changedFiles!.includes(files[0]));
+    assert.equal(result.incremental, false);
+    assert.match(result.fallbackReason ?? '', /^mtime: correctness-first full rebuild required for 1 changed and 0 deleted/);
+    // file0 has no stored mtime → it is the detected change
+    assert.deepEqual(result.changedExistingFiles, [path.resolve(files[0]!)]);
   });
 
-  it('falls back when changed > 20% of total (mtime)', () => {
+  it('falls back to a full rebuild when every file changed (mtime)', () => {
     // Store very-old mtimes for ALL 5 files so all are "changed"
     const oldTime = Date.now() - 1_000_000;
     const storedAll: Record<string, number> = {};
     for (let i = 0; i < 5; i++) storedAll[`file${i}.ts`] = oldTime;
     const result = decideIncremental(tmpDir, files, undefined, storedAll);
-    // 5/5 = 100% > 20% → fallback
     assert.equal(result.incremental, false);
-    assert.ok(result.fallbackReason?.includes('20%'));
+    assert.match(result.fallbackReason ?? '', /5 changed and 0 deleted/);
+    assert.equal(result.changedExistingFiles?.length, 5);
   });
 
   it('no changedFiles → empty array and incremental=true', () => {
@@ -236,7 +237,9 @@ describe('dirty working tree detection', () => {
       const mtimes = buildMtimeSnapshot(files, repo);
       mtimes['file0.ts'] -= 10_000;
       const result = decideIncremental(repo, files, base, mtimes);
-      assert.equal(result.incremental, true);
+      // Git sees no change; mtime evidence adds file0. Non-empty ⇒ correctness-first rebuild.
+      assert.equal(result.incremental, false);
+      assert.match(result.fallbackReason ?? '', /1 changed and 0 deleted/);
       assert.deepEqual(result.changedExistingFiles, [files[0]]);
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
@@ -295,6 +298,38 @@ describe('decideIncremental dependency-aware candidate gate', () => {
       ...overrides,
     };
   }
+
+  it('reports the detected change set on the correctness-first fallback (vectors are scoped by it)', () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-gate-changeset-'));
+    try {
+      const changed = path.join(repo, 'a.ts');
+      const stable = path.join(repo, 'b.ts');
+      fs.writeFileSync(changed, 'export const a = 1;\n');
+      fs.writeFileSync(stable, 'export const b = 1;\n');
+      const mtimes = buildMtimeSnapshot([changed, stable], repo);
+      mtimes['a.ts'] -= 10_000;
+      mtimes['gone.ts'] = Date.now();
+      const result = decideIncremental(repo, [changed, stable], undefined, mtimes);
+      assert.equal(result.incremental, false);
+      assert.deepEqual(result.changedExistingFiles, [path.resolve(changed)]);
+      assert.deepEqual(result.deletedFiles, ['gone.ts']);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves the change set unknown when nothing can be compared', () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-gate-unknown-'));
+    try {
+      const file = path.join(repo, 'a.ts');
+      fs.writeFileSync(file, 'export const a = 1;\n');
+      const result = decideIncremental(repo, [file], undefined, undefined);
+      assert.equal(result.incremental, false);
+      assert.equal(result.changedExistingFiles, undefined, 'unknown must not look like "no changes"');
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
 
   it('keeps the correctness-first full rebuild fallback when no options are passed (unchanged behavior)', () => {
     const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-gate-default-'));

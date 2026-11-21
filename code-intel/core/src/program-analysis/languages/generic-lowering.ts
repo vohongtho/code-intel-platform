@@ -114,8 +114,32 @@ function classifySlot(rawNode: TSNode, table: LanguageLoweringTable, allowFallba
   return allowFallback ? { kind: 'unknown', node, reason: `unmapped node type: ${node.type}` } : null;
 }
 
-function primaryExpressionChild(node: TSNode, kind: IrStatementKind): TSNode | undefined {
+/**
+ * The initializer of a declaration's first declared name (`const x = <init>`,
+ * `x := <init>`, `let x = <init>`), via the grammar's own `value`/`right`
+ * field on the nearest declarator ancestor of that name. Only a field
+ * that starts after the name counts, and a single-element expression list
+ * (Go) unwraps to its element. No field means no primary expression —
+ * the same as before this lookup existed — never a guessed child.
+ */
+function declarationInitializer(node: TSNode, table: LanguageLoweringTable): TSNode | undefined {
+  const nameNode = findDeclaredNameNode(node, table);
+  let current: TSNode | null = nameNode?.parent ?? null;
+  for (let hops = 0; current && nameNode && hops < 4; hops += 1) {
+    const value = current.childForFieldName('value') ?? current.childForFieldName('right');
+    if (value && value.startIndex >= nameNode.endIndex) {
+      return value.type.endsWith('_list') && value.namedChildCount === 1 ? (value.namedChildren[0] ?? undefined) : value;
+    }
+    if (current.id === node.id) break;
+    current = current.parent;
+  }
+  return undefined;
+}
+
+function primaryExpressionChild(node: TSNode, kind: IrStatementKind, table: LanguageLoweringTable): TSNode | undefined {
   switch (kind) {
+    case 'declaration':
+      return declarationInitializer(node, table);
     case 'return':
     case 'throw':
     case 'await':
@@ -404,7 +428,7 @@ function lowerStatement(classification: SlotClassification, table: LanguageLower
   // the very first top-level statement.
   ctx.order.push(id);
 
-  const primary = primaryExpressionChild(node, kind);
+  const primary = primaryExpressionChild(node, kind, table);
   const expressions = primary ? [lowerExpressionShallow(primary, table, ctx)] : [];
   if (kind === 'call') {
     for (const identifierNode of findIdentifierReads(node, table)) {

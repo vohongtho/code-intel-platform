@@ -5,6 +5,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { loadMetadata, getVectorDbPath, getDbPath } from '../../../src/storage/metadata.js';
+import { resolvePublishedArtifactPath } from '../../../src/storage/index-generation.js';
+
+// Since v1.0.8 any detected change forces a correctness-first full graph rebuild, so a
+// plain re-analyze after an edit reports the fallback rather than "Auto-incremental: N".
+const CHANGE_FALLBACK = /Auto-incremental unavailable: mtime: correctness-first full rebuild required for 1 changed and 0 deleted/;
 
 const CORE_ROOT = path.resolve(import.meta.dirname, '../../../..');
 const CLI_MAIN = path.join(CORE_ROOT, 'dist-tests', 'src', 'cli', 'main.js');
@@ -75,9 +80,10 @@ describe('CLI analyze sticky embeddings', () => {
     ].join('\n'));
 
     const second = runCli(repoDir, []);
-    assert.match(second.stdout, /Auto-incremental:/);
-    assert.match(second.stdout, /Embeddings: auto-enabled from previous index|Embeddings: enabled/);
-    assert.ok(fs.existsSync(vdbPath), 'plain analyze should rebuild missing remembered vector.db');
+    assert.match(second.stdout, CHANGE_FALLBACK);
+    assert.match(second.stdout, /Embeddings: auto-enabled from previous index/);
+    assert.match(second.stdout, /Embeddings: vector\.db missing, rebuilding full vector index/);
+    assert.ok(fs.existsSync(getVectorDbPath(repoDir)), 'plain analyze should rebuild missing remembered vector.db');
 
     const meta2 = loadMetadata(repoDir);
     assert.equal(meta2?.embeddings?.status, 'ready');
@@ -102,7 +108,8 @@ describe('CLI analyze sticky embeddings', () => {
 
     const out = runCli(repoDir, ['--incremental']);
     assert.match(out.stdout, /Embeddings: auto-enabled from previous index/);
-    const after = fs.statSync(vdbPath).mtimeMs;
+    assert.match(out.stdout, /Embeddings: \d+ vectors updated incrementally/);
+    const after = fs.statSync(getVectorDbPath(repoDir)).mtimeMs;
     assert.ok(after >= before, 'incremental analyze should touch remembered vector.db');
     assert.equal(loadMetadata(repoDir)?.embeddings?.status, 'ready');
   });
@@ -121,7 +128,7 @@ describe('CLI analyze sticky embeddings', () => {
       '',
     ].join('\n'));
     const out = runCli(repoDir, []);
-    assert.match(out.stdout, /Falling back to full analysis: changes-detected/);
+    assert.match(out.stdout, CHANGE_FALLBACK);
     assert.match(out.stdout, /Embeddings: \d+ vectors updated incrementally/);
     assert.doesNotMatch(out.stdout, /Embeddings: \d+ vectors built/);
     assert.equal(loadMetadata(repoDir)?.embeddings?.status, 'ready');
@@ -162,7 +169,7 @@ describe('CLI analyze sticky embeddings', () => {
     const before = fs.statSync(vdbPath).mtimeMs;
     const out = runCli(repoDir, ['--force']);
     assert.match(out.stdout, /Embeddings: auto-enabled from previous index/);
-    const after = fs.statSync(vdbPath).mtimeMs;
+    const after = fs.statSync(getVectorDbPath(repoDir)).mtimeMs;
     assert.ok(after >= before, 'force analyze should rebuild remembered vector.db');
     assert.equal(loadMetadata(repoDir)?.embeddings?.status, 'ready');
   });
@@ -187,7 +194,7 @@ describe('CLI analyze sticky embeddings', () => {
     const repoDir = mkRepo('sticky-legacy');
     runCli(repoDir, ['--embeddings']);
 
-    const metaPath = path.join(repoDir, '.code-intel', 'meta.json');
+    const metaPath = resolvePublishedArtifactPath(repoDir, 'meta.json');
     const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as Record<string, unknown>;
     delete meta['embeddings'];
     fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));

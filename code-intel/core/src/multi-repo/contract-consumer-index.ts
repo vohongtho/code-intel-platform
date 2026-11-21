@@ -56,6 +56,9 @@ export function buildContractConsumerIndex(input: {
   contracts: readonly Contract[];
   links: readonly ContractLink[];
   memberFacts: ReadonlyArray<{ repoId: string; repositoryName: string; facts: GraphFacts }>;
+  /** GraphQL operation / gRPC binding consumers already keyed by canonical contract id (see
+   * protocol-contracts.ts#buildProtocolConsumerRefs). */
+  protocolConsumers?: ReadonlyArray<{ contractId: string; ref: ContractConsumerRef }>;
   maxConsumersPerContract?: number;
 }): ContractConsumerIndex {
   const byContractId = new Map<string, ContractConsumerRef[]>();
@@ -139,6 +142,15 @@ export function buildContractConsumerIndex(input: {
     byContractId.set(producer.contractId!, [...(byContractId.get(producer.contractId!) ?? []), ref]);
     if (producer.semanticFingerprint) {
       bySemanticFingerprint.set(producer.semanticFingerprint, [...(bySemanticFingerprint.get(producer.semanticFingerprint) ?? []), ref]);
+    }
+  }
+
+  for (const { contractId, ref } of input.protocolConsumers ?? []) {
+    const contract = contractsById.get(contractId);
+    if (!contract) continue;
+    byContractId.set(contractId, [...(byContractId.get(contractId) ?? []), ref]);
+    if (contract.semanticFingerprint) {
+      bySemanticFingerprint.set(contract.semanticFingerprint, [...(bySemanticFingerprint.get(contract.semanticFingerprint) ?? []), ref]);
     }
   }
 

@@ -2,6 +2,7 @@ import type { KnowledgeGraph } from '../../graph/knowledge-graph.js';
 import type { CodeNode } from '../../shared/graph-types.js';
 import { diffApiContracts, type KnownConsumer } from './compatibility.js';
 import { matchApiContracts, type ApiMatchInstrumentation, type ScopedFact } from './matcher.js';
+import { checkConsumerResponseShapes, type ShapeCheckConsumer, type ShapeCheckResult } from './shape-check.js';
 import type {
   ApiCompatibilityFinding,
   ApiContractMatch,
@@ -61,6 +62,8 @@ export function consumerFactFromNode(node: CodeNode): HttpConsumerFact | undefin
     url: semantic['url'] as HttpConsumerFact['url'],
     requestShapeRef: semantic['requestShapeRef'] as string | undefined,
     consumedKeys: (semantic['consumedKeys'] as string[] | undefined) ?? [],
+    consumedPaths: semantic['consumedPaths'] as HttpConsumerFact['consumedPaths'],
+    consumedPathCoverage: semantic['consumedPathCoverage'] as ApiCoverage | undefined,
     expectedResponseShapeSymbolRef: semantic['expectedResponseShapeSymbolRef'] as string | undefined,
     coverage: (semantic['coverage'] as ApiCoverage | undefined) ?? EMPTY_COVERAGE,
   };
@@ -276,10 +279,55 @@ export function getApiContract(
   });
 }
 
+/** Consumers matched (exactly or as candidates) to `routeFactId`, carrying the match certainty
+ * so a candidate match can never prove a shape break on its own. */
+function shapeConsumersForRoute(
+  routeFactId: string,
+  matches: readonly ApiContractMatch[],
+  consumerByFactId: ReadonlyMap<string, HttpConsumerFact>,
+): ShapeCheckConsumer[] {
+  const consumers: ShapeCheckConsumer[] = [];
+  for (const match of matches) {
+    if (!match.candidates.some((candidate) => candidate.targetId === routeFactId)) continue;
+    const consumer = consumerByFactId.get(match.referenceId);
+    if (!consumer) continue;
+    consumers.push({ ...consumer, matchCertainty: match.certainty === 'exact' ? 'exact' : 'candidate' });
+  }
+  return consumers;
+}
+
+export interface ApiShapeCheckResult {
+  route: RouteContractView;
+  shapeCheck: ShapeCheckResult;
+}
+
+/** api_shape_check: consumer field reads vs. producer response shape for the selected route(s). */
+export function getApiShapeCheck(
+  graph: KnowledgeGraph,
+  selector: RouteSelector,
+  repoId = 'local',
+  options: { maxFindings?: number } = {},
+): ApiShapeCheckResult[] {
+  const facts = collectGraphFacts(graph);
+  const matched = selectRoutes(facts, selector);
+  if (matched.length === 0) return [];
+  const matches = matchConsumersToRoutes(facts.routes, facts.consumers, repoId);
+  const consumerByFactId = new Map(facts.consumers.map((consumer) => [consumer.factId, consumer]));
+  return matched.map((route) => ({
+    route: buildRouteContractView(route, facts.shapesByFingerprint, facts.handlerNameByFactId.get(route.factId)),
+    shapeCheck: checkConsumerResponseShapes(route, shapeConsumersForRoute(route.factId, matches, consumerByFactId), facts.shapesByFingerprint, options),
+  }));
+}
+
+/** Findings per route embedded in api_impact/api_drift — the full list stays on api_shape_check. */
+const EMBEDDED_SHAPE_FINDINGS = 20;
+
 export interface ApiImpactResult {
   routes: RouteContractView[];
   consumers: ConsumerMatchView[];
   coverage: { totalRoutes: number; totalConsumers: number; consumerCoverageComplete: boolean };
+  /** Additive (1.0.12): consumer field reads checked against each matched route's response shape. */
+  shapeChecks?: ShapeCheckResult[];
 }
 
 /** api_impact: routes matching `selector` plus every consumer resolved (exactly or as a
@@ -301,6 +349,12 @@ export function getApiImpact(
   return {
     routes: matched.map((route) => buildRouteContractView(route, facts.shapesByFingerprint, facts.handlerNameByFactId.get(route.factId))),
     consumers: relevantMatches.map((match) => toConsumerMatchView(match, consumerByFactId)),
+    shapeChecks: matched.map((route) => checkConsumerResponseShapes(
+      route,
+      shapeConsumersForRoute(route.factId, relevantMatches, consumerByFactId),
+      facts.shapesByFingerprint,
+      { maxFindings: EMBEDDED_SHAPE_FINDINGS },
+    )),
     coverage: {
       totalRoutes: facts.routes.length,
       totalConsumers: facts.consumers.length,
@@ -312,6 +366,16 @@ export function getApiImpact(
 export interface ApiDriftResult {
   findings: ApiCompatibilityFinding[];
   coverage: { baseRoutes: number; headRoutes: number; consumerCoverageComplete: boolean };
+  /** Additive (1.0.12): head consumers' field reads checked against each head route whose
+   * success response shape changed since base. */
+  shapeChecks?: ShapeCheckResult[];
+}
+
+function successShapeRefs(route: HttpRouteFact): string {
+  return route.responses
+    .map((variant) => `${variant.status ?? 'default'}=${variant.responseShapeRef ?? ''}`)
+    .sort()
+    .join('|');
 }
 
 /**
@@ -351,5 +415,16 @@ export function getApiDrift(
     consumerCoverageComplete,
   });
 
-  return { findings, coverage: { baseRoutes: base.routes.length, headRoutes: head.routes.length, consumerCoverageComplete } };
+  const baseRefsByKey = new Map(base.routes.map((route) => [`${route.method}::${route.normalizedPath}`, successShapeRefs(route)] as const));
+  const consumerByFactId = new Map(head.consumers.map((consumer) => [consumer.factId, consumer]));
+  const shapeChecks: ShapeCheckResult[] = [];
+  for (const route of head.routes) {
+    const baseRefs = baseRefsByKey.get(`${route.method}::${route.normalizedPath}`);
+    if (baseRefs === undefined || baseRefs === successShapeRefs(route)) continue;
+    const consumers = shapeConsumersForRoute(route.factId, matches, consumerByFactId);
+    if (consumers.length === 0) continue;
+    shapeChecks.push(checkConsumerResponseShapes(route, consumers, head.shapesByFingerprint, { maxFindings: EMBEDDED_SHAPE_FINDINGS }));
+  }
+
+  return { findings, coverage: { baseRoutes: base.routes.length, headRoutes: head.routes.length, consumerCoverageComplete }, shapeChecks };
 }

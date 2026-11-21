@@ -27,6 +27,7 @@ export interface AnalyzerCompatibilityReceipt {
   evidenceFingerprint?: string;
   embeddingFingerprint?: string;
   apiContractFingerprint?: string;
+  flowIdentityFingerprint?: string;
 }
 
 export type ArtifactStatus =
@@ -167,7 +168,7 @@ export function normalizeIndexGenerationManifest(value: unknown): IndexGeneratio
     for (const key of ['ddlFingerprint', 'analyzerFingerprint', 'languageRegistryFingerprint', 'factSchemaFingerprint', 'identityFingerprint', 'resolverFingerprint'] as const) {
       if (typeof record[key] !== 'string') return null;
     }
-    for (const key of ['evidenceFingerprint', 'embeddingFingerprint', 'apiContractFingerprint'] as const) {
+    for (const key of ['evidenceFingerprint', 'embeddingFingerprint', 'apiContractFingerprint', 'flowIdentityFingerprint'] as const) {
       if (record[key] !== undefined && typeof record[key] !== 'string') return null;
     }
   }

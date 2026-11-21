@@ -21,6 +21,7 @@ import { enforceContextBudget, normalizeContextTokenBudget, trimTextToTokenBudge
 import { certaintyRank, omissionsFromReceipts, type ContextAllocationReceipt, type ContextOmission } from './receipt.js';
 import { contentFingerprint, type ContextDeliverySession } from './session.js';
 import { summarizeEdgeTrust } from '../query/trust.js';
+import type { ContextRenderMode, ContextRenderPlan, RenderDecision } from './render-policy.js';
 
 // ── Public types ───────────────────────────────────────────────────────────────
 
@@ -43,6 +44,22 @@ export interface BuilderOptions {
   repoDir?: string;
   /** Per-workspace delivered-source memory — enables session-aware pointer back-references. */
   session?: ContextDeliverySession;
+  /** Optional per-node render plan (Explore). Absent → legacy adaptive rendering. */
+  renderPlan?: ContextRenderPlan;
+  /** Selected index/snapshot identity; session pointers are valid only when it still matches. */
+  indexIdentity?: string;
+  /** Full source per node id, overriding the (store-truncated) indexed content for rendering only. */
+  contentOverrides?: ReadonlyMap<string, string>;
+}
+
+export interface AppliedRenderDecision {
+  artifactId: string;
+  name: string;
+  mode: ContextRenderMode;
+  reason: string;
+  deliveredTokens: number;
+  bodyOmitted: boolean;
+  boundary?: string;
 }
 
 export interface ContextTrustSummary {
@@ -72,6 +89,8 @@ export interface ContextDocument {
   trust?: ContextTrustSummary;
   /** Requested evidence that could not be delivered, with a structured reason. */
   omitted?: ContextOmission[];
+  /** Applied render mode per artifact (present only when a render plan was supplied). */
+  renderDecisions?: AppliedRenderDecision[];
 }
 
 // ── Budget presets (B.5.2) ─────────────────────────────────────────────────────
@@ -422,6 +441,7 @@ interface FocusEntry {
   node: CodeNode;
   header: string;
   entry: string;
+  rendered?: RenderedEntry;
   demand: number;
   skipInLogic: boolean;
   missingSource: boolean;
@@ -445,6 +465,55 @@ function waterFillAllowances(demands: readonly number[], totalBudget: number): n
   return allowance;
 }
 
+interface RenderedEntry {
+  entry: string;
+  mode?: ContextRenderMode;
+  reason?: string;
+  boundary?: string;
+  bodyOmitted?: boolean;
+}
+
+function signatureLine(content: string | undefined): string {
+  const sig = content?.split('\n').find((l) => l.trim().length > 0) ?? '';
+  return sig ? sig.trimEnd() + (sig.includes('{') ? ' ... }' : '') : '';
+}
+
+/** Legacy (no render plan) entry: adaptive snippet, or signature-only below the relevance threshold. */
+function legacyEntry(header: string, content: string | undefined, score: number, threshold: number): RenderedEntry {
+  if (score < threshold) return { entry: `${header}\n// (low relevance)\n${signatureLine(content)}` };
+  const { lines: snippet } = adaptiveSnippet(content);
+  return { entry: `${header}\n\`\`\`\n${snippet}\n\`\`\`` };
+}
+
+/** Render one entry according to its plan decision; degrades explicitly, never fabricates. */
+function plannedEntry(header: string, content: string | undefined, decision: RenderDecision): RenderedEntry {
+  const base = { reason: decision.reason, boundary: decision.boundary };
+  const snippet = (reason?: string, boundary?: string): RenderedEntry => ({
+    entry: `${header}\n\`\`\`\n${adaptiveSnippet(content).lines}\n\`\`\``,
+    mode: 'snippet', reason: reason ?? base.reason, boundary: boundary ?? base.boundary, bodyOmitted: false,
+  });
+  const signature = (boundary?: string): RenderedEntry => ({
+    entry: `${header}\n// (signature only)\n${signatureLine(content)}`,
+    mode: 'signature', reason: base.reason, boundary: boundary ?? base.boundary, bodyOmitted: true,
+  });
+  switch (decision.mode) {
+    case 'full':
+      return { entry: `${header}\n\`\`\`\n${(content ?? '').replace(/^\n+|\s+$/g, '')}\n\`\`\``, mode: 'full', ...base, bodyOmitted: false };
+    case 'snippet':
+      return snippet();
+    case 'signature':
+      return signature();
+    case 'skeleton':
+      if (decision.skeletonText) {
+        return { entry: `${header}\n// (skeleton — body detail omitted)\n\`\`\`\n${decision.skeletonText}\n\`\`\``, mode: 'skeleton', ...base, bodyOmitted: true };
+      }
+      return signature('skeleton-unavailable');
+    default:
+      // 'reference' whose freshness no longer holds: resend source, never a stale pointer.
+      return snippet('stale-reference-resent', 'stale-session-reference');
+  }
+}
+
 function buildFocusCodeBlock(
   seeds: SeedSymbol[],
   nodes: CodeNode[],
@@ -452,6 +521,8 @@ function buildFocusCodeBlock(
   signatureOnlyThreshold: number,
   tokenBudget: number,
   session?: ContextDeliverySession,
+  renderPlan?: ContextRenderPlan,
+  indexIdentity?: string,
 ): { text: string; truncated: boolean; receipts: ContextAllocationReceipt[] } {
   if (nodes.length === 0) return { text: '', truncated: false, receipts: [] };
 
@@ -461,6 +532,17 @@ function buildFocusCodeBlock(
   const receipts: ContextAllocationReceipt[] = [];
 
   const scoreOf = (node: CodeNode): number => seeds.find((s) => s.nodeId === node.id)?.refinedScore ?? 1.0;
+  const renderEntryFor = (node: CodeNode, header: string): RenderedEntry => {
+    const decision = renderPlan?.decisions.get(node.id);
+    return decision
+      ? plannedEntry(header, node.content, decision)
+      : legacyEntry(header, node.content, scoreOf(node), signatureOnlyThreshold);
+  };
+  const withRender = (receipt: ContextAllocationReceipt, rendered: RenderedEntry | undefined): ContextAllocationReceipt => (
+    rendered?.mode
+      ? { ...receipt, renderMode: rendered.mode, renderReason: rendered.reason, renderBoundary: rendered.boundary, bodyOmitted: rendered.bodyOmitted }
+      : receipt
+  );
 
   // ── Classify each node up front (B.4.2 skip / missing source / session pointer) ──
   const classified: FocusEntry[] = nodes.map((node) => {
@@ -469,23 +551,14 @@ function buildFocusCodeBlock(
     const skipInLogic = ml <= 5 && dedup.isInLogic(node);
     const missingSource = !content;
     const pointerEligible = Boolean(session) && !skipInLogic && !missingSource
-      && session!.lookup(canonicalId(node))?.contentFingerprint === contentFingerprint(content);
+      && session!.isFresh(canonicalId(node), contentFingerprint(content), indexIdentity);
 
     const header = `// ${node.name} — ${last2Segments(node.filePath)}${node.startLine ? ':' + node.startLine : ''}`;
-    let entry = '';
-    if (!skipInLogic && !missingSource && !pointerEligible) {
-      const score = scoreOf(node);
-      if (score < signatureOnlyThreshold) {
-        const sig = content?.split('\n').find((l) => l.trim().length > 0) ?? '';
-        const sigLine = sig ? sig.trimEnd() + (sig.includes('{') ? ' ... }' : '') : '';
-        entry = `${header}\n// (low relevance)\n${sigLine}`;
-      } else {
-        const { lines: snippet } = adaptiveSnippet(content);
-        entry = `${header}\n\`\`\`\n${snippet}\n\`\`\``;
-      }
-    }
+    let rendered: RenderedEntry | undefined;
+    if (!skipInLogic && !missingSource && !pointerEligible) rendered = renderEntryFor(node, header);
+    const entry = rendered?.entry ?? '';
 
-    return { node, header, entry, demand: entry ? estimateTokens(entry) : 0, skipInLogic, missingSource, pointerEligible };
+    return { node, header, entry, rendered, demand: entry ? estimateTokens(entry) : 0, skipInLogic, missingSource, pointerEligible };
   });
 
   // ── Prevent all-pointer responses: force the highest-priority node concrete ──
@@ -494,16 +567,8 @@ function buildFocusCodeBlock(
     const forced = classified.find((c) => c.pointerEligible);
     if (forced) {
       forced.pointerEligible = false;
-      const score = scoreOf(forced.node);
-      const content = forced.node.content;
-      if (score < signatureOnlyThreshold) {
-        const sig = content?.split('\n').find((l) => l.trim().length > 0) ?? '';
-        const sigLine = sig ? sig.trimEnd() + (sig.includes('{') ? ' ... }' : '') : '';
-        forced.entry = `${forced.header}\n// (low relevance)\n${sigLine}`;
-      } else {
-        const { lines: snippet } = adaptiveSnippet(content);
-        forced.entry = `${forced.header}\n\`\`\`\n${snippet}\n\`\`\``;
-      }
+      forced.rendered = renderEntryFor(forced.node, forced.header);
+      forced.entry = forced.rendered.entry;
       forced.demand = estimateTokens(forced.entry);
     }
   }
@@ -523,7 +588,7 @@ function buildFocusCodeBlock(
 
   // ── Render in original node order ──
   for (let i = 0; i < classified.length; i++) {
-    const { node, header, entry, skipInLogic, missingSource, pointerEligible } = classified[i];
+    const { node, header, entry, rendered, skipInLogic, missingSource, pointerEligible } = classified[i];
     const artifactId = canonicalId(node);
     const score = scoreOf(node);
 
@@ -547,7 +612,7 @@ function buildFocusCodeBlock(
       }
       lines.push(pointerLine);
       usedTokens += toks;
-      receipts.push({ artifactId, name: node.name, namedByUser: true, relevanceScore: score, reservedTokens: toks, deliveredTokens: toks, deliveryMode: 'pointer' });
+      receipts.push({ artifactId, name: node.name, namedByUser: true, relevanceScore: score, reservedTokens: toks, deliveredTokens: toks, deliveryMode: 'pointer', ...(renderPlan ? { renderMode: 'reference' as const, renderReason: 'unchanged-in-session', bodyOmitted: false } : {}) });
       continue;
     }
 
@@ -563,7 +628,7 @@ function buildFocusCodeBlock(
     if (fullToks <= allowance && usedTokens + fullToks <= tokenBudget) {
       lines.push(entry);
       usedTokens += fullToks;
-      receipts.push({ artifactId, name: node.name, namedByUser: true, relevanceScore: score, reservedTokens: allowance, deliveredTokens: fullToks, deliveryMode: 'full' });
+      receipts.push(withRender({ artifactId, name: node.name, namedByUser: true, relevanceScore: score, reservedTokens: allowance, deliveredTokens: fullToks, deliveryMode: 'full' }, rendered));
       continue;
     }
 
@@ -573,7 +638,7 @@ function buildFocusCodeBlock(
       const toks = estimateTokens(trimmed.text);
       usedTokens += toks;
       truncated = true;
-      receipts.push({ artifactId, name: node.name, namedByUser: true, relevanceScore: score, reservedTokens: allowance, deliveredTokens: toks, deliveryMode: 'window' });
+      receipts.push(withRender({ artifactId, name: node.name, namedByUser: true, relevanceScore: score, reservedTokens: allowance, deliveredTokens: toks, deliveryMode: 'window' }, rendered));
     } else {
       truncated = true;
       receipts.push({ artifactId, name: node.name, namedByUser: true, relevanceScore: score, reservedTokens: allowance, deliveredTokens: 0, deliveryMode: 'omitted', omissionReason: 'budget' });
@@ -594,7 +659,11 @@ export function build(
   const signatureOnlyThreshold = options.signatureOnlyThreshold ?? 0.3;
   const intent: QueryIntent = options.queryIntent ?? 'auto';
   const preset = BUDGET_PRESETS[intent];
-  const nodes = seeds.map((seed) => graph.getNode(seed.nodeId)).filter((node): node is CodeNode => node !== undefined);
+  const overrides = options.contentOverrides;
+  const nodes = seeds
+    .map((seed) => graph.getNode(seed.nodeId))
+    .filter((node): node is CodeNode => node !== undefined)
+    .map((node) => (overrides?.has(node.id) ? { ...node, content: overrides.get(node.id) } : node));
   const dedup = new DedupeRegistry();
   const truncatedBlocks = new Set<ContextBlockName>();
   let available = maxTokens;
@@ -615,7 +684,7 @@ export function build(
   if (relationFit.truncated) truncatedBlocks.add('relation');
   available -= estimateTokens(relationFit.text);
 
-  const focus = buildFocusCodeBlock(seeds, nodes, dedup, signatureOnlyThreshold, Math.max(0, available), options.session);
+  const focus = buildFocusCodeBlock(seeds, nodes, dedup, signatureOnlyThreshold, Math.max(0, available), options.session, options.renderPlan, options.indexIdentity);
   if (focus.truncated) truncatedBlocks.add('focusCode');
 
   const enforced = enforceContextBudget({
@@ -644,9 +713,11 @@ export function build(
     options.session.beginCall();
     for (const receipt of receipts) {
       if (receipt.deliveryMode !== 'full' && receipt.deliveryMode !== 'window') continue;
+      // A skeleton/signature is not the full source: it must never license a later pointer-only reference.
+      if (receipt.renderMode === 'skeleton' || receipt.renderMode === 'signature') continue;
       const node = nodes.find((n) => canonicalId(n) === receipt.artifactId);
       if (!node?.content) continue;
-      options.session.record(receipt.artifactId, contentFingerprint(node.content), node.content.length);
+      options.session.record(receipt.artifactId, contentFingerprint(node.content), node.content.length, undefined, options.indexIdentity);
     }
   }
 
@@ -665,5 +736,20 @@ export function build(
     coverage: trustSummary.coverage,
     trust: { certainty: trustSummary.certainty, boundaries: trustSummary.boundaries },
     omitted: omissionsFromReceipts(receipts),
+    ...(options.renderPlan
+      ? {
+        renderDecisions: receipts
+          .filter((receipt) => receipt.renderMode !== undefined)
+          .map((receipt): AppliedRenderDecision => ({
+            artifactId: receipt.artifactId,
+            name: receipt.name,
+            mode: receipt.renderMode!,
+            reason: receipt.renderReason ?? '',
+            deliveredTokens: receipt.deliveredTokens,
+            bodyOmitted: receipt.bodyOmitted ?? false,
+            ...(receipt.renderBoundary ? { boundary: receipt.renderBoundary } : {}),
+          })),
+      }
+      : {}),
   };
 }

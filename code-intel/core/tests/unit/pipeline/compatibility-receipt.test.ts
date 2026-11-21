@@ -49,4 +49,10 @@ describe('buildAnalyzerCompatibilityReceipt', () => {
     assert.notEqual(a.resolverFingerprint, b.resolverFingerprint);
     assert.notEqual(a.identityFingerprint, b.identityFingerprint);
   });
+
+  it('includes the stable flow producer fingerprint', () => {
+    const receipt = buildAnalyzerCompatibilityReceipt({ parser: 'tree-sitter', identityFingerprint: 'symbol-identity-v2' });
+
+    assert.match(receipt.flowIdentityFingerprint, /^flow-identity-v\d+$/);
+  });
 });

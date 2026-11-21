@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "language": "typescript",
+  "sourceFile": "src/pricing.ts",
+  "baseFile": "pricing.base.ts",
+  "mutations": [
+    {
+      "id": "tax-rate-body-edit",
+      "description": "Change the tax calculation while keeping valid TypeScript.",
+      "file": "pricing.tax-rate.ts",
+      "expectedImpactedSymbols": ["calculateTotal"]
+    },
+    {
+      "id": "formatting-body-edit",
+      "description": "Change formatting behavior while keeping valid TypeScript.",
+      "file": "pricing.formatting.ts",
+      "expectedImpactedSymbols": ["formatTotal"]
+    }
+  ]
+}

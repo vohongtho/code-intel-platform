@@ -10,6 +10,7 @@ describe('scoped search request normalization', () => {
       limit: 20,
       mode: 'vector',
       scope: { type: 'repo', repoId: 'repo-api' },
+      selectorSource: 'canonical-scope',
       deprecated: false,
       explain: false,
     });
@@ -22,6 +23,7 @@ describe('scoped search request normalization', () => {
       limit: 20,
       mode: 'auto',
       scope: { type: 'group', name: 'platform' },
+      selectorSource: 'legacy-group',
       deprecated: true,
       explain: false,
     });

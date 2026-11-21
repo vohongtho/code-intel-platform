@@ -37,10 +37,17 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
   - Producer support: Express, Fastify, NestJS, ASP.NET Core. Consumer support: `fetch`, Axios, Angular `HttpClient`. Other route-discovery frameworks are unaffected and do not yet emit contract facts.
   - Never fabricates a link or a "safe" verdict — ambiguous matches, dynamic URLs, and unresolved shapes surface as `candidate-set`/`unresolved` certainty and incomplete coverage instead of guessing.
   - `group sync` uses the same matcher to resolve cross-repo route↔consumer links instead of name/substring equality.
+- **API and Protocol Contract Intelligence** _(v1.0.12)_ — `api_shape_check` / `code-intel api-shape-check` checks the nested response paths each HTTP consumer reads (`user.profile.displayName`, `items[].price`) against the route's response shapes. `group_contract_drift` now compares GraphQL schemas (graphql-js AST, operations mapped to canonical `Type.field` ids) and protobuf/gRPC contracts, reporting gRPC wire and generated-source compatibility separately. Rule table, binding capabilities and limits: [docs/protocol-contract-compatibility.md](docs/protocol-contract-compatibility.md).
+- **Extensible Taint and Receiver Dispatch** _(v1.0.12)_ — taint sources, sinks and sanitizers are declarative, validated models: built-in runtime models, framework adapter contributions (Express, NestJS, Spring, Flask, Go `net/http`, ASP.NET Core) and an optional `.code-intel/taint-models.json`. Model changes invalidate cached findings. `code-intel taint-trace`, MCP `taint_trace` and `GET /api/v1/taint-trace` report model ids, source/sink locations, sanitizer evidence, certainty and coverage, and follow persisted call edges when the index is trusted. A no-finding result is reported as `no-findings-partial-coverage` whenever coverage is incomplete, never as safe. Member calls with receiver evidence resolve through receiver type sets that keep every valid target. Details and limits: [docs/extensible-taint-and-dispatch.md](docs/extensible-taint-and-dispatch.md).
 - **Branch-Aware Semantic Graph Diff** _(v1.0.11)_ — compares the semantic graph between two Git refs (branches, tags, or commits) instead of only mapping textual hunks onto one graph state: added/removed/changed/moved/renamed symbols, relationship and call-site certainty changes, and API-contract deltas. Each ref is analyzed independently in an isolated temporary `git worktree` checkout — never touching your working tree, HEAD, or the currently published index — and cached per (ref, analyzer version) under `.code-intel/snapshots/`. `code-intel graph diff --base <ref> --head <ref>`, a `graph_diff` MCP tool, `POST /api/v1/graph/diff` HTTP route, and an optional `analysisMode: "semantic-snapshot"` on `pr_impact` that adds the semantic diff alongside (never in place of) its existing textual-hunk blast radius.
+- **Ref-aware reads and portable indexes** _(v1.0.12)_ — an optional `ref` on read tools (MCP, HTTP, `--ref` on CLI `search`/`inspect`/`impact`/`explore`) serves the query from that committed ref's isolated semantic snapshot instead of the current index, with an `indexView` identity in the response and no fallback to current state on failure. `code-intel index export`/`import` move a snapshot between machines as a validated `.cidx` package (repository identity, analyzer fingerprints and artifact hashes checked before anything is published; optional `metadata-only` profile strips source content). See [docs/ref-aware-portable-indexes.md](docs/ref-aware-portable-indexes.md).
+- **Safe refactoring and architecture guards** _(v1.0.12)_ — `code-intel refactor rename <selector> <newName>` resolves one canonical symbol (an ambiguous name exits 2 with candidates) and dry-runs by default; `--apply` edits only exact definition/reference/import/export spans, refuses stale plans, dirty files, symlinks and generated files, then re-analyzes and withholds success unless every planned reference resolves to the renamed symbol. Apply is enabled for TypeScript/JavaScript module-scope declarations; 12 other languages are preview-only and HTML is unsupported. `code-intel check --changed|--base <ref>` (text/JSON/SARIF) reports explicit architecture-policy violations from `.code-intel/architecture-policy.json`, new import cycles, breaking API drift and untested high-risk changes; inferred layers are advisory and never fail it. Read-only `rename_plan`/`structural_check` MCP tools and HTTP routes. See [docs/safe-refactoring-and-architecture-guards.md](docs/safe-refactoring-and-architecture-guards.md).
   - Rename/move detection is conservative: a symbol is only reported as `renamed`/`moved` when its declaration content is byte-identical across an unambiguous one-to-one pairing (optionally corroborated by Git's own rename detection); a shared display name alone is never treated as proof. Ambiguous candidates (e.g. identical-body overloads) are left as separate added/removed deltas annotated with candidate correlation metadata, never merged.
   - Coverage is always reported: a failed or unsupported ref never silently degrades to "no semantic impact" — `coverage.complete` and `coverage.incompleteReasons` (or, for `pr_impact`, `baseSnapshot`/`headSnapshot` boundaries) say why when a diff can't be produced or is partial.
-  - Flow and cluster deltas are not yet supported — their current node identity is a per-analysis-run enumeration index rather than a content fingerprint, so it isn't guaranteed stable across independent runs; the diff reports this explicitly (`flows`/`clusters: { supported: false, reason }`) instead of fabricating deltas.
+  - Flow deltas use stable, versioned semantic identities as of v1.0.12. Cluster deltas remain unsupported and are reported explicitly (`clusters: { supported: false, reason }`) instead of being fabricated.
+- **Change Risk & Test Intelligence** _(v1.0.12)_ — stable execution-flow identities make flow deltas deterministic across independent snapshot analyses; `pr_impact` adds `precision: "graph" | "pdg" | "auto"`, bounded PDG slices, source-to-IR mapping boundaries, projected impact, fallback counts, and structural risk metrics without replacing existing graph evidence.
+  - Test suggestions classify evidence as `direct`, `affected-flow`, `transitive`, `candidate`, or `unknown`, rank it deterministically, and keep generic suggested cases separate from evidence-backed existing tests. Incomplete coverage is surfaced explicitly rather than upgraded to certainty.
+  - PDG precision remains experimental and opt-in. The committed mutation benchmark produced equal graph and PDG precision (`0.333333`) with recall `1`, so the promotion gate did not pass and `auto` intentionally remains graph-backed.
 - **Correctness-First Incremental Analysis** _(v1.0.8)_ — detects committed, staged, unstaged, untracked, mtime-changed, and deleted files. Zero-change runs keep the fast path; any non-empty change set performs a clean full graph rebuild so cross-file `calls`, `imports`, `extends`, `implements`, clusters, and flows cannot be lost.
 - **Parallel Analysis** — `--parallel` flag runs parse + resolve phases on worker threads for large repos
 - **Selection-aware AI Context Files** — the first interactive `code-intel analyze` stores the selected agents in `.code-intel/agent-targets.json`; later analyses update only those selected repository instruction files, such as `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `.cursor/rules/code-intel.mdc`, `.kiro/steering/code-intel.md`, `.clinerules`, `.windsurfrules`, `.kilocode/rules/code-intel-rules.md`, or `.agents/rules/code-intel-rules.md`
@@ -63,6 +70,9 @@ A static code analysis platform that builds a **Knowledge Graph** from your sour
 - **VS Code Extension** _(v0.9)_ — symbol hover tooltips, Symbol Explorer panel, status bar freshness indicator, "Open in Graph" command, command palette integration
 - **Self-Update** _(v0.9)_ — `code-intel update` checks npm registry; background version check on startup; `--no-update-check` to suppress
 - **Self-contained Runtime Lifecycle** _(v1.0.11)_ — bundled install, `doctor --json`, side-by-side `upgrade`, `version list`, `version pin`, schema-safe `rollback`, default data-preserving `uninstall`, per-target checksum/SBOM/provenance artifacts
+- **Runtime Trust and Offline Install** _(v1.0.12)_ — `upgrade --bundle-dir <dir> --offline` verifies the signed release index and Sigstore attestation against the pinned release identity with no network access, and validates archive members before extraction. `verify-install` and `doctor` report `verified`, `legacy-checksum`, `unverified` or `invalid`; 1.0.11 checksum-only runtimes stay `legacy-checksum`
+- **Adaptive Agent Exploration** _(v1.0.12)_ — `explore` (CLI, MCP, `POST /api/v1/explore`) runs scoped search, graph-aware reranking, bounded expansion and budgeted context in one call, rendering symbols as full body, signature, skeleton or reference. The 33% token reduction in `eval/run-explore-bench.mjs` is measured on a synthetic 6-case fixture, not real repositories
+- **Change Workflows and System Flows** _(v1.0.12)_ — resumable change sessions (`code-intel workflow start|checkpoint|verify|complete`, MCP `change_workflow`) verify expected graph deltas after edits before completion; `system_flows` stitches stable local flows across exact cross-repository contract links and keeps non-exact links as candidates
 - **`--dry-run` flag** _(v0.9)_ — `analyze`, `clean`, `group sync` preview what would happen without side effects
 - **`code-intel doctor`** _(v0.9)_ — full diagnostics: Node.js, git, config, registry, DB integrity, network; exit 1 on any failure
 - **Lazy Graph Loading** _(v1.0)_ — `serve` starts in <2s for 10k-file repos; LRU node cache (5,000 nodes by default, `GRAPH_CACHE_SIZE` env var); background warm of high-blast-radius nodes
@@ -100,8 +110,8 @@ User data stays in `~/.code-intel`.
 
 ```bash
 node scripts/distribution/install/install-runtime.mjs \
-  --archive code-intel-runtime-v1.0.11-linux-x64.tar.gz \
-  --checksum-file code-intel-runtime-v1.0.11-linux-x64.tar.gz.sha256
+  --archive code-intel-runtime-v1.0.12-linux-x64.tar.gz \
+  --checksum-file code-intel-runtime-v1.0.12-linux-x64.tar.gz.sha256
 ```
 
 Verify:
@@ -115,9 +125,11 @@ Lifecycle:
 
 ```bash
 code-intel version list --json
-code-intel upgrade --archive ./code-intel-runtime-v1.0.11-linux-x64.tar.gz --checksum-file ./code-intel-runtime-v1.0.11-linux-x64.tar.gz.sha256 --version 1.0.11
-code-intel version pin 1.0.11
-code-intel rollback 1.0.10
+code-intel upgrade --bundle-dir /media/code-intel-v1.0.12 --offline   # verified, no network
+code-intel verify-install --json
+code-intel upgrade --archive ./code-intel-runtime-v1.0.12-linux-x64.tar.gz --checksum-file ./code-intel-runtime-v1.0.12-linux-x64.tar.gz.sha256 --version 1.0.12   # checksum only: legacy-checksum
+code-intel version pin 1.0.12
+code-intel rollback 1.0.11
 code-intel uninstall --dry-run
 code-intel uninstall
 ```
@@ -446,6 +458,8 @@ Eight bundled workflows cover the recurring engineering tasks the MCP tools are 
 
 Every workflow is graph-first but evidence-aware: each one requires canonical symbol identity before conclusions, propagates the coverage/certainty signals the MCP tools already report, and explicitly downgrades to "candidate"/"needs verification" language instead of stating an unproven result as fact. A workflow's *required* tools must exist on the connected server; its *optional* tools each declare an explicit fallback and a named reduced guarantee for when they're unavailable (e.g. `api-review` uses `api_contract`/`api_impact`/`api_drift` when registered, and falls back to `routes` + `pr_impact` + source reading — while stating plainly that response-shape compatibility wasn't proven).
 
+Workflows that may lead to an edit (all but `explore`) also include a change-session section when the server registers `change_workflow`: start or join a session, edit outside Code Intel, run `code-intel analyze`, then `verify`, and only claim completion after a `passed` result. See [Change workflows](#change-workflows).
+
 Installed workflow files are managed like `AGENTS.md`/`CLAUDE.md`: each carries a content fingerprint, and `code-intel analyze` only ever creates or updates a file that still matches its last-installed fingerprint. If you've edited an installed workflow file yourself, the next `analyze` leaves it untouched and reports a conflict instead of overwriting your changes. `code-intel analyze --dry-run` previews exactly which workflow files would be created, updated, skipped (unchanged), or left as a conflict, without writing anything.
 
 ---
@@ -720,6 +734,15 @@ code-intel clean --all --force           # Permanently remove all indexed reposi
 code-intel search <query>                # Execute intent-aware symbol search
 code-intel search <query> --limit <n>    # Limit number of results (default: 20)
 code-intel search <query> --json         # Include machine-readable qualified selectors
+code-intel explore <task>                # Search + rerank + bounded expansion + budgeted context in one call
+code-intel explore <task> --intent change --max-tokens 6000 --compression auto
+code-intel explore <task> --explain-ranking --json   # Add rerank contributions and per-symbol render reasons
+code-intel workflow start --task "<task>" --target <symbol>   # Pin baseline + plan (repo); add --group <name> for a group
+code-intel workflow status <session>       # Phase, plan, freshness (moves to reindex-required after edits)
+code-intel workflow checkpoint <session> --conditions '<json>' --remove-condition <id>   # Declare intent
+code-intel workflow verify <session>       # Expected-vs-actual after `code-intel analyze`
+code-intel workflow complete <session>     # Suggested commit plan only; nothing is committed
+code-intel group flows <name>              # Cross-repo system flows (exact HTTP links; candidates listed separately)
 code-intel inspect <symbol>              # Inspect a unique symbol; lists candidates when ambiguous
 code-intel inspect <selector>            # Inspect an exact qualified result from search/inspect
 code-intel inspect <symbol> --json       # Structured result; ambiguity exits with status 2
@@ -750,6 +773,20 @@ code-intel graph diff --base v1.2.0 --head v1.3.0 --no-contracts  # Skip API-con
 code-intel graph diff --base main --head HEAD --no-cache          # Force a full rebuild of both snapshots
 ```
 
+### Ref-aware reads and portable indexes
+
+```bash
+code-intel search "UserService" --ref main            # Read from main's snapshot; checkout and current index untouched
+code-intel inspect PaymentService --ref v2.3.0
+code-intel index refs                                 # Cached snapshots and the local branches/tags that map to them
+code-intel index export --ref main -o main.cidx       # Portable package; prints its sha256
+code-intel index export --ref main -o main.cidx --privacy metadata-only
+code-intel index import main.cidx --pin --expect-sha256 <digest>
+code-intel index pin|unpin|remove <ref | snapshot-id>
+```
+
+Import is rejected for another repository's package, an incompatible analyzer version, tampered artifacts, or unsafe archive entries, and it never changes the current index. Details and the security model: [docs/ref-aware-portable-indexes.md](docs/ref-aware-portable-indexes.md).
+
 Each ref is analyzed independently in an isolated temporary `git worktree` — your working tree, index, HEAD, and this repository's currently published index are never touched, on success or failure. Results are cached under `.code-intel/snapshots/`, keyed by (ref, analyzer version); a repeated diff against an unchanged ref is served from cache. See the Features section above for what is and isn't diffed (flow/cluster deltas are not yet supported).
 
 ### Groups (multi-repo / monorepo service tracking)
@@ -777,6 +814,22 @@ code-intel group status <name>                                             # Aud
 
 ---
 
+### Change workflows
+
+A change session pins the current trusted index as a baseline, plans the change, and later checks what actually changed:
+
+```bash
+code-intel workflow start --task "add idempotency to payment capture" --target capturePayment
+# edit files yourself (or with your agent)
+code-intel analyze
+code-intel workflow verify <session>
+code-intel workflow complete <session>
+```
+
+`verify` returns `passed`, `needs-revision`, `reindex-required` or `blocked`, per-condition statuses, unplanned changes and review-lens results. It never reasons from a stale index. Group sessions (`--group <name>`) also plan consumer updates from the group's consumer index and report a stale `group sync` instead of trusting it. Session files hold canonical IDs and content fingerprints, not source text; pass `--fingerprint-only` to keep only a hash of the task description. Over HTTP (`/api/v1/workflows`), a session belongs to the user or token that started it: only that owner or an admin can read or advance it, every repository in scope must be accessible to the caller, and mutations need the `analyst` role. Sessions started from the CLI or MCP have no owner and are admin-only over HTTP.
+
+Cross-repository system flows (`code-intel group flows <name>`, MCP `system_flows`, `GET /api/v1/groups/:name/system-flows`) join stable local flows across exact contract links: HTTP route facts, and literal protocol keys found during `group sync` — event topics (`publish`/`subscribe`, Kafka, NestJS patterns), GraphQL root operations (`gql` documents → resolvers) and gRPC methods (clients → `@GrpcMethod`/`addService`). Matches on names alone, unresolved endpoints and partially covered members are listed as candidates, not stitched.
+
 ## 🌐 HTTP API
 
 | Method | Endpoint | Description |
@@ -785,17 +838,25 @@ code-intel group status <name>                                             # Aud
 | `GET`  | `/api/v1/repos` | List indexed repos |
 | `GET`  | `/api/v1/graph/:repoId` | Full graph (nodes + edges) |
 | `POST` | `/api/v1/search` | Canonical scoped search (`query`, `limit`, `mode`, `scope`) with repo/group targeting; repo scope uses `repoId` |
+| `POST` | `/api/v1/explore` | Task-oriented exploration (`task`, `intent`, `max_tokens`, `compression`, `explain_ranking`, `seeds`, repo `scope`/`repoId`); stateless, so no session references; group scope is rejected; repo-scoped tokens may only explore their repositories |
+| `POST` | `/api/v1/workflows` | Start a change session (`task`, `targets`, `repoId` or `scope: "group"` + `group`, `task_retention`); caller becomes the owner; `analyst` role |
+| `GET`  | `/api/v1/workflows` | List sessions in a repo/group scope that the caller owns (admins: all) |
+| `GET`  | `/api/v1/workflows/:id` | Session status (owner or admin); `repoId`/`group` query selects the scope |
+| `POST` | `/api/v1/workflows/:id/checkpoint` · `/verify` · `/complete` | Advance a session (owner or admin; `analyst`); `expected_revision` gives optimistic concurrency (409 on conflict) |
+| `GET`  | `/api/v1/groups/:name/system-flows` | Read-only system flows (`symbol_id`, `contract_id`, `repository_id`, `limit` ≤ 100, `offset`); requires access to every member repository |
 | `POST` | `/api/v1/vector-search` | Deprecated compatibility alias for vector mode; returns resolved scope/mode metadata |
 | `GET`  | `/api/v1/vector-status` | Vector index ready/building status |
-| `GET`  | `/api/v1/nodes/:id` | Node detail (callers, callees, imports, etc.) |
-| `POST` | `/api/v1/blast-radius` | Impact analysis; request body accepts canonical `repoId` |
+| `GET`  | `/api/v1/nodes/:id` | Node detail (callers, callees, imports, etc.); accepts optional `repoId` and `ref` |
+| `POST` | `/api/v1/blast-radius` | Impact analysis; request body accepts canonical `repoId` and optional `ref` |
 | `POST` | `/api/v1/query` | Execute a GQL query string; accepts optional canonical `scope`, returns normalized `{ kind, nodes, edges, groups, path, executionTimeMs, truncated, totalCount, scope }` |
 | `POST` | `/api/v1/query/explain` | Return query plan without executing; accepts optional canonical `scope` |
 | `GET`  | `/api/v1/source` | Fetch file content with ±20 lines context; path-traversal protected; accepts optional `repoId` |
 | `POST` | `/api/v1/grep` | Regex search in file content |
-| `GET`  | `/api/v1/flows` | List detected flows; accepts optional `repoId` |
-| `GET`  | `/api/v1/clusters` | List clusters; accepts optional `repoId` |
-| `POST` | `/api/v1/graph/diff` | Semantic graph diff between two Git refs (`base_ref`, `head_ref`, optional `repoId`); paginated `nodes`/`relationships`. Requires the `analyst` role. |
+| `GET`  | `/api/v1/flows` | List detected flows; accepts optional `repoId` and `ref` |
+| `GET`  | `/api/v1/clusters` | List clusters; accepts optional `repoId` and `ref` |
+| `POST` | `/api/v1/graph/diff` | Semantic graph diff between two Git refs (`base_ref`, `head_ref`, optional `repoId`); paginated `nodes`/`relationships`; each side reports its `indexView`. Requires the `analyst` role. |
+
+`ref` (also accepted by `POST /api/v1/search`, `POST /api/v1/explore` and `GET /api/v1/graph/:repoId/nodes`) serves the request from that committed ref's semantic snapshot and adds `indexView` to the response. Only `analyst`+ may trigger a build of an uncached snapshot; other roles get `404` with `boundary: "snapshot-not-built"`. An unknown ref is `404` with `boundary: "unknown-ref"`.
 
 Migration note: internal/UI-owned repo selectors now use `repoId`. Legacy flat `repo` inputs remain only as bounded compatibility adapters on selected surfaces during migration.
 
@@ -804,6 +865,8 @@ Migration note: internal/UI-owned repo selectors now use `repoId`. Legacy flat `
 ## 🤖 MCP Server Tools
 
 All tools are available to any MCP-capable editor (Claude Desktop, Claude Code, VS Code, Cursor, etc.) after running `code-intel setup`.
+
+Read tools that advertise a `ref` input (`overview`, `search`, `inspect`, `context`, `explore`, `blast_radius`, `file_symbols`, `find_path`, `list_exports`, `routes`, `clusters`, `flows`, `query`, `explain_relationship`, `similar_symbols`, `health_report`, `cluster_summary`, `deprecated_usage`, `complexity_hotspots`, `api_contract`, `api_impact`, `api_shape_check`) can answer from a committed ref's snapshot; the result then includes `indexView`. Other tools reject `ref`.
 
 ### Core Tools
 
@@ -814,6 +877,9 @@ All tools are available to any MCP-capable editor (Claude Desktop, Claude Code, 
 | `search` | `query` (string), `limit` (number, default 10), `mode` (`auto`\|`bm25`\|`vector`, default `auto`), `scope` (object, optional), legacy `repo`/`group` during migration | Scoped search with MCP default behavior matching HTTP: hybrid/semantic when vector is ready, BM25 otherwise; explicit `mode` can force BM25 or prefer vector with BM25 fallback |
 | `inspect` | `symbol_name` (string) | 360° view of a symbol: definition, callers, callees, imports, heritage (extends/implements), members, cluster, and source preview |
 | `context` | `symbols` (string[]), `intent` (`code`\|`callers`\|`architecture`\|`auto`, default `auto`), `max_tokens` (number, default/server max 6000), `limit` (number, default 10) | Token-budgeted deep context for one or more symbols: returns `summary`, `logic`, `relation`, `focusCode`, and `truncated` from the shared context builder; change-context surfaces preserve additive trust summaries when impact/test evidence is incomplete |
+| `explore` | `task` (string), `intent` (`auto`\|`understand`\|`debug`\|`change`\|`review`\|`security`\|`api`, default auto-detected), `max_tokens` (number, default/server max 6000), `compression` (`auto`\|`none`\|`aggressive`), `explain_ranking` (boolean), `seeds` (1–8, default 5) | Task-oriented exploration in one call: scoped search, deterministic graph-aware rerank, bounded intent expansion (callers/callees, impact, tests, API, recorded security signals) and a token-budgeted context with per-symbol render modes (`full`/`snippet`/`signature`/`skeleton`/`reference`). Always reports certainty, coverage, boundaries and `capabilities.degraded`; absence of evidence is never proof. Specialized tools stay independently callable. |
+| `change_workflow` | `action` (`start`\|`status`\|`checkpoint`\|`verify`\|`complete`\|`list`), `session_id`, `task`, `targets`, `scope` (`repo`\|`group`), `group`, `expected_revision`, `conditions`, `remove_condition_ids`, `step_id`, `lenses`, `edited`, `task_retention` | Resumable change session. Sessions are reachable only through the selected repository or the named group. Stale index → `reindex-required`; unknown/partial evidence is never `satisfied`; never edits source or Git. |
+| `system_flows` | `name` (group), `symbol_id`, `contract_id`, `repository_id`, `limit` (max 100), `offset` | Read-only system flows stitched across exact contract links, with candidate continuations, coverage and cap boundaries. |
 | `blast_radius` | `target` (string), `direction` (`callers`\|`callees`\|`both`), `max_hops` (number, default 2) | Impact analysis: traverse the call/import graph to find all affected symbols. Returns additive trust fields including `riskLevel` (`LOW` / `MEDIUM` / `HIGH` / `UNKNOWN`), `certainty`, `coverage`, and `boundaries`. |
 | `file_symbols` | `file_path` (string, partial match), `limit` (number, default 10) | List all symbols defined in a file, ordered by line number. Avoids having to read raw source. |
 | `find_path` | `from` (string), `to` (string), `max_hops` (number, default 8) | Find the shortest call/import path between two symbols via BFS. Additive trust fields (`certainty`, `coverage`, `boundaries`) surface when traversal is bounded or evidence-backed. |
@@ -830,11 +896,13 @@ All tools are available to any MCP-capable editor (Claude Desktop, Claude Code, 
 | Tool | Input | Description |
 |------|-------|-------------|
 | `explain_relationship` | `from` (string), `to` (string) | Explain how two symbols are connected: directed paths, shared imports, and heritage (extends/implements). Returns up to 10 paths with at most 5 hops each plus additive trust fields such as `certainty`, `coverage`, path `strategy`, and evidence-backed `boundaries`. |
-| `pr_impact` | `changedFiles` (string[]), `diff` (string, optional), `maxHops` (number, default 2), `analysisMode` (`current-graph`\|`semantic-snapshot`, default `current-graph`), `base_ref`/`head_ref` (string, required when `analysisMode` is `semantic-snapshot`) | Given changed files or a unified diff, compute full blast radius with risk scores (`HIGH` / `MEDIUM` / `LOW` / `UNKNOWN`), test coverage gaps, top files to review, and additive trust summaries when impact coverage is incomplete. `analysisMode: "semantic-snapshot"` additionally builds isolated snapshots of `base_ref`/`head_ref` and adds a full semantic graph diff alongside (never replacing) the textual-hunk blast radius. |
+| `pr_impact` | `changedFiles` (string[]), `diff` (string, optional), `maxHops` (number, default 2), `precision` (`graph`\|`pdg`\|`auto`, default `graph`), `analysisMode` (`current-graph`\|`semantic-snapshot`, default `current-graph`), `base_ref`/`head_ref` (string, required when `analysisMode` is `semantic-snapshot`) | Given changed files or a unified diff, compute full blast radius with risk scores (`HIGH` / `MEDIUM` / `LOW` / `UNKNOWN`), test coverage gaps, top files to review, and additive trust summaries when impact coverage is incomplete. `pdg` requests bounded dependence slices with explicit fallbacks; `auto` remains graph-backed until the mutation promotion gate passes. `analysisMode: "semantic-snapshot"` additionally builds isolated snapshots of `base_ref`/`head_ref` and adds a full semantic graph diff alongside (never replacing) the textual-hunk blast radius. |
 | `graph_diff` | `base_ref` (string), `head_ref` (string), `include_contracts` (boolean, default true), `allow_cache` (boolean, default true), `nodes_offset`/`nodes_limit`/`relationships_offset`/`relationships_limit` (number, paginated) | Compares the semantic graph between two Git refs of the active repository: added/removed/changed/moved/renamed symbols, relationship and certainty changes, and API-contract deltas. Each side is analyzed independently in an isolated temporary checkout and cached by (ref, analyzer version). Unlike `api_drift` (two already-indexed, already-registered repositories), this resolves and analyzes the refs itself. |
+| `rename_plan` | `selector` (string), `newName` (string), `max_occurrences` (number, default 200) | Read-only rename plan for one canonical symbol: exact edits with spans, candidate string/comment mentions (never edited), language capability, boundaries that block apply, affected tests and a plan id. Ambiguous names return candidates. Apply locally with `code-intel refactor rename … --apply --expect-plan <planId>`. |
+| `structural_check` | `changedFiles` (string[]) or `base_ref`/`head_ref` (string), `rules` (string[]), `max_findings` (number, default 200) | Read-only structural verdict: explicit architecture-policy violations, new import cycles, breaking API drift, untested high-risk changes. Findings carry rule id, severity, location, evidence, certainty and whether the change introduced them; coverage says when no base was available. |
 | `similar_symbols` | `symbol` (string), `limit` (number, default 10) | Find symbols with similar names or structure using Levenshtein distance and kind matching. Useful for finding related functions, classes, or interfaces. |
 | `health_report` | `scope` (string, optional) | Code health signals for a scope: dead code, cycles, god nodes, orphan files, complexity hotspots. |
-| `suggest_tests` | `symbol` (string) | Suggest test cases for a symbol: call paths, suggested cases, existing tests, untested callers, plus additive trust fields when recommendations are derived from bounded or uncertain evidence. |
+| `suggest_tests` | `symbol` (string) | Suggest test cases for a symbol: call paths, generic suggested cases, untested callers, and deterministically ranked existing-test evidence classified as `direct`, `affected-flow`, `transitive`, `candidate`, or `unknown`. Coverage gates and additive trust fields prevent bounded or uncertain evidence from being presented as proven. |
 | `cluster_summary` | `cluster` (string) | Rich summary of a module/cluster: purpose, key symbols, dependencies, dependents, and health score. |
 
 ### Security & Quality Tools

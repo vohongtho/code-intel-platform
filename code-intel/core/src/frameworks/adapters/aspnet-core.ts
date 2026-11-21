@@ -5,6 +5,7 @@ import { declaration } from '../../semantic/adapters/common.js';
 import { buildHttpProducerFacts } from '../../semantic/api-contracts/index.js';
 import { summarizeFrameworkDetection } from '../detection.js';
 import type { FrameworkAdapter, FrameworkDetectionSignal, RepositoryFactView } from '../contracts.js';
+import { workspaceRelativePath } from '../contracts.js';
 
 const VERSION = '0.2.0';
 
@@ -56,7 +57,7 @@ function extractFacts(view: RepositoryFactView): FactBundle['facts'] {
   for (const filePath of view.filePaths) {
     const source = view.fileCache.get(filePath) ?? '';
     if (!source) continue;
-    const relPath = filePath.replace(/^.*?code-intel-platform\//, '');
+    const relPath = workspaceRelativePath(view.workspaceRoot, filePath);
     const lines = source.split('\n');
 
     let controllerPrefix = '';
@@ -273,6 +274,29 @@ export const aspnetCoreFrameworkAdapter: FrameworkAdapter = {
   id: 'aspnet-core',
   version: VERSION,
   languages: [Language.CSharp],
+  taintModels() {
+    return [{
+      adapterId: this.id,
+      adapterVersion: this.version,
+      model: {
+        schemaVersion: 1,
+        id: 'aspnet-core-request-input',
+        version: '1',
+        framework: 'aspnet-core',
+        languages: [Language.CSharp],
+        description: 'ASP.NET Core action parameters bound from the request by binding-source attributes.',
+        sources: [
+          { id: 'from-body', kind: 'annotation', annotation: 'FromBody' },
+          { id: 'from-form', kind: 'annotation', annotation: 'FromForm' },
+          { id: 'from-header', kind: 'annotation', annotation: 'FromHeader' },
+          { id: 'from-query', kind: 'annotation', annotation: 'FromQuery' },
+          { id: 'from-route', kind: 'annotation', annotation: 'FromRoute' },
+        ],
+        sinks: [],
+        sanitizers: [],
+      },
+    }];
+  },
   detect(view: RepositoryFactView) {
     return summarizeFrameworkDetection(detectSignals(view), this.id, this.version);
   },

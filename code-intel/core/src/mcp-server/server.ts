@@ -11,6 +11,7 @@ import { Bm25Index, getBm25DbPath } from '../search/bm25-index.js';
 import { executeSearchRequest, type SearchMode } from '../search/execute-scoped-search.js';
 import { build, detectQueryIntent, type QueryIntent, type SeedSymbol } from '../context/builder.js';
 import { ContextDeliverySession } from '../context/session.js';
+import { createScopedExploreSearch, ExploreRequestError, runExplore, type ExploreRequest } from '../query/explore.js';
 import { resolveContextSeed } from '../context/selection.js';
 import type { ContextOmission } from '../context/receipt.js';
 import { getVectorDbPath } from '../storage/index.js';
@@ -28,6 +29,8 @@ import {
 import { syncGroup } from '../multi-repo/group-sync.js';
 import { queryGroup } from '../multi-repo/group-query.js';
 import { getGroupContractDrift } from '../multi-repo/contract-drift/service.js';
+import { getGroupSystemFlows, querySystemFlows } from '../multi-repo/system-flows/service.js';
+import { runChangeWorkflowAction, workflowErrorPayload } from '../agents/workflows/session-service.js';
 import type { Contract } from '../multi-repo/types.js';
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -35,7 +38,7 @@ import path from 'node:path';
 import { withSpan, isTracingEnabled, sanitizeAttrs } from '../observability/tracing.js';
 import { mcpToolCallsTotal, mcpToolDurationSeconds } from '../observability/metrics.js';
 import { explainRelationship } from '../query/explain-relationship.js';
-import { computePRImpact, parseDiffFiles } from '../query/pr-impact.js';
+import { computePRImpactWithPrecision, parseDiffChangedLineRanges, parseDiffFiles, type PRImpactPrecision } from '../query/pr-impact.js';
 import { findSimilarSymbols } from '../query/similar-symbols.js';
 import { computeHealthReport } from '../query/health-report.js';
 import { suggestTests } from '../query/suggest-tests.js';
@@ -46,10 +49,14 @@ import { loadGraphFromDB } from '../multi-repo/graph-from-db.js';
 import { createKnowledgeGraph } from '../graph/knowledge-graph.js';
 import { CURRENT_SCHEMA_VERSION } from '../migrations/migration-runner.js';
 import { resolveSymbolTarget } from '../cli/symbol-target.js';
-import { getApiContract, getApiDrift, getApiImpact, type RouteSelector } from '../semantic/api-contracts/index.js';
+import { getApiContract, getApiDrift, getApiImpact, getApiShapeCheck, normalizeRoutePath, type RouteSelector } from '../semantic/api-contracts/index.js';
 import { computeSemanticGraphDiff } from '../snapshots/service.js';
 import { computeBlastRadiusWithTrust } from './blast-radius-trust.js';
-import { MCP_TOOL_DEFINITIONS } from './tool-definitions.js';
+import { MCP_TOOL_DEFINITIONS, REF_SELECTABLE_TOOL_NAMES } from './tool-definitions.js';
+import { resolveReadIndexView } from '../storage/index-view-resolver.js';
+import { summarizeIndexView, type ReadIndexView } from '../storage/index-view.js';
+import { runWithEvidenceDb } from '../evidence/store.js';
+import { loadIndexViewArtifacts, resetIndexViewLoaderForTests } from '../storage/index-view-loader.js';
 
 export { MCP_TOOL_DEFINITIONS } from './tool-definitions.js';
 
@@ -201,6 +208,8 @@ type LoadedRepoGraph = {
   bm25Index: Bm25Index | null;
   vectorDbPath?: string;
   missingIndex?: boolean;
+  /** Set when this context is an alternate-ref snapshot view rather than the active index. */
+  indexView?: ReadIndexView;
 };
 
 const repoGraphCache = new Map<string, LoadedRepoGraph>();
@@ -209,6 +218,7 @@ const repoReloads = new Map<string, Promise<LoadedRepoGraph>>();
 export function resetRepoGraphCacheForTests(): void {
   repoGraphCache.clear();
   repoReloads.clear();
+  resetIndexViewLoaderForTests();
 }
 
 function repoCacheKey(repoId: string, repoPath: string): string {
@@ -282,6 +292,99 @@ async function loadRepoGraph(
     bm25Index,
     vectorDbPath: snapshot.vectorDbPath,
   };
+}
+
+async function loadViewContext(
+  resolved: { id: string; name: string; path: string },
+  view: ReadIndexView,
+): Promise<LoadedRepoGraph> {
+  const loaded = await loadIndexViewArtifacts(view);
+  return {
+    id: resolved.id,
+    repo: resolved.name,
+    path: resolved.path,
+    indexVersion: view.identity,
+    schemaVersion: loaded.metadata?.schemaVersion ?? CURRENT_SCHEMA_VERSION,
+    generationId: view.identity,
+    snapshot: null,
+    metadata: loaded.metadata,
+    graph: loaded.graph,
+    bm25Index: loaded.bm25Index,
+    vectorDbPath: view.vectorDbPath,
+    indexView: view,
+  };
+}
+
+/** Adds the compact `indexView` identity to every JSON object payload of a ref-served result. */
+function attachIndexView(result: ToolResult, view: ReadIndexView): ToolResult {
+  const summary = summarizeIndexView(view);
+  let attached = false;
+  const content = result.content.map((item) => {
+    if (item.type !== 'text') return item;
+    try {
+      const parsed = JSON.parse(item.text) as unknown;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return item;
+      attached = true;
+      return { ...item, text: compact({ ...(parsed as Record<string, unknown>), indexView: summary }) };
+    } catch {
+      return item;
+    }
+  });
+  if (!attached) content.push({ type: 'text', text: compact({ indexView: summary }) });
+  return { ...result, content };
+}
+
+function refError(message: string, extra: Record<string, unknown> = {}): ToolResult {
+  return { isError: true, content: [{ type: 'text', text: compact({ error: message, ...extra }) }] };
+}
+
+/**
+ * Serves one ref-capable tool call from the semantic snapshot of `a.ref`. The view
+ * is resolved once, held by a read pin for the whole call, and every artifact
+ * (graph, BM25, vectors, evidence) comes from it. Failures are boundaries — there
+ * is no fallback to the current index.
+ */
+async function dispatchToolAtRef(
+  name: string,
+  a: Record<string, unknown>,
+  graph: KnowledgeGraph,
+  repoName: string,
+  workspaceRoot: string | undefined,
+  bm25Resolver?: () => Bm25Index | null,
+  contextSessionResolver?: (workspaceIdentity: string) => ContextDeliverySession,
+): Promise<ToolResult> {
+  const ref = a.ref;
+  if (!REF_SELECTABLE_TOOL_NAMES.has(name)) {
+    return refError(`Tool '${name}' does not accept ref`, { hint: 'Omit ref, or use graph_diff / pr_impact to compare refs.' });
+  }
+  if (typeof ref !== 'string' || ref.trim() === '') return refError('ref must be a non-empty string', { boundary: 'unknown-ref' });
+  const scope = a.scope as { type?: string; repoId?: string } | undefined;
+  if (scope?.type === 'group' || typeof a.group === 'string') {
+    return refError('ref cannot be combined with a group scope', { hint: 'Select one repository with repoId or scope.repoId.' });
+  }
+  let resolved: { id: string; name: string; path: string } | null;
+  try {
+    resolved = resolveRepo((a.repoId as string | undefined) ?? scope?.repoId, a.repo as string | undefined, repoName, workspaceRoot);
+  } catch (err) {
+    return refError(err instanceof Error ? err.message : String(err));
+  }
+  if (!resolved) return refError('No repository selected for ref', { hint: 'Pass repoId.' });
+
+  const resolution = await resolveReadIndexView({ repoDir: resolved.path, ref });
+  if (!resolution.ok) {
+    return refError(resolution.boundary.message, { boundary: resolution.boundary.kind, ref, repo: resolved.name });
+  }
+  const view = resolution.view;
+  try {
+    const ctx = await loadViewContext(resolved, view);
+    const result = await runWithEvidenceDb(
+      view.evidenceDbPath ?? null,
+      () => dispatchTool(name, a, graph, repoName, workspaceRoot, bm25Resolver, contextSessionResolver, ctx),
+    );
+    return attachIndexView(result, view);
+  } finally {
+    view.release();
+  }
 }
 
 async function ensureRepoLoaded(
@@ -359,6 +462,11 @@ async function graphContext(a: Record<string, unknown>, repoName: string, worksp
   return ensureRepoLoaded(a.repoId as string | undefined, a.repo as string | undefined, repoName, workspaceRoot, graph);
 }
 
+/** Delivery memory is per workspace *and* per view: content delivered from one ref is not "already delivered" for another. */
+function sessionIdentity(workspace: string, ctx: LoadedRepoGraph | null): string {
+  return ctx?.indexView ? `${workspace}@${ctx.indexView.identity}` : workspace;
+}
+
 function missingIndexResult(ctx: LoadedRepoGraph): ToolResult {
   const repoLabel = ctx.path || ctx.repo;
   return {
@@ -377,10 +485,11 @@ function missingIndexResult(ctx: LoadedRepoGraph): ToolResult {
 }
 
 const GRAPH_BACKED_TOOLS = new Set([
-  'overview', 'inspect', 'context', 'blast_radius', 'file_symbols', 'find_path', 'list_exports', 'routes', 'clusters', 'flows',
+  'overview', 'inspect', 'context', 'explore', 'blast_radius', 'file_symbols', 'find_path', 'list_exports', 'routes', 'clusters', 'flows',
   'detect_changes', 'query', 'raw_query', 'explain_relationship', 'pr_impact', 'similar_symbols', 'health_report',
   'suggest_tests', 'cluster_summary', 'deprecated_usage', 'complexity_hotspots', 'coverage_gaps', 'secrets', 'vulnerability_scan',
-  'api_contract', 'api_impact', 'api_drift', 'graph_diff',
+  'api_contract', 'api_impact', 'api_shape_check', 'api_drift', 'graph_diff', 'taint_trace',
+  'rename_plan', 'structural_check',
 ]);
 
 export async function dispatchTool(
@@ -391,7 +500,12 @@ export async function dispatchTool(
   workspaceRoot: string | undefined,
   bm25Resolver?: () => Bm25Index | null,
   contextSessionResolver?: (workspaceIdentity: string) => ContextDeliverySession,
+  /** Internal: a context already pinned to one alternate-ref view (see dispatchToolAtRef). */
+  pinnedContext?: LoadedRepoGraph,
 ): Promise<ToolResult> {
+  if (a.ref !== undefined && !pinnedContext) {
+    return dispatchToolAtRef(name, a, graph, repoName, workspaceRoot, bm25Resolver, contextSessionResolver);
+  }
   let activeRepoName = repoName;
   let activeWorkspaceRoot = workspaceRoot;
   let activeBm25: Bm25Index | null | undefined;
@@ -419,9 +533,9 @@ export async function dispatchTool(
     }
     preloadSearchContext = normalized.scope === undefined;
   }
-  if (GRAPH_BACKED_TOOLS.has(name) || preloadSearchContext) {
+  if (pinnedContext || GRAPH_BACKED_TOOLS.has(name) || preloadSearchContext) {
     try {
-      const ctx = await graphContext(a, repoName, workspaceRoot, graph);
+      const ctx = pinnedContext ?? await graphContext(a, repoName, workspaceRoot, graph);
       activeContext = ctx;
       graph = ctx.graph;
       activeRepoName = ctx.repo;
@@ -509,12 +623,25 @@ export async function dispatchTool(
             workspaceRoot: activeWorkspaceRoot,
             ensureBm25Index: () => activeBm25 ?? ((!a.repoId && (!a.repo || a.repo === repoName)) ? (bm25Resolver ? bm25Resolver() : null) : null),
             getGraphForRepo: async (requestedRepo) => {
-              if (!requestedRepo || requestedRepo === activeRepoName) return graph;
+              if (!requestedRepo || requestedRepo === activeRepoName || pinnedContext) return graph;
               const ctx = await ensureRepoLoaded(requestedRepo, undefined, repoName, workspaceRoot, graph);
               if (ctx.missingIndex) throw missingIndexError(ctx);
               return ctx.graph;
             },
             getRepoSearchContext: async (requestedRepo) => {
+              if (pinnedContext) {
+                // A ref-pinned call searches exactly the repo/view it resolved; never another index.
+                if (requestedRepo && requestedRepo !== pinnedContext.id && requestedRepo !== pinnedContext.repo) {
+                  throw new Error(`ref was resolved for repo '${pinnedContext.repo}', not '${requestedRepo}'`);
+                }
+                return {
+                  graph: pinnedContext.graph,
+                  bm25Index: pinnedContext.bm25Index,
+                  vectorDbPath: pinnedContext.vectorDbPath,
+                  metadata: pinnedContext.metadata,
+                  indexView: pinnedContext.indexView,
+                };
+              }
               const ctx = !requestedRepo || requestedRepo === activeRepoName
                 ? activeContext ?? await ensureRepoLoaded(requestedRepo, undefined, repoName, workspaceRoot, graph)
                 : await ensureRepoLoaded(requestedRepo, undefined, repoName, workspaceRoot, graph);
@@ -705,7 +832,7 @@ export async function dispatchTool(
           };
         }
 
-        const contextSession = contextSessionResolver?.(activeWorkspaceRoot ?? activeRepoName);
+        const contextSession = contextSessionResolver?.(sessionIdentity(activeWorkspaceRoot ?? activeRepoName, activeContext));
         const doc = build(resolvedSeeds, graph, {
           queryIntent,
           maxTokens,
@@ -731,6 +858,52 @@ export async function dispatchTool(
             }),
           }],
         };
+      }
+
+      // ── explore ────────────────────────────────────────────────────────────
+      case 'explore': {
+        const request: ExploreRequest = {
+          task: a.task as string,
+          intent: a.intent as ExploreRequest['intent'],
+          maxTokens: a.max_tokens as number | undefined,
+          compression: a.compression as ExploreRequest['compression'],
+          explainRanking: a.explain_ranking === true,
+          seeds: a.seeds as number | undefined,
+        };
+        try {
+          // Same scoped-search path as the `search` tool, pinned to the repo graphContext already resolved.
+          const result = await runExplore(request, {
+            graph,
+            search: createScopedExploreSearch({}, {
+              repoName: activeRepoName,
+              workspaceRoot: activeWorkspaceRoot,
+              ensureBm25Index: () => activeBm25 ?? (bm25Resolver ? bm25Resolver() : null),
+              getGraphForRepo: async () => graph,
+              getRepoSearchContext: async () => ({
+                graph,
+                bm25Index: activeContext?.indexView ? activeBm25 ?? null : activeBm25 ?? (bm25Resolver ? bm25Resolver() : null),
+                vectorDbPath: activeVectorDbPath,
+                snapshot: activeContext?.snapshot,
+                metadata: activeContext?.metadata,
+                indexView: activeContext?.indexView,
+              }),
+            }),
+            repoDir: activeWorkspaceRoot,
+            repoName: activeRepoName,
+            session: contextSessionResolver?.(sessionIdentity(activeWorkspaceRoot ?? activeRepoName, activeContext)),
+            indexIdentity: activeContext?.indexView?.identity ?? activeContext?.snapshot?.generationId,
+            ...(activeContext?.indexView ? {
+              hydrateSource: false,
+              sourceContentAvailable: activeContext.indexView.capabilities.sourceContent,
+            } : {}),
+          });
+          return { content: [{ type: 'text', text: compact(result) }] };
+        } catch (err) {
+          if (err instanceof ExploreRequestError) {
+            return { isError: true, content: [{ type: 'text', text: compact({ error: err.message, hint: err.hint, status: err.status }) }] };
+          }
+          throw err;
+        }
       }
 
       // ── blast_radius ───────────────────────────────────────────────────────
@@ -1259,6 +1432,62 @@ export async function dispatchTool(
       }
 
       // ── group_status ───────────────────────────────────────────────────────
+      // ── system_flows ───────────────────────────────────────────────────────
+      case 'system_flows': {
+        const groupName = a.name as string;
+        if (!groupName || !loadGroup(groupName)) return { content: [{ type: 'text', text: compact({ error: `Group "${groupName}" not found.` }) }], isError: true };
+        try {
+          const { result, cache } = await getGroupSystemFlows(groupName, { allowCache: true });
+          const page = querySystemFlows(result, {
+            symbolId: a.symbol_id as string | undefined,
+            contractId: a.contract_id as string | undefined,
+            repositoryId: a.repository_id as string | undefined,
+            limit: a.limit as number | undefined,
+            offset: a.offset as number | undefined,
+          });
+          return { content: [{ type: 'text', text: compact({ groupName, ...page, cacheHit: cache.hit }) }] };
+        } catch (err) {
+          return { content: [{ type: 'text', text: compact({ error: err instanceof Error ? err.message : String(err) }) }], isError: true };
+        }
+      }
+
+      // ── change_workflow ────────────────────────────────────────────────────
+      case 'change_workflow': {
+        // Scope policy: a session is reachable only through the repository the caller selected
+        // (repoId/repo, same resolution as every repo tool) or the group it explicitly names.
+        try {
+          const scope = (a.scope as 'repo' | 'group' | undefined) ?? (a.group ? 'group' : 'repo');
+          let repoDir: string | undefined;
+          if (scope === 'repo') {
+            const resolved = resolveRepo(a.repoId as string | undefined, a.repo as string | undefined, repoName, workspaceRoot);
+            if (!resolved?.path) return { content: [{ type: 'text', text: compact({ error: 'No repository selected for a repo-scoped workflow. Pass repoId/repo or run the server inside a repository.' }) }], isError: true };
+            repoDir = resolved.path;
+          } else if (!a.group || !loadGroup(a.group as string)) {
+            return { content: [{ type: 'text', text: compact({ error: `Group "${String(a.group)}" not found.` }) }], isError: true };
+          }
+          const result = await runChangeWorkflowAction({
+            action: a.action as string,
+            sessionId: a.session_id as string | undefined,
+            task: a.task as string | undefined,
+            scope,
+            repoDir,
+            groupName: scope === 'group' ? a.group as string : undefined,
+            targets: a.targets as string[] | undefined,
+            taskRetention: a.task_retention as 'summary' | 'fingerprint-only' | undefined,
+            expectedRevision: a.expected_revision as number | undefined,
+            note: a.note as string | undefined,
+            conditions: a.conditions as Array<Record<string, unknown>> | undefined,
+            removeConditionIds: a.remove_condition_ids as string[] | undefined,
+            stepId: a.step_id as string | undefined,
+            lenses: a.lenses as string[] | undefined,
+            edited: a.edited as boolean | undefined,
+          }, {}, { strict: true });
+          return { content: [{ type: 'text', text: compact(result) }] };
+        } catch (err) {
+          return { content: [{ type: 'text', text: compact(workflowErrorPayload(err)) }], isError: true };
+        }
+      }
+
       case 'group_status': {
         const groupName = a.name as string;
         const group = loadGroup(groupName);
@@ -1316,6 +1545,7 @@ export async function dispatchTool(
       case 'pr_impact': {
         const maxHops = (a.maxHops as number) ?? 2;
         let changedFiles: string[] = (a.changedFiles as string[]) ?? [];
+        const changedRanges = a.diff && typeof a.diff === 'string' ? parseDiffChangedLineRanges(a.diff) : [];
 
         // If a diff string is provided, extract files from it
         if (a.diff && typeof a.diff === 'string') {
@@ -1326,6 +1556,11 @@ export async function dispatchTool(
         const analysisMode = (a.analysisMode as string | undefined) ?? 'current-graph';
         if (analysisMode !== 'current-graph' && analysisMode !== 'semantic-snapshot') {
           return { content: [{ type: 'text', text: compact({ error: 'analysisMode must be "current-graph" or "semantic-snapshot".' }) }], isError: true };
+        }
+
+        const precision = (a.precision as PRImpactPrecision | undefined) ?? 'graph';
+        if (!['graph', 'pdg', 'auto'].includes(precision)) {
+          return { content: [{ type: 'text', text: compact({ error: 'precision must be "graph", "pdg", or "auto".' }) }], isError: true };
         }
 
         if (changedFiles.length === 0 && analysisMode === 'current-graph') {
@@ -1340,7 +1575,11 @@ export async function dispatchTool(
         // Textual-hunk blast radius — computed whenever changed files are known,
         // in both modes. semantic-snapshot mode adds to this; it never replaces it.
         const textualImpact = changedFiles.length > 0
-          ? computePRImpact(graph, changedFiles, maxHops, activeWorkspaceRoot)
+          ? await computePRImpactWithPrecision(graph, changedFiles, maxHops, {
+              repoDir: activeWorkspaceRoot,
+              precision,
+              changedRanges,
+            })
           : null;
 
         if (analysisMode === 'current-graph') {
@@ -1364,7 +1603,7 @@ export async function dispatchTool(
             : undefined;
           if (group && loadSyncResult(group.name)) {
             try {
-              crossRepositoryContracts = await getGroupContractDrift({ groupName: group.name, baseRef, headRef, allowCache: true });
+              crossRepositoryContracts = await getGroupContractDrift({ groupName: group.name, baseRef, headRef, allowCache: true, includeSystemFlows: true });
             } catch (error) {
               crossRepositoryContracts = {
                 groupName: group.name,
@@ -1433,6 +1672,41 @@ export async function dispatchTool(
         return { content: [{ type: 'text', text: compact(result) }] };
       }
 
+      // ── api_shape_check ────────────────────────────────────────────────────
+      case 'api_shape_check': {
+        const rawPath = a.path as string | undefined;
+        const selector: RouteSelector = {
+          method: a.method as string | undefined,
+          normalizedPath: rawPath ? normalizeRoutePath(rawPath).normalizedPath : undefined,
+          routeFactId: a.route_fact_id as string | undefined,
+          routeNodeId: a.route_node_id as string | undefined,
+        };
+        const maxFindings = a.max_findings as number | undefined;
+        const result = getApiShapeCheck(graph, selector, activeRepoName, Number.isInteger(maxFindings) && maxFindings! > 0 ? { maxFindings } : {});
+        return { content: [{ type: 'text', text: compact(result) }] };
+      }
+
+      // ── taint_trace ────────────────────────────────────────────────────────
+      case 'taint_trace': {
+        if (!activeWorkspaceRoot) {
+          return { content: [{ type: 'text', text: compact({ error: 'taint_trace needs an indexed repository workspace; pass repo to select one' }) }], isError: true };
+        }
+        const { traceTaint } = await import('../query/taint-trace.js');
+        const positive = (value: unknown) => (Number.isInteger(value) && (value as number) > 0 ? (value as number) : undefined);
+        const result = await traceTaint({
+          repoDir: activeWorkspaceRoot,
+          graph,
+          symbol: a.symbol as string | undefined,
+          source: a.source as string | undefined,
+          sink: a.sink as string | undefined,
+          ...(typeof a.interprocedural === 'boolean' ? { interprocedural: a.interprocedural } : {}),
+          maxFindings: positive(a.max_findings),
+          maxFunctions: positive(a.max_functions),
+          verbose: a.verbose === true,
+        });
+        return { content: [{ type: 'text', text: compact(result) }] };
+      }
+
       // ── api_drift ──────────────────────────────────────────────────────────
       case 'api_drift': {
         const baseRepoId = a.base_repo_id as string | undefined;
@@ -1456,6 +1730,24 @@ export async function dispatchTool(
             content: [{ type: 'text', text: compact({ error: err instanceof Error ? err.message : String(err) }) }],
             isError: true,
           };
+        }
+      }
+
+      // ── rename_plan / structural_check (read-only; never write source) ─────
+      case 'rename_plan':
+      case 'structural_check': {
+        if (!activeWorkspaceRoot) {
+          return { content: [{ type: 'text', text: compact({ error: 'No repository workspace root available. Select a repo with repoId/repo.' }) }], isError: true };
+        }
+        const { GovernanceRequestError, planRenameReadOnly, structuralCheckReadOnly } = await import('../governance/service.js');
+        try {
+          const result = name === 'rename_plan'
+            ? await planRenameReadOnly({ graph, workspaceRoot: activeWorkspaceRoot, selector: a.selector, newName: a.newName, maxOccurrences: a.max_occurrences })
+            : await structuralCheckReadOnly({ graph, repoDir: activeWorkspaceRoot, changedFiles: a.changedFiles, baseRef: a.base_ref, headRef: a.head_ref, rules: a.rules, maxFindings: a.max_findings });
+          return { content: [{ type: 'text', text: compact(result) }] };
+        } catch (error) {
+          if (error instanceof GovernanceRequestError) return { content: [{ type: 'text', text: compact({ error: error.message }) }], isError: true };
+          throw error;
         }
       }
 

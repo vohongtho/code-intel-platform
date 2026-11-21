@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { diffEntities, diffEntitiesWithContinuity, diffRelationships } from '../../../src/snapshots/graph-diff.js';
-import type { NormalizedEdge, NormalizedGraph, NormalizedNode } from '../../../src/snapshots/normalizer.js';
+import { diffEntities, diffEntitiesWithContinuity, diffFlows, diffRelationships } from '../../../src/snapshots/graph-diff.js';
+import type { NormalizedEdge, NormalizedFlow, NormalizedGraph, NormalizedNode } from '../../../src/snapshots/normalizer.js';
 
 function node(id: string, overrides: Partial<NormalizedNode['properties']> = {}, kind: NormalizedNode['kind'] = 'function'): NormalizedNode {
   return {
@@ -35,11 +35,16 @@ function edge(overrides: Partial<NormalizedEdge> & Pick<NormalizedEdge, 'source'
   };
 }
 
-function graph(nodes: NormalizedNode[], edges: NormalizedEdge[] = []): NormalizedGraph {
+function graph(nodes: NormalizedNode[], edges: NormalizedEdge[] = [], flows: NormalizedFlow[] = []): NormalizedGraph {
   return {
     nodesById: new Map(nodes.map((n) => [n.id, n])),
     edgesByKey: new Map(edges.map((e) => [e.key, e])),
+    flowsById: new Map(flows.map((flow) => [flow.flowId, flow])),
   };
+}
+
+function flow(flowId: string, entryPointId: string, steps: string[], callSiteIds: string[] = []): NormalizedFlow {
+  return { flowId, entryPointId, stepCanonicalIds: steps, callSiteIds };
 }
 
 describe('graph-diff: entities', () => {
@@ -122,5 +127,43 @@ describe('graph-diff: flow/cluster exclusion', () => {
     const deltas = diffEntitiesWithContinuity(base, head);
     assert.equal(deltas.length, 1);
     assert.equal(deltas[0]!.nodeKind, 'flow');
+  });
+});
+
+describe('graph-diff: stable flows', () => {
+  it('returns no delta for an unchanged stable flow', () => {
+    const same = flow('flow:entry:aaa', 'entry', ['entry', 'service', 'store']);
+    assert.deepEqual(diffFlows(graph([], [], [same]), graph([], [], [same])), []);
+  });
+
+  it('reports added and removed flows when stable entry points do not correlate', () => {
+    const base = graph([], [], [flow('flow:old:aaa', 'old', ['old', 'service', 'store'])]);
+    const head = graph([], [], [flow('flow:new:bbb', 'new', ['new', 'service', 'store'])]);
+
+    assert.deepEqual(diffFlows(base, head).map((delta) => delta.kind), ['added', 'removed']);
+  });
+
+  it('reports path-changed when one stable entry keeps membership but changes order', () => {
+    const base = graph([], [], [flow('flow:entry:aaa', 'entry', ['entry', 'a', 'b'])]);
+    const head = graph([], [], [flow('flow:entry:bbb', 'entry', ['entry', 'b', 'a'])]);
+
+    assert.deepEqual(diffFlows(base, head).map((delta) => delta.kind), ['path-changed']);
+  });
+
+  it('reports membership-changed when one stable entry gains or loses a step', () => {
+    const base = graph([], [], [flow('flow:entry:aaa', 'entry', ['entry', 'a', 'b'])]);
+    const head = graph([], [], [flow('flow:entry:bbb', 'entry', ['entry', 'a', 'c'])]);
+
+    assert.deepEqual(diffFlows(base, head).map((delta) => delta.kind), ['membership-changed']);
+  });
+
+  it('does not force-pair split or ambiguous flows sharing an entry point', () => {
+    const base = graph([], [], [flow('flow:entry:aaa', 'entry', ['entry', 'a', 'end'])]);
+    const head = graph([], [], [
+      flow('flow:entry:bbb', 'entry', ['entry', 'b', 'end']),
+      flow('flow:entry:ccc', 'entry', ['entry', 'c', 'end']),
+    ]);
+
+    assert.deepEqual(diffFlows(base, head).map((delta) => delta.kind), ['added', 'added', 'removed']);
   });
 });

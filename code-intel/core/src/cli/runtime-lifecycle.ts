@@ -5,6 +5,32 @@ import crypto from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { CURRENT_SCHEMA_VERSION } from '../migrations/migration-runner.js';
 import { loadBundledRuntimeMetadata } from './runtime-metadata.js';
+import { preflightRuntimeArchive } from './runtime-archive-preflight.js';
+import {
+  RUNTIME_INDEX_ATTESTATION_FILENAME,
+  RUNTIME_INDEX_FILENAME,
+  RUNTIME_INDEX_LIMITS,
+  RuntimeTrustError,
+  compareRuntimeVersions,
+  parseRuntimeBundleIndex,
+  selectRuntimeIndexTarget,
+  sha256Hex,
+  type RuntimeIndexFile,
+} from './runtime-bundle-index.js';
+import {
+  PINNED_TRUSTED_ROOT_RELPATH,
+  buildChecksumReceipt,
+  buildVerifiedReceipt,
+  inspectRuntimeTrust,
+  runWithNetworkDenied,
+  verifyRuntimeIndexAttestation,
+  writeTrustReceipt,
+  type RuntimeAuthenticity,
+  type RuntimeIndexAttestationVerifier,
+  type RuntimeTrustReceipt,
+  type TrustRootSource,
+  type VerifiedRuntimeRelease,
+} from './runtime-trust.js';
 
 const DEFAULT_INSTALL_ROOT = process.env['CODE_INTEL_INSTALL_ROOT']?.trim() || path.join(os.homedir(), '.local', 'share', 'code-intel');
 const DEFAULT_DATA_ROOT = process.env['CODE_INTEL_GLOBAL_DIR']?.trim() || path.join(os.homedir(), '.code-intel');
@@ -22,6 +48,7 @@ export interface InstalledRuntimeVersion {
   appVersion?: string;
   commitSha?: string;
   schemaVersion?: number | null;
+  authenticity?: RuntimeAuthenticity;
 }
 
 export interface RuntimeInstallState {
@@ -69,6 +96,33 @@ export interface RuntimeUpgradeResult {
   versionOutput: string;
   pathConflicts: Array<{ path: string; resolved: string }>;
   cleanedVersions: string[];
+  authenticity: RuntimeAuthenticity;
+}
+
+export interface RuntimeBundleUpgradeOptions {
+  bundleDir: string;
+  offline?: boolean;
+  target?: string;
+  /** Operator-supplied Sigstore trusted root; default is the root pinned in the running runtime. */
+  trustedRoot?: string;
+  installRoot?: string;
+  tempRoot?: string;
+  skipPathCheck?: boolean;
+  scriptPath?: string;
+  /** Version of the running installer, checked against the index's minimumInstallerVersion. */
+  installerVersion?: string;
+  /** Allow installing a release older than the running runtime. Off by default: a genuine but older signed bundle must not silently downgrade. */
+  allowDowngrade?: boolean;
+  /** Test seam; production always uses the pinned Sigstore verifier. */
+  attestationVerifier?: RuntimeIndexAttestationVerifier;
+}
+
+export interface RuntimeBundleUpgradeResult extends RuntimeUpgradeResult {
+  offline: boolean;
+  networkAttempts: number | null;
+  target: string;
+  release: VerifiedRuntimeRelease & { trustRootSource: TrustRootSource };
+  optionalAssets: Array<{ id: string; status: 'not-bundled'; message: string }>;
 }
 
 export interface RuntimeUninstallOptions {
@@ -134,17 +188,19 @@ function readChecksumFile(checksumFile: string, expectedName: string): string | 
   return null;
 }
 
-function verifyArchiveChecksum(archivePath: string, opts: RuntimeUpgradeOptions): string {
+function verifyArchiveChecksum(archivePath: string, opts: RuntimeUpgradeOptions, archiveName: string): string {
   const actual = sha256File(archivePath);
-  const expected = opts.checksum?.toLowerCase() || (opts.checksumFile ? readChecksumFile(opts.checksumFile, path.basename(archivePath)) : null);
+  const expected = opts.checksum?.toLowerCase() || (opts.checksumFile ? readChecksumFile(opts.checksumFile, archiveName) : null);
   if (!expected) throw new Error('Missing archive checksum. Provide --checksum or --checksum-file.');
-  if (actual !== expected) throw new Error(`Checksum mismatch for ${archivePath}. expected ${expected}, got ${actual}`);
+  if (actual !== expected) throw new Error(`Checksum mismatch for ${archiveName}. expected ${expected}, got ${actual}`);
   return actual;
 }
 
-function extractArchive(archivePath: string, tempRoot: string): string {
-  const extractDir = fs.mkdtempSync(path.join(tempRoot, 'code-intel-upgrade-'));
-  execFileSync('tar', ['-xzf', archivePath, '-C', extractDir], { stdio: 'inherit' });
+// Only call after preflightRuntimeArchive() approved this exact file.
+function extractArchive(archivePath: string, workDir: string): string {
+  const extractDir = path.join(workDir, 'extract');
+  mkdirp(extractDir);
+  execFileSync('tar', ['-xzf', archivePath, '-C', extractDir, '--no-same-owner'], { stdio: 'inherit' });
   const entries = fs.readdirSync(extractDir, { withFileTypes: true }).filter((entry) => entry.isDirectory());
   if (entries.length !== 1) throw new Error(`Archive must contain exactly one top-level directory, found ${entries.length}`);
   return path.join(extractDir, entries[0].name);
@@ -279,6 +335,7 @@ export function listInstalledRuntimeVersions(scriptPath = process.argv[1] ?? '',
         schemaVersion: typeof manifest?.schemaCompatibility === 'object' && manifest?.schemaCompatibility && 'currentSchemaVersion' in manifest.schemaCompatibility
           ? Number((manifest.schemaCompatibility as { currentSchemaVersion?: number }).currentSchemaVersion ?? null)
           : null,
+        authenticity: inspectRuntimeTrust(versionRoot).authenticity,
       } satisfies InstalledRuntimeVersion;
     })
     .sort((a, b) => a.version.localeCompare(b.version, undefined, { numeric: true }));
@@ -299,11 +356,12 @@ function checkRollbackCompatibility(version: InstalledRuntimeVersion): void {
   }
 }
 
-function launcherSmoke(version: InstalledRuntimeVersion): string {
+function launcherSmoke(version: InstalledRuntimeVersion, env?: NodeJS.ProcessEnv): string {
   const cli = path.join(version.path, 'app', 'code-intel', 'core', 'dist', 'cli', 'main.js');
   const child = spawnSync(process.execPath, [cli, '--version'], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
+    env,
   });
   if (child.status !== 0) {
     throw new Error(`Runtime ${version.version} failed smoke test: ${child.stderr || child.stdout}`);
@@ -352,45 +410,230 @@ export function cleanupRuntimeVersions(scriptPath = process.argv[1] ?? '', insta
   return removed;
 }
 
-export function installRuntimeUpgrade(options: RuntimeUpgradeOptions): RuntimeUpgradeResult {
-  const archivePath = path.resolve(options.archive);
-  if (!fs.existsSync(archivePath)) throw new Error(`Archive not found: ${archivePath}`);
-  const state = resolveRuntimeInstallState(options.scriptPath, options.installRoot);
-  ensureUserWritable(state.installRoot);
-  if (!fs.existsSync(state.launcherPath)) {
-    throw new Error(`Stable launcher not found: ${state.launcherPath}. Reinstall before running bundled upgrade.`);
-  }
-  const archiveSha = verifyArchiveChecksum(archivePath, options);
-  const extractedRoot = extractArchive(archivePath, path.resolve(options.tempRoot || os.tmpdir()));
+interface ActivateArchiveArgs {
+  state: RuntimeInstallState;
+  archivePath: string;
+  privateArchive: string;
+  archiveSha: string;
+  workDir: string;
+  expectedVersion?: string;
+  expectedTarget?: string;
+  receipt: (version: string, target: string) => RuntimeTrustReceipt;
+  skipPathCheck?: boolean;
+  scriptPath?: string;
+  smokeEnv?: NodeJS.ProcessEnv;
+}
+
+/**
+ * Shared install transaction. Every check runs against a private copy of the
+ * archive; the receipt is written into the staged version only after
+ * validation, and any failure removes staging and leaves current/pinned alone.
+ */
+async function activateRuntimeArchive(args: ActivateArchiveArgs): Promise<RuntimeUpgradeResult> {
+  const { state } = args;
+  await preflightRuntimeArchive(args.privateArchive);
+  const extractedRoot = extractArchive(args.privateArchive, args.workDir);
   const { manifestPath, manifest } = validateManifest(extractedRoot);
   const version = String(manifest?.product?.version || '').trim();
   if (!version) throw new Error(`Manifest missing product.version: ${manifestPath}`);
-  if (options.expectedVersion && options.expectedVersion !== version) {
-    throw new Error(`Archive version mismatch. expected ${options.expectedVersion}, got ${version}`);
+  if (!/^[0-9A-Za-z][0-9A-Za-z.+-]*$/.test(version)) throw new Error(`Manifest product.version is not a safe directory name: ${version}`);
+  if (args.expectedVersion && args.expectedVersion !== version) {
+    throw new Error(`Archive version mismatch. expected ${args.expectedVersion}, got ${version}`);
   }
+  const target = String(manifest?.bundleBuild?.target || '').trim();
+  if (args.expectedTarget && args.expectedTarget !== target) {
+    throw new Error(`Archive target mismatch. expected ${args.expectedTarget}, got ${target || 'none'}`);
+  }
+  const receipt = args.receipt(version, target);
   const stagedVersionRoot = path.join(state.versionsRoot, `.staging-${version}-${process.pid}`);
   rmrf(stagedVersionRoot);
   mkdirp(path.dirname(stagedVersionRoot));
-  fs.renameSync(extractedRoot, stagedVersionRoot);
-  const smoke = launcherSmoke({ version, current: false, pinned: false, path: stagedVersionRoot, manifestPath });
+  let smoke: string;
+  try {
+    fs.renameSync(extractedRoot, stagedVersionRoot);
+    smoke = launcherSmoke({ version, current: false, pinned: false, path: stagedVersionRoot, manifestPath }, args.smokeEnv);
+    writeTrustReceipt(stagedVersionRoot, receipt);
+  } catch (error) {
+    rmrf(stagedVersionRoot);
+    throw error;
+  }
   const liveVersionRoot = path.join(state.versionsRoot, version);
   rmrf(liveVersionRoot);
   fs.renameSync(stagedVersionRoot, liveVersionRoot);
   switchCurrentVersion(state, version);
   writeOwnershipMarkers(state);
-  const cleanedVersions = cleanupRuntimeVersions(options.scriptPath, state.installRoot);
+  const cleanedVersions = cleanupRuntimeVersions(args.scriptPath, state.installRoot);
   return {
     installRoot: state.installRoot,
     version,
-    archivePath,
-    archiveSha,
+    archivePath: args.archivePath,
+    archiveSha: args.archiveSha,
     manifestPath: path.join(liveVersionRoot, 'runtime-manifest.json'),
     liveVersionRoot,
     launcherPath: state.launcherPath,
     versionOutput: smoke,
-    pathConflicts: options.skipPathCheck ? [] : detectPathConflicts(state.installRoot),
+    pathConflicts: args.skipPathCheck ? [] : detectPathConflicts(state.installRoot),
     cleanedVersions,
+    authenticity: receipt.authenticity,
   };
+}
+
+function prepareInstall(scriptPath: string | undefined, installRoot: string | undefined, tempRoot: string | undefined) {
+  const state = resolveRuntimeInstallState(scriptPath, installRoot);
+  ensureUserWritable(state.installRoot);
+  if (!fs.existsSync(state.launcherPath)) {
+    throw new Error(`Stable launcher not found: ${state.launcherPath}. Reinstall before running bundled upgrade.`);
+  }
+  // mkdtemp creates the directory 0700, so the private archive copy cannot be swapped by other users.
+  const workDir = fs.mkdtempSync(path.join(path.resolve(tempRoot || os.tmpdir()), 'code-intel-upgrade-'));
+  return { state, workDir };
+}
+
+/** Checksum-only upgrade (v1.0.11 contract). Records `legacy-checksum`, never `verified`. */
+export async function installRuntimeUpgrade(options: RuntimeUpgradeOptions): Promise<RuntimeUpgradeResult> {
+  const archivePath = path.resolve(options.archive);
+  if (!fs.existsSync(archivePath)) throw new Error(`Archive not found: ${archivePath}`);
+  const { state, workDir } = prepareInstall(options.scriptPath, options.installRoot, options.tempRoot);
+  try {
+    const privateArchive = path.join(workDir, 'runtime.tar.gz');
+    fs.copyFileSync(archivePath, privateArchive);
+    const archiveSha = verifyArchiveChecksum(privateArchive, options, path.basename(archivePath));
+    return await activateRuntimeArchive({
+      state,
+      archivePath,
+      privateArchive,
+      archiveSha,
+      workDir,
+      expectedVersion: options.expectedVersion,
+      receipt: (version, target) => buildChecksumReceipt(version, target, archiveSha),
+      skipPathCheck: options.skipPathCheck,
+      scriptPath: options.scriptPath,
+    });
+  } finally {
+    rmrf(workDir);
+  }
+}
+
+/** Read a file named by the bundle index from the bundle directory, refusing links and size drift. */
+function readBundleFile(bundleDir: string, name: string, maxBytes: number): Buffer {
+  const filePath = path.join(bundleDir, name);
+  if (path.dirname(filePath) !== bundleDir) throw new RuntimeTrustError('ARTIFACT_MISMATCH', `refusing nested bundle path ${name}`);
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(filePath);
+  } catch {
+    throw new RuntimeTrustError(name === RUNTIME_INDEX_ATTESTATION_FILENAME ? 'ATTESTATION_MISSING' : 'ARTIFACT_MISSING', `${name} not found in ${bundleDir}`);
+  }
+  if (!stat.isFile()) throw new RuntimeTrustError('ARTIFACT_MISMATCH', `${name} is not a regular file`);
+  if (stat.size > maxBytes) throw new RuntimeTrustError('ARTIFACT_MISMATCH', `${name} exceeds ${maxBytes} bytes`);
+  return fs.readFileSync(filePath);
+}
+
+function checkIndexedBytes(file: RuntimeIndexFile, bytes: Buffer): void {
+  if (bytes.length !== file.size || sha256Hex(bytes) !== file.sha256) {
+    throw new RuntimeTrustError('ARTIFACT_MISMATCH', `${file.name} does not match the authenticated release index`);
+  }
+}
+
+function resolveTrustedRoot(options: RuntimeBundleUpgradeOptions): { bytes: Buffer; source: TrustRootSource } {
+  if (options.trustedRoot) {
+    const file = path.resolve(options.trustedRoot);
+    return { bytes: readBundleFile(path.dirname(file), path.basename(file), 1024 * 1024), source: 'operator' };
+  }
+  const runtime = loadBundledRuntimeMetadata(options.scriptPath);
+  const pinned = runtime.currentRoot ? path.join(runtime.currentRoot, PINNED_TRUSTED_ROOT_RELPATH) : null;
+  if (!pinned || !fs.existsSync(pinned)) {
+    throw new RuntimeTrustError('TRUST_ROOT_MISSING', 'the running runtime has no pinned Sigstore trusted root; authenticity cannot be established. Pass --trusted-root <file> obtained from a trusted channel.');
+  }
+  return { bytes: fs.readFileSync(pinned), source: 'pinned' };
+}
+
+/**
+ * Authenticated upgrade from a release bundle directory (`--bundle-dir`). All
+ * material is read from that directory only. With `offline`, every network
+ * primitive is denied for the whole transaction and the smoke test runs with
+ * update checks disabled.
+ */
+export async function installRuntimeFromBundle(options: RuntimeBundleUpgradeOptions): Promise<RuntimeBundleUpgradeResult> {
+  const run = async (): Promise<Omit<RuntimeBundleUpgradeResult, 'networkAttempts'>> => {
+    const bundleDir = path.resolve(options.bundleDir);
+    if (!fs.existsSync(bundleDir) || !fs.statSync(bundleDir).isDirectory()) throw new Error(`Bundle directory not found: ${bundleDir}`);
+    const indexBytes = readBundleFile(bundleDir, RUNTIME_INDEX_FILENAME, RUNTIME_INDEX_LIMITS.maxIndexBytes);
+    const index = parseRuntimeBundleIndex(indexBytes);
+    const attestation = readBundleFile(bundleDir, RUNTIME_INDEX_ATTESTATION_FILENAME, RUNTIME_INDEX_LIMITS.maxAttestationBytes);
+    const trustedRoot = resolveTrustedRoot(options);
+    const release = (options.attestationVerifier ?? verifyRuntimeIndexAttestation)({ attestation, indexBytes, index, trustedRoot: trustedRoot.bytes });
+
+    const installerVersion = options.installerVersion ?? loadBundledRuntimeMetadata(options.scriptPath).manifest?.product?.version;
+    if (installerVersion && compareRuntimeVersions(installerVersion, index.minimumInstallerVersion) < 0) {
+      throw new RuntimeTrustError('INSTALLER_TOO_OLD', `release ${index.release.tag} requires installer ${index.minimumInstallerVersion}; running ${installerVersion}`);
+    }
+    if (!options.allowDowngrade && installerVersion && compareRuntimeVersions(index.release.version, installerVersion) < 0) {
+      throw new RuntimeTrustError('DOWNGRADE_REFUSED', `release ${index.release.version} is older than the running runtime ${installerVersion}; use \`code-intel rollback\` or pass --allow-downgrade`);
+    }
+    const selected = selectRuntimeIndexTarget(index, options.target ?? `${process.platform}-${process.arch}`);
+
+    const sidecarMax = 64 * 1024 * 1024;
+    const checksum = readBundleFile(bundleDir, selected.checksum.name, sidecarMax);
+    checkIndexedBytes(selected.checksum, checksum);
+    checkIndexedBytes(selected.sbom, readBundleFile(bundleDir, selected.sbom.name, sidecarMax));
+    const provenance = readBundleFile(bundleDir, selected.provenance.name, sidecarMax);
+    checkIndexedBytes(selected.provenance, provenance);
+    const listed = checksum.toString('utf8').split(/\r?\n/).some((line) => line === `${selected.archive.sha256}  ${selected.archive.name}`);
+    let provenanceSubjects: Array<{ name?: string; digest?: { sha256?: string } }> = [];
+    try {
+      provenanceSubjects = (JSON.parse(provenance.toString('utf8')) as { subject?: typeof provenanceSubjects }).subject ?? [];
+    } catch { /* reported below */ }
+    const attested = provenanceSubjects.some((s) => s.name === selected.archive.name && s.digest?.sha256 === selected.archive.sha256);
+    if (!listed || !attested) throw new RuntimeTrustError('ARTIFACT_MISMATCH', 'checksum or provenance sidecar disagrees with the release index');
+
+    const archivePath = path.join(bundleDir, selected.archive.name);
+    const archiveStat = fs.lstatSync(archivePath, { throwIfNoEntry: false });
+    if (!archiveStat) throw new RuntimeTrustError('ARTIFACT_MISSING', `${selected.archive.name} not found in ${bundleDir}`);
+    if (!archiveStat.isFile()) throw new RuntimeTrustError('ARTIFACT_MISMATCH', `${selected.archive.name} is not a regular file`);
+
+    const { state, workDir } = prepareInstall(options.scriptPath, options.installRoot, options.tempRoot);
+    try {
+      const privateArchive = path.join(workDir, 'runtime.tar.gz');
+      fs.copyFileSync(archivePath, privateArchive);
+      const archiveSha = sha256File(privateArchive);
+      if (fs.statSync(privateArchive).size !== selected.archive.size || archiveSha !== selected.archive.sha256) {
+        throw new RuntimeTrustError('ARTIFACT_MISMATCH', `${selected.archive.name} does not match the authenticated release index`);
+      }
+      const result = await activateRuntimeArchive({
+        state,
+        archivePath,
+        privateArchive,
+        archiveSha,
+        workDir,
+        expectedVersion: index.release.version,
+        expectedTarget: selected.target,
+        receipt: (version, target) => buildVerifiedReceipt({ version, target, artifactSha256: archiveSha, indexBytes, release, trustRootSource: trustedRoot.source }),
+        skipPathCheck: options.skipPathCheck,
+        scriptPath: options.scriptPath,
+        smokeEnv: options.offline ? { ...process.env, UPDATE_CHECK_DISABLED: '1' } : undefined,
+      });
+      return {
+        ...result,
+        offline: Boolean(options.offline),
+        target: selected.target,
+        release: { ...release, trustRootSource: trustedRoot.source },
+        optionalAssets: [{
+          id: 'embedding-model-cache',
+          status: 'not-bundled',
+          message: 'Embedding models are not part of the runtime bundle; see `code-intel doctor` (vector-runtime) for readiness.',
+        }],
+      };
+    } finally {
+      rmrf(workDir);
+    }
+  };
+
+  if (!options.offline) return { ...(await run()), networkAttempts: null };
+  // Denied calls throw inside the transaction, so a reported count > 0 means a
+  // caller swallowed the error; nothing was fetched either way.
+  const { result, networkAttempts } = await runWithNetworkDenied(run);
+  return { ...result, networkAttempts };
 }
 
 function resolveDataRootForPurge(state: RuntimeInstallState, requestedDataRoot?: string): string {

@@ -6,8 +6,8 @@ import { getDbPath } from '../storage/metadata.js';
 import { verifyIndexTrust, upgradeLegacyIndexMetadata } from '../storage/index-trust.js';
 import { CURRENT_SCHEMA_VERSION } from '../migrations/migration-runner.js';
 import { loadGraphFromDB } from '../multi-repo/graph-from-db.js';
-import { buildChangeContext } from '../query/change-context.js';
-import { parseDiffFiles } from '../query/pr-impact.js';
+import { buildChangeContextWithPrecision } from '../query/change-context.js';
+import { parseDiffChangedLineRanges, parseDiffFiles, type PRImpactPrecision } from '../query/pr-impact.js';
 import { startChangeContextHttp, startChangeContextMcp } from './change-context-transports.js';
 import { DEFAULT_CONFIG, loadConfig } from './init-wizard.js';
 import {
@@ -19,6 +19,7 @@ import {
 import { collectDoctorChecks } from './doctor.js';
 import {
   cleanupRuntimeVersions,
+  installRuntimeFromBundle,
   installRuntimeUpgrade,
   listInstalledRuntimeVersions,
   pinRuntimeVersion,
@@ -26,6 +27,8 @@ import {
   rollbackRuntimeVersion,
   uninstallRuntime,
 } from './runtime-lifecycle.js';
+import { loadBundledRuntimeMetadata } from './runtime-metadata.js';
+import { inspectRuntimeTrust } from './runtime-trust.js';
 
 function optionValue(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
@@ -95,16 +98,21 @@ async function runChangeContext(args: string[]): Promise<void> {
   const fileOption = optionValue(args, '--files');
   const diffFile = optionValue(args, '--diff-file');
   let changedFiles = fileOption?.split(',').map((value) => value.trim()).filter(Boolean) ?? [];
+  let diff: string | undefined;
   if (diffFile) {
-    const diff = fs.readFileSync(path.resolve(diffFile), 'utf8');
+    diff = fs.readFileSync(path.resolve(diffFile), 'utf8');
     changedFiles = [...new Set([...changedFiles, ...parseDiffFiles(diff)])];
   }
   if (changedFiles.length === 0) {
     throw new Error('Provide --files file1,file2 or --diff-file path/to/change.diff');
   }
   const graph = await loadGraph(repoDir);
-  const result = buildChangeContext(graph, {
+  const precision = (optionValue(args, '--precision') ?? 'graph') as PRImpactPrecision;
+  if (!['graph', 'pdg', 'auto'].includes(precision)) throw new Error('--precision must be graph, pdg, or auto');
+  const result = await buildChangeContextWithPrecision(graph, {
     changedFiles,
+    precision,
+    changedRanges: diff ? parseDiffChangedLineRanges(diff) : undefined,
     maxHops: numberOption(args, '--max-hops'),
     maxTokens: numberOption(args, '--max-tokens'),
     maxChangedSymbols: numberOption(args, '--max-symbols'),
@@ -178,10 +186,28 @@ function runRollback(args: string[]): void {
   process.stdout.write(`${JSON.stringify({ current: rolled.version }, null, 2)}\n`);
 }
 
-function runUpgrade(args: string[]): void {
+async function runUpgrade(args: string[]): Promise<void> {
   const archive = optionValue(args, '--archive');
-  if (!archive) throw new Error('Usage: code-intel upgrade --archive <path> [--checksum <sha256> | --checksum-file <path>] [--version <v>]');
-  const result = installRuntimeUpgrade({
+  const bundleDir = optionValue(args, '--bundle-dir');
+  if (bundleDir) {
+    if (archive) throw new Error('Use either --bundle-dir or --archive, not both.');
+    const result = await installRuntimeFromBundle({
+      bundleDir,
+      offline: args.includes('--offline'),
+      target: optionValue(args, '--target'),
+      trustedRoot: optionValue(args, '--trusted-root'),
+      installRoot: optionValue(args, '--install-root'),
+      tempRoot: optionValue(args, '--temp-root'),
+      skipPathCheck: args.includes('--skip-path-check'),
+      allowDowngrade: args.includes('--allow-downgrade'),
+      scriptPath: process.argv[1],
+    });
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
+  if (args.includes('--offline')) throw new Error('--offline requires --bundle-dir <dir>.');
+  if (!archive) throw new Error('Usage: code-intel upgrade --bundle-dir <dir> [--offline] [--target <t>] [--trusted-root <file>] [--allow-downgrade] | --archive <path> [--checksum <sha256> | --checksum-file <path>] [--version <v>]');
+  const result = await installRuntimeUpgrade({
     archive,
     checksum: optionValue(args, '--checksum'),
     checksumFile: optionValue(args, '--checksum-file'),
@@ -192,6 +218,25 @@ function runUpgrade(args: string[]): void {
     scriptPath: process.argv[1],
   });
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+}
+
+function runVerifyInstall(args: string[]): void {
+  const json = args.includes('--json');
+  const runtime = loadBundledRuntimeMetadata(process.argv[1]);
+  if (!runtime.bundled || !runtime.currentRoot) {
+    const result = { bundled: false, authenticity: 'unverified', reason: 'not running from a self-contained runtime' };
+    process.stdout.write(json ? `${JSON.stringify(result, null, 2)}\n` : `unverified: ${result.reason}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  const inspection = inspectRuntimeTrust(runtime.currentRoot);
+  if (json) {
+    process.stdout.write(`${JSON.stringify({ bundled: true, ...inspection }, null, 2)}\n`);
+  } else {
+    process.stdout.write(`${inspection.version} (${inspection.target ?? 'unknown target'}): ${inspection.authenticity} — ${inspection.reason}\n`);
+    if (inspection.release) process.stdout.write(`  signer: ${inspection.release.workflowIdentity}\n`);
+  }
+  process.exitCode = inspection.authenticity === 'invalid' ? 2 : inspection.authenticity === 'verified' ? 0 : 1;
 }
 
 function runCleanupVersions(args: string[]): void {
@@ -224,7 +269,9 @@ export async function runStandaloneCommand(argv: string[]): Promise<boolean> {
     await runIndexStatus(args);
     return true;
   }
-  if (command === 'index') {
+  // Only the maintenance subcommands are standalone; `index refs|export|import|pin|unpin|remove`
+  // are Commander commands in app.ts.
+  if (command === 'index' && (args[0] === 'cleanup' || args[0] === 'unlock')) {
     await runIndexMaintenance(args);
     return true;
   }
@@ -245,7 +292,11 @@ export async function runStandaloneCommand(argv: string[]): Promise<boolean> {
     return true;
   }
   if (command === 'upgrade') {
-    runUpgrade(args);
+    await runUpgrade(args);
+    return true;
+  }
+  if (command === 'verify-install') {
+    runVerifyInstall(args);
     return true;
   }
   if (command === 'rollback') {

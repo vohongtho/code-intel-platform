@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { GROUP_CONTRACT_SCHEMA_VERSION } from '../../../src/multi-repo/contract-fingerprint.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -129,7 +130,7 @@ describe('syncGroup — evidence-based route matching', () => {
     });
 
     assert.equal(result.links.some((link) => link.matchKind === 'route-match'), false);
-    assert.equal(result.schemaVersion, '1.0.11');
+    assert.equal(result.schemaVersion, GROUP_CONTRACT_SCHEMA_VERSION);
 
     fs.rmSync(repoAPath, { recursive: true, force: true });
     fs.rmSync(repoBPath, { recursive: true, force: true });

@@ -1,4 +1,6 @@
 import type { AnalysisCertainty, AnalysisCoverage } from '../shared/index.js';
+import type { ProtocolContractPayload } from './protocol-contracts.js';
+import type { ProtocolCapabilityRow } from '../semantic/protocol-contracts/grpc-bindings.js';
 
 // ─── Group model ─────────────────────────────────────────────────────────────
 
@@ -59,9 +61,17 @@ export interface Contract {
   role?: ContractRole;
   certainty?: AnalysisCertainty | 'legacy';
   coverage?: AnalysisCoverage;
+  /** Additive (1.0.12): versioned rich GraphQL/protobuf structure the protocol comparators
+   * read. Absent on v1.0.11 flat protocol contracts, which therefore compare as `unknown`. */
+  protocol?: ProtocolContractPayload;
 }
 
-export type LinkKind = 'name-match' | 'route-match' | 'import-match';
+/**
+ * `route-match`: HTTP method + normalized path facts. `event-topic-match` / `graphql-operation-match`
+ * / `grpc-method-match`: literal protocol keys (see protocol-facts.ts). `name-match` /
+ * `import-match`: names only — never exact enough for a cross-repository continuation.
+ */
+export type LinkKind = 'name-match' | 'route-match' | 'import-match' | 'event-topic-match' | 'graphql-operation-match' | 'grpc-method-match';
 
 /**
  * A cross-repo link: a contract in one repo matched to a contract
@@ -151,6 +161,14 @@ export interface ContractDriftFinding {
   knownConsumerCoverage: KnownConsumerCoverage;
   /** Additive: flow/test guidance for exact-certainty consumers of breaking/potentially-breaking findings. */
   suggestedTests?: readonly ContractDriftTestSuggestion[];
+  /** Additive (1.0.12, gRPC): wire vs generated-source compatibility. `compatibility` is their
+   * conservative aggregate. */
+  protocolDimensions?: ProtocolCompatibilityDimensions;
+}
+
+export interface ProtocolCompatibilityDimensions {
+  wire?: 'compatible' | 'breaking' | 'unknown';
+  source?: 'compatible' | 'potentially-breaking' | 'breaking' | 'unknown';
 }
 
 export interface ContractDriftSummary {
@@ -178,4 +196,9 @@ export interface GroupSyncResult {
   changedContractIds?: string[];
   consumerIndex?: ContractConsumerIndex;
   driftSummary?: ContractDriftSummary;
+  /** Additive (1.0.12): which protocol schema/binding ecosystems were analyzed, so "no
+   * consumer found" can be told apart from "ecosystem not supported". */
+  protocolCapabilities?: readonly ProtocolCapabilityRow[];
+  /** Additive (1.0.12): per-repository protocol extraction boundaries (parse errors, limits). */
+  protocolCoverage?: Record<string, { graphql: readonly string[]; grpc: readonly string[] }>;
 }
