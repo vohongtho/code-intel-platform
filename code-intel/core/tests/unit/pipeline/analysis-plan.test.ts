@@ -118,6 +118,18 @@ describe('resolveAnalysisPlan', () => {
     } finally { fs.rmSync(value.root, { recursive: true, force: true }); }
   });
 
+  it('reuses an index whose metadata records a completed full reanalysis under the current receipt', () => {
+    // The initial publish persists `evolutionAction: 'full-reanalysis'` (what that
+    // run did). Reading it back as a request made the second unchanged analyze
+    // rebuild everything instead of preserving the active generation.
+    const value = fixture();
+    try {
+      value.metadata.evolutionAction = 'full-reanalysis';
+      const plan = resolveAnalysisPlan({ args: ['analyze'], metadata: value.metadata, snapshot: value.snapshot, source: unchanged });
+      assert.equal(plan.mode, 'noop');
+    } finally { fs.rmSync(value.root, { recursive: true, force: true }); }
+  });
+
   it('seeds vector.db and metadata for a known source change with healthy vectors', () => {
     const value = fixture();
     try {
