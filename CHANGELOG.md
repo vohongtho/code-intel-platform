@@ -4,7 +4,7 @@ All notable changes to this project are documented in this file.
 
 ---
 
-## [1.0.12] - Unreleased
+## [1.0.12] - 2026-11-21
 
 ### 🧪 Extensible taint models and receiver dispatch
 
